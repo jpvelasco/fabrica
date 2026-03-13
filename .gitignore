@@ -1,0 +1,19 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# CDK
+cdk.out/
+node_modules/
+
+# Fabrica
+.fabrica/
+fabrica.yaml
+
+# IDE
+.idea/
+.vscode/
+*.swp
