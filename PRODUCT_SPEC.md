@@ -308,6 +308,75 @@ Fabrica manages shared infrastructure (not single-machine), so state must be tea
 
 ---
 
+## Multi-Engine Architecture (Future Vision)
+
+Fabrica's infrastructure is naturally engine-agnostic. Perforce stores any engine's assets. Build servers compile whatever you tell them to. CI/CD pipelines trigger on any commit. This positions Fabrica as the **shared hub** in a hub-and-spoke architecture where engine-specific build tools sit at the edges.
+
+### The Airport Analogy
+
+Think of the ecosystem as an airline operation:
+
+- **Build tools** (Ludus and future siblings) = travel prep and luggage — engine-specific, each engine has unique build requirements
+- **Fabrica** = the airport — shared infrastructure that serves all engines, routes, studios
+- **Classis** = air traffic control — fleet management that doesn't care what engine built the container
+
+A studio is an airline. Their games are planes — different models (engines), different routes (platforms), but they all use the same airport infrastructure.
+
+### Architecture
+
+```
+Engine-Specific Build Tools
+┌──────────────────────────────────┐
+│  Ludus        (Unreal Engine 5)  │
+│  Future tool  (Unity)            │
+│  Future tool  (Godot)            │
+└──────────┬───────────────────────┘
+           │ containers, binaries, artifacts
+           v
+Fabrica — Shared Infrastructure
+┌──────────────────────────────────┐
+│  Perforce     (any engine)       │
+│  Build servers (any engine)      │
+│  CI/CD        (any engine)       │
+│  Cloud DDC    (any engine)       │
+│  Workstations (any engine)       │
+└──────────┬───────────────────────┘
+           │ deployed containers
+           v
+Classis — Fleet Operations
+┌──────────────────────────────────┐
+│  Fleet management  (any engine)  │
+│  Scaling           (any engine)  │
+│  Matchmaking       (any engine)  │
+│  Monitoring        (any engine)  │
+└──────────────────────────────────┘
+```
+
+### What This Means for Fabrica
+
+- **V1 is UE5-focused** — Horde, BuildGraph, UE5-aware workstation provisioning. This is where the complexity and pain is deepest.
+- **The infrastructure modules are already engine-agnostic** — Perforce, CI/CD, cost management, networking, IAM. No changes needed to support other engines at this layer.
+- **Engine-aware modules** could have adapters — e.g., a "build server" module that provisions a 500 GB NVMe instance with MSVC for UE5, or a 20 GB instance with Godot export templates, depending on the engine.
+- **Future engine support** could come via Fabrica plugins (engine-specific build pipeline modules) rather than requiring separate tools for each engine. Simpler engines like Godot and Unity don't need the complexity of a standalone Ludus-like tool.
+
+### The Pitch
+
+"Your studio has three UE5 games and one Unity title? Ludus builds the UE5 servers, your Unity pipeline feeds containers to the same Fabrica infrastructure, and Classis manages all four fleets from one place."
+
+### Shared Go Library (Future)
+
+Engine-specific build tools share common patterns that could be extracted into a shared module:
+
+- Container building (Dockerfile generation, Docker build, ECR push)
+- GameLift wrapper integration
+- Deploy pipeline (fleet creation, session management)
+- MCP tool patterns and registration
+- State/cache management
+
+Each engine tool would import this shared core and provide its own build frontend.
+
+---
+
 ## Open Questions
 
 1. ~~**IaC approach**~~ — **DECIDED:** Go + AWS Cloud Control API (`aws-sdk-go-v2/service/cloudcontrol`). Single binary, zero external dependencies, full resource coverage including modern GameLift. See Architecture section.
