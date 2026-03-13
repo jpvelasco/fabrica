@@ -8,7 +8,15 @@
 
 ## Executive Summary
 
-Fabrica is a CLI tool and infrastructure-as-code framework that provisions and manages the cloud infrastructure a game studio needs to operate: source control (Perforce Helix Core), distributed build farms (Unreal Horde), CI/CD pipelines, deployment targets, asset storage, and virtual workstations. It picks up where Ludus leaves off — while Ludus takes a single developer from zero to a deployed game on their local machine, Fabrica scales that to a team with proper engineering infrastructure.
+Fabrica is a CLI tool and infrastructure-as-code framework that provisions and manages the cloud infrastructure a game studio needs to operate: source control (Perforce Helix Core), distributed build farms, CI/CD pipelines, asset storage, and virtual workstations. Built on AWS CDK with C# .NET, it synthesizes CloudFormation stacks from opinionated, game-studio-specific constructs — delivering zero-assembly infrastructure through a guided CLI.
+
+Fabrica is the second product in a three-part suite:
+
+- **Ludus** — engine-specific build tool (UE5 today). Single developer, local machine.
+- **Fabrica** — engine-agnostic infrastructure platform. Team-scale, cloud.
+- **Classis** — engine-agnostic fleet operations. Production-scale, live games.
+
+Each layer is independently useful. A solo dev uses Ludus alone. A team adds Fabrica. A studio shipping to players adds Classis.
 
 ---
 
@@ -41,9 +49,8 @@ Ludus also provides:
 Ludus is the "training school" — a developer's Swiss army knife. But when a studio needs to:
 
 - Host Perforce for 10-100 developers pushing code and assets
-- Run distributed builds across a Horde grid (not a single machine taking 6 hours)
+- Run distributed builds across a build farm (not a single machine taking 6 hours)
 - Set up CI/CD that triggers on commits, builds, tests, and deploys automatically
-- Provision staging and production deployment environments
 - Manage derived data caches so developers aren't rebuilding shaders locally
 - Spin up cloud workstations for remote developers
 
@@ -54,9 +61,9 @@ Ludus is the "training school" — a developer's Swiss army knife. But when a st
 Ludus's `buildgraph` command generates UE5 BuildGraph XML describing engine and game build stages as a directed acyclic graph. This is the natural handoff point:
 
 - **Ludus** generates the BuildGraph XML and validates it
-- **Fabrica** provisions a Horde grid that consumes that XML and executes it at scale
+- **Fabrica** provisions a build farm that consumes that XML and executes it at scale
 
-A developer can prototype their build locally with Ludus, then hand it off to Fabrica's build farm for distributed execution.
+A developer can prototype their build locally with Ludus, then hand it off to Fabrica's build farm for distributed execution. This pattern — engine tool produces build definition, Fabrica executes it — is the template for future engine support.
 
 ---
 
@@ -90,9 +97,11 @@ AWS published the [Cloud Game Development Toolkit](https://aws-games.github.io/c
 
 7. **No GameLift integration** — Zero deployment pipeline. You build the game and then... nothing. No fleet management, no session creation, no matchmaking. The entire deployment story is missing.
 
+8. **Critical IAM failures** — Jenkins grants `s3:*` and `secretsmanager:BatchGetSecretValue` on `*`. VDI grants `secretsmanager:GetSecretValue`/`PutSecretValue` and `ssm:SendCommand` on `*` to every workstation — any instance can read any secret in the account. Security groups use VPC CIDR blocks instead of security group references. These aren't configuration oversights; they're structural — Terraform HCL makes it easy to write `resources = ["*"]` and hard to generate least-privilege policies.
+
 ### The Opportunity
 
-Fabrica can be to the Cloud Game Development Toolkit what Ludus was to "manually running RunUAT and docker build" — an opinionated, CLI-first tool with sensible defaults, guided setup, and deep domain knowledge about Unreal Engine workflows. The toolkit gives you raw materials; Fabrica gives you a working studio.
+Fabrica can be to the Cloud Game Development Toolkit what Ludus was to "manually running RunUAT and docker build" — an opinionated, CLI-first tool with sensible defaults, guided setup, and deep domain knowledge about game studio workflows. The toolkit gives you raw materials; Fabrica gives you a working studio.
 
 ---
 
@@ -106,15 +115,14 @@ fabrica setup
 
 And through a guided wizard, provisions:
 - A Perforce Helix Core server sized for their team
-- A Horde build farm with auto-scaling workers
+- A build farm with auto-scaling workers
 - A CI pipeline triggered on Perforce submits
-- GameLift deployment infrastructure (via Ludus integration)
 - A derived data cache for shader compilation
 - Cost alerts and budget guardrails
 
 The entire studio infrastructure is up in under an hour. New developers onboard by running `fabrica workstation create` and getting a cloud desktop pre-configured with the engine, the project, and all tools.
 
-When the studio is ready to ship, `fabrica promote prod` takes their deployment from staging to production with the same infrastructure patterns they've been using since day one.
+When the studio is ready to ship, they add Classis for production fleet operations — scaling, matchmaking, monitoring, blue/green deployments — all running on the infrastructure Fabrica provisioned.
 
 ---
 
@@ -123,9 +131,11 @@ When the studio is ready to ship, `fabrica promote prod` takes their deployment 
 | Persona | Role | How they use Fabrica |
 |---------|------|---------------------|
 | **Technical Director** | Decides infrastructure strategy | `fabrica setup` — initial provisioning, architecture decisions |
-| **Build Engineer** | Maintains CI/CD and build systems | `fabrica horde scale`, `fabrica ci status` — day-2 operations |
+| **Build Engineer** | Maintains CI/CD and build systems | `fabrica build-farm scale`, `fabrica ci status` — day-2 operations |
 | **Developer** | Ships game code and content | Indirect user — pushes to Perforce, builds happen automatically |
 | **Studio Lead** | Budget and planning | `fabrica cost report` — cost visibility and forecasting |
+
+The sweet spot: indie-to-mid studios (5-50 people) scaling from prototype to production. Teams that cannot afford dedicated DevOps but can't navigate raw Terraform.
 
 ---
 
@@ -133,62 +143,103 @@ When the studio is ready to ship, `fabrica promote prod` takes their deployment 
 
 ### 1. Source Control (Perforce Helix Core)
 
+Engine-agnostic — stores any engine's assets.
+
 - EC2-hosted Helix Core server with EBS/io2 storage
 - Automated backup to S3 (daily snapshots + continuous journaling)
-- Proxy servers for distributed teams (Helix Proxy in multiple regions)
-- Typemap configured for UE5 (binary assets, large file handling)
+- Typemap configured for common game engines (binary assets, large file handling)
 - Auth integration (LDAP, SAML, or local accounts)
 - Monitoring: connection count, storage growth, replication lag
+- Route 53 DNS (perforce.studio.internal)
 
-### 2. Build Farm (Unreal Horde)
+### 2. Build Farm
 
-- Horde server (coordinator) on EC2
+Engine-agnostic infrastructure, engine-specific configuration via chassis adapters.
+
+- Coordinator service (receives build definitions, distributes work)
 - Auto-scaling worker fleet (spot instances for cost, on-demand for reliability)
-- BuildGraph XML ingestion from Ludus or CI
-- Shared derived data cache (DDC) on S3/ElastiCache
+- Build definition ingestion — BuildGraph XML from Ludus (UE5), or build commands from other chassis
+- Shared derived data cache (DDC) on S3
 - Multi-platform build support (Linux workers for servers, Windows workers for clients)
 - Build artifact storage and retention policies
 
-### 3. CI/CD Pipeline
+V1 uses a simpler BuildGraph executor — not Horde. Horde is Epic's build orchestrator but requires Epic organization access, has complex deployment dependencies (DocumentDB, ElastiCache, Ansible), and is the CGD Toolkit's biggest pain point. V2 offers Horde as an upgrade path for studios that need it.
 
-- Trigger on Perforce submit (via Horde or webhook)
+### 3. CI/CD Pipeline (V2)
+
+- Trigger on Perforce submit (via webhook)
 - Pipeline stages: build → test → package → deploy
-- Integration with Ludus for GameLift deployment
+- Integration with engine-specific build tools for build steps
 - Artifact promotion (dev → staging → prod)
 - Notification integration (Slack, Discord, email)
 
-### 4. Deployment Infrastructure
-
-- GameLift fleet management (container + EC2, via Ludus)
-- Staging environments with isolated fleets
-- Blue/green deployment support
-- Monitoring and log aggregation (CloudWatch, optional Grafana)
-
-### 5. Workstations (future)
+### 4. Workstations (V2)
 
 - NICE DCV cloud workstations on GPU-enabled EC2
-- Pre-configured with UE5, Perforce workspace, project checkout
+- Pre-configured with engine, Perforce workspace, project checkout
 - Auto-stop on idle to control costs
 - Team templates (artist workstation, programmer workstation)
 
-### 6. Cost Management
+### 5. Cost Management
 
+- Pre-provisioning cost estimates — shown before `fabrica setup` confirms
 - Real-time cost dashboard per module
 - Budget alerts and guardrails
 - Spot instance recommendations for build workers
-- Reserved instance guidance for always-on servers (Perforce, Horde coordinator)
-- Monthly cost report generation
+- Reserved instance guidance for always-on servers (Perforce, coordinator)
 
 ---
 
-## Integration with Ludus
+## Product Suite Architecture
+
+### The Three Products
+
+```
+Solo Dev                    Team                      Production
+─────────                   ────                      ──────────
+
+Ludus (UE5)  ──────────┐
+Unity adapter ────────┐├──→ Fabrica ──────────────→ Classis
+Godot adapter ───────┐│     (infrastructure)        (fleet ops)
+                     ││
+                     ││     Perforce                 Fleet scaling
+                     │├───→ Build farm  ───────────→ Matchmaking
+                     │      CI/CD                    Monitoring
+                     │      Workstations             Blue/green
+                     │      Cost mgmt                Sessions
+                     │
+              containers + artifacts
+              (engine-agnostic interface)
+```
+
+### The Airport Analogy
+
+- **Engine-specific build tools** (Ludus and future siblings) = travel prep and luggage — each engine has unique build requirements
+- **Fabrica** = the airport — shared infrastructure that serves all engines, routes, studios
+- **Classis** = air traffic control — fleet management that doesn't care what engine built the container
+
+A studio is an airline. Their games are planes — different models (engines), different routes (platforms), but they all use the same airport infrastructure.
+
+### Product Boundaries
+
+| Concern | Ludus / Engine Tool | Fabrica | Classis |
+|---------|-------------------|---------|---------|
+| Build definition | Generates BuildGraph XML, build commands | Executes builds at scale | — |
+| Container images | Builds and pushes engine images | Provisions ECR, worker fleet | Deploys containers to fleets |
+| Infrastructure | — | Provisions VPC, Perforce, build farm, CI/CD | Provisions GameLift fleets, matchmaking |
+| Fleet operations | Test fleet for solo dev (prototype path) | — | Production fleet ops (scaling, sessions, monitoring) |
+| Cost | — | Pre-provisioning estimates, budget alerts | Runtime cost per fleet, per game |
+
+Ludus keeps its deployment commands (`ludus deploy fleet`, `ludus deploy session`) for the solo-dev prototyping path. Classis handles the production path — multi-fleet, scaling policies, matchmaking, monitoring, blue/green.
+
+### Integration with Ludus
 
 Fabrica and Ludus are independent tools that complement each other. Neither requires the other, but they're better together.
 
 | Integration Point | How it works |
 |-------------------|-------------|
-| **BuildGraph XML** | `ludus buildgraph` generates XML → Fabrica's Horde grid consumes it for distributed builds |
-| **GameLift Deployment** | Fabrica provisions the deployment infrastructure → Ludus handles container builds and fleet management within it |
+| **BuildGraph XML** | `ludus buildgraph` generates XML → Fabrica's build farm consumes it for distributed builds |
+| **Container Images** | `ludus engine push` pushes UE5 Docker images to ECR → Fabrica's build workers pull them |
 | **Build Configuration** | Ludus understands UE versions, toolchains, and build configs → Fabrica's CI can invoke Ludus commands for build steps |
 | **MCP** | Both tools expose MCP servers → AI agents can orchestrate the full workflow across both tools |
 | **Config Convention** | Both use YAML config with similar patterns, making them feel like a family |
@@ -202,18 +253,62 @@ ludus init --fix               # validate and fix prerequisites
 ludus buildgraph -o build.xml  # generate BuildGraph XML
 
 # Studio infrastructure (Fabrica)
-fabrica setup                  # provision Perforce, Horde, CI
-fabrica ci trigger --graph build.xml  # submit BuildGraph to Horde
+fabrica setup                  # provision Perforce, build farm, CI
+fabrica build-farm submit --graph build.xml  # submit BuildGraph to build farm
 fabrica deploy promote staging # promote latest build to staging
 
-# Back on developer machine (Ludus)
-ludus deploy session           # create test session on staging fleet
-ludus connect                  # play-test
+# Production operations (Classis)
+classis fleet create --from-build latest   # deploy to GameLift fleet
+classis scale auto --min 2 --max 20        # configure auto-scaling
+classis session create --region us-east-1  # create test session
 ```
 
 ---
 
-## Architecture (High-Level)
+## Multi-Engine Support
+
+### What's Engine-Agnostic (Works for Any Engine)
+
+- **Foundation** — VPC, subnets, NAT, Route 53. Networks don't care what game engine you use.
+- **Perforce** — Helix Core stores files. It doesn't know or care if they're `.uasset`, `.unity3d`, or `.tres`.
+- **Build farm infrastructure** — ECS clusters, ASGs, networking, IAM. The compute layer is the same regardless of engine.
+- **Cost estimation** — AWS pricing is AWS pricing.
+- **Workstations** — Windows/Linux boxes with DCV. Software packages differ, but the infrastructure is identical.
+
+### What's Engine-Specific (Chassis Adapters)
+
+| | UE5 | Unity | Godot |
+|---|---|---|---|
+| **Build system** | BuildGraph (XML DAG) | Unity Build Automation / custom | SCons |
+| **Build distribution** | Horde, FastBuild, IncrediBuild | Unity Accelerator, custom | Not common at scale |
+| **Caching** | DDC (Derived Data Cache), sccache | Unity Accelerator cache | No standard |
+| **Container images** | Huge, licensed, UE5 installed | Unity Hub + license server | Lightweight, MIT licensed |
+| **Typical project size** | 50-500GB | 10-100GB | 1-20GB |
+| **Standalone tool needed?** | Yes (Ludus) — build pipeline is extremely complex | Probably not — plugin adapter sufficient | No — trivial build commands |
+
+### The Chassis Interface
+
+Fabrica's build farm needs five things from any engine adapter:
+
+1. **Container image** — what worker image to run
+2. **Build command** — what to execute inside the container
+3. **Cache configuration** — how to configure the caching layer
+4. **Artifact output** — where build outputs land
+5. **Health check** — how to verify a build succeeded
+
+That's it. Fabrica doesn't need to understand BuildGraph or SCons or Unity's build pipeline. It just needs a chassis to provide those five things.
+
+### V1: UE5-Only
+
+V1 targets Unreal Engine 5 studios exclusively. UE5 studios have the deepest infrastructure pain — enormous project sizes, brutal shader compilation, complex build pipelines, and near-mandatory Perforce usage.
+
+### V2+: Engine Adapters
+
+Not every engine needs a full Ludus-like tool. UE5's build complexity justifies a standalone product. Unity and Godot are simpler — a Fabrica plugin or lightweight adapter that knows the right build commands is probably sufficient.
+
+---
+
+## Architecture
 
 ### CLI-First
 
@@ -223,63 +318,129 @@ Like Ludus, Fabrica is a CLI tool. Infrastructure engineers interact through com
 fabrica setup                     # guided first-time provisioning
 fabrica status                    # health of all modules
 fabrica perforce [setup|status|backup|restore]
-fabrica horde [setup|status|scale|workers]
+fabrica build-farm [setup|status|scale|submit]
 fabrica ci [setup|trigger|status|logs]
-fabrica deploy [setup|promote|status|destroy]
 fabrica workstation [create|list|stop|terminate]
 fabrica cost [report|forecast|alerts]
 fabrica doctor                    # diagnostic checks
 fabrica destroy --all             # tear down everything
 ```
 
-### Infrastructure as Code
+### Technology Stack
 
-**Decision: Go + AWS Cloud Control API (single binary, zero external dependencies)**
+**C# 13 on .NET 10 + AWS CDK v2**
 
-We evaluated Terraform, Pulumi, CDK, CloudFormation, and the AWS Cloud Control API. The decision came down to two factors:
+We evaluated Go + Cloud Control API, Go + CloudFormation template generation, Terraform, Pulumi, and CDK. The decision:
 
-1. **Single binary UX** — `fabrica setup` must work with nothing installed except AWS credentials. No Terraform binary, no Pulumi binary, no Python runtime, no Node.js. Pulumi's Automation API looked promising (Go-native, embeddable) but requires the `pulumi` CLI binary (~200MB) on PATH — same prerequisite friction we're trying to eliminate.
+- **Go + Cloud Control API** — rejected. Rebuilds Terraform's resource management, state backend, dependency resolution, and rollback from scratch. The right primitives at the wrong abstraction level.
+- **Go + CloudFormation template generation** — rejected. Rebuilds CDK's construct model, template synthesis, and cross-stack references from scratch. Same mistake, one layer up.
+- **C# + AWS CDK** — accepted. CDK already solves infrastructure composition, state management (via CloudFormation), IAM generation, and cross-stack references. Fabrica adds game-studio-specific L3 constructs on top.
 
-2. **Full resource coverage** — The AWS Cloud Control API supports 1,100+ resource types, including all GameLift resources (ContainerFleet, ContainerGroupDefinition, MatchmakingConfiguration) that Terraform and Pulumi's classic provider are missing. New AWS resources appear automatically via CloudFormation schema updates — no waiting for provider maintainers.
+Why C# over Go for Fabrica (when Ludus is Go):
 
-**Approach:** Fabrica uses `aws-sdk-go-v2/service/cloudcontrol` — the Go SDK for Cloud Control API — to manage all AWS resources through a uniform CRUD interface:
+- CDK's construct model is a class hierarchy. C# 13's OOP (records, pattern matching, required members) maps naturally to CDK constructs. Go's composition-over-inheritance makes CDK patterns awkward.
+- Each product picks the language that best fits its problem. Ludus is Go because Go is perfect for a single-binary CLI that shells out to build tools. Fabrica is C# because CDK demands strong OOP.
+- .NET 10 is the latest LTS, actively maintained, and has first-class AWS SDK support.
+
+**CDK CLI is an accepted external dependency.** `fabrica doctor` checks for Node.js + CDK CLI and guides installation. This is a pragmatic tradeoff — CDK eliminates thousands of lines of custom infrastructure code in exchange for a one-time `npm install -g aws-cdk`.
+
+### Three-Layer Architecture
 
 ```
-CreateResource(TypeName, DesiredState)   — create any resource
-GetResource(TypeName, Identifier)        — read current state
-UpdateResource(TypeName, Identifier, PatchDocument)  — update via JSON Patch
-DeleteResource(TypeName, Identifier)     — delete
-ListResources(TypeName)                  — enumerate
+Fabrica.Cli              — User-facing commands (setup, status, destroy, doctor, cost)
+    │                      System.CommandLine (C# equivalent of Cobra)
+    │
+Fabrica.Constructs       — CDK L3 constructs (FoundationStack, PerforceStack, BuildFarmStack)
+    │                      Game-studio-specific infrastructure patterns
+    │
+Fabrica.Operations       — Day-2 operations via AWS SDK (backup, scale, diagnose, cost)
+    │                      Direct SDK calls for runtime operations CDK doesn't cover
+    │
+Fabrica.CdkApp           — CDK app entry point (reads fabrica.yaml, instantiates stacks)
+                           Synthesizes CloudFormation templates, deploys via CDK CLI
 ```
 
-On top of this, Fabrica builds a thin orchestration layer:
-- **Resource dependency resolver** — topological sort ensures VPC before Subnet before Security Group
-- **Plan/preview** — diff desired state vs. stored state before applying
-- **Rollback** — compensating deletes on partial failure
-- **Tagging** — all resources tagged with `ManagedBy: fabrica`, module name, version
+### Why CDK Prevents the CGD Toolkit's Failures
 
-The AWS toolkit's Terraform modules serve as reference architectures — we study what resources they create and replicate the patterns through Cloud Control API, wrapped in a guided CLI experience.
-
-**Escape hatch:** `fabrica export --format cloudformation` generates raw CloudFormation templates from the current state, for teams that want to manage infrastructure with their own tools.
+| CGD Toolkit Problem | CDK Structural Solution |
+|---------------------|------------------------|
+| `s3:*` on `*`, `secretsmanager:*` on `*` | CDK grant methods (`bucket.GrantReadWrite(role)`) generate least-privilege IAM automatically. You can't accidentally grant `*`. |
+| Security groups using VPC CIDRs | CDK Connections API (`server.Connections.AllowFrom(nlb, Port.Tcp(1666))`) uses SG references by default. |
+| No resource naming consistency | Base construct class enforces project prefix and naming convention on every resource. |
+| Inconsistent tagging across modules | Base construct class applies standard tags (`ManagedBy: fabrica`, module name, version) to all resources. |
+| `terraform destroy` leaves orphans | CloudFormation stack deletion handles cleanup. Custom resources for edge cases (AMIs, DNS). |
+| 10-step assembly across 3 CLIs | `fabrica setup` synthesizes and deploys CDK stacks. One command. |
+| No cost visibility | Cost estimation layer queries pricing before `cdk deploy`. User confirms with full cost breakdown. |
 
 ### State Management
 
-Fabrica manages shared infrastructure (not single-machine), so state must be team-accessible, versioned, and locked against concurrent modification.
+CloudFormation manages resource state. CDK synthesizes templates, CloudFormation tracks what's deployed, handles rollback on failure, and detects drift. No custom state backend needed.
 
-**Remote state (source of truth):**
-- **S3 bucket** (`s3://fabrica-state-<account-id>/`) — encrypted (SSE-KMS), versioned (automatic history of every state change), shared across the team
-- **DynamoDB table** (`fabrica-state-lock`) — prevents two people from running `fabrica deploy` simultaneously
+- **No S3 state bucket** — CloudFormation is the source of truth
+- **No DynamoDB lock table** — CloudFormation handles concurrent deployment protection
+- **Stack outputs** — cross-module references (VPC ID from Foundation → Perforce stack) use CDK's typed cross-stack references, synthesized to CloudFormation exports
 
-**Local cache (fast reads):**
-- `.fabrica/state.json` — cached copy of remote state, synced on each command
-- `.fabrica/config.yaml` — CLI config and cached metadata
+**Local config:**
+- `fabrica.yaml` — user configuration (region, team size, module selections, engine preferences)
+- `.fabrica/` — cached metadata, CLI state
 
-**State contents:**
-- Resource inventory: type, identifier, region, properties, creation timestamp
-- Deployment history: who deployed what, when, which resources changed
-- Module versions: which Fabrica module version created each resource (for upgrade safety)
+### Module Architecture
 
-**Bootstrap:** `fabrica setup` creates the S3 bucket and DynamoDB table as its first action (using direct AWS SDK calls, not Cloud Control API — chicken-and-egg). All subsequent operations use the state backend.
+Fabrica modules are CDK stacks composed of L3 constructs. Module-level dependency graph, imperative within modules:
+
+- **Foundation** (VPC, subnets, NAT, DNS) — no dependencies
+- **Perforce** — depends on Foundation
+- **Build Farm** — depends on Foundation, optionally on Perforce
+
+Every construct inherits from a base class that enforces:
+- Project-prefixed resource naming
+- Standard tag schema
+- Cost metadata for estimation
+
+### Project Structure
+
+```
+fabrica/
+├── src/
+│   ├── Fabrica.Cli/                  # Console app (System.CommandLine)
+│   │   ├── Program.cs
+│   │   ├── Commands/
+│   │   │   ├── SetupCommand.cs
+│   │   │   ├── StatusCommand.cs
+│   │   │   ├── DoctorCommand.cs
+│   │   │   ├── DestroyCommand.cs
+│   │   │   └── CostCommand.cs
+│   │   └── Config/
+│   │       └── FabricaConfig.cs
+│   │
+│   ├── Fabrica.Constructs/           # CDK constructs library
+│   │   ├── Foundation/
+│   │   │   └── FoundationStack.cs
+│   │   ├── Perforce/
+│   │   │   ├── PerforceStack.cs
+│   │   │   └── PerforceServer.cs     # L3 construct
+│   │   ├── BuildFarm/
+│   │   │   ├── BuildFarmStack.cs
+│   │   │   ├── Coordinator.cs
+│   │   │   └── WorkerFleet.cs
+│   │   └── Shared/
+│   │       ├── FabricaConstruct.cs   # Base class (enforces tags, naming)
+│   │       ├── Tags.cs
+│   │       └── Naming.cs
+│   │
+│   ├── Fabrica.Operations/           # Day-2 operations (direct SDK)
+│   │   ├── Perforce/
+│   │   ├── BuildFarm/
+│   │   └── Cost/
+│   │
+│   └── Fabrica.CdkApp/              # CDK app entry point
+│       └── Program.cs
+│
+├── tests/
+├── fabrica.example.yaml
+├── cdk.json
+└── Fabrica.sln
+```
 
 ---
 
@@ -287,124 +448,64 @@ Fabrica manages shared infrastructure (not single-machine), so state must be tea
 
 ### In Scope
 
-- [ ] **CLI skeleton** — Go, Cobra, Viper (same stack as Ludus)
+- [ ] **Solution scaffold** — C# .NET 10, CDK v2, System.CommandLine
+- [ ] **`fabrica doctor`** — prerequisite validation (AWS creds, CDK CLI, Node.js, permissions, quotas)
 - [ ] **`fabrica setup`** — guided wizard for initial provisioning
-- [ ] **Perforce Helix Core** — single-server deployment with automated backup
-- [ ] **Horde build farm** — coordinator + auto-scaling workers
-- [ ] **BuildGraph integration** — ingest XML from Ludus, submit to Horde
+- [ ] **Foundation stack** — VPC, subnets, NAT, Route 53, security group baselines
+- [ ] **Perforce Helix Core stack** — EC2, EBS, NLB, backup, DNS, monitoring
+- [ ] **Build Farm stack** — BuildGraph executor with coordinator + auto-scaling workers (not Horde)
+- [ ] **BuildGraph integration** — ingest XML from Ludus, distribute to workers
 - [ ] **Cost estimation** — surface hourly/monthly costs before provisioning
 - [ ] **`fabrica status`** — health checks across all modules
-- [ ] **`fabrica doctor`** — prerequisite validation (AWS creds, permissions, quotas)
-- [ ] **`fabrica destroy`** — clean teardown of all resources
+- [ ] **`fabrica destroy`** — clean teardown of all stacks
+- [ ] **UE5 only** — build farm is UE5-specific in V1
 
 ### Out of Scope (V1)
 
-- Workstations (NICE DCV) — complex GPU instance management
-- Multi-region — V1 is single-region
-- CI/CD pipeline — V1 focuses on build farm; CI integration comes in V2
+- Horde — V2 upgrade path. V1 uses a simpler BuildGraph executor.
+- Unity / Godot adapters — engine adapter interface designed in V1, implementations in V2+
+- Workstations (NICE DCV) — V2
+- CI/CD pipeline — V2
+- Multi-region / Perforce replicas — V2
+- Multi-environment (dev/staging/prod) — V2
 - Web dashboard — CLI-only for V1
 - Multi-cloud — AWS only
 - MCP server — add after core is stable
-
----
-
-## Multi-Engine Architecture (Future Vision)
-
-Fabrica's infrastructure is naturally engine-agnostic. Perforce stores any engine's assets. Build servers compile whatever you tell them to. CI/CD pipelines trigger on any commit. This positions Fabrica as the **shared hub** in a hub-and-spoke architecture where engine-specific build tools sit at the edges.
-
-### The Airport Analogy
-
-Think of the ecosystem as an airline operation:
-
-- **Build tools** (Ludus and future siblings) = travel prep and luggage — engine-specific, each engine has unique build requirements
-- **Fabrica** = the airport — shared infrastructure that serves all engines, routes, studios
-- **Classis** = air traffic control — fleet management that doesn't care what engine built the container
-
-A studio is an airline. Their games are planes — different models (engines), different routes (platforms), but they all use the same airport infrastructure.
-
-### Architecture
-
-```
-Engine-Specific Build Tools
-┌──────────────────────────────────┐
-│  Ludus        (Unreal Engine 5)  │
-│  Future tool  (Unity)            │
-│  Future tool  (Godot)            │
-└──────────┬───────────────────────┘
-           │ containers, binaries, artifacts
-           v
-Fabrica — Shared Infrastructure
-┌──────────────────────────────────┐
-│  Perforce     (any engine)       │
-│  Build servers (any engine)      │
-│  CI/CD        (any engine)       │
-│  Cloud DDC    (any engine)       │
-│  Workstations (any engine)       │
-└──────────┬───────────────────────┘
-           │ deployed containers
-           v
-Classis — Fleet Operations
-┌──────────────────────────────────┐
-│  Fleet management  (any engine)  │
-│  Scaling           (any engine)  │
-│  Matchmaking       (any engine)  │
-│  Monitoring        (any engine)  │
-└──────────────────────────────────┘
-```
-
-### What This Means for Fabrica
-
-- **V1 is UE5-focused** — Horde, BuildGraph, UE5-aware workstation provisioning. This is where the complexity and pain is deepest.
-- **The infrastructure modules are already engine-agnostic** — Perforce, CI/CD, cost management, networking, IAM. No changes needed to support other engines at this layer.
-- **Engine-aware modules** could have adapters — e.g., a "build server" module that provisions a 500 GB NVMe instance with MSVC for UE5, or a 20 GB instance with Godot export templates, depending on the engine.
-- **Future engine support** could come via Fabrica plugins (engine-specific build pipeline modules) rather than requiring separate tools for each engine. Simpler engines like Godot and Unity don't need the complexity of a standalone Ludus-like tool.
-
-### The Pitch
-
-"Your studio has three UE5 games and one Unity title? Ludus builds the UE5 servers, your Unity pipeline feeds containers to the same Fabrica infrastructure, and Classis manages all four fleets from one place."
-
-### Shared Go Library (Future)
-
-Engine-specific build tools share common patterns that could be extracted into a shared module:
-
-- Container building (Dockerfile generation, Docker build, ECR push)
-- GameLift wrapper integration
-- Deploy pipeline (fleet creation, session management)
-- MCP tool patterns and registration
-- State/cache management
-
-Each engine tool would import this shared core and provide its own build frontend.
+- Classis integration — Classis is a separate product, post-Fabrica
 
 ---
 
 ## Open Questions
 
-1. ~~**IaC approach**~~ — **DECIDED:** Go + AWS Cloud Control API (`aws-sdk-go-v2/service/cloudcontrol`). Single binary, zero external dependencies, full resource coverage including modern GameLift. See Architecture section.
-2. **Horde vs. custom** — Horde is Epic's build orchestrator but complex to deploy. Should V1 use Horde directly, or start with a simpler job distribution system?
-3. **Perforce licensing** — Helix Core is free for up to 5 users. How to handle licensing for larger teams?
-4. **Naming conventions** — Should Fabrica-managed AWS resources use a naming convention that's compatible with Ludus's `ManagedBy: ludus` tagging?
-5. **Shared config** — Should `fabrica.yaml` be able to import/reference `ludus.yaml` values, or should they be fully independent?
-6. **Pricing model** — Is Fabrica open source (like Ludus), commercial, or open-core?
+1. ~~**IaC approach**~~ — **DECIDED:** C# .NET 10 + AWS CDK v2. CDK CLI is an accepted external dependency. CloudFormation manages state.
+2. ~~**Horde vs. custom**~~ — **DECIDED:** V1 uses a simpler BuildGraph executor. Horde is V2 upgrade path. Too complex, requires Epic org access, CGD Toolkit's biggest pain point.
+3. ~~**Build farm V1 scope**~~ — **DECIDED:** UE5-only with engine adapter interface designed for V2 expansion.
+4. **Perforce licensing** — Helix Core is free for up to 5 users. How to handle licensing messaging for larger teams during setup?
+5. **Naming conventions** — Fabrica-managed resources use `ManagedBy: fabrica` tag. Compatible with Ludus's `ManagedBy: ludus`. Classis will use `ManagedBy: classis`. Shared resources?
+6. **Shared config** — Should `fabrica.yaml` reference `ludus.yaml` values, or should they be fully independent?
+7. **Pricing model** — Is Fabrica open source (like Ludus), commercial, or open-core?
+8. **Classis language** — Go (like Ludus, lightweight fleet CLI) or C# (like Fabrica, if it needs CDK constructs for GameLift)?
+9. **Chassis interface specification** — Formalize the 5-point contract (image, command, cache, artifacts, health) as a versioned interface?
 
 ---
 
 ## Success Criteria
 
-1. A studio can go from zero AWS infrastructure to a working Perforce + Horde setup in under 1 hour
-2. Build times drop by 5-10x compared to single-machine builds (BuildGraph distributed across Horde workers)
+1. A studio can go from zero AWS infrastructure to a working Perforce + build farm setup in under 1 hour
+2. Build times drop by 5-10x compared to single-machine builds (BuildGraph distributed across workers)
 3. Total infrastructure cost is transparent and predictable before provisioning
 4. Teardown is clean — `fabrica destroy --all` leaves no orphaned resources
 5. A developer who knows Ludus feels immediately at home in Fabrica (same CLI patterns, same config style, same diagnostic approach)
+6. Zero IAM policy uses `*` for resource scope on write actions — structural prevention via CDK grants
 
 ---
 
 ## Timeline (Rough)
 
-| Phase | Focus | Duration |
-|-------|-------|----------|
-| **Phase 0** | Project setup, CLI skeleton, AWS foundation | 2-3 weeks |
-| **Phase 1** | Perforce Helix Core module | 3-4 weeks |
-| **Phase 2** | Horde build farm module | 4-6 weeks |
-| **Phase 3** | BuildGraph integration + Ludus bridge | 2-3 weeks |
-| **Phase 4** | Cost management + polish | 2-3 weeks |
-| **Alpha** | First external users | ~3-4 months from start |
+| Phase | Focus | Stack |
+|-------|-------|-------|
+| **Phase 0** | Solution scaffold, CLI skeleton, doctor command, CDK app | C#, System.CommandLine, CDK |
+| **Phase 1** | Foundation stack + Perforce stack + setup wizard | CDK constructs, CloudFormation |
+| **Phase 2** | Build Farm stack (BuildGraph coordinator + workers + DDC) | CDK constructs, ECS, ASG |
+| **Phase 3** | Cost estimation + status + polish | AWS Pricing API, CloudWatch |
+| **Alpha** | First external users | |
