@@ -1,24 +1,17 @@
-# Fabrica — game studio infrastructure configuration
-# Copy to fabrica.yaml and customize for your studio.
+cloud:
+  provider: aws
+  aws:
+    region: us-east-1
+    profile: ""
+    accountId: ""
+    tags: {}
 
-project: my-studio
-region: us-east-1
-# account: "123456789012"  # optional — defaults to current AWS credentials
+state:
+  bucket: ""
+  table:  fabrica-state-lock
+  kmsKeyId: ""
 
-foundation:
-  vpc_cidr: "10.0.0.0/16"
-  max_azs: 2
-  nat_gateways: 1             # 1 for cost savings, 2 for HA
-  internal_domain: studio.internal
-
-perforce:
-  instance_type: c6i.large    # 2 vCPU, 4GB — good for up to ~20 devs
-  depot_volume_gb: 256        # io2 — primary asset storage
-  metadata_volume_gb: 64      # gp3 — Perforce db files
-  logs_volume_gb: 32          # gp3 — server logs
-
-# build_farm:
-#   coordinator_instance_type: c6i.xlarge
-#   worker_instance_type: c6i.4xlarge
-#   min_workers: 0            # scale to zero when idle
-#   max_workers: 4
+perforce: {}
+horde: {}
+ci: {}
+cost: {}
