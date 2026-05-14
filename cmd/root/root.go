@@ -6,6 +6,7 @@ import (
 	"os/signal"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/version"
 	"github.com/spf13/cobra"
 )
 
@@ -27,4 +28,6 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&globals.DryRun, "dry-run", "d", false, "Show what would be done without making changes")
 	rootCmd.PersistentFlags().BoolVarP(&globals.AssumeYes, "yes", "y", false, "Assume yes to all prompts")
 	rootCmd.PersistentFlags().StringVarP(&globals.Profile, "profile", "p", "", "Configuration profile to use")
+
+	rootCmd.AddCommand(version.Cmd)
 }
