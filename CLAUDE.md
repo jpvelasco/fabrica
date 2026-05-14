@@ -2,60 +2,74 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Project Status
+
+Pre-implementation. The product spec (`Fabrica_PRODUCT_SPEC.md`) is complete; no code exists yet. Phase 0 (CLI skeleton + AWS foundation) is the current focus.
+
+## What Fabrica Is
+
+A Go CLI + infrastructure-as-code framework that provisions and manages game studio cloud infrastructure on AWS: Perforce Helix Core, Unreal Horde build farms, CI/CD, GameLift deployment, and cloud workstations. Sister tool to [Ludus](https://github.com/jpvelasco/ludus) — while Ludus handles a single developer's pipeline, Fabrica scales that to a full studio.
+
+## Architecture Decisions (Already Made)
+
+**Language/stack:** Go + Cobra + Viper — same as Ludus.
+
+**IaC approach:** `aws-sdk-go-v2/service/cloudcontrol` (AWS Cloud Control API). No Terraform, no Pulumi, no external binaries required. Single binary. Rationale: zero prerequisite friction, 1100+ resource types including modern GameLift resources not in Terraform provider.
+
+**State backend:**
+- Remote: S3 (`s3://fabrica-state-<account-id>/`, SSE-KMS, versioned) + DynamoDB (`fabrica-state-lock`) for distributed locking
+- Local cache: `.fabrica/state.json` + `.fabrica/config.yaml`
+- Bootstrap: `fabrica setup` creates the S3 bucket and DynamoDB table via direct AWS SDK (not Cloud Control — bootstrapping the state store itself)
+
+**Resource management pattern:**
+```go
+CreateResource(TypeName, DesiredState)
+GetResource(TypeName, Identifier)
+UpdateResource(TypeName, Identifier, PatchDocument)  // JSON Patch
+DeleteResource(TypeName, Identifier)
+ListResources(TypeName)
+```
+Orchestration layer handles: topological dependency resolution, plan/diff preview, rollback on partial failure, and tagging (`ManagedBy: fabrica` on all resources).
+
+## Planned Command Structure
+
+```
+fabrica setup                          # guided first-run provisioning wizard
+fabrica status                         # health of all modules
+fabrica perforce [setup|status|backup|restore]
+fabrica horde [setup|status|scale|workers]
+fabrica ci [setup|trigger|status|logs]
+fabrica deploy [setup|promote|status|destroy]
+fabrica workstation [create|list|stop|terminate]
+fabrica cost [report|forecast|alerts]
+fabrica doctor                         # prerequisite validation
+fabrica destroy --all                  # clean teardown
+fabrica export --format cloudformation # escape hatch
+```
+
+## V1 Scope
+
+In scope: CLI skeleton, `fabrica setup` wizard, Perforce Helix Core (single-server + S3 backup), Horde build farm (coordinator + auto-scaling workers), BuildGraph XML ingestion from Ludus, cost estimation before provisioning, `fabrica status`, `fabrica doctor`, `fabrica destroy`.
+
+Out of scope for V1: workstations (NICE DCV), multi-region, CI/CD pipeline, web dashboard, multi-cloud, MCP server.
+
+## Ludus Integration
+
+Ludus's `ludus buildgraph` generates BuildGraph XML → Fabrica's Horde grid consumes it. Fabrica provisions deployment infrastructure → Ludus manages containers and GameLift fleets within it. Both tools share: YAML config conventions, `ManagedBy` tagging patterns, similar CLI UX patterns.
+
 ## Build Commands
 
-```bash
-dotnet build                                    # build all projects
-dotnet test                                     # run all tests
-dotnet test --filter "FullyQualifiedName~Name"  # run a single test
-dotnet run --project src/Fabrica.Cli -- doctor  # run a CLI command
-cdk synth                                       # synthesize CloudFormation templates
-cdk synth fabrica-foundation                    # synthesize a single stack
+_To be documented once Phase 0 scaffolding is complete. Expected:_
+```
+go build ./...
+go test ./...
+go test ./... -run TestName
+golangci-lint run
 ```
 
-CDK synthesis runs `dotnet run --project src/Fabrica.CdkApp` under the hood (configured in `cdk.json`).
+## Open Questions (Unresolved)
 
-## Architecture
-
-Fabrica is a game studio infrastructure tool built on AWS CDK. Part of a three-product suite: **Ludus** (UE5 engine builds) → **Fabrica** (infrastructure) → **Classis** (fleet operations).
-
-### Four-project solution with clear data flow
-
-```
-fabrica.yaml → Fabrica.Cli (user commands)
-                    │
-                    ├──→ Fabrica.CdkApp (reads CDK context, wires stacks)
-                    │         │
-                    │         └──→ Fabrica.Constructs (CDK L3 constructs → CloudFormation)
-                    │
-                    └──→ Fabrica.Operations (day-2 AWS SDK calls: status, backup, cost)
-```
-
-**Fabrica.Cli** parses `fabrica.yaml` via `FabricaConfig` (YamlDotNet), then shells out to `cdk deploy/destroy` passing config as CDK context args (`-c fabrica:project=X -c fabrica:region=Y -c fabrica:account=Z`). It also calls Operations directly for non-CDK commands like `status`.
-
-**Fabrica.CdkApp** is the CDK entry point. It reads context from the CDK app, instantiates stacks with explicit dependency ordering (`AddDependency`), and calls `app.Synth()`. This is what CDK CLI invokes.
-
-**Fabrica.Constructs** contains the infrastructure definitions. Two base types enforce standards:
-- `FabricaStack` (extends CDK `Stack`) — base for module-level stacks. Auto-applies tags.
-- `FabricaConstruct` (extends CDK `Construct`) — base for individual L3 constructs within stacks. Auto-applies tags.
-
-Both use `ResourceName()` for consistent `{project}-{module}-{resource}` naming.
-
-Stack dependency graph: Foundation → Perforce → BuildFarm. Cross-stack references (VPC, PrivateZone) are passed via typed props, not string lookups.
-
-**Fabrica.Operations** provides AWS SDK clients for runtime operations that CDK doesn't cover.
-
-### CDK construct pattern
-
-Props that inherit from `StackProps` (via `FabricaStackProps`) must be **classes**, not records — CDK's JSII-generated types aren't records. Props for non-stack constructs (`FabricaConstructProps`) can be records.
-
-System.CommandLine 2.0.5 API: use `SetAction(async (parseResult, cancellationToken) => ...)` not `SetHandler`. Options use `Add(option)` in constructors and `result.GetValue(option)` in handlers. Invocation: `root.Parse(args).InvokeAsync()`.
-
-## Conventions
-
-- C# 13, .NET 10, AWS CDK v2
-- IAM via CDK grant methods only (`bucket.GrantReadWrite(role)`) — never write raw IAM policy documents with `resources = ["*"]`
-- Security groups via CDK Connections API — never use CIDR blocks where SG references work
-- Standard tags on all resources: `ManagedBy: fabrica`, `fabrica:Module`, `fabrica:Project`, `fabrica:Version` (enforced by base classes)
-- Config: `fabrica.yaml` (gitignored). Use `fabrica.example.yaml` as template.
-- V1 targets UE5 only. Multi-engine support (Unity, Godot) planned via chassis adapter pattern in V2.
+- Horde vs. simpler custom job distribution for V1
+- Perforce licensing strategy for teams > 5 users
+- `fabrica.yaml` / `ludus.yaml` config sharing approach
+- Open source vs. commercial vs. open-core pricing model
