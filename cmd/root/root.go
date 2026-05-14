@@ -12,7 +12,7 @@ import (
 var rootCmd = &cobra.Command{
 	Use:          "fabrica",
 	SilenceUsage: true,
-	Short:        "Provision game studio cloud infrastructure on AWS",
+	Short:        "Studio infrastructure provisioning tool",
 }
 
 func Execute() error {
@@ -22,9 +22,9 @@ func Execute() error {
 }
 
 func init() {
-	rootCmd.PersistentFlags().BoolVarP(&globals.Verbose, "verbose", "v", false, "verbose output")
-	rootCmd.PersistentFlags().BoolVar(&globals.JSONOutput, "json", false, "output in JSON format")
-	rootCmd.PersistentFlags().BoolVar(&globals.DryRun, "dry-run", false, "print plan without executing")
-	rootCmd.PersistentFlags().BoolVar(&globals.AssumeYes, "yes", false, "assume yes to all prompts")
-	rootCmd.PersistentFlags().StringVar(&globals.Profile, "profile", "", "use FABRICA_PROFILE (e.g., 'staging')")
+	rootCmd.PersistentFlags().BoolVarP(&globals.Verbose, "verbose", "v", false, "Enable verbose output")
+	rootCmd.PersistentFlags().BoolVarP(&globals.JSONOutput, "json", "j", false, "Output in JSON format")
+	rootCmd.PersistentFlags().BoolVarP(&globals.DryRun, "dry-run", "d", false, "Show what would be done without making changes")
+	rootCmd.PersistentFlags().BoolVarP(&globals.AssumeYes, "yes", "y", false, "Assume yes to all prompts")
+	rootCmd.PersistentFlags().StringVarP(&globals.Profile, "profile", "p", "", "Configuration profile to use")
 }
