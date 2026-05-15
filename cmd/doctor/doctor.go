@@ -27,7 +27,7 @@ var Cmd = &cobra.Command{
   AWS credentials
   Region
   Fabrica version
-  State backend reachability`,
+  State backend (S3 bucket + DynamoDB lock table)`,
 	RunE: runDoctor,
 }
 
@@ -47,7 +47,8 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checkVersion(),
 		checkCreds(cmd.Context()),
 		checkRegion(),
-		checkStateBackend(cmd.Context()),
+		checkBucket(cmd.Context()),
+		checkTable(cmd.Context()),
 	)
 
 	if globals.JSONOutput {
@@ -96,10 +97,47 @@ func checkRegion() diagnostic {
 	return diagnostic{"Region", "ok", globals.Cfg.Cloud.AWS.Region}
 }
 
-func checkStateBackend(ctx context.Context) diagnostic {
-	if globals.Cfg == nil || globals.Cfg.Cloud.Provider == "" {
+func checkBucket(ctx context.Context) diagnostic {
+	if globals.Cfg == nil {
 		return diagnostic{
-			"State backend",
+			"S3 state bucket",
+			"warn",
+			"not yet provisioned (run fabrica setup)",
+		}
+	}
+
+	bucket := globals.Cfg.State.Bucket
+	if bucket == "" {
+		return diagnostic{
+			"S3 state bucket",
+			"warn",
+			"not yet provisioned (run fabrica setup)",
+		}
+	}
+
+	region := globals.Cfg.Cloud.AWS.Region
+	profile := globals.Cfg.Cloud.AWS.Profile
+
+	ok, err := checkBucketExists(ctx, region, profile, bucket)
+	if err != nil {
+		return diagnostic{"S3 state bucket", "fail", err.Error()}
+	}
+
+	if ok {
+		return diagnostic{"S3 state bucket", "ok", bucket}
+	}
+
+	return diagnostic{
+		"S3 state bucket",
+		"warn",
+		"not found (run fabrica setup)",
+	}
+}
+
+func checkTable(ctx context.Context) diagnostic {
+	if globals.Cfg == nil {
+		return diagnostic{
+			"DynamoDB lock table",
 			"warn",
 			"not yet provisioned (run fabrica setup)",
 		}
@@ -108,47 +146,58 @@ func checkStateBackend(ctx context.Context) diagnostic {
 	bucket := globals.Cfg.State.Bucket
 	table := globals.Cfg.State.Table
 
+	// If bucket is not set, setup hasn't run — don't probe DynamoDB
 	if bucket == "" {
 		return diagnostic{
-			"State backend",
+			"DynamoDB lock table",
 			"warn",
 			"not yet provisioned (run fabrica setup)",
 		}
 	}
 
-	ok, err := probeState(ctx, globals.Cfg.Cloud.AWS.Region, globals.Cfg.Cloud.AWS.Profile, bucket, table)
+	region := globals.Cfg.Cloud.AWS.Region
+	profile := globals.Cfg.Cloud.AWS.Profile
+
+	ok, err := checkTableExists(ctx, region, profile, table)
 	if err != nil {
-		return diagnostic{"State backend", "fail", err.Error()}
+		return diagnostic{"DynamoDB lock table", "fail", err.Error()}
 	}
 
 	if ok {
-		return diagnostic{"State backend", "ok", fmt.Sprintf("bucket %s, table %s", bucket, table)}
+		return diagnostic{"DynamoDB lock table", "ok", table}
 	}
 
 	return diagnostic{
-		"State backend",
+		"DynamoDB lock table",
 		"warn",
-		"not yet provisioned (run fabrica setup)",
+		"not found (run fabrica setup)",
 	}
 }
 
-func probeState(ctx context.Context, region, profile, bucket, table string) (bool, error) {
+func loadAWSDOctorConfig(ctx context.Context, region, profile string) (aws.Config, error) {
 	opts := []func(*awscfg.LoadOptions) error{
 		awscfg.WithRegion(region),
 	}
 	if profile != "" {
 		opts = append(opts, awscfg.WithSharedConfigProfile(profile))
 	}
-	cfg, err := awscfg.LoadDefaultConfig(ctx, opts...)
+	return awscfg.LoadDefaultConfig(ctx, opts...)
+}
+
+func checkBucketExists(ctx context.Context, region, profile, bucket string) (bool, error) {
+	cfg, err := loadAWSDOctorConfig(ctx, region, profile)
 	if err != nil {
 		return false, fmt.Errorf("loading AWS config: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	s3client := s3.NewFromConfig(cfg)
-	_, err = s3client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(bucket)})
+	client := s3.NewFromConfig(cfg)
+	ctx2, cancel2 := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel2()
+
+	_, err = client.HeadBucket(ctx2, &s3.HeadBucketInput{Bucket: aws.String(bucket)})
 	if err != nil {
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) {
@@ -159,10 +208,23 @@ func probeState(ctx context.Context, region, profile, bucket, table string) (boo
 		return false, fmt.Errorf("checking S3 bucket %s: %w", bucket, err)
 	}
 
-	dynClient := dynamodb.NewFromConfig(cfg)
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+	return true, nil
+}
+
+func checkTableExists(ctx context.Context, region, profile, table string) (bool, error) {
+	cfg, err := loadAWSDOctorConfig(ctx, region, profile)
+	if err != nil {
+		return false, fmt.Errorf("loading AWS config: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	client := dynamodb.NewFromConfig(cfg)
+	ctx2, cancel2 := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel2()
-	_, err = dynClient.DescribeTable(ctx2, &dynamodb.DescribeTableInput{TableName: aws.String(table)})
+
+	_, err = client.DescribeTable(ctx2, &dynamodb.DescribeTableInput{TableName: aws.String(table)})
 	if err != nil {
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) {
