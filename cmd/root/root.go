@@ -7,6 +7,8 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/version"
+	_ "github.com/jpvelasco/fabrica/internal/cloud/aws"
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -20,6 +22,10 @@ var rootCmd = &cobra.Command{
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		var err error
 		globals.Cfg, err = config.Load(cfgFile)
+		if err != nil {
+			return err
+		}
+		globals.Provider, err = cloud.Get(globals.Cfg.Cloud.Provider, globals.Cfg)
 		return err
 	},
 }
