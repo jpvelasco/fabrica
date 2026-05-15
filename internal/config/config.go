@@ -5,87 +5,116 @@ import (
 	"os"
 
 	"github.com/spf13/viper"
+	"go.yaml.in/yaml/v3"
 )
+
+const (
+	DefaultFile       = "fabrica.yaml"
+	DefaultProvider   = "aws"
+	DefaultAWSRegion  = "us-east-1"
+	DefaultStateTable = "fabrica-state-lock"
+)
+
+// Path returns the config file selected by the explicit path/profile flags.
+func Path(explicit, profile string) string {
+	if explicit != "" || profile == "" {
+		return explicit
+	}
+	return fmt.Sprintf("fabrica-%s.yaml", profile)
+}
 
 // Save writes the config to a YAML file at the given path.
 // If path is empty, defaults to fabrica.yaml.
 func (c *Config) Save(path string) error {
 	if path == "" {
-		path = "fabrica.yaml"
+		path = DefaultFile
 	}
 
-	v := viper.New()
-	v.SetConfigType("yaml")
-	v.SetDefault("cloud", c.Cloud)
-	v.SetDefault("state", c.State)
-
-	// Marshal struct to map[string]any for viper
-	data := make(map[string]any)
-	data["cloud"] = map[string]any{
-		"provider": c.Cloud.Provider,
-		"aws": map[string]any{
-			"region":    c.Cloud.AWS.Region,
-			"profile":   c.Cloud.AWS.Profile,
-			"accountId": c.Cloud.AWS.AccountID,
-			"tags":      c.Cloud.AWS.Tags,
-		},
+	data, err := c.YAML()
+	if err != nil {
+		return err
 	}
-	data["state"] = map[string]any{
-		"bucket":   c.State.Bucket,
-		"table":    c.State.Table,
-		"kmsKeyId": c.State.KMSKeyID,
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("writing config %s: %w", path, err)
 	}
-	data["perforce"] = c.Perforce
-	data["horde"] = c.Horde
-	data["ci"] = c.CI
-	data["cost"] = c.Cost
+	return nil
+}
 
-	for k, val := range data {
-		v.Set(k, val)
+// YAML renders the config in the on-disk schema used by fabrica.yaml.
+func (c *Config) YAML() ([]byte, error) {
+	out, err := yaml.Marshal(c.fileConfig())
+	if err != nil {
+		return nil, fmt.Errorf("marshaling config: %w", err)
 	}
-
-	return v.WriteConfigAs(path)
+	return out, nil
 }
 
 type Config struct {
-	Cloud    Cloud    `mapstructure:"cloud"`
-	State    State    `mapstructure:"state"`
-	Perforce any     `mapstructure:"perforce"`
-	Horde    any     `mapstructure:"horde"`
-	CI       any     `mapstructure:"ci"`
-	Cost     any     `mapstructure:"cost"`
+	Cloud    Cloud `mapstructure:"cloud" yaml:"cloud"`
+	State    State `mapstructure:"state" yaml:"state"`
+	Perforce any   `mapstructure:"perforce" yaml:"perforce"`
+	Horde    any   `mapstructure:"horde" yaml:"horde"`
+	CI       any   `mapstructure:"ci" yaml:"ci"`
+	Cost     any   `mapstructure:"cost" yaml:"cost"`
 }
 
 type Cloud struct {
-	Provider string `mapstructure:"provider"`
-	AWS      AWS    `mapstructure:"aws"`
+	Provider string `mapstructure:"provider" yaml:"provider"`
+	AWS      AWS    `mapstructure:"aws" yaml:"aws"`
 }
 
 type AWS struct {
-	Region    string            `mapstructure:"region"`
-	Profile   string            `mapstructure:"profile"`
-	AccountID string            `mapstructure:"accountId"`
-	Tags      map[string]string `mapstructure:"tags"`
+	Region    string            `mapstructure:"region" yaml:"region"`
+	Profile   string            `mapstructure:"profile" yaml:"profile"`
+	AccountID string            `mapstructure:"accountId" yaml:"accountId"`
+	Tags      map[string]string `mapstructure:"tags" yaml:"tags"`
 }
 
 type State struct {
-	Bucket   string `mapstructure:"bucket"`
-	Table    string `mapstructure:"table"`
-	KMSKeyID string `mapstructure:"kmsKeyId"`
+	Bucket   string `mapstructure:"bucket" yaml:"bucket"`
+	Table    string `mapstructure:"table" yaml:"table"`
+	KMSKeyID string `mapstructure:"kmsKeyId" yaml:"kmsKeyId"`
+}
+
+type fileConfig struct {
+	Cloud    Cloud `yaml:"cloud"`
+	State    State `yaml:"state"`
+	Perforce any   `yaml:"perforce"`
+	Horde    any   `yaml:"horde"`
+	CI       any   `yaml:"ci"`
+	Cost     any   `yaml:"cost"`
+}
+
+func (c *Config) fileConfig() fileConfig {
+	return fileConfig{
+		Cloud:    c.Cloud,
+		State:    c.State,
+		Perforce: emptySection(c.Perforce),
+		Horde:    emptySection(c.Horde),
+		CI:       emptySection(c.CI),
+		Cost:     emptySection(c.Cost),
+	}
+}
+
+func emptySection(v any) any {
+	if v == nil {
+		return map[string]any{}
+	}
+	return v
 }
 
 // Defaults returns a pre-populated Config with sensible defaults.
 func Defaults() *Config {
 	return &Config{
 		Cloud: Cloud{
-			Provider: "aws",
+			Provider: DefaultProvider,
 			AWS: AWS{
-				Region: "us-east-1",
+				Region: DefaultAWSRegion,
 				Tags:   make(map[string]string),
 			},
 		},
 		State: State{
-			Table: "fabrica-state-lock",
+			Table: DefaultStateTable,
 		},
 	}
 }
@@ -112,7 +141,7 @@ func Load(path string) (*Config, error) {
 	if path != "" {
 		v.SetConfigFile(path)
 	} else {
-		v.SetConfigFile("fabrica.yaml")
+		v.SetConfigFile(DefaultFile)
 	}
 
 	if err := v.ReadInConfig(); err != nil {
@@ -128,6 +157,22 @@ func Load(path string) (*Config, error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
+	cfg.normalize()
 
 	return cfg, nil
+}
+
+func (c *Config) normalize() {
+	if c.Cloud.Provider == "" {
+		c.Cloud.Provider = DefaultProvider
+	}
+	if c.Cloud.AWS.Region == "" {
+		c.Cloud.AWS.Region = DefaultAWSRegion
+	}
+	if c.Cloud.AWS.Tags == nil {
+		c.Cloud.AWS.Tags = make(map[string]string)
+	}
+	if c.State.Table == "" {
+		c.State.Table = DefaultStateTable
+	}
 }

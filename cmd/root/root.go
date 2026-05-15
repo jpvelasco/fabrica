@@ -11,7 +11,6 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/setup"
 	"github.com/jpvelasco/fabrica/cmd/version"
-	"github.com/jpvelasco/fabrica/internal/cloud"
 	_ "github.com/jpvelasco/fabrica/internal/cloud/aws"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
@@ -24,14 +23,7 @@ var rootCmd = &cobra.Command{
 	SilenceUsage: true,
 	Short:        "Studio infrastructure as code — AWS",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		var err error
-		globals.ConfigPath = resolveConfigPath()
-		globals.Cfg, err = config.Load(globals.ConfigPath)
-		if err != nil {
-			return err
-		}
-		globals.Provider, err = cloud.Get(globals.Cfg.Cloud.Provider, globals.Cfg)
-		return err
+		return globals.Init(config.Path(cfgFile, globals.Profile))
 	},
 }
 
@@ -39,13 +31,6 @@ func Execute() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	return rootCmd.ExecuteContext(ctx)
-}
-
-func resolveConfigPath() string {
-	if cfgFile != "" || globals.Profile == "" {
-		return cfgFile
-	}
-	return "fabrica-" + globals.Profile + ".yaml"
 }
 
 func init() {

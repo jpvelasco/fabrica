@@ -2,10 +2,10 @@ package configcmd
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
 )
 
@@ -32,55 +32,21 @@ var showCmd = &cobra.Command{
 
 func printConfig() {
 	cfg := globals.Cfg
-
-	fmt.Println("cloud:")
-	fmt.Printf("  provider: %s\n", cfg.Cloud.Provider)
-	fmt.Println("  aws:")
-	fmt.Printf("    region: %s\n", cfg.Cloud.AWS.Region)
-	if cfg.Cloud.AWS.Profile != "" {
-		fmt.Printf("    profile: %s\n", cfg.Cloud.AWS.Profile)
+	out, err := cfg.YAML()
+	if err != nil {
+		fmt.Printf("error rendering config: %v\n", err)
+		return
 	}
-	if cfg.Cloud.AWS.AccountID != "" {
-		cfgTag := cfg.Cloud.AWS.AccountID
-		fmt.Printf("    accountId: %s\n", cfgTag)
+	fmt.Print(string(out))
+	if len(out) == 0 || out[len(out)-1] != '\n' {
+		fmt.Println()
 	}
-	if len(cfg.Cloud.AWS.Tags) > 0 {
-		fmt.Println("    tags:")
-		keys := make([]string, 0, len(cfg.Cloud.AWS.Tags))
-		for k := range cfg.Cloud.AWS.Tags {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			fmt.Printf("      %s: %s\n", k, cfg.Cloud.AWS.Tags[k])
-		}
-	}
-	fmt.Println()
-	fmt.Println("state:")
-	if cfg.State.Bucket != "" {
-		fmt.Printf("  bucket: %s\n", cfg.State.Bucket)
-	}
-	fmt.Printf("  table: %s\n", cfg.State.Table)
-	if cfg.State.KMSKeyID != "" {
-		fmt.Printf("  kmsKeyId: %s\n", cfg.State.KMSKeyID)
-	}
-	fmt.Println()
-
-	// Print module sections even if empty
-	fmt.Println("perforce: {}")
-	fmt.Println("horde: {}")
-	fmt.Println("ci: {}")
-	fmt.Println("cost: {}")
-	fmt.Println()
 
 	// Show resolved resource names
-	bucket := cfg.State.Bucket
-	if bucket == "" {
-		bucket = "fabrica-state-<account-id>"
-	}
+	backend := fabricastate.ResolveBackendNames(cfg, cfg.Cloud.AWS.AccountID)
 	fmt.Println("Resolved resource names:")
 	fmt.Println(strings.Repeat("-", 50))
-	fmt.Printf("  S3 bucket:      %s\n", bucket)
-	fmt.Printf("  DynamoDB table: %s\n", cfg.State.Table)
+	fmt.Printf("  S3 bucket:      %s\n", backend.Bucket)
+	fmt.Printf("  DynamoDB table: %s\n", backend.Table)
 	fmt.Println(strings.Repeat("-", 50))
 }

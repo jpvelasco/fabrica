@@ -2,6 +2,8 @@ package doctor
 
 import (
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/config"
 )
 
 func TestStatusSymbol(t *testing.T) {
@@ -124,11 +126,11 @@ func TestCheckRegion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.region == "" {
-				d := checkRegion()
-				if d.status != tt.wantStatus {
-					t.Errorf("status = %q, want %q", d.status, tt.wantStatus)
-				}
+			r := runner{cfg: config.Defaults()}
+			r.cfg.Cloud.AWS.Region = tt.region
+			d := r.checkRegion()
+			if d.status != tt.wantStatus {
+				t.Errorf("status = %q, want %q", d.status, tt.wantStatus)
 			}
 		})
 	}

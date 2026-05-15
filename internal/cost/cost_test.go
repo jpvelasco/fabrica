@@ -7,29 +7,29 @@ import (
 
 func TestRegistryGetRegistered(t *testing.T) {
 	tests := []struct {
-		name    string
+		name     string
 		typeName string
-		wantErr bool
+		wantErr  bool
 	}{
 		{
-			name:    "S3 bucket estimator registered",
+			name:     "S3 bucket estimator registered",
 			typeName: "AWS::S3::Bucket",
-			wantErr: false,
+			wantErr:  false,
 		},
 		{
-			name:    "DynamoDB table estimator registered",
+			name:     "DynamoDB table estimator registered",
 			typeName: "AWS::DynamoDB::Table",
-			wantErr: false,
+			wantErr:  false,
 		},
 		{
-			name:    "unknown type returns error",
+			name:     "unknown type returns error",
 			typeName: "AWS::EC2::Instance",
-			wantErr: true,
+			wantErr:  true,
 		},
 		{
-			name:    "empty type returns error",
+			name:     "empty type returns error",
 			typeName: "",
-			wantErr: true,
+			wantErr:  true,
 		},
 	}
 
@@ -90,6 +90,44 @@ func TestRegistryEstimateUnknown(t *testing.T) {
 	_, err := Global.Estimate("AWS::EC2::Instance", Resource{TypeName: "AWS::EC2::Instance"})
 	if err == nil {
 		t.Fatal("expected error for unknown type, got nil")
+	}
+}
+
+func TestRegistryEstimateAll(t *testing.T) {
+	report := Global.EstimateAll([]Resource{
+		{TypeName: TypeAWSS3Bucket, Name: "state bucket"},
+		{TypeName: TypeAWSDynamoDBTable, Name: "lock table"},
+	})
+
+	if len(report.Results) != 2 {
+		t.Fatalf("result count = %d, want 2", len(report.Results))
+	}
+	if report.Total <= 0 {
+		t.Fatalf("Total = %f, want positive", report.Total)
+	}
+	if report.Confidence != High {
+		t.Fatalf("Confidence = %s, want high", report.Confidence)
+	}
+	for _, result := range report.Results {
+		if result.Err != nil {
+			t.Fatalf("%s: unexpected error: %v", result.Resource.Name, result.Err)
+		}
+	}
+}
+
+func TestRegistryEstimateAllMissingEstimator(t *testing.T) {
+	report := Global.EstimateAll([]Resource{
+		{TypeName: "missing", Name: "unknown"},
+	})
+
+	if len(report.Results) != 1 {
+		t.Fatalf("result count = %d, want 1", len(report.Results))
+	}
+	if report.Results[0].Err == nil {
+		t.Fatal("expected per-resource error")
+	}
+	if report.Confidence != Low {
+		t.Fatalf("Confidence = %s, want low", report.Confidence)
 	}
 }
 

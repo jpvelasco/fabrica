@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/jpvelasco/fabrica/internal/config"
 )
 
 // mockLockClient implements lockClient for testing.
 type mockLockClient struct {
-	items      map[string]*putOutput
+	items       map[string]*putOutput
 	conditionOK bool
-	deleteOK   bool
+	deleteOK    bool
 }
 
 func newMockLockClient() *mockLockClient {
@@ -199,6 +201,40 @@ func TestLockID(t *testing.T) {
 	id := LockID("us-east-1", "fabrica-state-123")
 	if id != "us-east-1/fabrica-state-123" {
 		t.Errorf("LockID = %q, want us-east-1/fabrica-state-123", id)
+	}
+}
+
+func TestResolveBackendNames(t *testing.T) {
+	cfg := config.Defaults()
+
+	got := ResolveBackendNames(cfg, "123456789012")
+	if got.Bucket != "fabrica-state-123456789012" {
+		t.Fatalf("Bucket = %q", got.Bucket)
+	}
+	if got.Table != config.DefaultStateTable {
+		t.Fatalf("Table = %q", got.Table)
+	}
+
+	cfg.State.Bucket = "custom-bucket"
+	cfg.State.Table = "custom-table"
+	got = ResolveBackendNames(cfg, "123456789012")
+	if got.Bucket != "custom-bucket" || got.Table != "custom-table" {
+		t.Fatalf("custom backend = %+v", got)
+	}
+}
+
+func TestNewSetupPlanAppliesBackendNames(t *testing.T) {
+	cfg := config.Defaults()
+
+	plan := NewSetupPlan(cfg, "123456789012", "us-east-1")
+	if plan.Backend.Bucket != "fabrica-state-123456789012" {
+		t.Fatalf("Bucket = %q", plan.Backend.Bucket)
+	}
+	if cfg.State.Bucket != plan.Backend.Bucket {
+		t.Fatalf("plan did not apply bucket to config")
+	}
+	if len(plan.Resources) != 2 {
+		t.Fatalf("resource count = %d, want 2", len(plan.Resources))
 	}
 }
 

@@ -22,6 +22,27 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
+func TestPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		explicit string
+		profile  string
+		want     string
+	}{
+		{name: "default", want: ""},
+		{name: "explicit wins", explicit: "custom.yaml", profile: "prod", want: "custom.yaml"},
+		{name: "profile", profile: "prod", want: "fabrica-prod.yaml"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Path(tt.explicit, tt.profile); got != tt.want {
+				t.Fatalf("Path() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestClone(t *testing.T) {
 	cfg := Defaults()
 	cfg.Cloud.AWS.Tags["foo"] = "bar"
@@ -128,4 +149,37 @@ func TestLoadPartialFile(t *testing.T) {
 	if cfg.State.Table != "fabrica-state-lock" {
 		t.Errorf("table = %q, want fabrica-state-lock", cfg.State.Table)
 	}
+}
+
+func TestSaveWritesSchemaNames(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fabrica.yaml")
+
+	cfg := Defaults()
+	cfg.Cloud.AWS.AccountID = "123456789012"
+	cfg.State.KMSKeyID = "alias/fabrica"
+
+	if err := cfg.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	text := string(got)
+	for _, want := range []string{"accountId:", "kmsKeyId:", "perforce:", "horde:", "ci:", "cost:"} {
+		if !contains(text, want) {
+			t.Fatalf("saved config missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
