@@ -11,6 +11,7 @@ package cost
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -25,9 +26,9 @@ type Monthly struct {
 type ConfidenceLevel int
 
 const (
-	High ConfidenceLevel = iota // Well-constrained estimate (e.g. on-demand pricing).
-	Medium                       // Reasonable estimate with some assumptions.
-	Low                          // Very approximate — actual cost may differ significantly.
+	High   ConfidenceLevel = iota // Well-constrained estimate (e.g. on-demand pricing).
+	Medium                        // Reasonable estimate with some assumptions.
+	Low                           // Very approximate — actual cost may differ significantly.
 )
 
 func (c ConfidenceLevel) String() string {
@@ -45,6 +46,21 @@ func (c ConfidenceLevel) String() string {
 // Estimators receive a copy — they must not mutate it.
 type Resource struct {
 	TypeName string
+	Name     string
+}
+
+// EstimateResult is the outcome for one requested resource estimate.
+type EstimateResult struct {
+	Resource Resource
+	Monthly  Monthly
+	Err      error
+}
+
+// Report aggregates resource estimates for a plan.
+type Report struct {
+	Results    []EstimateResult
+	Total      float64
+	Confidence ConfidenceLevel
 }
 
 // Estimator produces a monthly cost estimate for a single resource.
@@ -55,8 +71,8 @@ type Estimator interface {
 
 // Registry holds estimators keyed by resource TypeName.
 type Registry struct {
-	mu       sync.RWMutex
-	estims   map[string]Estimator
+	mu     sync.RWMutex
+	estims map[string]Estimator
 }
 
 // Global is the default cost registry.
@@ -87,6 +103,7 @@ func (r *Registry) Get(typeName string) (Estimator, error) {
 		for k := range r.estims {
 			avail = append(avail, k)
 		}
+		sort.Strings(avail)
 		return nil, fmt.Errorf("no cost estimator for %q; available: %v", typeName, avail)
 	}
 	return e, nil
@@ -99,4 +116,34 @@ func (r *Registry) Estimate(typeName string, resource Resource) (Monthly, error)
 		return Monthly{}, err
 	}
 	return e.Estimate(resource)
+}
+
+// EstimateAll estimates every resource and returns a best-effort aggregate.
+// Missing estimators are recorded per-result instead of aborting the report.
+func (r *Registry) EstimateAll(resources []Resource) Report {
+	report := Report{
+		Results:    make([]EstimateResult, 0, len(resources)),
+		Confidence: High,
+	}
+
+	for _, resource := range resources {
+		monthly, err := r.Estimate(resource.TypeName, resource)
+		result := EstimateResult{
+			Resource: resource,
+			Monthly:  monthly,
+			Err:      err,
+		}
+		report.Results = append(report.Results, result)
+
+		if err != nil {
+			report.Confidence = Low
+			continue
+		}
+		report.Total += monthly.Amount
+		if monthly.Confidence > report.Confidence {
+			report.Confidence = monthly.Confidence
+		}
+	}
+
+	return report
 }

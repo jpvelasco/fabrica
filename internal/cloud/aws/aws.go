@@ -4,13 +4,13 @@ import (
 	"context"
 
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
-	fabricav "github.com/jpvelasco/fabrica/internal/version"
 	"github.com/jpvelasco/fabrica/internal/config"
+	fabricav "github.com/jpvelasco/fabrica/internal/version"
 )
 
 type awsProvider struct {
-	cfg    *config.Config
-	awsCfg awsConfig
+	cfg     *config.Config
+	awsCfg  awsConfig
 	clients resourceClients
 }
 
@@ -20,7 +20,8 @@ type awsConfig struct {
 }
 
 type resourceClients struct {
-	cc *ccClient
+	cc      *ccClient
+	version string
 }
 
 var _ fabricac.Provider = (*awsProvider)(nil)
@@ -46,13 +47,9 @@ func (p *awsProvider) Identity(ctx context.Context) (account, arn, region string
 func (p *awsProvider) Resources() fabricac.ResourceClient {
 	if p.clients.cc == nil {
 		p.clients.cc = &ccClient{}
+		p.clients.version = fabricav.Version
 	}
 	return &p.clients
-}
-
-// injectTags calls the tags helper with the real version.
-func (p *awsProvider) injectTags(r *fabricac.Resource) {
-	r.DesiredState = injectFabricaTags(r.DesiredState, "fabrica", fabricav.Version, nil)
 }
 
 func init() {

@@ -9,9 +9,9 @@ import (
 
 // LockStore is the DynamoDB-backed distributed lock.
 type LockStore struct {
-	table   string
-	region  string
-	client  lockClient
+	table  string
+	region string
+	client lockClient
 }
 
 // lockClient is the minimal DynamoDB interface for lock operations
@@ -23,28 +23,28 @@ type lockClient interface {
 
 // putInput / putOutput match the DynamoDB PutItem request/response shape.
 type putInput struct {
-	TableName        string
-	Item             map[string]attrValue
-	ConditionExpression string
+	TableName                 string
+	Item                      map[string]attrValue
+	ConditionExpression       string
 	ExpressionAttributeValues map[string]attrValue
 }
 
 type putOutput struct{}
 
 type deleteInput struct {
-	TableName             string
-	Key                   map[string]attrValue
-	ConditionExpression  string
+	TableName                 string
+	Key                       map[string]attrValue
+	ConditionExpression       string
 	ExpressionAttributeValues map[string]attrValue
 }
 
 type deleteOutput struct{}
 
 type attrValue struct {
-	S  string `json:"s,omitempty"`
-	N  string `json:"n,omitempty"`
-	B  []byte `json:"b,omitempty"`
-	M  map[string]attrValue `json:"m,omitempty"`
+	S string               `json:"s,omitempty"`
+	N string               `json:"n,omitempty"`
+	B []byte               `json:"b,omitempty"`
+	M map[string]attrValue `json:"m,omitempty"`
 }
 
 // NewLockStore creates a new lock store for the given table and region.
@@ -71,8 +71,8 @@ func (s *LockStore) Acquire(ctx context.Context, resourceID, holder string) (str
 	}
 
 	_, err = s.client.putItem(ctx, &putInput{
-		TableName:  s.table,
-		Item:       item,
+		TableName:           s.table,
+		Item:                item,
 		ConditionExpression: "attribute_not_exists(LockID)",
 		ExpressionAttributeValues: map[string]attrValue{
 			"#id": {S: resourceID},
@@ -93,9 +93,9 @@ func (s *LockStore) Release(ctx context.Context, resourceID, token string) error
 	}
 
 	_, err := s.client.deleteItem(ctx, &deleteInput{
-		TableName:             s.table,
-		Key:                   key,
-		ConditionExpression:  "Token = :token",
+		TableName:           s.table,
+		Key:                 key,
+		ConditionExpression: "Token = :token",
 		ExpressionAttributeValues: map[string]attrValue{
 			":token": {S: token},
 		},
@@ -112,9 +112,4 @@ func genToken() (string, error) {
 		return "", fmt.Errorf("crypto: %w", err)
 	}
 	return hex.EncodeToString(b), nil
-}
-
-// localStatePath returns the path to the local state cache file.
-func localStatePath() string {
-	return ".fabrica/state.json"
 }

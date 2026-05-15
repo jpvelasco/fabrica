@@ -5,6 +5,11 @@
 // their own estimators the same way.
 package cost
 
+const (
+	TypeAWSS3Bucket      = "AWS::S3::Bucket"
+	TypeAWSDynamoDBTable = "AWS::DynamoDB::Table"
+)
+
 // s3Estimator provides cost estimates for S3 buckets.
 type s3Estimator struct{}
 
@@ -41,6 +46,6 @@ func (dynamoDBEstimator) Estimate(r Resource) (Monthly, error) {
 }
 
 func init() {
-	Global.Register("AWS::S3::Bucket", s3Estimator{})
-	Global.Register("AWS::DynamoDB::Table", dynamoDBEstimator{})
+	Global.Register(TypeAWSS3Bucket, s3Estimator{})
+	Global.Register(TypeAWSDynamoDBTable, dynamoDBEstimator{})
 }

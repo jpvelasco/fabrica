@@ -3,29 +3,41 @@ package doctor
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
+	"os"
 	"runtime"
-	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	awscfg "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/smithy-go"
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/config"
 	fabricav "github.com/jpvelasco/fabrica/internal/version"
 	"github.com/spf13/cobra"
 )
 
-var Cmd = &cobra.Command{
-	Use:   "doctor",
-	Short: "Check environment health",
-	Long: `Run diagnostic checks against your Fabrica environment.
+func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "doctor",
+		Short: "Check environment health",
+		Long: `Run diagnostic checks against your Fabrica environment.
 
 Checks Go version, Fabrica version, AWS credentials, region, and
 the state backend (S3 bucket and DynamoDB lock table).`,
-	RunE: runDoctor,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rt, err := runtimeSource()
+			if err != nil {
+				return err
+			}
+			opts := optionsSource()
+			backend, _ := rt.Provider.(cloud.StateBackendChecker)
+			return command{
+				runtime: rt,
+				backend: backend,
+				json:    opts.JSONOutput,
+				out:     out,
+			}.run(cmd.Context())
+		},
+	}
 }
 
 type diagnostic struct {
@@ -34,34 +46,96 @@ type diagnostic struct {
 	message string
 }
 
-func runDoctor(cmd *cobra.Command, args []string) error {
-	var checks []diagnostic
-	checks = append(checks,
-		checkGo(),
-		checkVersion(),
-		checkCreds(cmd.Context()),
-		checkRegion(),
-		checkBucket(cmd.Context()),
-		checkTable(cmd.Context()),
-	)
+type command struct {
+	runtime globals.Runtime
+	backend cloud.StateBackendChecker
+	json    bool
+	out     io.Writer
+}
 
-	if globals.JSONOutput {
-		var out = make([]any, len(checks))
-		for i, d := range checks {
-			out[i] = map[string]string{
-				"name":    d.name,
-				"status":  d.status,
-				"message": d.message,
-			}
-		}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		fmt.Println(string(b))
-		return nil
+func (c command) run(ctx context.Context) error {
+	checks := checker{
+		runtime: c.runtime,
+		backend: c.backend,
+	}.run(ctx)
+
+	if c.json {
+		return c.printJSON(checks)
 	}
 
-	fmt.Println("Fabrica environment diagnostics")
-	fmt.Println()
-	return printDiagnostics(checks)
+	fmt.Fprintln(c.out, "Fabrica environment diagnostics")
+	fmt.Fprintln(c.out)
+	return c.printText(checks)
+}
+
+func (c command) printJSON(checks []diagnostic) error {
+	b, err := json.MarshalIndent(jsonDiagnostics(checks), "", "  ")
+	if err != nil {
+		return fmt.Errorf("encoding diagnostics: %w", err)
+	}
+	fmt.Fprintln(c.out, string(b))
+	return nil
+}
+
+func (c command) printText(checks []diagnostic) error {
+	fails, warns := 0, 0
+	for _, d := range checks {
+		switch d.status {
+		case "fail":
+			fails++
+		case "warning":
+			warns++
+		}
+		fmt.Fprintf(c.out, "  %-6s %-26s %s\n", statusSymbol(d.status), d.name+":", d.message)
+	}
+
+	fmt.Fprintln(c.out)
+	return c.printSummary(fails, warns)
+}
+
+func (c command) printSummary(fails, warns int) error {
+	if fails > 0 {
+		msg := fmt.Sprintf("%d check(s) failed", fails)
+		if warns > 0 {
+			msg += fmt.Sprintf(", %d warning(s)", warns)
+		}
+		fmt.Fprintln(c.out, msg)
+		return fmt.Errorf("%d diagnostic check(s) failed", fails)
+	}
+	if warns > 0 {
+		fmt.Fprintf(c.out, "All checks passed (%d warning(s)).\n", warns)
+		return nil
+	}
+	fmt.Fprintln(c.out, "All checks passed.")
+	return nil
+}
+
+type checker struct {
+	runtime globals.Runtime
+	backend cloud.StateBackendChecker
+}
+
+func (r checker) run(ctx context.Context) []diagnostic {
+	return []diagnostic{
+		checkGo(),
+		checkVersion(),
+		r.checkCreds(ctx),
+		r.checkRegion(),
+		r.checkBucket(ctx),
+		r.checkTable(ctx),
+	}
+}
+
+func jsonDiagnostics(checks []diagnostic) []map[string]string {
+	out := make([]map[string]string, len(checks))
+	for i, d := range checks {
+		out[i] = map[string]string{
+			"name":    d.name,
+			"status":  d.status,
+			"message": d.message,
+		}
+	}
+	return out
 }
 
 func checkGo() diagnostic {
@@ -77,12 +151,12 @@ func checkVersion() diagnostic {
 	return diagnostic{"Fabrica version", "ok", msg}
 }
 
-func checkCreds(ctx context.Context) diagnostic {
-	if globals.Provider == nil {
+func (r checker) checkCreds(ctx context.Context) diagnostic {
+	if r.runtime.Provider == nil {
 		return diagnostic{"AWS credentials", "warning", "no provider configured"}
 	}
 
-	_, _, _, err := globals.Provider.Identity(ctx)
+	_, _, _, err := r.runtime.Provider.Identity(ctx)
 	if err != nil {
 		return diagnostic{"AWS credentials", "fail", "could not authenticate — check your credentials and region"}
 	}
@@ -90,27 +164,28 @@ func checkCreds(ctx context.Context) diagnostic {
 	return diagnostic{"AWS credentials", "ok", "authenticated"}
 }
 
-func checkRegion() diagnostic {
-	if globals.Cfg == nil || globals.Cfg.Cloud.AWS.Region == "" {
-		return diagnostic{"Region", "warning", "not set — using us-east-1 default"}
+func (r checker) checkRegion() diagnostic {
+	if r.runtime.Config == nil || r.runtime.Config.Cloud.AWS.Region == "" {
+		return diagnostic{"Region", "warning", "not set — using " + config.DefaultAWSRegion + " default"}
 	}
-	return diagnostic{"Region", "ok", globals.Cfg.Cloud.AWS.Region}
+	return diagnostic{"Region", "ok", r.runtime.Config.Cloud.AWS.Region}
 }
 
-func checkBucket(ctx context.Context) diagnostic {
-	if globals.Cfg == nil {
-		return diagnostic{"S3 state bucket", "warning", "not yet provisioned (run fabrica setup)"}
+func (r checker) checkBucket(ctx context.Context) diagnostic {
+	if r.runtime.Config == nil {
+		return stateBackendWarning("S3 state bucket")
 	}
 
-	bucket := globals.Cfg.State.Bucket
+	bucket := r.runtime.Config.State.Bucket
 	if bucket == "" {
-		return diagnostic{"S3 state bucket", "warning", "not yet provisioned (run fabrica setup)"}
+		return stateBackendWarning("S3 state bucket")
 	}
 
-	region := globals.Cfg.Cloud.AWS.Region
-	profile := globals.Cfg.Cloud.AWS.Profile
+	if r.backend == nil {
+		return diagnostic{"S3 state bucket", "warning", "state backend checker unavailable for provider"}
+	}
 
-	ok, err := checkBucketExists(ctx, region, profile, bucket)
+	ok, err := r.backend.StateBucketExists(ctx, bucket)
 	if err != nil {
 		return diagnostic{"S3 state bucket", "fail", "check failed: " + err.Error()}
 	}
@@ -122,23 +197,24 @@ func checkBucket(ctx context.Context) diagnostic {
 	return diagnostic{"S3 state bucket", "warning", "bucket not found (run fabrica setup)"}
 }
 
-func checkTable(ctx context.Context) diagnostic {
-	if globals.Cfg == nil {
-		return diagnostic{"DynamoDB lock table", "warning", "not yet provisioned (run fabrica setup)"}
+func (r checker) checkTable(ctx context.Context) diagnostic {
+	if r.runtime.Config == nil {
+		return stateBackendWarning("DynamoDB lock table")
 	}
 
-	bucket := globals.Cfg.State.Bucket
-	table := globals.Cfg.State.Table
+	bucket := r.runtime.Config.State.Bucket
+	table := r.runtime.Config.State.Table
 
 	// If bucket is not set, setup hasn't run — skip DynamoDB probe
 	if bucket == "" {
-		return diagnostic{"DynamoDB lock table", "warning", "not yet provisioned (run fabrica setup)"}
+		return stateBackendWarning("DynamoDB lock table")
 	}
 
-	region := globals.Cfg.Cloud.AWS.Region
-	profile := globals.Cfg.Cloud.AWS.Profile
+	if r.backend == nil {
+		return diagnostic{"DynamoDB lock table", "warning", "state backend checker unavailable for provider"}
+	}
 
-	ok, err := checkTableExists(ctx, region, profile, table)
+	ok, err := r.backend.StateLockTableExists(ctx, table)
 	if err != nil {
 		return diagnostic{"DynamoDB lock table", "fail", "check failed: " + err.Error()}
 	}
@@ -150,85 +226,12 @@ func checkTable(ctx context.Context) diagnostic {
 	return diagnostic{"DynamoDB lock table", "warning", "table not found (run fabrica setup)"}
 }
 
-func loadAWSDOctorConfig(ctx context.Context, region, profile string) (aws.Config, error) {
-	opts := []func(*awscfg.LoadOptions) error{
-		awscfg.WithRegion(region),
-	}
-	if profile != "" {
-		opts = append(opts, awscfg.WithSharedConfigProfile(profile))
-	}
-	return awscfg.LoadDefaultConfig(ctx, opts...)
-}
-
-func checkBucketExists(ctx context.Context, region, profile, bucket string) (bool, error) {
-	cfg, err := loadAWSDOctorConfig(ctx, region, profile)
-	if err != nil {
-		return false, fmt.Errorf("loading AWS config: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	client := s3.NewFromConfig(cfg)
-	ctx2, cancel2 := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel2()
-
-	_, err = client.HeadBucket(ctx2, &s3.HeadBucketInput{Bucket: aws.String(bucket)})
-	if err != nil {
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) {
-			if apiErr.ErrorCode() == "404" || apiErr.ErrorCode() == "NoSuchBucket" {
-				return false, nil
-			}
-		}
-		return false, fmt.Errorf("checking S3 bucket %s: %w", bucket, err)
-	}
-
-	return true, nil
-}
-
-func checkTableExists(ctx context.Context, region, profile, table string) (bool, error) {
-	cfg, err := loadAWSDOctorConfig(ctx, region, profile)
-	if err != nil {
-		return false, fmt.Errorf("loading AWS config: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	client := dynamodb.NewFromConfig(cfg)
-	ctx2, cancel2 := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel2()
-
-	_, err = client.DescribeTable(ctx2, &dynamodb.DescribeTableInput{TableName: aws.String(table)})
-	if err != nil {
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) {
-			if apiErr.ErrorCode() == "ResourceNotFoundException" {
-				return false, nil
-			}
-		}
-		return false, fmt.Errorf("checking DynamoDB table %s: %w", table, err)
-	}
-
-	return true, nil
+func stateBackendWarning(name string) diagnostic {
+	return diagnostic{name, "warning", "not yet provisioned (run fabrica setup)"}
 }
 
 func printDiagnostics(checks []diagnostic) error {
-	fails, warns := 0, 0
-	for _, d := range checks {
-		switch d.status {
-		case "fail":
-			fails++
-		case "warning":
-			warns++
-		}
-		status := statusSymbol(d.status)
-		fmt.Printf("  %-6s %-26s %s\n", status, d.name+":", d.message)
-	}
-
-	fmt.Println()
-	return formatDiagnosticSummary(fails, warns)
+	return command{out: os.Stdout}.printText(checks)
 }
 
 func statusSymbol(status string) string {
@@ -243,18 +246,5 @@ func statusSymbol(status string) string {
 }
 
 func formatDiagnosticSummary(fails, warns int) error {
-	if fails > 0 {
-		msg := fmt.Sprintf("%d check(s) failed", fails)
-		if warns > 0 {
-			msg += fmt.Sprintf(", %d warning(s)", warns)
-		}
-		fmt.Println(msg)
-		return fmt.Errorf("%d diagnostic check(s) failed", fails)
-	}
-	if warns > 0 {
-		fmt.Printf("All checks passed (%d warning(s)).\n", warns)
-		return nil
-	}
-	fmt.Println("All checks passed.")
-	return nil
+	return command{out: os.Stdout}.printSummary(fails, warns)
 }

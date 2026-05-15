@@ -30,7 +30,7 @@ type ModuleState struct {
 type ModuleResource struct {
 	TypeName   string            `json:"typeName"`
 	Identifier string            `json:"identifier"`
-	Properties map[string]string  `json:"properties"`
+	Properties map[string]string `json:"properties"`
 }
 
 // Operation records a state change in the history log.
@@ -56,12 +56,14 @@ func NewState(account, region string) *State {
 
 // UpsertModule adds or updates the state of a module.
 func (s *State) UpsertModule(name, version, status string, resources []ModuleResource) {
+	now := time.Now().UTC()
 	for i, m := range s.Modules {
 		if m.Name == name {
 			s.Modules[i].Version = version
 			s.Modules[i].Status = status
 			s.Modules[i].Resources = resources
-			s.Modules[i].Provision = time.Now().UTC().Format(time.RFC3339)
+			s.Modules[i].Provision = now.Format(time.RFC3339)
+			s.Updated = now
 			return
 		}
 	}
@@ -70,14 +72,16 @@ func (s *State) UpsertModule(name, version, status string, resources []ModuleRes
 		Version:   version,
 		Status:    status,
 		Resources: resources,
-		Provision: time.Now().UTC().Format(time.RFC3339),
+		Provision: now.Format(time.RFC3339),
 	})
-	s.Updated = time.Now().UTC()
+	s.Updated = now
 }
 
 // AddOp appends an operation to the history log.
 func (s *State) AddOp(module, action string, count int) {
-	s.History = append(s.History, Operation{Module: module, Action: action, Time: time.Now().UTC(), Count: count})
+	now := time.Now().UTC()
+	s.History = append(s.History, Operation{Module: module, Action: action, Time: now, Count: count})
+	s.Updated = now
 }
 
 // ModuleCount returns the total number of resources recorded across all modules.

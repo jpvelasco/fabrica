@@ -8,16 +8,6 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
-// bootstrapClient handles S3/DynamoDB operations needed for
-// creating the state backend (chicken-and-egg problem).
-type bootstrapClient interface {
-	createBucket(ctx context.Context, bucket string) (bool, error)
-	putBucketVersioning(ctx context.Context, bucket string) error
-	putPublicAccessBlock(ctx context.Context, bucket string) error
-	putBucketEncryption(ctx context.Context, bucket, kmsKeyID string) error
-	createTable(ctx context.Context, table, region string) (bool, error)
-}
-
 // BootstrapResult describes the outcome of one bootstrapping step.
 type BootstrapResult struct {
 	Name    string
@@ -37,22 +27,12 @@ func Bootstrap(ctx context.Context, provider fabricac.Provider, cfg *config.Conf
 		return nil, fmt.Errorf("resolving identity: %w", err)
 	}
 
-	bucket := cfg.State.Bucket
-	if bucket == "" {
-		bucket = fmt.Sprintf("fabrica-state-%s", account)
-		cfg.State.Bucket = bucket
-	}
-
-	table := cfg.State.Table
-	if table == "" {
-		table = "fabrica-state-lock"
-		cfg.State.Table = table
-	}
+	backend := ApplyBackendNames(cfg, account)
 
 	var results []BootstrapResult
 
 	// 1. S3 bucket (idempotent: AlreadyExists → success)
-	result, err := createBucket(ctx, bucket)
+	result, err := createBucket(ctx, backend.Bucket)
 	if err != nil {
 		return results, fmt.Errorf("creating S3 bucket: %w", err)
 	}
@@ -65,9 +45,9 @@ func Bootstrap(ctx context.Context, provider fabricac.Provider, cfg *config.Conf
 			do   func() error
 			name string
 		}{
-			{"versioning", func() error { return enableVersioning(ctx, bucket) }, "S3 bucket versioning"},
-			{"public access block", func() error { return blockPublicAccess(ctx, bucket) }, "S3 public access block"},
-			{"encryption", func() error { return enableEncryption(ctx, bucket, cfg.State.KMSKeyID) }, "S3 bucket encryption"},
+			{"versioning", func() error { return enableVersioning(ctx, backend.Bucket) }, "S3 bucket versioning"},
+			{"public access block", func() error { return blockPublicAccess(ctx, backend.Bucket) }, "S3 public access block"},
+			{"encryption", func() error { return enableEncryption(ctx, backend.Bucket, cfg.State.KMSKeyID) }, "S3 bucket encryption"},
 		} {
 			if err := r.do(); err != nil {
 				return results, fmt.Errorf("%s: %w", r.fn, err)
@@ -77,7 +57,7 @@ func Bootstrap(ctx context.Context, provider fabricac.Provider, cfg *config.Conf
 	}
 
 	// 5. DynamoDB lock table (idempotent: ResourceInUse → success)
-	result, err = createTable(ctx, table, region)
+	result, err = createTable(ctx, backend.Table, region)
 	if err != nil {
 		return results, fmt.Errorf("creating DynamoDB lock table: %w", err)
 	}

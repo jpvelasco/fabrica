@@ -9,7 +9,7 @@ import (
 var _ cloud.ResourceClient = (*resourceClients)(nil)
 
 func (c *resourceClients) Create(ctx context.Context, r *cloud.Resource) error {
-	r.DesiredState = injectFabricaTags(r.DesiredState, "fabrica", "0.0.0", nil)
+	r.DesiredState = injectFabricaTags(r.DesiredState, "fabrica", c.version, nil)
 	// TODO: implement actual Cloud Control API CreateResource call
 	_ = c.cc
 	_ = ctx

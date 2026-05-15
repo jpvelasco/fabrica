@@ -2,6 +2,7 @@ package root
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/signal"
 
@@ -12,27 +13,11 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/setup"
 	"github.com/jpvelasco/fabrica/cmd/version"
 	_ "github.com/jpvelasco/fabrica/internal/cloud/aws"
-	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
 
-var cfgFile string
-
-var rootCmd = &cobra.Command{
-	Use:          "fabrica",
-	SilenceUsage: true,
-	Short:        "Studio infrastructure as code — AWS",
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		var err error
-		globals.Cfg, err = config.Load(cfgFile)
-		if err != nil {
-			return err
-		}
-		globals.Provider, err = cloud.Get(globals.Cfg.Cloud.Provider, globals.Cfg)
-		return err
-	},
-}
+var rootCmd = New(os.Stdout)
 
 func Execute() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -40,17 +25,37 @@ func Execute() error {
 	return rootCmd.ExecuteContext(ctx)
 }
 
-func init() {
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "Path to config file (default: ./fabrica.yaml)")
-	rootCmd.PersistentFlags().BoolVarP(&globals.Verbose, "verbose", "v", false, "Enable verbose output")
-	rootCmd.PersistentFlags().BoolVarP(&globals.JSONOutput, "json", "j", false, "Output in JSON format")
-	rootCmd.PersistentFlags().BoolVarP(&globals.DryRun, "dry-run", "d", false, "Show what would be done without making changes")
-	rootCmd.PersistentFlags().BoolVarP(&globals.AssumeYes, "yes", "y", false, "Skip confirmation prompts")
-	rootCmd.PersistentFlags().StringVarP(&globals.Profile, "profile", "p", "", "AWS profile to use")
+func New(out io.Writer) *cobra.Command {
+	var cfgFile string
+	var opts globals.Options
+	var runtimeStore globals.Store
 
-	rootCmd.AddCommand(version.Cmd)
-	rootCmd.AddCommand(doctor.Cmd)
-	rootCmd.AddCommand(setup.Cmd)
-	rootCmd.AddCommand(destroy.Cmd)
-	rootCmd.AddCommand(configcmd.Cmd)
+	cmd := &cobra.Command{
+		Use:          "fabrica",
+		SilenceUsage: true,
+		Short:        "Studio infrastructure as code — AWS",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			return runtimeStore.Init(config.Path(cfgFile, opts.Profile))
+		},
+	}
+
+	runtimeSource := runtimeStore.Require
+	optionsSource := func() globals.Options {
+		return opts
+	}
+
+	cmd.PersistentFlags().StringVar(&cfgFile, "config", "", "Path to config file (default: ./fabrica.yaml)")
+	cmd.PersistentFlags().BoolVarP(&opts.Verbose, "verbose", "v", false, "Enable verbose output")
+	cmd.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "Output in JSON format")
+	cmd.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "Show what would be done without making changes")
+	cmd.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "Skip confirmation prompts")
+	cmd.PersistentFlags().StringVarP(&opts.Profile, "profile", "p", "", "Fabrica config profile to use (loads fabrica-<profile>.yaml)")
+
+	cmd.AddCommand(version.Cmd)
+	cmd.AddCommand(doctor.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(setup.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(destroy.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(configcmd.New(runtimeSource, out))
+
+	return cmd
 }

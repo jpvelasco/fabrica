@@ -1,7 +1,12 @@
 package doctor
 
 import (
+	"context"
+	"fmt"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/config"
 )
 
 func TestStatusSymbol(t *testing.T) {
@@ -124,11 +129,12 @@ func TestCheckRegion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.region == "" {
-				d := checkRegion()
-				if d.status != tt.wantStatus {
-					t.Errorf("status = %q, want %q", d.status, tt.wantStatus)
-				}
+			cfg := config.Defaults()
+			cfg.Cloud.AWS.Region = tt.region
+			r := checker{runtime: globals.Runtime{Config: cfg}}
+			d := r.checkRegion()
+			if d.status != tt.wantStatus {
+				t.Errorf("status = %q, want %q", d.status, tt.wantStatus)
 			}
 		})
 	}
@@ -150,6 +156,80 @@ func TestDiagnosticStruct(t *testing.T) {
 	if d.message != "all good" {
 		t.Errorf("message = %q, want all good", d.message)
 	}
+}
+
+func TestCheckBucketUsesStateBackendChecker(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.State.Bucket = "state-bucket"
+	backend := &fakeStateBackendChecker{bucketExists: true}
+
+	d := checker{
+		runtime: globals.Runtime{Config: cfg},
+		backend: backend,
+	}.checkBucket(context.Background())
+
+	if d.status != "ok" {
+		t.Fatalf("status = %q, want ok", d.status)
+	}
+	if backend.bucket != "state-bucket" {
+		t.Fatalf("bucket = %q, want state-bucket", backend.bucket)
+	}
+}
+
+func TestCheckTableUsesStateBackendChecker(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.State.Bucket = "state-bucket"
+	cfg.State.Table = "state-locks"
+	backend := &fakeStateBackendChecker{tableExists: true}
+
+	d := checker{
+		runtime: globals.Runtime{Config: cfg},
+		backend: backend,
+	}.checkTable(context.Background())
+
+	if d.status != "ok" {
+		t.Fatalf("status = %q, want ok", d.status)
+	}
+	if backend.table != "state-locks" {
+		t.Fatalf("table = %q, want state-locks", backend.table)
+	}
+}
+
+func TestCheckBucketReportsBackendCheckerErrors(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.State.Bucket = "state-bucket"
+	backend := &fakeStateBackendChecker{bucketErr: fmt.Errorf("boom")}
+
+	d := checker{
+		runtime: globals.Runtime{Config: cfg},
+		backend: backend,
+	}.checkBucket(context.Background())
+
+	if d.status != "fail" {
+		t.Fatalf("status = %q, want fail", d.status)
+	}
+	if !contains(d.message, "boom") {
+		t.Fatalf("message = %q, want boom", d.message)
+	}
+}
+
+type fakeStateBackendChecker struct {
+	bucket       string
+	table        string
+	bucketExists bool
+	tableExists  bool
+	bucketErr    error
+	tableErr     error
+}
+
+func (f *fakeStateBackendChecker) StateBucketExists(ctx context.Context, bucket string) (bool, error) {
+	f.bucket = bucket
+	return f.bucketExists, f.bucketErr
+}
+
+func (f *fakeStateBackendChecker) StateLockTableExists(ctx context.Context, table string) (bool, error) {
+	f.table = table
+	return f.tableExists, f.tableErr
 }
 
 func contains(s, substr string) bool {
