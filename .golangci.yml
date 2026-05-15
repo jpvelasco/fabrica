@@ -1,0 +1,38 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gocritic
+    - misspell
+    - unconvert
+    - gosec
+    - dupl
+
+  settings:
+    gosec:
+      excludes:
+        - G104 # unhandled errors — intentional for best-effort cleanup
+        - G301 # directory permissions 0755 — standard for state dirs
+        - G304 # file inclusion via variable — intentional for config file reads
+        - G306 # WriteFile 0644 — config files need to be world-readable
+
+  exclusions:
+    presets:
+      - std-error-handling
+      - common-false-positives
+    rules:
+      - linters:
+          - staticcheck
+        text: "ST1005"
+    paths:
+      - vendor
+
+formatters:
+  enable:
+    - gofmt

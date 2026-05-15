@@ -1,16 +1,22 @@
+# Fabrica configuration template
+# Copy to fabrica.yaml and edit for your environment.
+#
+# See Fabrica_PRODUCT_SPEC.md for details on each section.
+
 cloud:
-  provider: aws
+  provider: aws               # Currently only "aws" is supported
   aws:
-    region: us-east-1
-    profile: ""
-    accountId: ""
-    tags: {}
+    region: us-east-1         # AWS region for all resources
+    profile: ""               # Named AWS profile (optional; defaults to SDK credential chain)
+    accountId: ""             # Auto-detected on first `fabrica setup`; leave empty initially
+    tags: {}                  # Extra tags merged with standard Fabrica tags on every resource
 
 state:
-  bucket: ""
-  table:  fabrica-state-lock
-  kmsKeyId: ""
+  bucket: ""                  # Auto-named `fabrica-state-<account-id>` on setup; override if desired
+  table: fabrica-state-lock   # DynamoDB table name for distributed locks
+  kmsKeyId: ""                # KMS key ARN for SSE-KMS encryption (optional; defaults to SSE-S3)
 
+# Module configuration sections — reserved for Phase 1+
 perforce: {}
 horde: {}
 ci: {}
