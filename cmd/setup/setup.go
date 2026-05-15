@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strings"
 
@@ -24,29 +23,30 @@ type command struct {
 	version string
 }
 
-var Cmd = &cobra.Command{
-	Use:   "setup",
-	Short: "Provision the state backend",
-	Long: `Set up the Fabrica state backend (S3 bucket + DynamoDB lock table).
+func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "setup",
+		Short: "Provision the state backend",
+		Long: `Set up the Fabrica state backend (S3 bucket + DynamoDB lock table).
 
 This command detects your AWS account and creates the infrastructure
 required for Fabrica to manage state. With --dry-run, it shows what
 would be created and the estimated monthly cost.`,
-	RunE: runSetup,
-}
-
-func runSetup(cmd *cobra.Command, args []string) error {
-	rt, err := globals.RequireCurrent()
-	if err != nil {
-		return err
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rt, err := runtimeSource()
+			if err != nil {
+				return err
+			}
+			opts := optionsSource()
+			return command{
+				runtime: rt,
+				dryRun:  opts.DryRun,
+				out:     out,
+				costs:   fabricacost.Global,
+				version: fabricav.Version,
+			}.run(cmd.Context())
+		},
 	}
-	return command{
-		runtime: rt,
-		dryRun:  globals.DryRun,
-		out:     os.Stdout,
-		costs:   fabricacost.Global,
-		version: fabricav.Version,
-	}.run(cmd.Context())
 }
 
 func (c command) run(ctx context.Context) error {

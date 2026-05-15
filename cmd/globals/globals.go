@@ -14,18 +14,28 @@ type Runtime struct {
 	ConfigPath string
 }
 
-var (
+// Options are the root flags used by subcommands.
+type Options struct {
 	Verbose    bool
 	JSONOutput bool
 	DryRun     bool
 	Profile    string
 	AssumeYes  bool
-)
+}
 
-var current Runtime
+// RuntimeSource returns the initialized command runtime.
+type RuntimeSource func() (Runtime, error)
+
+// OptionsSource returns the current root options.
+type OptionsSource func() Options
+
+// Store owns the runtime initialized by the root command.
+type Store struct {
+	current Runtime
+}
 
 // Init loads configuration and resolves the configured cloud provider.
-func Init(path string) error {
+func (s *Store) Init(path string) error {
 	cfg, err := config.Load(path)
 	if err != nil {
 		return err
@@ -35,7 +45,7 @@ func Init(path string) error {
 		return err
 	}
 
-	current = Runtime{
+	s.current = Runtime{
 		Config:     cfg,
 		Provider:   provider,
 		ConfigPath: path,
@@ -43,20 +53,15 @@ func Init(path string) error {
 	return nil
 }
 
-// Current returns the initialized runtime dependency set.
-func Current() Runtime {
-	return current
-}
-
-// RequireCurrent returns the runtime or an error if root initialization failed.
-func RequireCurrent() (Runtime, error) {
-	if current.Config == nil {
+// Require returns the runtime or an error if root initialization failed.
+func (s *Store) Require() (Runtime, error) {
+	if s.current.Config == nil {
 		return Runtime{}, fmt.Errorf("no configuration loaded")
 	}
-	if current.Provider == nil {
+	if s.current.Provider == nil {
 		return Runtime{}, fmt.Errorf("no cloud provider loaded")
 	}
-	return current, nil
+	return s.current, nil
 }
 
 // ConfigFile returns the concrete path used for write-back and diagnostics.

@@ -4,28 +4,26 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
-	"github.com/jpvelasco/fabrica/internal/cloud"
-	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
 )
 
 type command struct {
-	cfg       *config.Config
-	provider  cloud.Provider
+	runtime   globals.Runtime
 	all       bool
 	assumeYes bool
 	out       io.Writer
 }
 
-var Cmd = &cobra.Command{
-	Use:   "destroy",
-	Short: "Tear down provisioned infrastructure",
-	Long: `Safely dismantle Fabrica-managed infrastructure.
+func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
+	var all bool
+	cmd := &cobra.Command{
+		Use:   "destroy",
+		Short: "Tear down provisioned infrastructure",
+		Long: `Safely dismantle Fabrica-managed infrastructure.
 
 By default, this command shows a summary of what would be destroyed
 if --all is provided. It never mutates infrastructure without explicit
@@ -35,24 +33,22 @@ Use --all to target all provisioned resources. The command will walk
 through a confirmation dialog before proceeding.
 
 Run with --all --yes to skip the interactive prompt (use with care).`,
-	RunE: runDestroy,
-}
-
-var allFlag bool
-
-func init() {
-	Cmd.Flags().BoolVarP(&allFlag, "all", "a", false, "Include all provisioned infrastructure")
-}
-
-func runDestroy(cmd *cobra.Command, args []string) error {
-	rt := globals.Current()
-	return command{
-		cfg:       rt.Config,
-		provider:  rt.Provider,
-		all:       allFlag,
-		assumeYes: globals.AssumeYes,
-		out:       os.Stdout,
-	}.run(cmd.Context())
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rt, err := runtimeSource()
+			if err != nil {
+				return err
+			}
+			opts := optionsSource()
+			return command{
+				runtime:   rt,
+				all:       all,
+				assumeYes: opts.AssumeYes,
+				out:       out,
+			}.run(cmd.Context())
+		},
+	}
+	cmd.Flags().BoolVarP(&all, "all", "a", false, "Include all provisioned infrastructure")
+	return cmd
 }
 
 func (c command) run(ctx context.Context) error {
@@ -61,17 +57,17 @@ func (c command) run(ctx context.Context) error {
 		return nil
 	}
 
-	if c.provider == nil {
+	if c.runtime.Provider == nil {
 		fmt.Fprintln(c.out, "No infrastructure found. Nothing to destroy.")
 		return nil
 	}
 
-	account, _, region, err := c.provider.Identity(ctx)
+	account, _, region, err := c.runtime.Provider.Identity(ctx)
 	if err != nil {
 		return fmt.Errorf("resolving identity: %w", err)
 	}
 
-	backend := fabricastate.ResolveBackendNames(c.cfg, account)
+	backend := fabricastate.ResolveBackendNames(c.runtime.Config, account)
 	c.printPlan(account, region, backend)
 
 	if !c.assumeYes {

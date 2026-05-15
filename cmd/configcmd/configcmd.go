@@ -3,43 +3,43 @@ package configcmd
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
-	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
 )
 
 type showCommand struct {
-	cfg *config.Config
-	out io.Writer
+	runtime globals.Runtime
+	out     io.Writer
 }
 
-var Cmd = &cobra.Command{
-	Use:   "config",
-	Short: "View and modify fabrica.yaml configuration",
+func New(runtimeSource globals.RuntimeSource, out io.Writer) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "View and modify fabrica.yaml configuration",
+	}
+	cmd.AddCommand(newShowCommand(runtimeSource, out))
+	return cmd
 }
 
-func init() {
-	Cmd.AddCommand(showCmd)
-}
-
-var showCmd = &cobra.Command{
-	Use:   "show",
-	Short: "Show current configuration",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		rt := globals.Current()
-		if rt.Config == nil {
-			return fmt.Errorf("no configuration loaded")
-		}
-		return showCommand{cfg: rt.Config, out: os.Stdout}.run()
-	},
+func newShowCommand(runtimeSource globals.RuntimeSource, out io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "show",
+		Short: "Show current configuration",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rt, err := runtimeSource()
+			if err != nil {
+				return err
+			}
+			return showCommand{runtime: rt, out: out}.run()
+		},
+	}
 }
 
 func (c showCommand) run() error {
-	out, err := c.cfg.YAML()
+	out, err := c.runtime.Config.YAML()
 	if err != nil {
 		return err
 	}
@@ -53,7 +53,7 @@ func (c showCommand) run() error {
 }
 
 func (c showCommand) printResolvedNames() {
-	backend := fabricastate.ResolveBackendNames(c.cfg, c.cfg.Cloud.AWS.AccountID)
+	backend := fabricastate.ResolveBackendNames(c.runtime.Config, c.runtime.Config.Cloud.AWS.AccountID)
 	fmt.Fprintln(c.out, "Resolved resource names:")
 	fmt.Fprintln(c.out, strings.Repeat("-", 50))
 	fmt.Fprintf(c.out, "  S3 bucket:      %s\n", backend.Bucket)

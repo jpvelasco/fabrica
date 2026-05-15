@@ -12,7 +12,7 @@ import (
 type Constructor func(cfg *config.Config) (Provider, error)
 
 type registry struct {
-	mu       sync.RWMutex
+	mu        sync.RWMutex
 	providers map[string]Constructor
 }
 

@@ -8,16 +8,6 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
-// bootstrapClient handles S3/DynamoDB operations needed for
-// creating the state backend (chicken-and-egg problem).
-type bootstrapClient interface {
-	createBucket(ctx context.Context, bucket string) (bool, error)
-	putBucketVersioning(ctx context.Context, bucket string) error
-	putPublicAccessBlock(ctx context.Context, bucket string) error
-	putBucketEncryption(ctx context.Context, bucket, kmsKeyID string) error
-	createTable(ctx context.Context, table, region string) (bool, error)
-}
-
 // BootstrapResult describes the outcome of one bootstrapping step.
 type BootstrapResult struct {
 	Name    string
