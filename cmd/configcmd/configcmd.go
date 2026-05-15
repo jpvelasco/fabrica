@@ -34,14 +34,15 @@ func printConfig() {
 	cfg := globals.Cfg
 
 	fmt.Println("cloud:")
-	fmt.Println("  provider: " + cfg.Cloud.Provider)
+	fmt.Printf("  provider: %s\n", cfg.Cloud.Provider)
 	fmt.Println("  aws:")
-	fmt.Println("    region: " + cfg.Cloud.AWS.Region)
+	fmt.Printf("    region: %s\n", cfg.Cloud.AWS.Region)
 	if cfg.Cloud.AWS.Profile != "" {
-		fmt.Println("    profile: " + cfg.Cloud.AWS.Profile)
+		fmt.Printf("    profile: %s\n", cfg.Cloud.AWS.Profile)
 	}
 	if cfg.Cloud.AWS.AccountID != "" {
-		fmt.Println("    accountId: " + cfg.Cloud.AWS.AccountID)
+		cfgTag := cfg.Cloud.AWS.AccountID
+		fmt.Printf("    accountId: %s\n", cfgTag)
 	}
 	if len(cfg.Cloud.AWS.Tags) > 0 {
 		fmt.Println("    tags:")
@@ -51,17 +52,17 @@ func printConfig() {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			fmt.Println("      " + k + ": " + cfg.Cloud.AWS.Tags[k])
+			fmt.Printf("      %s: %s\n", k, cfg.Cloud.AWS.Tags[k])
 		}
 	}
 	fmt.Println()
 	fmt.Println("state:")
 	if cfg.State.Bucket != "" {
-		fmt.Println("  bucket: " + cfg.State.Bucket)
+		fmt.Printf("  bucket: %s\n", cfg.State.Bucket)
 	}
-	fmt.Println("  table: " + cfg.State.Table)
+	fmt.Printf("  table: %s\n", cfg.State.Table)
 	if cfg.State.KMSKeyID != "" {
-		fmt.Println("  kmsKeyId: " + cfg.State.KMSKeyID)
+		fmt.Printf("  kmsKeyId: %s\n", cfg.State.KMSKeyID)
 	}
 	fmt.Println()
 
@@ -72,22 +73,14 @@ func printConfig() {
 	fmt.Println("cost: {}")
 	fmt.Println()
 
-	// Print resolved info
-	if len(cfg.Cloud.AWS.Tags) > 0 {
-		fmt.Println("# Standard tags will be applied:")
-		for k, v := range cfg.Cloud.AWS.Tags {
-			fmt.Printf("  %s: %s\n", k, v)
-		}
-	}
-	fmt.Println()
-	fmt.Println("# Resolved resource names:")
-	fmt.Println(strings.Repeat("-", 50))
+	// Show resolved resource names
 	bucket := cfg.State.Bucket
 	if bucket == "" {
-		fmt.Printf("  S3 bucket:      fabrica-state-(account id after setup)\n")
-	} else {
-		fmt.Printf("  S3 bucket:      %s\n", bucket)
+		bucket = "fabrica-state-<account-id>"
 	}
+	fmt.Println("Resolved resource names:")
+	fmt.Println(strings.Repeat("-", 50))
+	fmt.Printf("  S3 bucket:      %s\n", bucket)
 	fmt.Printf("  DynamoDB table: %s\n", cfg.State.Table)
 	fmt.Println(strings.Repeat("-", 50))
 }

@@ -36,7 +36,7 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		fmt.Println("  fabrica destroy --all")
 		fmt.Println()
-		fmt.Println("This requires explicit confirmation. Use --all --yes to skip.")
+		fmt.Println("This requires explicit confirmation. Use --all --yes to skip the prompt.")
 		return nil
 	}
 
@@ -54,18 +54,18 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 	// Explain what would happen
 	fmt.Println("The following resources will be destroyed:")
 	fmt.Println()
-	fmt.Printf("  Account: %s\n", account)
-	fmt.Printf("  Region:  %s\n", region)
+	fmt.Printf("  Account:  %s\n", account)
+	fmt.Printf("  Region:   %s\n", region)
 	fmt.Println()
-	fmt.Println("  S3 state bucket      : fabrica-state-" + account)
-	fmt.Println("  DynamoDB lock table   : fabrica-state-lock")
+	fmt.Printf("  S3 bucket:      fabrica-state-%s\n", account)
+	fmt.Println("  DynamoDB table: fabrica-state-lock")
 	fmt.Println()
 	fmt.Println("This operation cannot be undone.")
 
 	// Prompt or --yes
 	if globals.AssumeYes {
 		fmt.Println()
-		fmt.Println("Proceeding with --yes...")
+		fmt.Println("Proceeding (--yes flag set).")
 	} else {
 		fmt.Println()
 		if !prompt.Confirm("Continue with destroy?") {
@@ -76,8 +76,7 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 
 	// Stub — real implementation in Phase 1
 	fmt.Println()
-	fmt.Println("Stub — actual destruction logic not yet implemented.")
-	fmt.Println("This will be wired in Phase 1.")
+	fmt.Println("The destruction logic is not yet implemented. This will be added in Phase 1.")
 	fmt.Println()
 	fmt.Println("No resources were destroyed.")
 

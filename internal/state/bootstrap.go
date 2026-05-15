@@ -57,12 +57,9 @@ func Bootstrap(ctx context.Context, provider fabricac.Provider, cfg *config.Conf
 		return results, fmt.Errorf("creating S3 bucket: %w", err)
 	}
 	results = append(results, result)
-	if result.Existed {
-		fmt.Println(result.String())
-	}
 
 	if !result.Existed {
-		// 2-5. Bucket config (only on fresh creation)
+		// 2-4. Bucket config (only on fresh creation)
 		for _, r := range []struct {
 			fn   string
 			do   func() error
@@ -76,17 +73,15 @@ func Bootstrap(ctx context.Context, provider fabricac.Provider, cfg *config.Conf
 				return results, fmt.Errorf("%s: %w", r.fn, err)
 			}
 			results = append(results, BootstrapResult{Name: r.name})
-			fmt.Println(BootstrapResult{Name: r.name}.String())
 		}
 	}
 
-	// 6. DynamoDB lock table (idempotent: ResourceInUse → success)
+	// 5. DynamoDB lock table (idempotent: ResourceInUse → success)
 	result, err = createTable(ctx, table, region)
 	if err != nil {
 		return results, fmt.Errorf("creating DynamoDB lock table: %w", err)
 	}
 	results = append(results, result)
-	fmt.Println(result.String())
 
 	return results, nil
 }

@@ -20,14 +20,11 @@ import (
 
 var Cmd = &cobra.Command{
 	Use:   "doctor",
-	Short: "Run diagnostic checks",
-	Long: `Performs diagnostics on the Fabrica environment:
+	Short: "Check environment health",
+	Long: `Run diagnostic checks against your Fabrica environment.
 
-  Go version
-  AWS credentials
-  Region
-  Fabrica version
-  State backend (S3 bucket + DynamoDB lock table)`,
+Checks Go version, Fabrica version, AWS credentials, region, and
+the state backend (S3 bucket and DynamoDB lock table).`,
 	RunE: runDoctor,
 }
 
@@ -38,9 +35,6 @@ type diagnostic struct {
 }
 
 func runDoctor(cmd *cobra.Command, args []string) error {
-	fmt.Println("Running diagnostics...")
-	fmt.Println()
-
 	var checks []diagnostic
 	checks = append(checks,
 		checkGo(),
@@ -60,31 +54,37 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 				"message": d.message,
 			}
 		}
-		b, _ := json.Marshal(out)
+		b, _ := json.MarshalIndent(out, "", "  ")
 		fmt.Println(string(b))
+		return nil
 	}
 
+	fmt.Println("Fabrica environment diagnostics")
+	fmt.Println()
 	return printDiagnostics(checks)
 }
 
 func checkGo() diagnostic {
-	msg := fmt.Sprintf("Go %s", runtime.Version())
+	msg := runtime.Version()
 	return diagnostic{"Go version", "ok", msg}
 }
 
 func checkVersion() diagnostic {
-	msg := fmt.Sprintf("Fabrica %s (commit %s)", fabricav.Version, fabricav.Commit)
+	msg := fabricav.Version
+	if fabricav.Commit != "" {
+		msg += " (commit " + fabricav.Commit + ")"
+	}
 	return diagnostic{"Fabrica version", "ok", msg}
 }
 
 func checkCreds(ctx context.Context) diagnostic {
 	if globals.Provider == nil {
-		return diagnostic{"AWS credentials", "warn", "no provider configured"}
+		return diagnostic{"AWS credentials", "warning", "no provider configured"}
 	}
 
 	_, _, _, err := globals.Provider.Identity(ctx)
 	if err != nil {
-		return diagnostic{"AWS credentials", "fail", err.Error()}
+		return diagnostic{"AWS credentials", "fail", "could not authenticate — check your credentials and region"}
 	}
 
 	return diagnostic{"AWS credentials", "ok", "authenticated"}
@@ -92,27 +92,19 @@ func checkCreds(ctx context.Context) diagnostic {
 
 func checkRegion() diagnostic {
 	if globals.Cfg == nil || globals.Cfg.Cloud.AWS.Region == "" {
-		return diagnostic{"Region", "warn", "not set in config (default: us-east-1)"}
+		return diagnostic{"Region", "warning", "not set — using us-east-1 default"}
 	}
 	return diagnostic{"Region", "ok", globals.Cfg.Cloud.AWS.Region}
 }
 
 func checkBucket(ctx context.Context) diagnostic {
 	if globals.Cfg == nil {
-		return diagnostic{
-			"S3 state bucket",
-			"warn",
-			"not yet provisioned (run fabrica setup)",
-		}
+		return diagnostic{"S3 state bucket", "warning", "not yet provisioned (run fabrica setup)"}
 	}
 
 	bucket := globals.Cfg.State.Bucket
 	if bucket == "" {
-		return diagnostic{
-			"S3 state bucket",
-			"warn",
-			"not yet provisioned (run fabrica setup)",
-		}
+		return diagnostic{"S3 state bucket", "warning", "not yet provisioned (run fabrica setup)"}
 	}
 
 	region := globals.Cfg.Cloud.AWS.Region
@@ -120,39 +112,27 @@ func checkBucket(ctx context.Context) diagnostic {
 
 	ok, err := checkBucketExists(ctx, region, profile, bucket)
 	if err != nil {
-		return diagnostic{"S3 state bucket", "fail", err.Error()}
+		return diagnostic{"S3 state bucket", "fail", "check failed: " + err.Error()}
 	}
 
 	if ok {
 		return diagnostic{"S3 state bucket", "ok", bucket}
 	}
 
-	return diagnostic{
-		"S3 state bucket",
-		"warn",
-		"not found (run fabrica setup)",
-	}
+	return diagnostic{"S3 state bucket", "warning", "bucket not found (run fabrica setup)"}
 }
 
 func checkTable(ctx context.Context) diagnostic {
 	if globals.Cfg == nil {
-		return diagnostic{
-			"DynamoDB lock table",
-			"warn",
-			"not yet provisioned (run fabrica setup)",
-		}
+		return diagnostic{"DynamoDB lock table", "warning", "not yet provisioned (run fabrica setup)"}
 	}
 
 	bucket := globals.Cfg.State.Bucket
 	table := globals.Cfg.State.Table
 
-	// If bucket is not set, setup hasn't run — don't probe DynamoDB
+	// If bucket is not set, setup hasn't run — skip DynamoDB probe
 	if bucket == "" {
-		return diagnostic{
-			"DynamoDB lock table",
-			"warn",
-			"not yet provisioned (run fabrica setup)",
-		}
+		return diagnostic{"DynamoDB lock table", "warning", "not yet provisioned (run fabrica setup)"}
 	}
 
 	region := globals.Cfg.Cloud.AWS.Region
@@ -160,18 +140,14 @@ func checkTable(ctx context.Context) diagnostic {
 
 	ok, err := checkTableExists(ctx, region, profile, table)
 	if err != nil {
-		return diagnostic{"DynamoDB lock table", "fail", err.Error()}
+		return diagnostic{"DynamoDB lock table", "fail", "check failed: " + err.Error()}
 	}
 
 	if ok {
 		return diagnostic{"DynamoDB lock table", "ok", table}
 	}
 
-	return diagnostic{
-		"DynamoDB lock table",
-		"warn",
-		"not found (run fabrica setup)",
-	}
+	return diagnostic{"DynamoDB lock table", "warning", "table not found (run fabrica setup)"}
 }
 
 func loadAWSDOctorConfig(ctx context.Context, region, profile string) (aws.Config, error) {
@@ -244,40 +220,41 @@ func printDiagnostics(checks []diagnostic) error {
 		switch d.status {
 		case "fail":
 			fails++
-		case "warn":
+		case "warning":
 			warns++
 		}
-		marker := diagnosticMarker(d.status)
-		fmt.Printf("  %s %-30s %s\n", marker, d.name, d.message)
+		status := statusSymbol(d.status)
+		fmt.Printf("  %-6s %-26s %s\n", status, d.name+":", d.message)
 	}
+
 	fmt.Println()
 	return formatDiagnosticSummary(fails, warns)
 }
 
-func diagnosticMarker(status string) string {
+func statusSymbol(status string) string {
 	switch status {
 	case "fail":
 		return "[FAIL]"
-	case "warn":
+	case "warning":
 		return "[WARN]"
 	default:
-		return "[OK]  "
+		return "[OK]"
 	}
 }
 
 func formatDiagnosticSummary(fails, warns int) error {
 	if fails > 0 {
-		fmt.Printf("%d issue(s) found", fails)
+		msg := fmt.Sprintf("%d check(s) failed", fails)
 		if warns > 0 {
-			fmt.Printf(", %d warning(s)", warns)
+			msg += fmt.Sprintf(", %d warning(s)", warns)
 		}
-		fmt.Println()
+		fmt.Println(msg)
 		return fmt.Errorf("%d diagnostic check(s) failed", fails)
 	}
 	if warns > 0 {
-		fmt.Printf("No issues found (%d warning(s)).\n", warns)
-	} else {
-		fmt.Println("No issues found.")
+		fmt.Printf("All checks passed (%d warning(s)).\n", warns)
+		return nil
 	}
+	fmt.Println("All checks passed.")
 	return nil
 }
