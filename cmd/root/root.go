@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/jpvelasco/fabrica/cmd/doctor"
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/version"
 	_ "github.com/jpvelasco/fabrica/internal/cloud/aws"
@@ -45,4 +46,5 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&globals.Profile, "profile", "p", "", "Configuration profile to use")
 
 	rootCmd.AddCommand(version.Cmd)
+	rootCmd.AddCommand(doctor.Cmd)
 }
