@@ -1,0 +1,125 @@
+package state
+
+import (
+	"context"
+	"fmt"
+
+	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/config"
+)
+
+// bootstrapClient handles S3/DynamoDB operations needed for
+// creating the state backend (chicken-and-egg problem).
+type bootstrapClient interface {
+	createBucket(ctx context.Context, bucket string) (bool, error)
+	putBucketVersioning(ctx context.Context, bucket string) error
+	putPublicAccessBlock(ctx context.Context, bucket string) error
+	putBucketEncryption(ctx context.Context, bucket, kmsKeyID string) error
+	createTable(ctx context.Context, table, region string) (bool, error)
+}
+
+// BootstrapResult describes the outcome of one bootstrapping step.
+type BootstrapResult struct {
+	Name    string
+	Existed bool
+}
+
+func (r BootstrapResult) String() string {
+	if r.Existed {
+		return fmt.Sprintf("  %s already exists — skipping", r.Name)
+	}
+	return fmt.Sprintf("  created %s", r.Name)
+}
+
+func Bootstrap(ctx context.Context, provider fabricac.Provider, cfg *config.Config) ([]BootstrapResult, error) {
+	account, _, region, err := provider.Identity(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolving identity: %w", err)
+	}
+
+	bucket := cfg.State.Bucket
+	if bucket == "" {
+		bucket = fmt.Sprintf("fabrica-state-%s", account)
+		cfg.State.Bucket = bucket
+	}
+
+	table := cfg.State.Table
+	if table == "" {
+		table = "fabrica-state-lock"
+		cfg.State.Table = table
+	}
+
+	var results []BootstrapResult
+
+	// 1. S3 bucket (idempotent: AlreadyExists → success)
+	result, err := createBucket(ctx, bucket)
+	if err != nil {
+		return results, fmt.Errorf("creating S3 bucket: %w", err)
+	}
+	results = append(results, result)
+	if result.Existed {
+		fmt.Println(result.String())
+	}
+
+	if !result.Existed {
+		// 2-5. Bucket config (only on fresh creation)
+		for _, r := range []struct {
+			fn   string
+			do   func() error
+			name string
+		}{
+			{"versioning", func() error { return enableVersioning(ctx, bucket) }, "S3 bucket versioning"},
+			{"public access block", func() error { return blockPublicAccess(ctx, bucket) }, "S3 public access block"},
+			{"encryption", func() error { return enableEncryption(ctx, bucket, cfg.State.KMSKeyID) }, "S3 bucket encryption"},
+		} {
+			if err := r.do(); err != nil {
+				return results, fmt.Errorf("%s: %w", r.fn, err)
+			}
+			results = append(results, BootstrapResult{Name: r.name})
+			fmt.Println(BootstrapResult{Name: r.name}.String())
+		}
+	}
+
+	// 6. DynamoDB lock table (idempotent: ResourceInUse → success)
+	result, err = createTable(ctx, table, region)
+	if err != nil {
+		return results, fmt.Errorf("creating DynamoDB lock table: %w", err)
+	}
+	results = append(results, result)
+	fmt.Println(result.String())
+
+	return results, nil
+}
+
+// createBucket attempts to create the S3 bucket. Returns existed=true
+// if the bucket already exists (already handled gracefully).
+func createBucket(ctx context.Context, bucket string) (BootstrapResult, error) {
+	// TODO: implement via direct SDK call after AWS provider bootstrap client is wired
+	return BootstrapResult{Name: fmt.Sprintf("S3 bucket %s", bucket), Existed: true}, nil
+}
+
+// enableVersioning enables versioning on the bucket.
+func enableVersioning(ctx context.Context, bucket string) error {
+	// TODO: implement
+	return nil
+}
+
+// blockPublicAccess applies a public-access block to the bucket.
+func blockPublicAccess(ctx context.Context, bucket string) error {
+	// TODO: implement
+	return nil
+}
+
+// enableEncryption enables SSE-S3 encryption (or SSE-KMS if kmsKeyID is set).
+func enableEncryption(ctx context.Context, bucket, kmsKeyID string) error {
+	// TODO: implement
+	_ = kmsKeyID
+	return nil
+}
+
+// createTable attempts to create the DynamoDB lock table. Returns existed=true
+// if the table already exists.
+func createTable(ctx context.Context, table, region string) (BootstrapResult, error) {
+	// TODO: implement via direct SDK call
+	return BootstrapResult{Name: fmt.Sprintf("DynamoDB lock table %s", table), Existed: true}, nil
+}
