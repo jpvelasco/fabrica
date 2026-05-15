@@ -7,12 +7,18 @@ import (
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
 	fabricav "github.com/jpvelasco/fabrica/internal/version"
 	"github.com/spf13/cobra"
 )
+
+type plannedResource struct {
+	label    string
+	typeName string
+}
 
 var Cmd = &cobra.Command{
 	Use:   "setup",
@@ -30,38 +36,43 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no cloud provider loaded — check your config")
 	}
 
-	// Resolve identity
 	account, _, region, err := globals.Provider.Identity(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("could not resolve AWS identity — check your credentials: %w", err)
 	}
 
 	cfg := globals.Cfg
-
-	// Determine resource names
-	bucket := cfg.State.Bucket
-	if bucket == "" {
-		bucket = "fabrica-state-" + account
-	}
-	cfg.State.Bucket = bucket
-
-	table := cfg.State.Table
-	if table == "" {
-		table = "fabrica-state-lock"
-	}
-	cfg.State.Table = table
-
-	// Standard tags
-	tags := fabricatags.Standard("setup", fabricav.Version)
-	for k, v := range cfg.Cloud.AWS.Tags {
-		tags[k] = v
-	}
+	bucket, table := resolveStateBackend(cfg, account)
+	tags := setupTags(cfg.Cloud.AWS.Tags)
 
 	if globals.DryRun {
 		return runDryRun(account, region, bucket, table, tags)
 	}
 
 	return runReal(cmd.Context(), account, region, bucket, table)
+}
+
+func resolveStateBackend(cfg *config.Config, account string) (bucket, table string) {
+	bucket = cfg.State.Bucket
+	if bucket == "" {
+		bucket = "fabrica-state-" + account
+	}
+	cfg.State.Bucket = bucket
+
+	table = cfg.State.Table
+	if table == "" {
+		table = "fabrica-state-lock"
+	}
+	cfg.State.Table = table
+	return bucket, table
+}
+
+func setupTags(extra map[string]string) map[string]string {
+	tags := fabricatags.Standard("setup", fabricav.Version)
+	for k, v := range extra {
+		tags[k] = v
+	}
+	return tags
 }
 
 func runDryRun(account, region, bucket, table string, tags map[string]string) error {
@@ -92,43 +103,55 @@ func runDryRun(account, region, bucket, table string, tags map[string]string) er
 	fmt.Printf("  %-28s %10s  %s\n", "Resource", "Cost/mo", "Confidence")
 	fmt.Println(strings.Repeat("-", 50))
 
-	var total float64
-	type costEntry struct {
-		label    string
-		typeName string
-		monthly  fabricacost.Monthly
+	resources := []plannedResource{
+		{label: "S3 bucket (" + bucket + ")", typeName: fabricacost.TypeAWSS3Bucket},
+		{label: "DynamoDB table (" + table + ")", typeName: fabricacost.TypeAWSDynamoDBTable},
 	}
-	entries := []costEntry{
-		{label: "S3 bucket (" + bucket + ")", typeName: "AWS::S3::Bucket"},
-		{label: "DynamoDB table (" + table + ")", typeName: "AWS::DynamoDB::Table"},
-	}
-
-	for _, e := range entries {
-		m, err := fabricacost.Global.Estimate(e.typeName, fabricacost.Resource{TypeName: e.typeName})
-		if err != nil {
-			fmt.Printf("  %-28s %10s  %s\n", e.label, "—", "(estimator not registered)")
+	estimates, total, confidence := estimateResources(resources)
+	for i, r := range resources {
+		m := estimates[i]
+		if m.err != nil {
+			fmt.Printf("  %-28s %10s  %s\n", r.label, "-", "(estimator not registered)")
 			continue
 		}
-		e.monthly = m
-		total += m.Amount
-		fmt.Printf("  %-28s  $%-8.2f  %s\n", e.label, m.Amount, m.Confidence)
+		fmt.Printf("  %-28s  $%-8.2f  %s\n", r.label, m.monthly.Amount, m.monthly.Confidence)
 	}
 
 	fmt.Println(strings.Repeat("-", 50))
 	fmt.Printf("  %-28s  $%-8.2f\n", "Total:", total)
 	fmt.Println()
-
-	// Overall confidence: lowest confidence of all entries
-	confidence := fabricacost.High
-	for _, e := range entries {
-		if e.monthly.Confidence < confidence {
-			confidence = e.monthly.Confidence
-		}
-	}
 	fmt.Printf("Confidence: %s\n", confidence)
 	fmt.Println()
 	fmt.Println("Run without --dry-run to proceed.")
 	return nil
+}
+
+type costEstimate struct {
+	monthly fabricacost.Monthly
+	err     error
+}
+
+func estimateResources(resources []plannedResource) ([]costEstimate, float64, fabricacost.ConfidenceLevel) {
+	estimates := make([]costEstimate, len(resources))
+	confidence := fabricacost.High
+	var total float64
+
+	for i, r := range resources {
+		monthly, err := fabricacost.Global.Estimate(r.typeName, fabricacost.Resource{TypeName: r.typeName})
+		if err != nil {
+			estimates[i] = costEstimate{err: err}
+			confidence = fabricacost.Low
+			continue
+		}
+
+		estimates[i] = costEstimate{monthly: monthly}
+		total += monthly.Amount
+		if monthly.Confidence > confidence {
+			confidence = monthly.Confidence
+		}
+	}
+
+	return estimates, total, confidence
 }
 
 func runReal(ctx context.Context, account, region, bucket, table string) error {
@@ -136,6 +159,8 @@ func runReal(ctx context.Context, account, region, bucket, table string) error {
 	fmt.Println()
 	fmt.Printf("  Account:  %s\n", account)
 	fmt.Printf("  Region:   %s\n", region)
+	fmt.Printf("  Bucket:   %s\n", bucket)
+	fmt.Printf("  Table:    %s\n", table)
 	fmt.Println()
 
 	// Bootstrap returns results
@@ -156,9 +181,13 @@ func runReal(ctx context.Context, account, region, bucket, table string) error {
 	// Write account ID into config
 	if globals.Cfg.Cloud.AWS.AccountID == "" {
 		globals.Cfg.Cloud.AWS.AccountID = account
-		if err := globals.Cfg.Save("fabrica.yaml"); err != nil {
-			fmt.Printf("Warning: could not save config to fabrica.yaml: %v\n", err)
-			fmt.Println("Please update fabrica.yaml with account ID: " + account)
+		if err := globals.Cfg.Save(globals.ConfigPath); err != nil {
+			path := globals.ConfigPath
+			if path == "" {
+				path = "fabrica.yaml"
+			}
+			fmt.Printf("Warning: could not save config to %s: %v\n", path, err)
+			fmt.Println("Please update your config with account ID: " + account)
 		}
 	}
 

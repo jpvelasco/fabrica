@@ -8,6 +8,7 @@ import (
 var (
 	Cfg        *config.Config
 	Provider   cloud.Provider
+	ConfigPath string
 	Verbose    bool
 	JSONOutput bool
 	DryRun     bool

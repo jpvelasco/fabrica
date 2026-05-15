@@ -11,6 +11,7 @@ package cost
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -25,9 +26,9 @@ type Monthly struct {
 type ConfidenceLevel int
 
 const (
-	High ConfidenceLevel = iota // Well-constrained estimate (e.g. on-demand pricing).
-	Medium                       // Reasonable estimate with some assumptions.
-	Low                          // Very approximate — actual cost may differ significantly.
+	High   ConfidenceLevel = iota // Well-constrained estimate (e.g. on-demand pricing).
+	Medium                        // Reasonable estimate with some assumptions.
+	Low                           // Very approximate — actual cost may differ significantly.
 )
 
 func (c ConfidenceLevel) String() string {
@@ -55,8 +56,8 @@ type Estimator interface {
 
 // Registry holds estimators keyed by resource TypeName.
 type Registry struct {
-	mu       sync.RWMutex
-	estims   map[string]Estimator
+	mu     sync.RWMutex
+	estims map[string]Estimator
 }
 
 // Global is the default cost registry.
@@ -87,6 +88,7 @@ func (r *Registry) Get(typeName string) (Estimator, error) {
 		for k := range r.estims {
 			avail = append(avail, k)
 		}
+		sort.Strings(avail)
 		return nil, fmt.Errorf("no cost estimator for %q; available: %v", typeName, avail)
 	}
 	return e, nil

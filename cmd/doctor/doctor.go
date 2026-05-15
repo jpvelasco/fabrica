@@ -34,6 +34,11 @@ type diagnostic struct {
 	message string
 }
 
+type awsProbeConfig struct {
+	region  string
+	profile string
+}
+
 func runDoctor(cmd *cobra.Command, args []string) error {
 	var checks []diagnostic
 	checks = append(checks,
@@ -99,18 +104,15 @@ func checkRegion() diagnostic {
 
 func checkBucket(ctx context.Context) diagnostic {
 	if globals.Cfg == nil {
-		return diagnostic{"S3 state bucket", "warning", "not yet provisioned (run fabrica setup)"}
+		return stateBackendWarning("S3 state bucket")
 	}
 
 	bucket := globals.Cfg.State.Bucket
 	if bucket == "" {
-		return diagnostic{"S3 state bucket", "warning", "not yet provisioned (run fabrica setup)"}
+		return stateBackendWarning("S3 state bucket")
 	}
 
-	region := globals.Cfg.Cloud.AWS.Region
-	profile := globals.Cfg.Cloud.AWS.Profile
-
-	ok, err := checkBucketExists(ctx, region, profile, bucket)
+	ok, err := checkBucketExists(ctx, doctorAWSConfig(), bucket)
 	if err != nil {
 		return diagnostic{"S3 state bucket", "fail", "check failed: " + err.Error()}
 	}
@@ -124,7 +126,7 @@ func checkBucket(ctx context.Context) diagnostic {
 
 func checkTable(ctx context.Context) diagnostic {
 	if globals.Cfg == nil {
-		return diagnostic{"DynamoDB lock table", "warning", "not yet provisioned (run fabrica setup)"}
+		return stateBackendWarning("DynamoDB lock table")
 	}
 
 	bucket := globals.Cfg.State.Bucket
@@ -132,13 +134,10 @@ func checkTable(ctx context.Context) diagnostic {
 
 	// If bucket is not set, setup hasn't run — skip DynamoDB probe
 	if bucket == "" {
-		return diagnostic{"DynamoDB lock table", "warning", "not yet provisioned (run fabrica setup)"}
+		return stateBackendWarning("DynamoDB lock table")
 	}
 
-	region := globals.Cfg.Cloud.AWS.Region
-	profile := globals.Cfg.Cloud.AWS.Profile
-
-	ok, err := checkTableExists(ctx, region, profile, table)
+	ok, err := checkTableExists(ctx, doctorAWSConfig(), table)
 	if err != nil {
 		return diagnostic{"DynamoDB lock table", "fail", "check failed: " + err.Error()}
 	}
@@ -150,18 +149,29 @@ func checkTable(ctx context.Context) diagnostic {
 	return diagnostic{"DynamoDB lock table", "warning", "table not found (run fabrica setup)"}
 }
 
-func loadAWSDOctorConfig(ctx context.Context, region, profile string) (aws.Config, error) {
-	opts := []func(*awscfg.LoadOptions) error{
-		awscfg.WithRegion(region),
+func stateBackendWarning(name string) diagnostic {
+	return diagnostic{name, "warning", "not yet provisioned (run fabrica setup)"}
+}
+
+func doctorAWSConfig() awsProbeConfig {
+	return awsProbeConfig{
+		region:  globals.Cfg.Cloud.AWS.Region,
+		profile: globals.Cfg.Cloud.AWS.Profile,
 	}
-	if profile != "" {
-		opts = append(opts, awscfg.WithSharedConfigProfile(profile))
+}
+
+func loadAWSDOctorConfig(ctx context.Context, probe awsProbeConfig) (aws.Config, error) {
+	opts := []func(*awscfg.LoadOptions) error{
+		awscfg.WithRegion(probe.region),
+	}
+	if probe.profile != "" {
+		opts = append(opts, awscfg.WithSharedConfigProfile(probe.profile))
 	}
 	return awscfg.LoadDefaultConfig(ctx, opts...)
 }
 
-func checkBucketExists(ctx context.Context, region, profile, bucket string) (bool, error) {
-	cfg, err := loadAWSDOctorConfig(ctx, region, profile)
+func checkBucketExists(ctx context.Context, probe awsProbeConfig, bucket string) (bool, error) {
+	cfg, err := loadAWSDOctorConfig(ctx, probe)
 	if err != nil {
 		return false, fmt.Errorf("loading AWS config: %w", err)
 	}
@@ -170,10 +180,7 @@ func checkBucketExists(ctx context.Context, region, profile, bucket string) (boo
 	defer cancel()
 
 	client := s3.NewFromConfig(cfg)
-	ctx2, cancel2 := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel2()
-
-	_, err = client.HeadBucket(ctx2, &s3.HeadBucketInput{Bucket: aws.String(bucket)})
+	_, err = client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(bucket)})
 	if err != nil {
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) {
@@ -187,8 +194,8 @@ func checkBucketExists(ctx context.Context, region, profile, bucket string) (boo
 	return true, nil
 }
 
-func checkTableExists(ctx context.Context, region, profile, table string) (bool, error) {
-	cfg, err := loadAWSDOctorConfig(ctx, region, profile)
+func checkTableExists(ctx context.Context, probe awsProbeConfig, table string) (bool, error) {
+	cfg, err := loadAWSDOctorConfig(ctx, probe)
 	if err != nil {
 		return false, fmt.Errorf("loading AWS config: %w", err)
 	}
@@ -197,10 +204,7 @@ func checkTableExists(ctx context.Context, region, profile, table string) (bool,
 	defer cancel()
 
 	client := dynamodb.NewFromConfig(cfg)
-	ctx2, cancel2 := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel2()
-
-	_, err = client.DescribeTable(ctx2, &dynamodb.DescribeTableInput{TableName: aws.String(table)})
+	_, err = client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(table)})
 	if err != nil {
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) {

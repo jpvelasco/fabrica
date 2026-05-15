@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	"github.com/spf13/cobra"
 )
@@ -51,14 +52,16 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolving identity: %w", err)
 	}
 
+	bucket, table := destroyTargets(globals.Cfg, account)
+
 	// Explain what would happen
 	fmt.Println("The following resources will be destroyed:")
 	fmt.Println()
 	fmt.Printf("  Account:  %s\n", account)
 	fmt.Printf("  Region:   %s\n", region)
 	fmt.Println()
-	fmt.Printf("  S3 bucket:      fabrica-state-%s\n", account)
-	fmt.Println("  DynamoDB table: fabrica-state-lock")
+	fmt.Printf("  S3 bucket:      %s\n", bucket)
+	fmt.Printf("  DynamoDB table: %s\n", table)
 	fmt.Println()
 	fmt.Println("This operation cannot be undone.")
 
@@ -81,4 +84,19 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 	fmt.Println("No resources were destroyed.")
 
 	return nil
+}
+
+func destroyTargets(cfg *config.Config, account string) (bucket, table string) {
+	bucket = "fabrica-state-" + account
+	table = "fabrica-state-lock"
+	if cfg == nil {
+		return bucket, table
+	}
+	if cfg.State.Bucket != "" {
+		bucket = cfg.State.Bucket
+	}
+	if cfg.State.Table != "" {
+		table = cfg.State.Table
+	}
+	return bucket, table
 }
