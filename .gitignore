@@ -13,6 +13,7 @@ fabrica.yaml
 vendor/
 coverage.out
 *.test
+*.go.[0-9]*
 
 # IDE
 .idea/
