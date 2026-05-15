@@ -126,7 +126,7 @@ func TestCheckRegion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := runner{cfg: config.Defaults()}
+			r := checker{cfg: config.Defaults()}
 			r.cfg.Cloud.AWS.Region = tt.region
 			d := r.checkRegion()
 			if d.status != tt.wantStatus {

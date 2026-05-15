@@ -3,6 +3,8 @@ package setup
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"sort"
 	"strings"
 
@@ -13,6 +15,14 @@ import (
 	fabricav "github.com/jpvelasco/fabrica/internal/version"
 	"github.com/spf13/cobra"
 )
+
+type command struct {
+	runtime globals.Runtime
+	dryRun  bool
+	out     io.Writer
+	costs   *fabricacost.Registry
+	version string
+}
 
 var Cmd = &cobra.Command{
 	Use:   "setup",
@@ -26,79 +36,98 @@ would be created and the estimated monthly cost.`,
 }
 
 func runSetup(cmd *cobra.Command, args []string) error {
-	if globals.Provider == nil {
-		return fmt.Errorf("no cloud provider loaded — check your config")
+	rt, err := globals.RequireCurrent()
+	if err != nil {
+		return err
 	}
+	return command{
+		runtime: rt,
+		dryRun:  globals.DryRun,
+		out:     os.Stdout,
+		costs:   fabricacost.Global,
+		version: fabricav.Version,
+	}.run(cmd.Context())
+}
 
-	account, _, region, err := globals.Provider.Identity(cmd.Context())
+func (c command) run(ctx context.Context) error {
+	account, _, region, err := c.runtime.Provider.Identity(ctx)
 	if err != nil {
 		return fmt.Errorf("could not resolve AWS identity — check your credentials: %w", err)
 	}
 
-	cfg := globals.Cfg
+	cfg := c.runtime.Config
 	plan := fabricastate.NewSetupPlan(cfg, account, region)
-	tags := setupTags(cfg.Cloud.AWS.Tags)
+	tags := setupTags(c.version, cfg.Cloud.AWS.Tags)
 
-	if globals.DryRun {
-		return runDryRun(plan, tags)
+	if c.dryRun {
+		c.printDryRun(plan, tags)
+		return nil
 	}
 
-	return runReal(cmd.Context(), plan)
+	return c.runApply(ctx, plan)
 }
 
-func setupTags(extra map[string]string) map[string]string {
-	tags := fabricatags.Standard("setup", fabricav.Version)
+func setupTags(version string, extra map[string]string) map[string]string {
+	tags := fabricatags.Standard("setup", version)
 	for k, v := range extra {
 		tags[k] = v
 	}
 	return tags
 }
 
-func runDryRun(plan fabricastate.SetupPlan, tags map[string]string) error {
-	fmt.Println("Setup (dry run)")
-	fmt.Println(strings.Repeat("-", 50))
-	fmt.Printf("  Account:  %s\n", plan.Account)
-	fmt.Printf("  Region:   %s\n", plan.Region)
-	fmt.Println()
+func (c command) printDryRun(plan fabricastate.SetupPlan, tags map[string]string) {
+	fmt.Fprintln(c.out, "Setup (dry run)")
+	fmt.Fprintln(c.out, strings.Repeat("-", 50))
+	fmt.Fprintf(c.out, "  Account:  %s\n", plan.Account)
+	fmt.Fprintf(c.out, "  Region:   %s\n", plan.Region)
+	fmt.Fprintln(c.out)
 
-	fmt.Println("Resources to create:")
+	fmt.Fprintln(c.out, "Resources to create:")
 	for _, r := range plan.Resources {
-		fmt.Printf("  %-24s %s\n", r.Kind+":", r.Identifier)
+		fmt.Fprintf(c.out, "  %-24s %s\n", r.Label+":", r.Identifier)
 	}
-	fmt.Println()
+	fmt.Fprintln(c.out)
 
-	fmt.Println("Tags:")
-	keys := make([]string, 0, len(tags))
-	for k := range tags {
+	c.printTags(tags)
+	c.printCostReport(c.costs.EstimateAll(costResources(plan.Resources)))
+	fmt.Fprintln(c.out, "Run without --dry-run to proceed.")
+}
+
+func (c command) printTags(tags map[string]string) {
+	fmt.Fprintln(c.out, "Tags:")
+	for _, k := range sortedKeys(tags) {
+		fmt.Fprintf(c.out, "  %-20s %s\n", k+":", tags[k])
+	}
+	fmt.Fprintln(c.out)
+}
+
+func (c command) printCostReport(report fabricacost.Report) {
+	fmt.Fprintln(c.out, "Cost estimate:")
+	fmt.Fprintln(c.out, strings.Repeat("-", 50))
+	fmt.Fprintf(c.out, "  %-28s %10s  %s\n", "Resource", "Cost/mo", "Confidence")
+	fmt.Fprintln(c.out, strings.Repeat("-", 50))
+	for _, result := range report.Results {
+		if result.Err != nil {
+			fmt.Fprintf(c.out, "  %-28s %10s  %s\n", result.Resource.Name, "-", "(estimator not registered)")
+			continue
+		}
+		fmt.Fprintf(c.out, "  %-28s  $%-8.2f  %s\n", result.Resource.Name, result.Monthly.Amount, result.Monthly.Confidence)
+	}
+
+	fmt.Fprintln(c.out, strings.Repeat("-", 50))
+	fmt.Fprintf(c.out, "  %-28s  $%-8.2f\n", "Total:", report.Total)
+	fmt.Fprintln(c.out)
+	fmt.Fprintf(c.out, "Confidence: %s\n", report.Confidence)
+	fmt.Fprintln(c.out)
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	for _, k := range keys {
-		fmt.Printf("  %-20s %s\n", k+":", tags[k])
-	}
-	fmt.Println()
-
-	fmt.Println("Cost estimate:")
-	fmt.Println(strings.Repeat("-", 50))
-	fmt.Printf("  %-28s %10s  %s\n", "Resource", "Cost/mo", "Confidence")
-	fmt.Println(strings.Repeat("-", 50))
-
-	report := fabricacost.Global.EstimateAll(costResources(plan.Resources))
-	for _, result := range report.Results {
-		if result.Err != nil {
-			fmt.Printf("  %-28s %10s  %s\n", result.Resource.Name, "-", "(estimator not registered)")
-			continue
-		}
-		fmt.Printf("  %-28s  $%-8.2f  %s\n", result.Resource.Name, result.Monthly.Amount, result.Monthly.Confidence)
-	}
-
-	fmt.Println(strings.Repeat("-", 50))
-	fmt.Printf("  %-28s  $%-8.2f\n", "Total:", report.Total)
-	fmt.Println()
-	fmt.Printf("Confidence: %s\n", report.Confidence)
-	fmt.Println()
-	fmt.Println("Run without --dry-run to proceed.")
-	return nil
+	return keys
 }
 
 func costResources(resources []fabricastate.ResourcePlan) []fabricacost.Resource {
@@ -106,56 +135,73 @@ func costResources(resources []fabricastate.ResourcePlan) []fabricacost.Resource
 	for _, r := range resources {
 		out = append(out, fabricacost.Resource{
 			TypeName: r.TypeName,
-			Name:     fmt.Sprintf("%s (%s)", r.Kind, r.Identifier),
+			Name:     fmt.Sprintf("%s (%s)", r.Label, r.Identifier),
 		})
 	}
 	return out
 }
 
-func runReal(ctx context.Context, plan fabricastate.SetupPlan) error {
-	fmt.Println("Setting up state backend...")
-	fmt.Println()
-	fmt.Printf("  Account:  %s\n", plan.Account)
-	fmt.Printf("  Region:   %s\n", plan.Region)
-	fmt.Printf("  Bucket:   %s\n", plan.Backend.Bucket)
-	fmt.Printf("  Table:    %s\n", plan.Backend.Table)
-	fmt.Println()
+func (c command) runApply(ctx context.Context, plan fabricastate.SetupPlan) error {
+	c.printApplyHeader(plan)
 
-	// Bootstrap returns results
-	results, err := fabricastate.Bootstrap(ctx, globals.Provider, globals.Cfg)
+	results, err := fabricastate.Bootstrap(ctx, c.runtime.Provider, c.runtime.Config)
 	if err != nil {
 		return fmt.Errorf("bootstrap failed: %w", err)
 	}
 
-	allExisted := true
-	for _, r := range results {
-		fmt.Println("  " + strings.TrimSpace(r.String()))
-		if !r.Existed {
-			allExisted = false
-		}
-	}
-	fmt.Println()
-
-	// Write account ID into config
-	if globals.Cfg.Cloud.AWS.AccountID == "" {
-		globals.Cfg.Cloud.AWS.AccountID = plan.Account
-		if err := globals.Cfg.Save(globals.ConfigPath); err != nil {
-			fmt.Printf("Warning: could not save config to %s: %v\n", globals.ConfigFile(), err)
-			fmt.Println("Please update your config with account ID: " + plan.Account)
-		}
-	}
-
-	if allExisted {
-		fmt.Println("All resources already exist. Nothing changed.")
-	} else {
-		fmt.Println("Setup complete.")
-	}
-
-	fmt.Println()
-	fmt.Println("Next steps:")
-	fmt.Println("  fabrica doctor               Verify environment health")
-	fmt.Println("  fabrica config show          Inspect configuration")
-	fmt.Println("  fabrica version              Show version information")
-
+	c.printBootstrapResults(results)
+	c.saveAccountID(plan.Account)
+	c.printCompletion(results)
 	return nil
+}
+
+func (c command) printApplyHeader(plan fabricastate.SetupPlan) {
+	fmt.Fprintln(c.out, "Setting up state backend...")
+	fmt.Fprintln(c.out)
+	fmt.Fprintf(c.out, "  Account:  %s\n", plan.Account)
+	fmt.Fprintf(c.out, "  Region:   %s\n", plan.Region)
+	fmt.Fprintf(c.out, "  Bucket:   %s\n", plan.Backend.Bucket)
+	fmt.Fprintf(c.out, "  Table:    %s\n", plan.Backend.Table)
+	fmt.Fprintln(c.out)
+}
+
+func (c command) printBootstrapResults(results []fabricastate.BootstrapResult) {
+	for _, r := range results {
+		fmt.Fprintln(c.out, "  "+strings.TrimSpace(r.String()))
+	}
+	fmt.Fprintln(c.out)
+}
+
+func (c command) saveAccountID(account string) {
+	if c.runtime.Config.Cloud.AWS.AccountID != "" {
+		return
+	}
+	c.runtime.Config.Cloud.AWS.AccountID = account
+	if err := c.runtime.Config.Save(c.runtime.ConfigPath); err != nil {
+		fmt.Fprintf(c.out, "Warning: could not save config to %s: %v\n", c.runtime.ConfigFile(), err)
+		fmt.Fprintln(c.out, "Please update your config with account ID: "+account)
+	}
+}
+
+func (c command) printCompletion(results []fabricastate.BootstrapResult) {
+	if allResourcesExisted(results) {
+		fmt.Fprintln(c.out, "All resources already exist. Nothing changed.")
+	} else {
+		fmt.Fprintln(c.out, "Setup complete.")
+	}
+
+	fmt.Fprintln(c.out)
+	fmt.Fprintln(c.out, "Next steps:")
+	fmt.Fprintln(c.out, "  fabrica doctor               Verify environment health")
+	fmt.Fprintln(c.out, "  fabrica config show          Inspect configuration")
+	fmt.Fprintln(c.out, "  fabrica version              Show version information")
+}
+
+func allResourcesExisted(results []fabricastate.BootstrapResult) bool {
+	for _, r := range results {
+		if !r.Existed {
+			return false
+		}
+	}
+	return true
 }

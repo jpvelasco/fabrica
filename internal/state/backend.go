@@ -8,20 +8,25 @@ import (
 
 const unresolvedAccountID = "<account-id>"
 
+const (
+	stateBucketTypeName = "AWS::S3::Bucket"
+	lockTableTypeName   = "AWS::DynamoDB::Table"
+)
+
 // BackendNames are the concrete S3/DynamoDB names for the state backend.
 type BackendNames struct {
 	Bucket string
 	Table  string
 }
 
-// ResourcePlan describes one state-backend resource Fabrica will manage.
+// ResourcePlan describes one state-backend resource that setup will create.
 type ResourcePlan struct {
 	TypeName   string
-	Kind       string
+	Label      string
 	Identifier string
 }
 
-// SetupPlan is the provider/account-specific state-backend plan.
+// SetupPlan is the resolved Phase 0 state-backend plan for one account/region.
 type SetupPlan struct {
 	Account   string
 	Region    string
@@ -74,13 +79,13 @@ func NewSetupPlan(cfg *config.Config, account, region string) SetupPlan {
 		Backend: backend,
 		Resources: []ResourcePlan{
 			{
-				TypeName:   "AWS::S3::Bucket",
-				Kind:       "S3 bucket",
+				TypeName:   stateBucketTypeName,
+				Label:      "S3 bucket",
 				Identifier: backend.Bucket,
 			},
 			{
-				TypeName:   "AWS::DynamoDB::Table",
-				Kind:       "DynamoDB table",
+				TypeName:   lockTableTypeName,
+				Label:      "DynamoDB table",
 				Identifier: backend.Table,
 			},
 		},

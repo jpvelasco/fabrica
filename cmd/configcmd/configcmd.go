@@ -2,12 +2,20 @@ package configcmd
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
 )
+
+type showCommand struct {
+	cfg *config.Config
+	out io.Writer
+}
 
 var Cmd = &cobra.Command{
 	Use:   "config",
@@ -22,31 +30,33 @@ var showCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show current configuration",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if globals.Cfg == nil {
+		rt := globals.Current()
+		if rt.Config == nil {
 			return fmt.Errorf("no configuration loaded")
 		}
-		printConfig()
-		return nil
+		return showCommand{cfg: rt.Config, out: os.Stdout}.run()
 	},
 }
 
-func printConfig() {
-	cfg := globals.Cfg
-	out, err := cfg.YAML()
+func (c showCommand) run() error {
+	out, err := c.cfg.YAML()
 	if err != nil {
-		fmt.Printf("error rendering config: %v\n", err)
-		return
+		return err
 	}
-	fmt.Print(string(out))
+	fmt.Fprint(c.out, string(out))
 	if len(out) == 0 || out[len(out)-1] != '\n' {
-		fmt.Println()
+		fmt.Fprintln(c.out)
 	}
 
-	// Show resolved resource names
-	backend := fabricastate.ResolveBackendNames(cfg, cfg.Cloud.AWS.AccountID)
-	fmt.Println("Resolved resource names:")
-	fmt.Println(strings.Repeat("-", 50))
-	fmt.Printf("  S3 bucket:      %s\n", backend.Bucket)
-	fmt.Printf("  DynamoDB table: %s\n", backend.Table)
-	fmt.Println(strings.Repeat("-", 50))
+	c.printResolvedNames()
+	return nil
+}
+
+func (c showCommand) printResolvedNames() {
+	backend := fabricastate.ResolveBackendNames(c.cfg, c.cfg.Cloud.AWS.AccountID)
+	fmt.Fprintln(c.out, "Resolved resource names:")
+	fmt.Fprintln(c.out, strings.Repeat("-", 50))
+	fmt.Fprintf(c.out, "  S3 bucket:      %s\n", backend.Bucket)
+	fmt.Fprintf(c.out, "  DynamoDB table: %s\n", backend.Table)
+	fmt.Fprintln(c.out, strings.Repeat("-", 50))
 }
