@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/jpvelasco/fabrica/cmd/destroy"
 	"github.com/jpvelasco/fabrica/cmd/doctor"
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/setup"
@@ -49,4 +50,5 @@ func init() {
 	rootCmd.AddCommand(version.Cmd)
 	rootCmd.AddCommand(doctor.Cmd)
 	rootCmd.AddCommand(setup.Cmd)
+	rootCmd.AddCommand(destroy.Cmd)
 }
