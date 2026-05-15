@@ -7,6 +7,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/doctor"
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/setup"
 	"github.com/jpvelasco/fabrica/cmd/version"
 	_ "github.com/jpvelasco/fabrica/internal/cloud/aws"
 	"github.com/jpvelasco/fabrica/internal/cloud"
@@ -47,4 +48,5 @@ func init() {
 
 	rootCmd.AddCommand(version.Cmd)
 	rootCmd.AddCommand(doctor.Cmd)
+	rootCmd.AddCommand(setup.Cmd)
 }

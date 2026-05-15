@@ -7,6 +7,46 @@ import (
 	"github.com/spf13/viper"
 )
 
+// Save writes the config to a YAML file at the given path.
+// If path is empty, defaults to fabrica.yaml.
+func (c *Config) Save(path string) error {
+	if path == "" {
+		path = "fabrica.yaml"
+	}
+
+	v := viper.New()
+	v.SetConfigType("yaml")
+	v.SetDefault("cloud", c.Cloud)
+	v.SetDefault("state", c.State)
+
+	// Marshal struct to map[string]any for viper
+	data := make(map[string]any)
+	data["cloud"] = map[string]any{
+		"provider": c.Cloud.Provider,
+		"aws": map[string]any{
+			"region":    c.Cloud.AWS.Region,
+			"profile":   c.Cloud.AWS.Profile,
+			"accountId": c.Cloud.AWS.AccountID,
+			"tags":      c.Cloud.AWS.Tags,
+		},
+	}
+	data["state"] = map[string]any{
+		"bucket":   c.State.Bucket,
+		"table":    c.State.Table,
+		"kmsKeyId": c.State.KMSKeyID,
+	}
+	data["perforce"] = c.Perforce
+	data["horde"] = c.Horde
+	data["ci"] = c.CI
+	data["cost"] = c.Cost
+
+	for k, val := range data {
+		v.Set(k, val)
+	}
+
+	return v.WriteConfigAs(path)
+}
+
 type Config struct {
 	Cloud    Cloud    `mapstructure:"cloud"`
 	State    State    `mapstructure:"state"`
