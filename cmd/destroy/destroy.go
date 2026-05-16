@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
@@ -14,8 +15,10 @@ import (
 type command struct {
 	runtime   globals.Runtime
 	all       bool
+	dryRun    bool
 	assumeYes bool
 	out       io.Writer
+	confirm   func(string) bool
 }
 
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
@@ -42,8 +45,10 @@ Run with --all --yes to skip the interactive prompt (use with care).`,
 			return command{
 				runtime:   rt,
 				all:       all,
+				dryRun:    opts.DryRun,
 				assumeYes: opts.AssumeYes,
 				out:       out,
+				confirm:   prompt.Confirm,
 			}.run(cmd.Context())
 		},
 	}
@@ -70,9 +75,14 @@ func (c command) run(ctx context.Context) error {
 	backend := fabricastate.ResolveBackendNames(c.runtime.Config, account)
 	c.printPlan(account, region, backend)
 
+	if c.dryRun {
+		c.printDryRun()
+		return nil
+	}
+
 	if !c.assumeYes {
 		fmt.Fprintln(c.out)
-		if !prompt.Confirm("Continue with destroy?") {
+		if !c.confirm("Continue with destroy?") {
 			fmt.Fprintln(c.out, "Aborted.")
 			return nil
 		}
@@ -81,8 +91,11 @@ func (c command) run(ctx context.Context) error {
 		fmt.Fprintln(c.out, "Proceeding (--yes flag set).")
 	}
 
-	c.printStub()
-	return nil
+	destroyer, ok := c.runtime.Provider.(cloud.StateBackendDestroyer)
+	if !ok {
+		return fmt.Errorf("provider %s does not support state backend destroy", c.runtime.Provider.Name())
+	}
+	return c.destroyBackend(ctx, destroyer, backend)
 }
 
 func (c command) printUsageHint() {
@@ -105,9 +118,41 @@ func (c command) printPlan(account, region string, backend fabricastate.BackendN
 	fmt.Fprintln(c.out, "This operation cannot be undone.")
 }
 
-func (c command) printStub() {
+func (c command) printDryRun() {
 	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "The destruction logic is not yet implemented. This will be added in Phase 1.")
+	fmt.Fprintln(c.out, "Dry run: no resources will be deleted.")
+	fmt.Fprintln(c.out, "Run without --dry-run to proceed.")
+}
+
+func (c command) destroyBackend(ctx context.Context, destroyer cloud.StateBackendDestroyer, backend fabricastate.BackendNames) error {
 	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "No resources were destroyed.")
+	fmt.Fprintln(c.out, "Destroying state backend...")
+	fmt.Fprintln(c.out)
+
+	bucket, err := destroyer.DeleteStateBucket(ctx, backend.Bucket)
+	if err != nil {
+		return err
+	}
+	c.printDeleteResult("S3 bucket", bucket)
+
+	table, err := destroyer.DeleteStateLockTable(ctx, backend.Table)
+	if err != nil {
+		return err
+	}
+	c.printDeleteResult("DynamoDB lock table", table)
+
+	fmt.Fprintln(c.out)
+	fmt.Fprintln(c.out, "Destroy complete.")
+	return nil
+}
+
+func (c command) printDeleteResult(label string, result cloud.StateBackendDeleteResult) {
+	switch {
+	case result.Deleted:
+		fmt.Fprintf(c.out, "  deleted %s %s\n", label, result.Identifier)
+	case result.Missing:
+		fmt.Fprintf(c.out, "  %s %s not found; skipping\n", label, result.Identifier)
+	default:
+		fmt.Fprintf(c.out, "  %s %s unchanged\n", label, result.Identifier)
+	}
 }
