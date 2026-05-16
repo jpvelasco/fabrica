@@ -84,10 +84,15 @@ func (p *awsProvider) DeleteStateBucket(ctx context.Context, bucket string) (fab
 				result.Missing = true
 				return result, nil
 			case "BucketNotEmpty":
-				return result, fmt.Errorf("deleting S3 bucket %s: bucket is not empty; empty it manually before running destroy again: %w", bucket, err)
+				return result, fmt.Errorf("deleting S3 bucket %s: %w", bucket, fabricac.ErrStateBucketNotEmpty)
 			}
 		}
 		return result, fmt.Errorf("deleting S3 bucket %s: %w", bucket, err)
+	}
+
+	waiter := s3.NewBucketNotExistsWaiter(client)
+	if err := waiter.Wait(ctx, &s3.HeadBucketInput{Bucket: aws.String(bucket)}, 2*time.Minute); err != nil {
+		return result, fmt.Errorf("waiting for S3 bucket %s deletion: %w", bucket, err)
 	}
 
 	result.Deleted = true
@@ -115,6 +120,11 @@ func (p *awsProvider) DeleteStateLockTable(ctx context.Context, table string) (f
 			}
 		}
 		return result, fmt.Errorf("deleting DynamoDB table %s: %w", table, err)
+	}
+
+	waiter := dynamodb.NewTableNotExistsWaiter(client)
+	if err := waiter.Wait(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(table)}, 2*time.Minute); err != nil {
+		return result, fmt.Errorf("waiting for DynamoDB table %s deletion: %w", table, err)
 	}
 
 	result.Deleted = true

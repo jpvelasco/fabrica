@@ -1,6 +1,13 @@
 package cloud
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrStateBucketNotEmpty is returned when a state bucket cannot be deleted
+// because it still contains objects.
+var ErrStateBucketNotEmpty = errors.New("state bucket is not empty")
 
 // StateBackendChecker verifies the storage primitives used by Fabrica state.
 type StateBackendChecker interface {
