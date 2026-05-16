@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // Confirm asks the user a yes/no question. Returns true if the user
@@ -22,4 +23,18 @@ func Confirm(msg string) bool {
 	answer := scanner.Text()
 	fmt.Println()
 	return answer == "y" || answer == "Y" || answer == "yes" || answer == "Yes" || answer == "YES"
+}
+
+// ConfirmExact asks the user to type an exact phrase. Returns true only
+// when the input matches exactly after trimming surrounding whitespace.
+func ConfirmExact(msg, phrase string) bool {
+	fmt.Printf("%s: ", msg)
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		fmt.Println()
+		return false
+	}
+	answer := strings.TrimSpace(scanner.Text())
+	fmt.Println()
+	return answer == phrase
 }
