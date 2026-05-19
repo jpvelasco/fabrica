@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"strings"
 	"time"
 
@@ -133,7 +132,9 @@ func (c command) run(ctx context.Context) error {
 		m.Status = "ready"
 		info.moduleStatus = "ready"
 		st.UpsertModule(moduleName, m.Version, "ready", m.Resources)
-		_ = c.writeState(st) // best-effort; don't fail status on write error
+		if err := c.writeState(st); err != nil {
+			fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
+		}
 	}
 
 	c.printResult(info)
@@ -152,7 +153,9 @@ func (c command) pollUntilReady(ctx context.Context, st *fabricastate.State, m *
 			m.Status = "ready"
 			info.moduleStatus = "ready"
 			st.UpsertModule(moduleName, m.Version, "ready", m.Resources)
-			_ = c.writeState(st)
+			if err := c.writeState(st); err != nil {
+				fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
+			}
 			c.printResult(info)
 			return nil
 		}
@@ -194,7 +197,7 @@ func (c command) buildInfo(ctx context.Context, m *fabricastate.ModuleState) (st
 			Identifier: info.instanceID,
 		}
 		if err := c.getResource(ctx, r); err != nil {
-			return info, fmt.Errorf("querying instance %s: %w", info.instanceID, err)
+			return info, fmt.Errorf("querying instance %s via Cloud Control: %w", info.instanceID, err)
 		}
 		parseInstanceActualState(r, &info)
 	}
@@ -315,35 +318,16 @@ func (c command) printJSON(info statusInfo) {
 }
 
 func (c command) defaultReadState() (*fabricastate.State, error) {
-	data, err := os.ReadFile(".fabrica/state.json")
-	if os.IsNotExist(err) {
-		account := ""
-		region := ""
-		if c.runtime.Config != nil {
-			region = c.runtime.Config.Cloud.AWS.Region
-			account = c.runtime.Config.Cloud.AWS.AccountID
-		}
-		return fabricastate.NewState(account, region), nil
+	account, region := "", ""
+	if c.runtime.Config != nil {
+		account = c.runtime.Config.Cloud.AWS.AccountID
+		region = c.runtime.Config.Cloud.AWS.Region
 	}
-	if err != nil {
-		return nil, fmt.Errorf("reading state file: %w", err)
-	}
-	var st fabricastate.State
-	if err := json.Unmarshal(data, &st); err != nil {
-		return nil, fmt.Errorf("parsing state file: %w", err)
-	}
-	return &st, nil
+	return fabricastate.ReadStateOrNew(account, region)
 }
 
 func (c command) defaultWriteState(st *fabricastate.State) error {
-	if err := os.MkdirAll(".fabrica", 0700); err != nil {
-		return fmt.Errorf("creating .fabrica directory: %w", err)
-	}
-	data, err := json.MarshalIndent(st, "", "  ")
-	if err != nil {
-		return fmt.Errorf("serializing state: %w", err)
-	}
-	return os.WriteFile(".fabrica/state.json", data, 0600)
+	return fabricastate.WriteState(st)
 }
 
 func defaultProbeTCP(address string) bool {

@@ -3,10 +3,12 @@ package perforce
 import (
 	"context"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/config"
 )
 
 func TestNewCreatePlan_Defaults(t *testing.T) {
-	cfg := PerforceConfig{}
+	cfg := config.PerforceConfig{}
 	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -29,7 +31,7 @@ func TestNewCreatePlan_Defaults(t *testing.T) {
 }
 
 func TestNewCreatePlan_CustomInstanceType(t *testing.T) {
-	cfg := PerforceConfig{InstanceType: "c5.2xlarge"}
+	cfg := config.PerforceConfig{InstanceType: "c5.2xlarge"}
 	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -40,7 +42,7 @@ func TestNewCreatePlan_CustomInstanceType(t *testing.T) {
 }
 
 func TestNewCreatePlan_CostResourceTypeNames(t *testing.T) {
-	cfg := PerforceConfig{}
+	cfg := config.PerforceConfig{}
 	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -74,7 +76,7 @@ func TestNewCreatePlan_VersionValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.version, func(t *testing.T) {
-			_, err := NewCreatePlan(context.Background(), PerforceConfig{}, "123456789012", "us-east-1", tc.version, nil)
+			_, err := NewCreatePlan(context.Background(), config.PerforceConfig{}, "123456789012", "us-east-1", tc.version, nil)
 			if tc.wantErr && err == nil {
 				t.Errorf("version %q: expected error, got nil", tc.version)
 			}
@@ -104,7 +106,7 @@ func TestResolveVersion(t *testing.T) {
 
 func TestNewCreatePlan_VPCResolver(t *testing.T) {
 	resolver := &fakeVPCResolver{vpcID: "vpc-abc", subnetID: "subnet-abc"}
-	cfg := PerforceConfig{}
+	cfg := config.PerforceConfig{}
 	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -121,7 +123,7 @@ func TestNewCreatePlan_VPCResolver(t *testing.T) {
 }
 
 func TestNewCreatePlan_ExplicitVPC(t *testing.T) {
-	cfg := PerforceConfig{VPCId: "vpc-explicit", SubnetId: "subnet-explicit"}
+	cfg := config.PerforceConfig{VPCId: "vpc-explicit", SubnetId: "subnet-explicit"}
 	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

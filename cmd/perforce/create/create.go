@@ -3,7 +3,6 @@ package create
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"fmt"
 	"io"
 	"math/big"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/cloud"
-	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/prompt"
@@ -22,10 +20,10 @@ import (
 )
 
 const (
-	lineWidth    = 58
-	moduleName   = "perforce"
-	credFile     = ".fabrica/perforce-credentials.yaml"
-	passwordLen  = 24
+	lineWidth     = 58
+	moduleName    = "perforce"
+	credFile      = ".fabrica/perforce-credentials.yaml"
+	passwordLen   = 24
 	passwordChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 )
 
@@ -41,8 +39,8 @@ type command struct {
 	confirm      func(string, string) bool
 
 	// seams for testing
-	readState  func() (*fabricastate.State, error)
-	writeState func(*fabricastate.State) error
+	readState      func() (*fabricastate.State, error)
+	writeState     func(*fabricastate.State) error
 	createResource func(ctx context.Context, r *cloud.Resource) error
 }
 
@@ -104,7 +102,7 @@ func (c command) run(ctx context.Context) error {
 	}
 
 	// Resolve version: flag > config > default
-	pfCfg := resolvePerforceConfig(c.runtime.Config)
+	pfCfg := c.runtime.Config.Perforce
 	effectiveVersion := perforce.ResolveVersion(c.version, pfCfg.Version)
 	if c.instanceType != "" {
 		pfCfg.InstanceType = c.instanceType
@@ -245,8 +243,8 @@ func (c command) printDryRun(plan *perforce.CreatePlan) {
 	fmt.Fprintf(c.out, "  Helix Core:       %s\n", versionLabel)
 	fmt.Fprintf(c.out, "  Data volume:      %d GiB gp3\n", plan.VolumeSize)
 	if plan.DefaultVPC {
-		fmt.Fprintf(c.out, "  VPC:   default (%s)\n", plan.VPCID)
-		fmt.Fprintln(c.out, "  Note:  Default VPC used. Configure a dedicated VPC for production.")
+		fmt.Fprintf(c.out, "  VPC:              default (%s)\n", plan.VPCID)
+		fmt.Fprintln(c.out, "  Note:             Default VPC used. Configure a dedicated VPC for production.")
 	} else if plan.VPCID != "" {
 		fmt.Fprintf(c.out, "  VPC:              %s\n", plan.VPCID)
 	}
@@ -319,57 +317,17 @@ func (c command) printPostCreate(_ *perforce.CreatePlan, instanceID string) {
 	fmt.Fprintln(c.out, "  fabrica perforce status      Check readiness")
 }
 
-// defaultReadState loads state from the local cache (.fabrica/state.json).
-// For Phase 1 this is a local file; the backend wiring comes later.
 func (c command) defaultReadState() (*fabricastate.State, error) {
-	data, err := os.ReadFile(".fabrica/state.json")
-	if os.IsNotExist(err) {
-		account := ""
-		region := ""
-		if c.runtime.Config != nil {
-			region = c.runtime.Config.Cloud.AWS.Region
-			account = c.runtime.Config.Cloud.AWS.AccountID
-		}
-		return fabricastate.NewState(account, region), nil
+	account, region := "", ""
+	if c.runtime.Config != nil {
+		account = c.runtime.Config.Cloud.AWS.AccountID
+		region = c.runtime.Config.Cloud.AWS.Region
 	}
-	if err != nil {
-		return nil, fmt.Errorf("reading state file: %w", err)
-	}
-	var st fabricastate.State
-	if err := json.Unmarshal(data, &st); err != nil {
-		return nil, fmt.Errorf("parsing state file: %w", err)
-	}
-	return &st, nil
+	return fabricastate.ReadStateOrNew(account, region)
 }
 
-// defaultWriteState persists state to .fabrica/state.json.
 func (c command) defaultWriteState(st *fabricastate.State) error {
-	if err := os.MkdirAll(".fabrica", 0700); err != nil {
-		return fmt.Errorf("creating .fabrica directory: %w", err)
-	}
-	data, err := json.MarshalIndent(st, "", "  ")
-	if err != nil {
-		return fmt.Errorf("serializing state: %w", err)
-	}
-	return os.WriteFile(".fabrica/state.json", data, 0600)
-}
-
-// resolvePerforceConfig extracts PerforceConfig from the raw config Perforce field.
-// config.Config.Perforce is typed as `any`; this handles the map[string]any case
-// from Viper unmarshalling by re-marshalling through JSON.
-func resolvePerforceConfig(cfg *config.Config) perforce.PerforceConfig {
-	if cfg == nil || cfg.Perforce == nil {
-		return perforce.PerforceConfig{}
-	}
-	data, err := json.Marshal(cfg.Perforce)
-	if err != nil {
-		return perforce.PerforceConfig{}
-	}
-	var out perforce.PerforceConfig
-	if err := json.Unmarshal(data, &out); err != nil {
-		return perforce.PerforceConfig{}
-	}
-	return out
+	return fabricastate.WriteState(st)
 }
 
 func generatePassword(length int) (string, error) {

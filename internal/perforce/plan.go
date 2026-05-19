@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 
+	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
 )
 
@@ -34,7 +35,7 @@ type CreatePlan struct {
 // NewCreatePlan validates inputs and builds a CreatePlan. VPCResolver is called
 // only when VPCId/SubnetId are absent from cfg; pass nil to skip resolution
 // (dry-run with explicit VPC values, or tests).
-func NewCreatePlan(ctx context.Context, cfg PerforceConfig, account, region, version string, resolver VPCResolver) (*CreatePlan, error) {
+func NewCreatePlan(ctx context.Context, cfg config.PerforceConfig, account, region, version string, resolver VPCResolver) (*CreatePlan, error) {
 	if err := validateVersion(version); err != nil {
 		return nil, err
 	}
