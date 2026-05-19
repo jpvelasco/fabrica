@@ -2,34 +2,89 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Status
-
-Pre-implementation. The product spec (`Fabrica_PRODUCT_SPEC.md`) is complete; no code exists yet. Phase 0 (CLI skeleton + AWS foundation) is the current focus.
-
 ## What Fabrica Is
 
 A Go CLI + infrastructure-as-code framework that provisions and manages game studio cloud infrastructure on AWS: Perforce Helix Core, Unreal Horde build farms, CI/CD, GameLift deployment, and cloud workstations. Sister tool to [Ludus](https://github.com/jpvelasco/ludus) — while Ludus handles a single developer's pipeline, Fabrica scales that to a full studio.
 
-## Architecture Decisions (Already Made)
+## Project Status
 
-**Language/stack:** Go + Cobra + Viper — same as Ludus.
+Phase 0 (CLI skeleton + AWS foundation) is underway. The state backend (S3 + DynamoDB bootstrap + locking), `doctor`, `setup`, `destroy`, and `configcmd` commands are implemented. Cloud Control API CRUD methods are stubbed (`internal/cloud/aws/cloudcontrol.go`) — resource management is not yet wired to real AWS calls.
 
-**IaC approach:** `aws-sdk-go-v2/service/cloudcontrol` (AWS Cloud Control API). No Terraform, no Pulumi, no external binaries required. Single binary. Rationale: zero prerequisite friction, 1100+ resource types including modern GameLift resources not in Terraform provider.
+The `src/` directory contains a parallel C# CDK exploration (`Fabrica.CdkApp`, `Fabrica.Cli`, `Fabrica.Constructs`, `Fabrica.Operations`) — this is not the active implementation path; Go is the chosen stack.
 
-**State backend:**
-- Remote: S3 (`s3://fabrica-state-<account-id>/`, SSE-KMS, versioned) + DynamoDB (`fabrica-state-lock`) for distributed locking
-- Local cache: `.fabrica/state.json` + `.fabrica/config.yaml`
-- Bootstrap: `fabrica setup` creates the S3 bucket and DynamoDB table via direct AWS SDK (not Cloud Control — bootstrapping the state store itself)
+## Build Commands
 
-**Resource management pattern:**
-```go
-CreateResource(TypeName, DesiredState)
-GetResource(TypeName, Identifier)
-UpdateResource(TypeName, Identifier, PatchDocument)  // JSON Patch
-DeleteResource(TypeName, Identifier)
-ListResources(TypeName)
+```bash
+go build ./...
+go vet ./...
+go test ./...                          # Windows (no -race)
+go test -race -coverprofile=coverage.out -covermode=atomic ./...  # Linux/macOS
+go test ./... -run TestName            # single test
+golangci-lint run ./...
+go tool cover -func=coverage.out       # coverage summary
 ```
-Orchestration layer handles: topological dependency resolution, plan/diff preview, rollback on partial failure, and tagging (`ManagedBy: fabrica` on all resources).
+
+CI runs lint + build + test cross-platform (ubuntu/windows/macos) on push/PR to main.
+
+## Architecture
+
+### Dependency Flow
+
+```
+cmd/* → internal/{config, state, cost, tags, prompt, cloud}
+                                                    ↓
+                                        internal/cloud/aws
+```
+
+`internal/cloud/*` never imports `internal/state`, `internal/cost`, or any `cmd/*`. Verify after changes to `internal/`:
+
+```bash
+go list -deps ./internal/cloud/...
+```
+
+### Package Responsibilities
+
+| Package | Purpose |
+|---------|---------|
+| `cmd/root` | Wires global flags (`--config`, `--verbose`, `--json`, `--dry-run`, `--yes`, `--profile`), initializes `globals.Store`, registers subcommands |
+| `cmd/globals` | `Runtime` (Config + Provider + ConfigPath), `Options`, `Store.Init()`, dependency injection types |
+| `cmd/{destroy,doctor,setup,configcmd,version}` | Subcommands; each `New()` accepts `RuntimeSource` + `OptionsSource` closures — no direct globals access |
+| `internal/config` | `Config` struct, Viper loading from `fabrica.yaml` (scoped here only), YAML serialization, defaults |
+| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `StateBackendDestroyer` |
+| `internal/cloud/aws` | AWS implementation registered via `init()` in `internal/cloud/registry.go`; wraps `cloudcontrol`, `s3`, `dynamodb`, `iam` SDK clients |
+| `internal/state` | `State`/`ModuleState`/`ModuleResource` types, `Backend` interface, S3+DynamoDB bootstrap, DynamoDB locking |
+| `internal/cost` | Cost estimator interface + Phase 0 estimators; registered by resource `TypeName` |
+| `internal/tags` | Tag injection helpers; `ManagedBy: fabrica` applied to all resources |
+| `internal/prompt` | `ConfirmExact` for interactive confirmation dialogs |
+| `internal/version` | Version constant |
+
+### Provider Registration
+
+`internal/cloud/aws/aws.go` registers the AWS provider via a blank-import side-effect (`_ "github.com/jpvelasco/fabrica/internal/cloud/aws"` in `cmd/root`). New providers follow the same `init()` pattern against `internal/cloud/registry.go`.
+
+### Config + State
+
+Config: `fabrica.yaml` (or `fabrica-<profile>.yaml` with `--profile`). State: S3 bucket (`fabrica-state-<account-id>`) + DynamoDB table (`fabrica-state-lock`) remote, with `.fabrica/state.json` local cache.
+
+## Architecture Decisions (Locked)
+
+- **IaC:** AWS Cloud Control API (`aws-sdk-go-v2/service/cloudcontrol`) — no Terraform, no Pulumi, no external binaries
+- **Module path:** `github.com/jpvelasco/fabrica`
+- **Config:** Viper + YAML — Viper scoped inside `internal/config` only; no logging library, `fmt.Printf`/`Println` only
+
+## Test Strategy
+
+The destroy command uses a two-package test approach — a pattern to follow for other commands as they are implemented:
+
+- `destroy_test.go` (`package destroy`) — white-box tests that call `command.run()` directly. Used for confirmation rejection paths, partial failures, and any behavior that requires access to unexported fields (e.g. the `confirm` injection seam).
+- `cobra_test.go` (`package destroy_test`) — black-box Cobra-layer tests that call `destroy.New(...) + ExecuteContext`. These exercise flag parsing (`--all`, `--dry-run`, `--yes`), command construction, and output. They build a minimal root command in the test to replicate the persistent-flag hierarchy (`--dry-run`, `--yes` live on root, not on destroy).
+
+## Conventions
+
+See `AGENTS.md` for the full coding conventions. Key additions over Ludus:
+- `mapstructure:` tags required on all config structs
+- `gofmt` only (no goimports/gofumpt)
+- Coverage target: 60%+ for `internal/*`; tests use mocked SDK interfaces — no real AWS calls
 
 ## Planned Command Structure
 
@@ -53,21 +108,7 @@ In scope: CLI skeleton, `fabrica setup` wizard, Perforce Helix Core (single-serv
 
 Out of scope for V1: workstations (NICE DCV), multi-region, CI/CD pipeline, web dashboard, multi-cloud, MCP server.
 
-## Ludus Integration
-
-Ludus's `ludus buildgraph` generates BuildGraph XML → Fabrica's Horde grid consumes it. Fabrica provisions deployment infrastructure → Ludus manages containers and GameLift fleets within it. Both tools share: YAML config conventions, `ManagedBy` tagging patterns, similar CLI UX patterns.
-
-## Build Commands
-
-_To be documented once Phase 0 scaffolding is complete. Expected:_
-```
-go build ./...
-go test ./...
-go test ./... -run TestName
-golangci-lint run
-```
-
-## Open Questions (Unresolved)
+## Open Questions
 
 - Horde vs. simpler custom job distribution for V1
 - Perforce licensing strategy for teams > 5 users

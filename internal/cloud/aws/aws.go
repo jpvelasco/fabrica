@@ -9,9 +9,14 @@ import (
 )
 
 type awsProvider struct {
-	cfg     *config.Config
-	awsCfg  awsConfig
-	clients resourceClients
+	cfg                      *config.Config
+	awsCfg                   awsConfig
+	clients                  resourceClients
+	loadConfig               stateBackendConfigLoader
+	newS3StateClient         stateBackendS3ClientFactory
+	newDynamoDBStateClient   stateBackendDynamoDBClientFactory
+	newBucketNotExistsWaiter stateBackendBucketWaiterFactory
+	newTableNotExistsWaiter  stateBackendTableWaiterFactory
 }
 
 type awsConfig struct {
