@@ -212,6 +212,35 @@ func TestDestroyTreatsMissingResourcesAsSuccess(t *testing.T) {
 	assertContains(t, out.String(), "DynamoDB lock table not found; skipping: fabrica-locks-test")
 }
 
+func TestDestroyContinuesWhenBucketIsAlreadyMissing(t *testing.T) {
+	var out bytes.Buffer
+	provider := &fakeProvider{bucketMissing: true}
+	cmd := command{
+		runtime: globals.Runtime{
+			Config:   destroyTestConfig(),
+			Provider: provider,
+		},
+		all:       true,
+		assumeYes: true,
+		out:       &out,
+	}
+
+	if err := cmd.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if provider.bucketDeleteCalls != 1 {
+		t.Fatalf("bucket delete calls = %d, want 1", provider.bucketDeleteCalls)
+	}
+	if provider.tableDeleteCalls != 1 {
+		t.Fatalf("table delete calls = %d, want 1", provider.tableDeleteCalls)
+	}
+	if !provider.deletedTable {
+		t.Fatal("table should be deleted when bucket is already missing")
+	}
+	assertContains(t, out.String(), "S3 state bucket not found; skipping: fabrica-state-test")
+	assertContains(t, out.String(), "deleted DynamoDB lock table: fabrica-locks-test")
+}
+
 func TestDestroyStopsBeforeTableWhenBucketDeleteFails(t *testing.T) {
 	var out bytes.Buffer
 	provider := &fakeProvider{bucketErr: cloud.ErrStateBucketNotEmpty}
@@ -316,6 +345,33 @@ func TestDestroyUnsupportedProviderFailsBeforeConfirmation(t *testing.T) {
 	assertContains(t, err.Error(), "provider unsupported does not support state backend destroy")
 }
 
+func TestDestroyIdentityFailureSkipsConfirmationAndDeletion(t *testing.T) {
+	var out bytes.Buffer
+	provider := &fakeProvider{identityErr: fmt.Errorf("identity unavailable")}
+	cmd := command{
+		runtime: globals.Runtime{
+			Config:   destroyTestConfig(),
+			Provider: provider,
+		},
+		all: true,
+		out: &out,
+		confirm: func(string, string) bool {
+			t.Fatal("confirm should not be called when identity resolution fails")
+			return false
+		},
+	}
+
+	err := cmd.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if provider.bucketDeleteCalls != 0 || provider.tableDeleteCalls != 0 {
+		t.Fatal("delete calls should not be made when identity resolution fails")
+	}
+	assertContains(t, err.Error(), "resolving identity")
+	assertContains(t, err.Error(), "identity unavailable")
+}
+
 func destroyTestConfig() *config.Config {
 	cfg := config.Defaults()
 	cfg.State.Bucket = "fabrica-state-test"
@@ -330,6 +386,7 @@ type fakeProvider struct {
 	deletedTable      bool
 	bucketMissing     bool
 	tableMissing      bool
+	identityErr       error
 	bucketErr         error
 	tableErr          error
 	bucketDeleteCalls int
@@ -341,6 +398,9 @@ func (f *fakeProvider) Name() string {
 }
 
 func (f *fakeProvider) Identity(ctx context.Context) (string, string, string, error) {
+	if f.identityErr != nil {
+		return "", "", "", f.identityErr
+	}
 	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
 }
 
