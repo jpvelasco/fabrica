@@ -1,8 +1,14 @@
 # Perforce Module Design
 
 **Date:** 2026-05-19  
-**Status:** Approved  
+**Status:** Approved — revised scope  
 **Scope:** First PR — `fabrica perforce create` (+ `--dry-run`) and `fabrica perforce status`
+
+---
+
+## Revision Note
+
+First-PR scope narrowed from original design. IAM role/instance profile creation, SSM Parameter Store for admin password, and S3 journal backup are deferred to later PRs. This keeps the first slice focused on validating the Cloud Control provisioning path, state tracking, and cost estimation without introducing IAM orchestration complexity.
 
 ---
 
@@ -24,19 +30,27 @@ cmd/perforce/
 internal/perforce/
     config.go                 # PerforceConfig struct (maps to fabrica.yaml perforce: section)
     plan.go                   # CreatePlan type: resolved names, resource specs, cost inputs
-    resources.go              # resource definitions: SG, instance, DLM (TypeNames + desired state builders)
+    resources.go              # desired-state builders for SG, instance, DLM
     userdata.go               # cloud-init script generation (Go template)
-    userdata_test.go          # pure string verification tests
-    cost.go                   # cost estimators registered against cost.Global via init()
+    userdata_test.go          # pure string verification — no AWS
+    cost.go                   # estimators registered against cost.Global via init()
     cost_test.go
     plan_test.go
 ```
 
-`internal/perforce` has no AWS SDK imports. It produces plans and user data scripts; the AWS layer (`internal/cloud/aws`) executes them.
+`internal/perforce` has no AWS SDK imports. It produces plans and scripts; `internal/cloud/aws` executes them.
 
 ---
 
 ## 2. First Deliverable Scope
+
+### Cloud Control resources
+
+| TypeName | Purpose |
+|---|---|
+| `AWS::EC2::SecurityGroup` | Allow TCP 1666 inbound; restrict SSH to admin CIDR or disable |
+| `AWS::EC2::Instance` | Helix Core server; EBS data volume attached at launch |
+| `AWS::DLM::LifecyclePolicy` | Daily EBS snapshot, retain 7 days |
 
 ### `fabrica perforce create`
 
@@ -44,10 +58,10 @@ internal/perforce/
 
 | Flag | Default | Description |
 |---|---|---|
-| `--dry-run` | false | Print plan + cost estimate, no AWS calls |
+| `--dry-run` | false | Print plan + cost estimate; zero AWS calls |
 | `--yes` | false | Skip confirmation prompt |
 | `--instance-type` | `m5.xlarge` | EC2 instance type |
-| `--version` | `"2024.2"` (pinned at release) | Helix Core version: `"latest"`, `"2024.2"`, or `"2024.2/2659294"` |
+| `--version` | `"2024.2"` | Helix Core version: `"latest"`, `"2024.2"`, or `"2024.2/2659294"` |
 | `--volume-size` | `500` | EBS data volume size in GiB |
 
 Version precedence (highest to lowest):
@@ -55,7 +69,7 @@ Version precedence (highest to lowest):
 2. `perforce.version` in `fabrica.yaml`
 3. Built-in default (`"2024.2"`)
 
-**Dry-run output (example):**
+**Dry-run output:**
 
 ```
 Perforce Helix Core (dry run)
@@ -86,91 +100,103 @@ Confidence: medium
 Run without --dry-run to proceed.
 ```
 
-**Apply flow (sequential, each step gated on previous):**
+**Apply flow:**
 
 1. Resolve identity (account, region) via `provider.Identity`
-2. Build `CreatePlan` from config + flags (includes VPC resolution if not configured)
+2. Build `CreatePlan` from config + flags (resolves default VPC if `vpcId`/`subnetId` not configured)
 3. Print plan summary
-4. Check state — abort if `"perforce"` module already exists in state
-5. Confirm: exact phrase `"create perforce <account>"` (unless `--yes`)
-6. Acquire state lock (`"perforce"` lock ID)
-7. Create SSM Parameter (admin password, SecureString) → record identifier
-8. Create IAM Role + InstanceProfile → poll until active, record identifiers
-9. Create Security Group → poll until active, record identifier
-10. Create EC2 Instance (user data embedded, instance profile attached) → poll until running, record identifier
-11. Create DLM Lifecycle Policy → record identifier
-12. Write `ModuleState` entry: module `"perforce"`, status `"provisioning"`, all 6 resources
-13. Release lock
-14. Print connection info + readiness note
+4. Check state — abort cleanly if `"perforce"` module already exists
+5. Confirm: exact phrase `"create perforce <account>"` unless `--yes`
+6. Acquire state lock (`"perforce"`)
+7. Generate admin password (`crypto/rand`, 24-char alphanumeric); write to `.fabrica/perforce-credentials.yaml` (mode 0600); print once to terminal
+8. Create Security Group → poll until active; record identifier in state
+9. Create EC2 Instance (user data embedded) → poll until running; record identifier in state
+10. Create DLM Lifecycle Policy; record identifier in state
+11. Write `ModuleState`: module `"perforce"`, status `"provisioning"`, all 3 resource identifiers
+12. Release lock
+13. Print connection info + readiness note
 
-**Post-create output:**
+**Admin password handling:** No SSM, no IAM in this PR. The password is generated locally, stored in `.fabrica/perforce-credentials.yaml` (gitignored, mode 0600), and embedded in user data. This is a bootstrap credential — users are expected to rotate it after first login. A warning is printed at create time:
+
 ```
-Perforce Helix Core provisioned.
-
-  Instance ID:   i-0abc123def456789
-  P4PORT:        ssl:10.0.1.42:1666
-  Status:        provisioning (Helix Core setup in progress, ~3 min)
-
-Next steps:
-  fabrica perforce status      Check readiness
-  fabrica perforce status -w   Wait until ready (polls until Helix Core responds)
+Admin credentials written to .fabrica/perforce-credentials.yaml
+Keep this file secure. Rotate the password after first login.
 ```
 
-**Already-exists behavior:** If state shows `"perforce"` module already exists, print:
+The password appears in user data (EC2 metadata). This is a known V1 limitation; SSM-based secret delivery is the V2 improvement once IAM provisioning is implemented.
+
+**Already-exists behavior:**
+
 ```
 Perforce is already provisioned. Run 'fabrica perforce status' to check health.
 Use 'fabrica perforce destroy' to remove it first.
 ```
+
 Exit cleanly (no error).
+
+**Post-create output:**
+
+```
+Perforce Helix Core provisioned.
+
+  Instance ID:   i-0abc123def456789
+  P4PORT:        tcp:10.0.1.42:1666
+  Status:        provisioning (Helix Core setup in progress, ~3 min)
+
+  Admin credentials: .fabrica/perforce-credentials.yaml
+  Warning: Rotate the admin password after first login.
+
+Next steps:
+  fabrica perforce status      Check readiness
+```
+
+Note: P4PORT uses plain TCP in this PR (not SSL). SSL requires cert generation in user data which adds complexity. TCP is acceptable for V1 evaluation use; the doc string on the command notes this limitation explicitly.
 
 ### `fabrica perforce status`
 
-Reads the `"perforce"` module from state, then queries AWS for current resource state.
+Reads the `"perforce"` module from state, then calls `provider.Resources().Get()` for the instance.
 
-**Output (provisioning):**
+**Output (provisioning — instance running, user data still executing):**
+
 ```
 Perforce Helix Core
-  Status:          provisioning
-  Instance:        i-0abc123def456789  (running)
-  Instance type:   m5.xlarge
-  Private IP:      10.0.1.42
-  P4PORT:          ssl:10.0.1.42:1666
-  Helix Core:      setting up... (check back in ~2 min)
-  Snapshots:       daily (retain 7)
+  Status:        provisioning
+  Instance ID:   i-0abc123def456789  (running)
+  Instance type: m5.xlarge
+  Private IP:    10.0.1.42
+  P4PORT:        tcp:10.0.1.42:1666
+  Helix Core:    setting up... (~3 min from launch)
+  Snapshots:     daily (retain 7)
 ```
 
-**Output (ready):**
+**Output (ready — detected via TCP port probe):**
+
 ```
 Perforce Helix Core
-  Status:          ready
-  Instance:        i-0abc123def456789  (running)
-  Instance type:   m5.xlarge
-  Private IP:      10.0.1.42
-  P4PORT:          ssl:10.0.1.42:1666
-  Helix Core:      2024.2/2659294  (responding)
-  Snapshots:       daily (retain 7)
-  Last snapshot:   2026-05-18 03:00 UTC
+  Status:        ready
+  Instance ID:   i-0abc123def456789  (running)
+  Instance type: m5.xlarge
+  Private IP:    10.0.1.42
+  P4PORT:        tcp:10.0.1.42:1666
+  Helix Core:    2024.2 (responding)
+  Snapshots:     daily (retain 7)
 ```
 
 **Output (not provisioned):**
+
 ```
 Perforce is not provisioned. Run 'fabrica perforce create' to set it up.
 ```
 
-"Ready" detection: SSM `SendCommand` to run `p4 -p ssl:1666 info` and check exit code 0. Status transitions: `provisioning` → `ready` when the command succeeds. State is updated on each `status` call when a transition is detected.
+**Readiness detection without SSM:** Status transitions from `provisioning` to `ready` when a TCP dial to port 1666 succeeds (via `net.DialTimeout`). This is a lightweight probe from the CLI machine — it requires network connectivity to the instance's private IP, which is typical in a studio environment. If the CLI machine cannot reach the instance IP (e.g. no VPN), status shows `provisioning` with a note:
 
-**`--wait` / `-w` flag:** Poll every 15 seconds until status is `ready` (or error). Max wait: 10 minutes.
+```
+  Helix Core:    unreachable from this machine (check VPN/network)
+```
 
-### Cloud Control resources (V1)
+State is updated to `"ready"` when the probe succeeds; status always re-probes.
 
-| TypeName | Purpose | Notes |
-|---|---|---|
-| `AWS::SSM::Parameter` | Admin password (SecureString) | Created before instance |
-| `AWS::IAM::Role` | Instance profile role with SSM permissions | Required for status readiness probe |
-| `AWS::IAM::InstanceProfile` | Attaches role to instance | Created before instance |
-| `AWS::EC2::SecurityGroup` | Allow TCP 1666 inbound, restrict SSH to admin CIDR | VPC-scoped |
-| `AWS::EC2::Instance` | Helix Core server with data EBS volume | User data embedded |
-| `AWS::DLM::LifecyclePolicy` | Daily EBS snapshot, retain 7 days | Targets instance by tag |
+**`--wait` / `-w` flag:** Poll every 15 seconds until `ready` or until 10 minutes elapses.
 
 ---
 
@@ -178,226 +204,233 @@ Perforce is not provisioned. Run 'fabrica perforce create' to set it up.
 
 ### User data / cloud-init
 
-`userdata.go` defines a `Script` type and a `Generate(cfg UserDataConfig) (string, error)` function. `UserDataConfig` captures everything needed to render the script: version string, server ID, SSM parameter name for the admin password, data directory paths.
+`userdata.go` exposes a `Generate(cfg UserDataConfig) (string, error)` function that renders a `text/template`. The template produces a `#!/bin/bash` script with `set -euo pipefail`.
 
-The script is a Go `text/template`. Key sections:
+```go
+type UserDataConfig struct {
+    Version      string // "latest", "2024.2", or "2024.2/2659294"
+    ServerID     string // e.g. "fabrica-perforce"
+    AdminPass    string // generated by create command, embedded in script
+    DataDevice   string // e.g. "/dev/nvme1n1"
+    DataMount    string // "/hxdepots"
+}
+```
+
+Key script sections:
 
 ```bash
 #!/bin/bash
 set -euo pipefail
 
-# 1. Add Perforce package repo (Ubuntu 22.04 LTS)
+# Add Perforce package repo (Ubuntu 22.04 LTS)
 wget -qO - https://package.perforce.com/perforce.pubkey | apt-key add -
 add-apt-repository "deb http://package.perforce.com/apt/ubuntu jammy release"
 apt-get update -qq
 
-# 2. Install Helix Core
+# Install Helix Core
 {{ if eq .Version "latest" -}}
 apt-get install -y helix-p4d
 {{- else -}}
-apt-get install -y helix-p4d={{ .Version }}
+apt-get install -y "helix-p4d={{ .Version }}"
 {{- end }}
 
-# 3. Format and mount data volume
-mkfs.ext4 /dev/nvme1n1
-mkdir -p /hxdepots /hxlogs /hxmetadata
-mount /dev/nvme1n1 /hxdepots
-echo "/dev/nvme1n1 /hxdepots ext4 defaults,nofail 0 2" >> /etc/fstab
+# Format and mount data volume
+mkfs.ext4 {{ .DataDevice }}
+mkdir -p {{ .DataMount }} /hxlogs /hxmetadata
+mount {{ .DataDevice }} {{ .DataMount }}
+echo "{{ .DataDevice }} {{ .DataMount }} ext4 defaults,nofail 0 2" >> /etc/fstab
 
-# 4. Retrieve admin password from SSM (never in user data plaintext)
-ADMIN_PASS=$(aws ssm get-parameter \
-  --name "{{ .SSMParamName }}" \
-  --with-decryption \
-  --query Parameter.Value \
-  --output text \
-  --region {{ .Region }})
-
-# 5. Configure Helix Core
+# Configure Helix Core
 /opt/perforce/sbin/configure-helix-p4d.sh \
   -n {{ .ServerID }} \
-  -p ssl:1666 \
-  -r /hxdepots \
+  -p 1666 \
+  -r {{ .DataMount }} \
   -u admin \
-  --super-passwd "$ADMIN_PASS" \
+  --super-passwd "{{ .AdminPass }}" \
   -y
 
-# 6. Enable and start
+# Start service
 systemctl enable helix-p4d
 systemctl start helix-p4d
 ```
 
-The admin password is generated at plan time in Go (`crypto/rand`, 24-char alphanumeric), stored as `AWS::SSM::Parameter` (SecureString) *before* instance creation, and retrieved by the script at first boot. This means the SSM parameter creation is step 0 in the apply flow, before the Security Group.
-
-`userdata_test.go` verifies: version branch renders correctly for `latest` vs pinned, SSM parameter name appears exactly once in the output, no literal password in the script, mount point `/hxdepots` present.
+The admin password in user data is a V1 limitation documented explicitly. V2 replaces it with SSM Parameter Store retrieval once IAM provisioning is added.
 
 ### Version handling
 
-`PerforceConfig.Version` is a `string`. Validation in `CreatePlan`:
+Defined in `internal/perforce/config.go`:
 
-- `"latest"` → pass through to template
-- `"YYYY.N"` (e.g. `"2024.2"`) → validate format with regexp `^\d{4}\.\d+$`, pass through
-- `"YYYY.N/NNNNNN"` (e.g. `"2024.2/2659294"`) → validate format, pass through to apt as exact version constraint
-
-Invalid format → error at plan time, before any AWS call.
-
-Default version constant defined in `internal/perforce/config.go`:
 ```go
 const DefaultHelixVersion = "2024.2"
 ```
 
-### Create flow and state locking
+Version validation in `NewCreatePlan`:
+- `"latest"` → accepted, renders without version pin
+- `^\d{4}\.\d+$` (e.g. `"2024.2"`) → accepted, renders as `helix-p4d=2024.2`
+- `^\d{4}\.\d+/\d+$` (e.g. `"2024.2/2659294"`) → accepted, renders as `helix-p4d=2024.2/2659294`
+- Anything else → error at plan time before any AWS call
 
-The lock key is `"perforce"`. `state.LockStore.Acquire` is called after confirmation and before the first AWS mutation. If acquisition fails (another `fabrica` invocation is in progress), print:
-```
-Another Fabrica operation is in progress. Try again in a moment.
-```
-and exit non-zero.
+### State tracking
 
-Resource identifiers are written to state incrementally: after each `Create` + poll completes, `state.UpsertModule` is called with the resources created so far and status `"provisioning"`. If the create command is interrupted mid-flight, the next run detects a partial `"provisioning"` state and reports:
+After each successful Cloud Control create + poll, `state.UpsertModule` is called with resources created so far and status `"provisioning"`. This means partial state is written on interruption — the next `create` run detects it and prints a clear message rather than attempting a blind re-create.
+
+`ModuleResource` entries for this module:
+
+| TypeName | Identifier |
+|---|---|
+| `AWS::EC2::SecurityGroup` | `sg-xxxxxxxx` |
+| `AWS::EC2::Instance` | `i-xxxxxxxx` |
+| `AWS::DLM::LifecyclePolicy` | `policy-xxxxxxxx` |
+
+`status` reads these identifiers from state to call `provider.Resources().Get()`.
+
+### VPC resolution
+
+`PerforceConfig` has optional `VPCId` and `SubnetId` fields. If unset, `NewCreatePlan` calls a `VPCResolver` interface (not raw AWS SDK) injected into the function:
+
+```go
+type VPCResolver interface {
+    ResolveDefaultVPC(ctx context.Context) (vpcID, subnetID string, err error)
+}
 ```
-Perforce provisioning is incomplete (2 of 3 resources created).
-Run 'fabrica perforce create --resume' to continue, or 'fabrica perforce destroy' to clean up.
-```
-`--resume` is a stretch goal for this PR; the detection and clear message are not.
+
+`awsProvider` implements this via a direct `ec2:DescribeVpcs` SDK call (not Cloud Control — VPC describe is not a mutating operation). The interface keeps `internal/perforce` clean of AWS SDK imports.
 
 ### Cost estimation
 
 `internal/perforce/cost.go` registers three estimators via `init()`:
 
 ```go
-func init() {
-    cost.Global.Register("AWS::EC2::Instance", instanceEstimator{})
-    cost.Global.Register("AWS::EC2::Volume", volumeEstimator{})
-    cost.Global.Register("AWS::DLM::LifecyclePolicy", dlmEstimator{})
-}
+cost.Global.Register("AWS::EC2::Instance", instanceEstimator{})
+cost.Global.Register("AWS::EC2::Volume",   volumeEstimator{})
+cost.Global.Register("AWS::DLM::LifecyclePolicy", dlmEstimator{})
 ```
 
-`instanceEstimator` accepts a `Properties` map (decoded from `Resource.DesiredState`) and looks up the instance type against a hard-coded pricing table for `us-east-1` (on-demand Linux). For other regions, confidence drops to `Medium` with a note. The table covers the instance types we recommend: `m5.large`, `m5.xlarge`, `m5.2xlarge`, `r5.xlarge`, `r5.2xlarge`.
+`instanceEstimator` uses a hard-coded on-demand price table for `us-east-1` covering: `m5.large` ($70.08), `m5.xlarge` ($140.16), `m5.2xlarge` ($280.32), `r5.xlarge` ($181.44), `r5.2xlarge` ($362.88). For other regions: `Medium` confidence with a note. For unlisted instance types: error (not a panic).
 
-`volumeEstimator` uses `$0.08/GiB/month` for `gp3` (us-east-1). `dlmEstimator` returns `$5.00 / month` at `Medium` confidence (snapshot storage cost depends on data change rate).
-
-Cost resources in `CreatePlan` carry a `Properties map[string]string` that the estimators read (e.g. `"InstanceType": "m5.xlarge"`, `"VolumeSize": "500"`).
+`volumeEstimator` uses `$0.08/GiB/month` for `gp3`.  
+`dlmEstimator` returns `$5.00/month` at `Medium` confidence (snapshot cost depends on data change rate).
 
 ---
 
 ## 4. Architecture & Integration Points
 
-### Parts of existing architecture exercised for the first time
+### What this PR wires for real
 
-| Component | How Perforce exercises it |
-|---|---|
-| `cloudcontrol.go` Create stub | First real `CreateResource` call — must implement polling |
-| `cloudcontrol.go` Get stub | Used by `status` to fetch current instance state |
-| `poll.go` WaitForRequest | Must be fully implemented; Perforce create hangs otherwise |
-| `state.UpsertModule` | First module beyond the Phase 0 bootstrap resources |
-| `cost.Global.Register` (Phase 1) | First registrations beyond the two Phase 0 entries |
-| `config.Perforce any` | Replaced with typed `PerforceConfig` — first config struct extension |
+| Component | Current state | What this PR does |
+|---|---|---|
+| `cloudcontrol.go` Create | TODO stub | Fully implements `CreateResource` + token extraction |
+| `cloudcontrol.go` Get | TODO stub | Implements `GetResource` for instance/SG state queries |
+| `poll.go` WaitForRequest | Unimplemented | Implements exponential backoff on `GetResourceRequestStatus` |
+| `state.UpsertModule` | Schema exists | First use by a provisioning command |
+| `cost.Global.Register` | 2 Phase 0 entries | First Phase 1 module adds 3 more |
+| `config.Perforce any` | Untyped placeholder | Replaced with typed `PerforceConfig` |
 
-### Areas that need extension
+### Extensions needed
 
-**`cloudcontrol.go` Create response → identifier extraction.** Cloud Control's `CreateResource` returns a progress token. After polling completes, `GetResourceRequestStatus` returns the resource identifier. The `ResourceClient.Create(*Resource)` signature fills in `r.Identifier` on success. We implement this fully.
+**`poll.go`:** Exponential backoff, 2s start → 30s ceiling, context-cancellable, configurable total timeout (default 10 min). Must distinguish terminal failure (`FAILED`) from in-progress (`IN_PROGRESS`) and success (`SUCCESS`). Tested independently.
 
-**`poll.go` WaitForRequest.** Implement exponential backoff starting at 2 seconds, doubling to a ceiling of 30 seconds, total timeout configurable (default 10 minutes for instance creation). Respects `context.Context` cancellation.
+**Cloud Control `CreateResource` response:** The resource identifier arrives via `GetResourceRequestStatus.ResourceModel` after polling, not in the initial response. `ResourceClient.Create(*Resource)` fills in `r.Identifier` on completion. No interface change needed — this is the intended design.
 
-**VPC resolution.** `PerforceConfig` accepts optional `VPCId` and `SubnetId`. If unset, the AWS provider resolves the default VPC via `ec2:DescribeVpcs` (a direct SDK call, not Cloud Control). This is added to `awsProvider` as a `ResolveDefaultVPC(ctx) (vpcID, subnetID string, err error)` method — similar to how `StateBackendChecker` was added. `internal/perforce` never calls the SDK directly; it gets VPC IDs through the `CreatePlan` function which accepts a `VPCResolver` interface.
+**`awsProvider.ResolveDefaultVPC`:** New method on `awsProvider`, satisfies `perforce.VPCResolver`. Direct `ec2:DescribeVpcs` SDK call with `Filters: [{Name: "isDefault", Values: ["true"]}]`. Not behind Cloud Control.
 
-**SSM parameter creation.** Admin password stored in SSM before instance launch. Needs a new `SSMClient` in the AWS provider, or direct use of `AWS::SSM::Parameter` via Cloud Control. We use Cloud Control for consistency.
-
-**State `GetModuleResource` helper.** The `status` command needs to find a specific resource in the module state (e.g. the instance identifier). Add a `(s *State) GetModuleResource(module, typeName string) (*ModuleResource, bool)` helper to `internal/state/state.go`.
-
-### Dependency flow stays clean
-
-`internal/perforce` only imports `internal/config`, `internal/cost`, `internal/cloud` (interface), and `internal/state` (types). No AWS SDK imports. `cmd/perforce/create` imports `internal/perforce` and `internal/cloud`. The one-way flow is preserved.
+**`state.GetModuleResource`:** New helper on `*State`:
+```go
+func (s *State) GetModuleResource(module, typeName string) (*ModuleResource, bool)
+```
+Used by `status` to look up the instance identifier without scanning the slice manually. Small addition to `internal/state/state.go`.
 
 ---
 
 ## 5. Testing Strategy
 
-### `internal/perforce` (no AWS, pure logic)
+### `internal/perforce` — zero AWS, pure logic
 
-**`plan_test.go`** — table-driven:
-- Default config produces correct resource names (`fabrica-perforce-sg`, `fabrica-perforce`, `fabrica-perforce-snapshots`)
-- Custom instance type propagates to plan
-- Version validation: `"latest"` accepted, `"2024.2"` accepted, `"2024.2/2659294"` accepted, `"bad"` returns error
-- Cost resources match expected TypeNames and properties
+**`plan_test.go`** (table-driven):
+- Default config produces correct resource names
+- Custom instance type propagates correctly
+- Version strings validated: `latest`, `2024.2`, `2024.2/2659294` accepted; `bad`, `""`, `2024` rejected
+- Cost resource TypeNames match expected values
 
-**`userdata_test.go`** — pure string:
-- `latest` version renders without version pin in apt command
-- Pinned version renders `helix-p4d=2024.2` in apt command
-- SSM parameter name appears in script
-- No literal password string in output
-- `/hxdepots` mount present
+**`userdata_test.go`** (string verification):
+- `latest` renders without version pin in apt command
+- Pinned version renders `helix-p4d=2024.2`
+- `helix-p4d=2024.2/2659294` for full version string
+- Admin password appears in script exactly once
+- Mount point `/hxdepots` present
+- `set -euo pipefail` present
 
 **`cost_test.go`**:
-- `m5.xlarge` produces `$140.16/month` at `High` confidence
-- `gp3 500 GiB` produces `$40.00/month` at `High` confidence
-- DLM produces `Medium` confidence
-- Unknown instance type returns error (not a panic)
+- `m5.xlarge` → `$140.16/month`, `High`
+- `gp3 500 GiB` → `$40.00/month`, `High`
+- DLM → `Medium` confidence
+- Unknown instance type → error (not panic)
+- Estimators registered only once (duplicate registration panics — verify via recover in test)
 
 ### `cmd/perforce/create`
 
 **`create_test.go`** (`package create`) — white-box via `command.run()`:
-- Dry-run: zero `ResourceClient.Create` calls, output contains plan fields
-- Already-exists: state has `"perforce"` module → clean exit with informative message
-- Identity failure: aborts before any create call
-- Apply happy path: creates SG → Instance → DLM in order, state written, lock released
-- Partial failure (Instance create fails): SG identifier in state, error returned, lock released
-- Confirmation rejection: no create calls made
+- Dry-run: zero `ResourceClient.Create` calls; output contains account, region, resource names, cost total
+- Already-exists: state has `"perforce"` module → clean exit, correct message, zero AWS calls
+- Identity failure: aborts before any AWS call
+- Happy path: creates SG → Instance → DLM in order; state written with all 3 identifiers; lock acquired and released
+- Partial failure (Instance create fails): SG identifier recorded in state; error returned; lock released
+- Confirmation rejection: zero create calls
 
-**`cobra_test.go`** (`package create_test`) — Cobra-layer:
-- `--dry-run` zero AWS calls
+**`cobra_test.go`** (`package create_test`) — Cobra-layer, same pattern as `cmd/destroy`:
+- `--dry-run` produces plan output, zero AWS calls
 - `--yes` skips confirmation and executes
-- `--version latest` accepted, `--version bad` returns error before AWS
-- Missing provider handled gracefully
+- `--version latest` accepted
+- `--version bad` returns error before AWS
+- Missing provider → clean exit with informative message
 
 ### `cmd/perforce/status`
 
 **`status_test.go`** — white-box:
-- Not-provisioned: outputs creation prompt
-- Provisioning state: outputs instance ID, IP, "setting up" message
-- Ready state: outputs all fields including Helix Core version
-- AWS error on Get: reports error clearly
+- Not provisioned → "not provisioned" message, clean exit
+- State shows `provisioning`, instance running → correct output fields
+- TCP probe succeeds → status updated to `ready` in output
+- `Get` returns error → error reported clearly, non-zero exit
 
-### Mocking strategy
+### `poll.go`
 
-All `cmd/` tests use a `fakeResourceClient` implementing `cloud.ResourceClient`. It tracks calls by TypeName, controls return values (success, error, specific identifiers). The `fakeProvider` from destroy tests is the template. No real AWS credentials or network calls in any unit test.
+**`poll_test.go`** (new, in `internal/cloud/aws`):
+- `SUCCESS` on first poll → returns immediately
+- `IN_PROGRESS` then `SUCCESS` → correct number of polls
+- `FAILED` → returns error with failure reason
+- Context cancellation mid-poll → returns context error
+- Backoff ceiling respected (never exceeds 30s interval)
 
 ---
 
-## 6. Risks and Open Questions
+## 6. Risks
+
+### Password in user data (V1 limitation)
+
+The admin password is embedded in EC2 user data. User data is accessible to anyone with `ec2:DescribeInstanceAttribute` on the instance. This is a known, documented limitation of this PR. Mitigation in V1: IAM permissions for Fabrica's AWS user should restrict who can call `DescribeInstanceAttribute`. Full mitigation (SSM Parameter Store) is V2 once IAM provisioning lands.
+
+Fabrica prints a clear warning at create time and in `status`:
+
+```
+Warning: Admin password is stored in EC2 user data. Restrict DescribeInstanceAttribute
+access and rotate the password after first login. See 'fabrica perforce status' for details.
+```
 
 ### Cloud Control for `AWS::EC2::Instance`
 
-Cloud Control supports `AWS::EC2::Instance` but has known gaps: user data is only applied at creation (cannot be updated via patch), and some instance-level attributes require instance stop/start cycles that Cloud Control doesn't model well. For V1 (create-only, no updates), this is acceptable. If future phases need in-place instance updates (e.g. resize), we may fall back to direct `ec2` SDK calls behind the same `ResourceClient` interface — callers don't change.
+Cloud Control supports EC2 instance creation but is known to be slower and occasionally less reliable than direct EC2 SDK calls for instance management. For V1 create-only flow, this is acceptable risk. The `poll.go` implementation must handle transient errors (throttling, `IN_PROGRESS` loops) gracefully.
 
-**Mitigation:** Keep the `cloud.ResourceClient` interface clean. The AWS provider can route specific TypeNames to direct SDK implementations without changing the interface.
+If Cloud Control proves unreliable for EC2 specifically during implementation, the fallback is a direct `ec2:RunInstances` call behind the same `ResourceClient.Create` interface — `internal/perforce` changes nothing, only `internal/cloud/aws` changes routing for `AWS::EC2::Instance`.
 
-### Cloud Control polling reliability
+### TCP readiness probe requires network access
 
-Cloud Control's async model means `CreateResource` returns a token and we poll `GetResourceRequestStatus`. In practice, EC2 instance creation takes 60-120 seconds; the polling loop must handle transient errors (throttling, network blips) without failing. The exponential backoff in `poll.go` must be robust.
+`fabrica perforce status` probes TCP 1666 from the CLI machine. In a studio environment with VPN this is standard. For users running Fabrica from outside the VPC (e.g. from a laptop with no VPN), the probe will time out and status will show `unreachable`. This is informative, not an error — the instance may still be ready. Documented behavior, not a blocker.
 
-**Mitigation:** Implement `poll.go` with context cancellation, exponential backoff (2s → 30s ceiling), and clear timeout errors. Test the backoff logic independently.
+### Default VPC security posture
 
-### Default VPC assumption
+Using the default VPC places the instance in a subnet that may have internet access. For evaluation this is acceptable. The dry-run output includes a note:
 
-Using the default VPC is fine for evaluation but has security implications (public subnets in the default VPC). V1 documentation must be clear: "Default VPC is suitable for evaluation. Production deployments should configure a dedicated VPC with private subnets."
-
-### Helix Core `configure-helix-p4d.sh` availability
-
-The Perforce-provided setup script (`configure-helix-p4d.sh`) is included with the `helix-p4d` package. Its CLI arguments and behavior should be treated as a dependency. We should pin to an Ubuntu LTS release (22.04 Jammy) to avoid unexpected package repository changes.
-
-### Status "ready" detection via SSM
-
-`fabrica perforce status` checks readiness by running `p4 -p ssl:1666 info` via SSM Run Command. This requires:
-- Instance has an IAM instance profile with `ssm:SendCommand` permission
-- SSM agent is running on the instance (installed by default on Ubuntu 22.04 LTS AMIs)
-
-The instance profile is a fourth resource not listed in the main resources table: `AWS::IAM::Role` + `AWS::IAM::InstanceProfile`. These need to be created before the instance. This is a gap in the initial scope list that must be resolved during implementation — either add them as tracked resources or use a pre-existing instance profile from config.
-
-**Decision needed before implementation:** Create IAM role/profile as part of `perforce create` (adds two more Cloud Control resources and IAM permissions), or require a pre-created instance profile ARN in `PerforceConfig`. Recommendation: create it as part of `perforce create` for zero-friction setup. This adds `AWS::IAM::Role` and `AWS::IAM::InstanceProfile` to the Cloud Control resource list.
-
-### Resolved decisions
-
-1. **IAM instance profile**: Created via Cloud Control as part of `perforce create`. Added to resource table above.
-2. **Ubuntu AMI**: SSM Parameter Store lookup (`/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id`) at plan time, with a fallback table for the regions Fabrica explicitly supports. This keeps AMI IDs current without requiring manual maintenance.
-3. **P4PORT protocol**: SSL from day one. Plain TCP is not offered — it would be a security regression relative to the CGD Toolkit and undermines Fabrica's differentiation. SSL cert is self-signed and generated by `configure-helix-p4d.sh` during first boot.
+```
+  VPC:          default (vpc-xxxxxxxx)
+  Note: Default VPC used. For production, configure a dedicated VPC with private subnets.
+```
