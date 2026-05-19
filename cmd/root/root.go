@@ -10,6 +10,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/destroy"
 	"github.com/jpvelasco/fabrica/cmd/doctor"
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/perforce"
 	"github.com/jpvelasco/fabrica/cmd/setup"
 	"github.com/jpvelasco/fabrica/cmd/version"
 	_ "github.com/jpvelasco/fabrica/internal/cloud/aws"
@@ -56,6 +57,7 @@ func New(out io.Writer) *cobra.Command {
 	cmd.AddCommand(setup.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(destroy.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(configcmd.New(runtimeSource, out))
+	cmd.AddCommand(perforce.New(runtimeSource, optionsSource, out))
 
 	return cmd
 }

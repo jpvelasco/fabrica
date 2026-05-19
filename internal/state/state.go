@@ -84,6 +84,31 @@ func (s *State) AddOp(module, action string, count int) {
 	s.Updated = now
 }
 
+// GetModule returns the module state for the given name, or nil if absent.
+func (s *State) GetModule(name string) *ModuleState {
+	for i := range s.Modules {
+		if s.Modules[i].Name == name {
+			return &s.Modules[i]
+		}
+	}
+	return nil
+}
+
+// GetModuleResource returns the first resource matching typeName within the
+// named module, or (nil, false) if the module or resource is not found.
+func (s *State) GetModuleResource(module, typeName string) (*ModuleResource, bool) {
+	m := s.GetModule(module)
+	if m == nil {
+		return nil, false
+	}
+	for i := range m.Resources {
+		if m.Resources[i].TypeName == typeName {
+			return &m.Resources[i], true
+		}
+	}
+	return nil, false
+}
+
 // ModuleCount returns the total number of resources recorded across all modules.
 func (s *State) ModuleCount() int {
 	n := 0
