@@ -26,6 +26,17 @@ go tool cover -func=coverage.out       # coverage summary
 
 CI runs lint + build + test cross-platform (ubuntu/windows/macos) on push/PR to main.
 
+## Git Hooks
+
+Hooks live in `.githooks/` (tracked). Activate once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+- **pre-commit**: runs `gofmt -l` and `go vet` on staged Go files
+- **commit-msg**: enforces Conventional Commits (`feat|fix|refactor|test|docs|chore|perf|ci|build`)
+
 ## Architecture
 
 ### Dependency Flow

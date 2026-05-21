@@ -50,12 +50,21 @@ func (c *Config) YAML() ([]byte, error) {
 }
 
 type Config struct {
-	Cloud    Cloud `mapstructure:"cloud" yaml:"cloud"`
-	State    State `mapstructure:"state" yaml:"state"`
-	Perforce any   `mapstructure:"perforce" yaml:"perforce"`
-	Horde    any   `mapstructure:"horde" yaml:"horde"`
-	CI       any   `mapstructure:"ci" yaml:"ci"`
-	Cost     any   `mapstructure:"cost" yaml:"cost"`
+	Cloud    Cloud          `mapstructure:"cloud"    yaml:"cloud"`
+	State    State          `mapstructure:"state"    yaml:"state"`
+	Perforce PerforceConfig `mapstructure:"perforce" yaml:"perforce"`
+	Horde    any            `mapstructure:"horde"    yaml:"horde"`
+	CI       any            `mapstructure:"ci"       yaml:"ci"`
+	Cost     any            `mapstructure:"cost"     yaml:"cost"`
+}
+
+// PerforceConfig holds the perforce: section of fabrica.yaml.
+type PerforceConfig struct {
+	Version      string `mapstructure:"version"      yaml:"version"`
+	InstanceType string `mapstructure:"instanceType" yaml:"instanceType"`
+	VolumeSize   int    `mapstructure:"volumeSize"   yaml:"volumeSize"`
+	VPCId        string `mapstructure:"vpcId"        yaml:"vpcId"`
+	SubnetId     string `mapstructure:"subnetId"     yaml:"subnetId"`
 }
 
 type Cloud struct {
@@ -77,19 +86,19 @@ type State struct {
 }
 
 type fileConfig struct {
-	Cloud    Cloud `yaml:"cloud"`
-	State    State `yaml:"state"`
-	Perforce any   `yaml:"perforce"`
-	Horde    any   `yaml:"horde"`
-	CI       any   `yaml:"ci"`
-	Cost     any   `yaml:"cost"`
+	Cloud    Cloud          `yaml:"cloud"`
+	State    State          `yaml:"state"`
+	Perforce PerforceConfig `yaml:"perforce"`
+	Horde    any            `yaml:"horde"`
+	CI       any            `yaml:"ci"`
+	Cost     any            `yaml:"cost"`
 }
 
 func (c *Config) fileConfig() fileConfig {
 	return fileConfig{
 		Cloud:    c.Cloud,
 		State:    c.State,
-		Perforce: emptySection(c.Perforce),
+		Perforce: c.Perforce,
 		Horde:    emptySection(c.Horde),
 		CI:       emptySection(c.CI),
 		Cost:     emptySection(c.Cost),
