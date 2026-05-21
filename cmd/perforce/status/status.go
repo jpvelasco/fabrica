@@ -67,6 +67,7 @@ type command struct {
 	getResource func(ctx context.Context, r *cloud.Resource) error
 	probeTCP    func(address string) bool
 	sleep       func(d time.Duration)
+	now         func() time.Time
 }
 
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
@@ -96,6 +97,7 @@ Use --wait / -w to poll every 15 seconds until ready (up to 10 minutes).`,
 			c.writeState = c.defaultWriteState
 			c.probeTCP = defaultProbeTCP
 			c.sleep = time.Sleep
+			c.now = time.Now
 			if rt.Provider != nil {
 				c.getResource = rt.Provider.Resources().Get
 			}
@@ -142,7 +144,7 @@ func (c command) run(ctx context.Context) error {
 }
 
 func (c command) pollUntilReady(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState) error {
-	deadline := time.Now().Add(waitDeadline)
+	deadline := c.now().Add(waitDeadline)
 	for {
 		info, err := c.buildInfo(ctx, m)
 		if err != nil {
@@ -162,7 +164,7 @@ func (c command) pollUntilReady(ctx context.Context, st *fabricastate.State, m *
 
 		c.printResult(info)
 
-		if time.Now().After(deadline) {
+		if c.now().After(deadline) {
 			fmt.Fprintln(c.out, "Timed out waiting for Perforce to become ready (10 minutes).")
 			return nil
 		}

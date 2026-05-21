@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -91,6 +92,55 @@ func TestStatusCobraRuntimeError(t *testing.T) {
 	}
 }
 
+// TestStatusCobraWaitFlagAccepted verifies --wait/-w flag is accepted (no parse error).
+// Behaviour (actual polling) is verified in white-box tests.
+func TestStatusCobraWaitFlagAccepted(t *testing.T) {
+	for _, flag := range []string{"--wait", "-w"} {
+		t.Run(flag, func(t *testing.T) {
+			// No state on disk → prints not-provisioned immediately, no real polling.
+			t.Chdir(t.TempDir())
+			_, err := runStatus(t, newCobraRuntime(&cobraFakeProvider{}), flag)
+			if err != nil {
+				t.Fatalf("%s flag caused error: %v", flag, err)
+			}
+		})
+	}
+}
+
+// TestStatusCobraJSONProvisioned verifies --json output is valid JSON with provisioned=true
+// when state exists on disk with a perforce module.
+func TestStatusCobraJSONProvisioned(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	// Write minimal state file
+	stateJSON := `{
+		"account":"123456789012","region":"us-east-1",
+		"modules":[{"name":"perforce","version":"2024.2","status":"provisioning",
+		"resources":[
+			{"typeName":"AWS::EC2::SecurityGroup","identifier":"sg-cobra"},
+			{"typeName":"AWS::EC2::Instance","identifier":"i-cobra"}
+		]}]}`
+	if err := writeStateFile(dir, stateJSON); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := runStatus(t, newCobraRuntime(&cobraFakeProvider{}), "--json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var result status.StatusOutput
+	if err := json.Unmarshal([]byte(got), &result); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, got)
+	}
+	if !result.Provisioned {
+		t.Error("expected provisioned=true when state has perforce module")
+	}
+	if result.InstanceID != "i-cobra" {
+		t.Errorf("instanceId = %q, want i-cobra", result.InstanceID)
+	}
+}
+
 // ---- cobraFakeProvider ----
 
 type cobraFakeProvider struct{}
@@ -113,6 +163,13 @@ func (r *cobraFakeRC) Update(_ context.Context, _ *cloud.Resource) error { retur
 func (r *cobraFakeRC) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
 func (r *cobraFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
 	return nil, nil
+}
+
+func writeStateFile(dir, content string) error {
+	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
+		return err
+	}
+	return os.WriteFile(dir+"/.fabrica/state.json", []byte(content), 0600)
 }
 
 func assertCobraContains(t *testing.T, s, substr string) {

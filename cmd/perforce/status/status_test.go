@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ func newTestCommand(out *bytes.Buffer, st *fabricastate.State, getResource func(
 		runtime: globals.Runtime{Config: cfg, Provider: nil},
 		out:     out,
 		sleep:   func(time.Duration) {},
+		now:     time.Now,
 	}
 	c.readState = func() (*fabricastate.State, error) { return st, nil }
 	c.writeState = func(_ *fabricastate.State) error { return nil }
@@ -240,6 +242,270 @@ func TestStatusUnreachableFromMachine(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	assertContains(t, out.String(), "unreachable from this machine")
+}
+
+// TestStatusReadStateError verifies error is surfaced immediately.
+func TestStatusReadStateError(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCommand(&out, nil, nil, nil)
+	c.readState = func() (*fabricastate.State, error) {
+		return nil, errors.New("disk failure")
+	}
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when readState fails")
+	}
+	assertContains(t, err.Error(), "reading state")
+}
+
+// TestStatusAlreadyReady verifies no state write when module is already ready.
+func TestStatusAlreadyReady(t *testing.T) {
+	var out bytes.Buffer
+	st := perforceState("ready", true)
+	stateWritten := false
+	getResource := func(_ context.Context, r *cloud.Resource) error {
+		r.ActualState = mustMarshal(map[string]any{
+			"InstanceType":     "m5.xlarge",
+			"PrivateIpAddress": "10.0.1.42",
+			"State":            map[string]any{"Name": "running"},
+		})
+		return nil
+	}
+	c := newTestCommand(&out, st, getResource, func(string) bool { return true })
+	c.writeState = func(_ *fabricastate.State) error {
+		stateWritten = true
+		return nil
+	}
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if stateWritten {
+		t.Error("state must not be rewritten when module is already ready")
+	}
+	assertContains(t, out.String(), "ready")
+}
+
+// TestStatusWriteStateErrorSurfacedAsWarning verifies write errors show a warning but don't fail.
+func TestStatusWriteStateErrorSurfacedAsWarning(t *testing.T) {
+	var out bytes.Buffer
+	st := perforceState("provisioning", true)
+	getResource := func(_ context.Context, r *cloud.Resource) error {
+		r.ActualState = mustMarshal(map[string]any{
+			"InstanceType":     "m5.xlarge",
+			"PrivateIpAddress": "10.0.1.42",
+			"State":            map[string]any{"Name": "running"},
+		})
+		return nil
+	}
+	c := newTestCommand(&out, st, getResource, func(string) bool { return true })
+	c.writeState = func(_ *fabricastate.State) error {
+		return errors.New("disk full")
+	}
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("status must not return error on writeState failure: %v", err)
+	}
+	assertContains(t, out.String(), "Warning")
+	assertContains(t, out.String(), "disk full")
+}
+
+// TestStatusWaitBecomesReady verifies --wait exits on first successful probe.
+func TestStatusWaitBecomesReady(t *testing.T) {
+	var out bytes.Buffer
+	st := perforceState("provisioning", true)
+	probeCall := 0
+	getResource := func(_ context.Context, r *cloud.Resource) error {
+		r.ActualState = mustMarshal(map[string]any{
+			"InstanceType":     "m5.xlarge",
+			"PrivateIpAddress": "10.0.1.42",
+			"State":            map[string]any{"Name": "running"},
+		})
+		return nil
+	}
+	c := newTestCommand(&out, st, getResource, func(string) bool {
+		probeCall++
+		return probeCall >= 2 // fail once, succeed on second call
+	})
+	c.wait = true
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	assertContains(t, out.String(), "ready")
+	assertContains(t, out.String(), "responding")
+	if probeCall < 2 {
+		t.Errorf("expected at least 2 probe calls, got %d", probeCall)
+	}
+}
+
+// TestStatusWaitTimeout verifies --wait surfaces timeout message after deadline.
+func TestStatusWaitTimeout(t *testing.T) {
+	var out bytes.Buffer
+	st := perforceState("provisioning", true)
+	getResource := func(_ context.Context, r *cloud.Resource) error {
+		r.ActualState = mustMarshal(map[string]any{
+			"InstanceType":     "m5.xlarge",
+			"PrivateIpAddress": "10.0.1.42",
+			"State":            map[string]any{"Name": "running"},
+		})
+		return nil
+	}
+	// Time starts at deadline - 1s so the very first iteration exceeds the deadline.
+	startTime := time.Now()
+	callCount := 0
+	c := newTestCommand(&out, st, getResource, func(string) bool { return false })
+	c.wait = true
+	c.now = func() time.Time {
+		callCount++
+		if callCount <= 1 {
+			return startTime // first call: compute deadline
+		}
+		return startTime.Add(waitDeadline + time.Second) // subsequent: past deadline
+	}
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	assertContains(t, out.String(), "Timed out")
+}
+
+// TestStatusWaitGetResourceError surfaces error during poll loop.
+func TestStatusWaitGetResourceError(t *testing.T) {
+	var out bytes.Buffer
+	st := perforceState("provisioning", true)
+	getResource := func(_ context.Context, r *cloud.Resource) error {
+		return &fakeProviderError{"network timeout"}
+	}
+	c := newTestCommand(&out, st, getResource, nil)
+	c.wait = true
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when getResource fails during wait")
+	}
+	assertContains(t, err.Error(), "querying instance")
+}
+
+// TestStatusProbeAddressFormat verifies probe is called with "ip:1666".
+func TestStatusProbeAddressFormat(t *testing.T) {
+	var out bytes.Buffer
+	st := perforceState("provisioning", true)
+	var probeAddr string
+	getResource := func(_ context.Context, r *cloud.Resource) error {
+		r.ActualState = mustMarshal(map[string]any{
+			"InstanceType":     "m5.xlarge",
+			"PrivateIpAddress": "192.168.1.10",
+			"State":            map[string]any{"Name": "running"},
+		})
+		return nil
+	}
+	c := newTestCommand(&out, st, getResource, func(addr string) bool {
+		probeAddr = addr
+		return false
+	})
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if probeAddr != "192.168.1.10:1666" {
+		t.Errorf("probe address = %q, want 192.168.1.10:1666", probeAddr)
+	}
+}
+
+// TestStatusNoProbeWhenNoPrivateIP verifies probe is not attempted without an IP.
+func TestStatusNoProbeWhenNoPrivateIP(t *testing.T) {
+	var out bytes.Buffer
+	st := perforceState("provisioning", true)
+	probeCalled := false
+	getResource := func(_ context.Context, r *cloud.Resource) error {
+		// Return non-empty state but no PrivateIpAddress.
+		r.ActualState = mustMarshal(map[string]any{
+			"InstanceType": "m5.xlarge",
+			"State":        map[string]any{"Name": "pending"},
+		})
+		return nil
+	}
+	c := newTestCommand(&out, st, getResource, func(string) bool {
+		probeCalled = true
+		return true
+	})
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if probeCalled {
+		t.Error("TCP probe must not be attempted when instance has no private IP")
+	}
+}
+
+// TestStatusJSONHelixCoreField verifies helixCore values in JSON output.
+func TestStatusJSONHelixCoreField(t *testing.T) {
+	cases := []struct {
+		name          string
+		probeResult   bool
+		moduleStatus  string
+		wantHelixCore string
+	}{
+		{"responding", true, "provisioning", "responding"},
+		{"unreachable", false, "provisioning", "unreachable"},
+		{"setting_up_no_ip", false, "provisioning", "setting up"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			st := perforceState(tc.moduleStatus, true)
+
+			var getResource func(context.Context, *cloud.Resource) error
+			if tc.name == "setting_up_no_ip" {
+				getResource = func(_ context.Context, r *cloud.Resource) error { return nil }
+			} else {
+				getResource = func(_ context.Context, r *cloud.Resource) error {
+					r.ActualState = mustMarshal(map[string]any{
+						"InstanceType":     "m5.xlarge",
+						"PrivateIpAddress": "10.0.0.1",
+						"State":            map[string]any{"Name": "running"},
+					})
+					return nil
+				}
+			}
+
+			c := newTestCommand(&out, st, getResource, func(string) bool { return tc.probeResult })
+			c.jsonOut = true
+
+			if err := c.run(context.Background()); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			var result StatusOutput
+			if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+				t.Fatalf("invalid JSON: %v\noutput: %s", err, out.String())
+			}
+			if result.HelixCore != tc.wantHelixCore {
+				t.Errorf("helixCore = %q, want %q", result.HelixCore, tc.wantHelixCore)
+			}
+		})
+	}
+}
+
+// TestStatusJSONSGID verifies sgId appears in JSON output.
+func TestStatusJSONSGID(t *testing.T) {
+	var out bytes.Buffer
+	st := perforceState("provisioning", true) // includes sg-abc123
+	c := newTestCommand(&out, st, nil, nil)
+	c.jsonOut = true
+	// No getResource — no instance IP, so probe won't fire.
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	var result StatusOutput
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, out.String())
+	}
+	if result.SGID != "sg-abc123" {
+		t.Errorf("sgId = %q, want sg-abc123", result.SGID)
+	}
 }
 
 // ---- helpers ----

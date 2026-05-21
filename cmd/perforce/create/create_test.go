@@ -242,10 +242,165 @@ func TestCreateVersionFlagInvalidAbortsBeforeAWS(t *testing.T) {
 	}
 }
 
+// TestCreateReadStateError verifies error is surfaced before any AWS call.
+func TestCreateReadStateError(t *testing.T) {
+	var out bytes.Buffer
+	provider := &fakeProvider{}
+	c := newTestCommand(&out, provider, nil)
+	c.readState = func() (*fabricastate.State, error) {
+		return nil, errors.New("disk read failure")
+	}
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when readState fails")
+	}
+	if provider.createCalls != 0 {
+		t.Fatal("readState failure: create was called")
+	}
+	assertContains(t, err.Error(), "reading state")
+}
+
+// TestCreateSGFailureNoStateWritten verifies state is never written when SG creation fails.
+func TestCreateSGFailureNoStateWritten(t *testing.T) {
+	var out bytes.Buffer
+	provider := &fakeProvider{sgCreateErr: errors.New("sg quota")}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	stateWritten := false
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.writeState = func(_ *fabricastate.State) error {
+		stateWritten = true
+		return nil
+	}
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error on SG create failure")
+	}
+	assertContains(t, err.Error(), "creating security group")
+	if stateWritten {
+		t.Error("state must not be written when SG creation fails")
+	}
+}
+
+// TestCreateDryRunVersionPinned verifies "(pinned)" label appears for non-latest version.
+func TestCreateDryRunVersionPinned(t *testing.T) {
+	var out bytes.Buffer
+	provider := &fakeProvider{}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	c := newTestCommand(&out, provider, st)
+	c.dryRun = true
+	c.version = "2024.2"
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	assertContains(t, out.String(), "(pinned)")
+}
+
+// TestCreateDryRunVersionLatestNotPinned verifies "latest" does not get "(pinned)" label.
+func TestCreateDryRunVersionLatestNotPinned(t *testing.T) {
+	var out bytes.Buffer
+	provider := &fakeProvider{}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	c := newTestCommand(&out, provider, st)
+	c.dryRun = true
+	c.version = "latest"
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := out.String()
+	assertContains(t, got, "latest")
+	if containsStr(got, "(pinned)") {
+		t.Error("'latest' should not show '(pinned)' label")
+	}
+}
+
+// TestCreateFlagOverridesConfigInstanceType verifies --instance-type flag wins over config.
+func TestCreateFlagOverridesConfigInstanceType(t *testing.T) {
+	var out bytes.Buffer
+	provider := &fakeProvider{}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	c := newTestCommand(&out, provider, st)
+	c.dryRun = true
+	c.instanceType = "c5.2xlarge"
+	c.runtime.Config.Perforce.InstanceType = "m5.xlarge"
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	assertContains(t, out.String(), "c5.2xlarge")
+}
+
+// TestCreateFlagOverridesConfigVolumeSize verifies --volume-size flag wins over config.
+func TestCreateFlagOverridesConfigVolumeSize(t *testing.T) {
+	var out bytes.Buffer
+	provider := &fakeProvider{}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	c := newTestCommand(&out, provider, st)
+	c.dryRun = true
+	c.volumeSize = 1000
+	c.runtime.Config.Perforce.VolumeSize = 500
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	assertContains(t, out.String(), "1000 GiB")
+}
+
+// TestCreateVersionFromConfig verifies version is read from config when flag is empty.
+func TestCreateVersionFromConfig(t *testing.T) {
+	var out bytes.Buffer
+	provider := &fakeProvider{}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	c := newTestCommand(&out, provider, st)
+	c.dryRun = true
+	c.version = ""
+	c.runtime.Config.Perforce.Version = "2025.1"
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	assertContains(t, out.String(), "2025.1")
+}
+
+// TestCreateWriteStateError verifies that a writeState failure after SG is surfaced.
+func TestCreateWriteStateError(t *testing.T) {
+	var out bytes.Buffer
+	provider := &fakeProvider{}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.writeState = func(_ *fabricastate.State) error {
+		return errors.New("disk full")
+	}
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when writeState fails")
+	}
+	assertContains(t, err.Error(), "writing state")
+}
+
+func containsStr(s, sub string) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
 // ---- fakeProvider ----
 
 type fakeProvider struct {
 	identityErr       error
+	sgCreateErr       error
 	instanceCreateErr error
 	createCalls       int
 	createdTypes      []string
@@ -271,6 +426,9 @@ type fakeResourceClient struct {
 func (r *fakeResourceClient) Create(_ context.Context, res *cloud.Resource) error {
 	r.provider.createCalls++
 	r.provider.createdTypes = append(r.provider.createdTypes, res.TypeName)
+	if res.TypeName == "AWS::EC2::SecurityGroup" && r.provider.sgCreateErr != nil {
+		return r.provider.sgCreateErr
+	}
 	if res.TypeName == "AWS::EC2::Instance" && r.provider.instanceCreateErr != nil {
 		return r.provider.instanceCreateErr
 	}
@@ -284,9 +442,9 @@ func (r *fakeResourceClient) Create(_ context.Context, res *cloud.Resource) erro
 	return nil
 }
 
-func (r *fakeResourceClient) Get(_ context.Context, _ *cloud.Resource) error      { return nil }
-func (r *fakeResourceClient) Update(_ context.Context, _ *cloud.Resource) error   { return nil }
-func (r *fakeResourceClient) Delete(_ context.Context, _ *cloud.Resource) error   { return nil }
+func (r *fakeResourceClient) Get(_ context.Context, _ *cloud.Resource) error    { return nil }
+func (r *fakeResourceClient) Update(_ context.Context, _ *cloud.Resource) error { return nil }
+func (r *fakeResourceClient) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
 func (r *fakeResourceClient) List(_ context.Context, _ string) ([]cloud.Resource, error) {
 	return nil, nil
 }

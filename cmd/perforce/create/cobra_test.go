@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -142,6 +143,54 @@ func TestCreateCobraIdentityFailure(t *testing.T) {
 	if !cobraContainsString(err.Error(), "resolving identity") {
 		t.Fatalf("error %q does not mention resolving identity", err.Error())
 	}
+}
+
+// TestCreateCobraDryRunInstanceTypeFlag verifies --instance-type appears in dry-run output.
+func TestCreateCobraDryRunInstanceTypeFlag(t *testing.T) {
+	provider := &cobraFakeProvider{}
+	got, err := runCreate(t, newCobraTestRuntime(provider), "--dry-run", "--instance-type", "c5.2xlarge")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertCobraContains(t, got, "c5.2xlarge")
+}
+
+// TestCreateCobraDryRunVolumeSizeFlag verifies --volume-size appears in dry-run output.
+func TestCreateCobraDryRunVolumeSizeFlag(t *testing.T) {
+	provider := &cobraFakeProvider{}
+	got, err := runCreate(t, newCobraTestRuntime(provider), "--dry-run", "--volume-size", "1000")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertCobraContains(t, got, "1000 GiB")
+}
+
+// TestCreateCobraAlreadyProvisioned verifies early exit when module is in state.
+func TestCreateCobraAlreadyProvisioned(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	stateJSON := `{"account":"123456789012","region":"us-east-1","modules":[
+		{"name":"perforce","version":"2024.2","status":"provisioning","resources":[
+			{"typeName":"AWS::EC2::SecurityGroup","identifier":"sg-existing"},
+			{"typeName":"AWS::EC2::Instance","identifier":"i-existing"}
+		]}]}`
+	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/.fabrica/state.json", []byte(stateJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &cobraFakeProvider{}
+	got, err := runCreate(t, newCobraTestRuntime(provider))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider.createCalls != 0 {
+		t.Fatalf("already provisioned: made %d create calls, want 0", provider.createCalls)
+	}
+	assertCobraContains(t, got, "already provisioned")
 }
 
 // ---- cobraFakeProvider ----

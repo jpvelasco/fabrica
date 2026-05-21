@@ -2,6 +2,7 @@ package perforce
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/config"
@@ -136,6 +137,106 @@ func TestNewCreatePlan_ExplicitVPC(t *testing.T) {
 	}
 }
 
+func TestNewCreatePlan_VolumeSize(t *testing.T) {
+	cases := []struct {
+		cfgVolume  int
+		wantVolume int
+	}{
+		{0, 500},     // default
+		{-1, 500},    // negative treated as zero → default
+		{100, 100},   // explicit small
+		{2000, 2000}, // explicit large
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("cfg=%d", tc.cfgVolume), func(t *testing.T) {
+			cfg := config.PerforceConfig{VolumeSize: tc.cfgVolume}
+			plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if plan.VolumeSize != tc.wantVolume {
+				t.Errorf("VolumeSize = %d, want %d", plan.VolumeSize, tc.wantVolume)
+			}
+		})
+	}
+}
+
+func TestNewCreatePlan_VPCResolverError(t *testing.T) {
+	resolver := &fakeVPCResolver{err: fmt.Errorf("no default VPC")}
+	cfg := config.PerforceConfig{}
+	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, resolver)
+	if err == nil {
+		t.Fatal("expected error when VPC resolver fails")
+	}
+	if !containsString(err.Error(), "resolving default VPC") {
+		t.Errorf("error %q should mention resolving default VPC", err.Error())
+	}
+}
+
+func TestNewCreatePlan_ExplicitVPCSkipsResolver(t *testing.T) {
+	called := false
+	resolver := &callTrackingResolver{onCall: func() { called = true }, vpcID: "vpc-skip", subnetID: "subnet-skip"}
+	cfg := config.PerforceConfig{VPCId: "vpc-explicit", SubnetId: "subnet-explicit"}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, resolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if called {
+		t.Error("resolver was called despite explicit VPC config — should be skipped")
+	}
+	if plan.VPCID != "vpc-explicit" {
+		t.Errorf("VPCID = %q, want vpc-explicit", plan.VPCID)
+	}
+}
+
+func TestNewCreatePlan_AccountAndRegionPropagated(t *testing.T) {
+	cfg := config.PerforceConfig{}
+	plan, err := NewCreatePlan(context.Background(), cfg, "999999999999", "eu-west-1", DefaultHelixVersion, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if plan.Account != "999999999999" {
+		t.Errorf("Account = %q, want 999999999999", plan.Account)
+	}
+	if plan.Region != "eu-west-1" {
+		t.Errorf("Region = %q, want eu-west-1", plan.Region)
+	}
+}
+
+func TestNewCreatePlan_CostResourceNamesReflectInputs(t *testing.T) {
+	cfg := config.PerforceConfig{InstanceType: "c5.2xlarge", VolumeSize: 1000}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var foundInstance, foundVolume bool
+	for _, r := range plan.CostResources {
+		if r.TypeName == "AWS::EC2::Instance" && r.Name == "c5.2xlarge" {
+			foundInstance = true
+		}
+		if r.TypeName == "AWS::EC2::Volume" && r.Name == "gp3-1000GiB" {
+			foundVolume = true
+		}
+	}
+	if !foundInstance {
+		t.Error("CostResources missing AWS::EC2::Instance with name c5.2xlarge")
+	}
+	if !foundVolume {
+		t.Error("CostResources missing AWS::EC2::Volume with name gp3-1000GiB")
+	}
+}
+
+func containsString(s, sub string) bool {
+	return len(sub) == 0 || len(s) >= len(sub) && func() bool {
+		for i := 0; i <= len(s)-len(sub); i++ {
+			if s[i:i+len(sub)] == sub {
+				return true
+			}
+		}
+		return false
+	}()
+}
+
 type fakeVPCResolver struct {
 	vpcID    string
 	subnetID string
@@ -144,4 +245,15 @@ type fakeVPCResolver struct {
 
 func (f *fakeVPCResolver) ResolveDefaultVPC(_ context.Context) (string, string, error) {
 	return f.vpcID, f.subnetID, f.err
+}
+
+type callTrackingResolver struct {
+	onCall   func()
+	vpcID    string
+	subnetID string
+}
+
+func (r *callTrackingResolver) ResolveDefaultVPC(_ context.Context) (string, string, error) {
+	r.onCall()
+	return r.vpcID, r.subnetID, nil
 }
