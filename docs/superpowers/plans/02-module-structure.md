@@ -20,17 +20,18 @@ cmd/horde/
     cobra_test.go                # black-box (package submit_test)
 
 internal/horde/
-  config.go                      # HordeConfig struct, VPCResolver interface
+  config.go                      # VPCResolver interface only (HordeConfig lives in internal/config)
   plan.go                        # CreatePlan, NewCreatePlan
   resources.go                   # SGDesiredState, InstanceDesiredState (Cloud Control JSON)
   userdata.go                    # cloud-init template; Generate() + GenerateRaw()
   cost.go                        # m7i.* EC2 + gp3 EBS estimators; registers via init()
-  buildgraph.go                  # ParseBuildGraph(path) → *BuildGraphJob; pure XML parse
-  config_test.go                 # (if needed for VPCResolver interface)
   plan_test.go                   # NewCreatePlan validation
   resources_test.go              # SGDesiredState + InstanceDesiredState JSON shape
   userdata_test.go               # GenerateRaw content; Generate returns base64
   cost_test.go                   # estimator round-trip
+
+internal/horde/buildgraph/
+  buildgraph.go                  # BuildGraphJob struct, ParseBuildGraph(path) → *BuildGraphJob
   buildgraph_test.go             # XML parse happy path + error cases
 ```
 
@@ -59,7 +60,7 @@ cmd/root/root.go                 # cmd.AddCommand(horde.New(...))
 | `resources.go` | `SGDesiredState()` and `InstanceDesiredState()` return `json.RawMessage` for Cloud Control — no SDK types |
 | `userdata.go` | `UserDataConfig` struct; `Generate()` returns base64-encoded cloud-init; `GenerateRaw()` returns plain string for tests |
 | `cost.go` | `m7i.*` EC2 price table + gp3 EBS estimator; both registered in `init()` against `cost.Global` |
-| `buildgraph.go` | `BuildGraphJob` struct; `ParseBuildGraph(path string) (*BuildGraphJob, error)` — opens file, parses XML, no HTTP/AWS |
+| `buildgraph/buildgraph.go` | `BuildGraphJob` struct; `ParseBuildGraph(path string) (*BuildGraphJob, error)` — opens file, parses XML, no HTTP/AWS. Isolated sub-package so it can be imported without pulling in the plan layer. |
 
 ### `cmd/horde` — execution layer
 
@@ -141,9 +142,11 @@ Import: `"github.com/jpvelasco/fabrica/internal/horde"` added to `internal/confi
 
 ---
 
-## BuildGraphJob (in `internal/horde/buildgraph.go`)
+## BuildGraphJob (in `internal/horde/buildgraph/buildgraph.go`)
 
 ```go
+package buildgraph
+
 type BuildGraphJob struct {
     Name   string
     Target string
@@ -153,3 +156,5 @@ func ParseBuildGraph(path string) (*BuildGraphJob, error)
 ```
 
 Parses the `<BuildGraph>` root element and first `<Agent>` or `<Node>` to extract Name/Target. Pure file I/O + XML decode — no AWS, no HTTP.
+
+The sub-package isolation means `cmd/horde/submit` imports `internal/horde/buildgraph` directly, without depending on the full plan layer (`CreatePlan`, `SGDesiredState`, etc.).

@@ -18,6 +18,14 @@ Mirrors `cmd/perforce/status/status.go` exactly, with three differences:
 2. TCP probe targets port 5000 (Horde HTTP) not 1666
 3. `StatusOutput` has `HordeURL`, `HordeGRPC`, and `HordeStatus` fields instead of `P4PORT` and `HelixCore`
 
+### Readiness probe scope (V1)
+
+We probe port 5000 only — the Horde HTTP API. This is the right signal: if the web UI is serving, MongoDB and Redis are up and Horde is configured. Port 5002 (gRPC) is only needed once agents are connecting; there is nothing in V1 that requires an agent-reachability check. Port 5002 can be added to the probe in a later PR when the agent fleet is introduced.
+
+### Last known state in output
+
+`StatusOutput` intentionally surfaces the last known module status from local state (`"provisioning"` or `"ready"`) even when the live Cloud Control query returns empty `ActualState`. This gives operators a useful debugging baseline: if Cloud Control is returning nothing (stubbed or throttled), the last recorded status and resource IDs are still visible. The `HordeStatus` field (`"responding"` / `"unreachable"` / `"setting up"`) is populated only when a TCP probe was actually attempted.
+
 ---
 
 ## Task 1: `status.go`

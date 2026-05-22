@@ -28,13 +28,16 @@ The status command needs to probe port 5000 and construct `hordeUrl`/`hordeGrpc`
 
 ---
 
-### 4. Submit URL Resolution Without Live AWS
+### 4. Submit URL Resolution: Private IP, VPN, and Reachability
 
-The `hordeHTTPClient` resolves the coordinator IP by calling `provider.Resources().Get` on the EC2 instance (Cloud Control). If Cloud Control is still stubbed (as it is today), Get returns empty `ActualState` and the client has no IP.
+The `hordeHTTPClient` constructs the coordinator URL from the instance's **private IP address** retrieved via Cloud Control Get. This has several implications:
 
-**Resolution:** The submit command falls back to `nil` `ActualState` gracefully — if `PrivateIpAddress` is empty in ActualState, it returns an error: `"Horde instance has no private IP yet. Run 'fabrica horde status' to check readiness."` This is not a test failure; it's the expected behavior when Cloud Control is stubbed.
+- **VPN / same-VPC required.** The machine running `fabrica horde submit` must be able to reach the instance's private IP. This works from within the VPC (same-subnet or peered), over a VPN (e.g. AWS Client VPN, Tailscale), or from a bastion. It does **not** work from a developer's laptop unless they are on VPN.
+- **No public IP by default.** The instance has no public IP or Elastic IP in V1. If a studio needs internet-accessible submit (e.g. from GitHub Actions without VPN), they must attach an Elastic IP manually and update `horde.allowedCidr` to permit the runner CIDR.
+- **Elastic IP (future).** A future PR could add `horde.allocateElasticIp: true` to `HordeConfig`. This is explicitly out of scope for V1.
+- **Cloud Control stub.** If Cloud Control is still stubbed (as it is today), `Get` returns empty `ActualState` and the client has no IP. The submit command returns `"Horde instance has no private IP yet. Run 'fabrica horde status' to check readiness."` This is expected behavior when the stub is active.
 
-**For integration testing** once Cloud Control is live: the submit command will resolve correctly.
+**Resolution for V1:** Document the VPN/VPC requirement in the post-create output and in `docs/horde-ami.md`. No code change beyond the graceful empty-ActualState error.
 
 ---
 
@@ -53,6 +56,28 @@ The actual Horde REST API paths and request/response shapes are based on the off
 **Risk:** API shape may differ between Horde versions. The `client.go` implementation uses struct-based JSON marshaling — if the API changes, a compile-time error won't fire; only a runtime 4xx will.
 
 **Resolution:** Document the tested Horde version in `cmd/horde/submit/client.go`. For V1, fire-and-forget is the default; `--wait` is opt-in. If the GET endpoint shape changes, only `--wait` is affected.
+
+---
+
+### 7. AMI Drift / Misconfiguration
+
+Fabrica trusts that the user-provided AMI is correctly built. If the AMI is outdated or misconfigured, the EC2 instance will launch but cloud-init will fail silently (or partially), leaving the coordinator unreachable.
+
+**Failure modes and detection:**
+
+| AMI Problem | Symptom | How Detected |
+|---|---|---|
+| `mongod` not starting | cloud-init exits with `"MongoDB did not become healthy within 60s"` | `/var/log/fabrica-horde-init.log` on the instance |
+| `horde` unit missing | `systemctl restart horde` fails; cloud-init exits non-zero | Same log |
+| Wrong `.json` config path | Horde starts but ignores the written config | Port 5000 may respond but behavior is wrong |
+| Outdated Horde binary | API shape mismatch | `fabrica horde submit` gets 4xx responses |
+| Wrong architecture (arm64 AMI on m7i) | Instance fails to launch | Cloud Control returns an error at create time |
+
+**V1 approach:** Fabrica cannot introspect the AMI before launch. The readiness probe in `fabrica horde status` catches the most common failure (port 5000 never opens). The 10-minute `--wait` timeout gives a clear signal that something went wrong.
+
+**Communication:** The post-create output includes a note directing users to check `/var/log/fabrica-horde-init.log` if the coordinator doesn't become ready. `docs/horde-ami.md` covers the verification steps.
+
+**Future improvement:** A `fabrica horde ami verify` dry-run command (deferred) could launch the AMI in a throwaway subnet, run the health checks, and terminate it — giving confidence before production use.
 
 ---
 

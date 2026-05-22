@@ -32,20 +32,32 @@ Complete this phase before touching any `cmd/` code.
   - Implement `UserDataConfig`, `GenerateRaw`, `Generate`
   - Run: `go test ./internal/horde/... -run TestGenerate`
 
-- [ ] **Step 6: `internal/horde/buildgraph.go` + `buildgraph_test.go`**
+- [ ] **Step 6: `internal/horde/buildgraph/buildgraph.go` + `buildgraph_test.go`**
   - Write failing tests first
   - Implement `BuildGraphJob`, `ParseBuildGraph`
-  - Run: `go test ./internal/horde/... -run TestParseBuildGraph`
+  - Run: `go test ./internal/horde/buildgraph/... -run TestParseBuildGraph`
 
 - [ ] **Step 7: Extend `internal/perforce/cost.go` with m7i prices**
   - Add `m7i.xlarge`, `m7i.2xlarge`, `m7i.4xlarge`, `m7i.8xlarge` to `ec2InstancePrices`
-  - Run: `go test ./internal/perforce/... && go test ./internal/horde/...`
+  - Run: `go test ./internal/perforce/... && go test ./internal/horde/... ./internal/horde/buildgraph/...`
 
 - [ ] **Step 8: Commit Phase 1**
   ```bash
   git add internal/config/config.go internal/horde/ internal/perforce/cost.go
+  # internal/horde/ includes buildgraph/ sub-package
   git commit -m "feat: add internal/horde plan layer and HordeConfig"
   ```
+
+### ✅ Checkpoint: internal/horde review
+
+Before writing any `cmd/` code, verify:
+- `go test ./internal/horde/... ./internal/horde/buildgraph/...` passes
+- `go vet ./...` passes
+- Coverage on `internal/horde/...` is at or above 60%
+- All exported types match the spec in `02-module-structure.md`
+- No circular imports: `go list -deps ./internal/horde/... | grep -v fabrica` should show only stdlib
+
+Only proceed to Phase 2 once this checkpoint passes.
 
 ---
 
@@ -88,6 +100,19 @@ Complete this phase before touching any `cmd/` code.
   git add cmd/horde/ cmd/root/root.go
   git commit -m "feat: add fabrica horde create command"
   ```
+
+### ✅ Checkpoint: create command review + merge to main
+
+Before starting status + submit, consider merging what exists into `main` as an intermediate PR:
+
+- `go test ./...` passes
+- `go build ./...` produces a working binary
+- `./fabrica horde create --dry-run` shows correct plan output and cost estimate
+- `./fabrica horde create --help` shows clean usage text
+- `./fabrica horde status` (before status is implemented) shows appropriate "unknown command" or help text — not a panic
+- Dry-run output includes m7i.2xlarge recommendation and `0.0.0.0/0` warning when applicable
+
+**Merge point:** `internal/horde` plan layer + `fabrica horde create` together form a complete, testable unit. Merging here keeps PR size manageable and unblocks anyone building the AMI in parallel. Status and submit can land in a follow-on PR.
 
 ---
 
@@ -138,6 +163,14 @@ Complete this phase before touching any `cmd/` code.
   git commit -m "feat: add fabrica horde submit command"
   ```
 
+### ✅ Checkpoint: status + submit review
+
+- `go test ./cmd/horde/status/... ./cmd/horde/submit/...` passes
+- `./fabrica horde status` on an empty state prints "not provisioned" cleanly
+- `./fabrica horde submit --help` shows correct flag documentation
+- JSON output from `./fabrica horde status --json` is valid and parseable
+- `--wait` and `-w` short-form flags work for both commands
+
 ---
 
 ## Phase 5: Final checks
@@ -178,11 +211,12 @@ Complete this phase before touching any `cmd/` code.
 ```
 internal/config  ← (HordeConfig added here)
        ↓
-internal/horde   ← plan, resources, userdata, buildgraph
+internal/horde            ← plan, resources, userdata
+internal/horde/buildgraph ← BuildGraphJob, ParseBuildGraph (isolated sub-package)
        ↓
 cmd/horde/create  →  cmd/horde/horde.go  →  cmd/root/root.go
 cmd/horde/status  ↗
-cmd/horde/submit  ↗
+cmd/horde/submit  ↗  (imports internal/horde/buildgraph directly)
 ```
 
 Each phase only depends on the phase above it. Complete Phase 1 entirely before writing any `cmd/horde/` code — the plan layer types must be stable before the execution layer references them.

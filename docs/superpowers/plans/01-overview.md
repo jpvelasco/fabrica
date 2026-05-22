@@ -61,6 +61,27 @@ MongoDB (27017) and Redis (6379) are localhost-only — no ingress rules.
 
 ---
 
+## What's Not in V1
+
+The following are explicitly deferred — do not design for them now.
+
+| Deferred | Notes |
+|---|---|
+| `fabrica horde destroy` | PR #2; follows perforce destroy pattern |
+| Agent fleet / Auto Scaling Group | Coordinator-only V1; agents are future work |
+| `fabrica horde ami build` | AMI creation is manual (see `docs/horde-ami.md`); a `fabrica horde ami build` command is out of scope |
+| OIDC / SSO authentication | Web UI admin setup is manual in V1 |
+| `fabrica horde logs` | Requires REST client in `internal/` — only moves there when a second command needs it |
+| `fabrica horde cancel` | Same dependency as logs |
+| Multi-region coordinator | Single-region only in V1 |
+| Load balancer / high availability | Single EC2 instance; no ELB |
+| DocumentDB / Atlas | On-instance MongoDB is sufficient for V1 coordinator load |
+| Elastic IP for coordinator | Private IP only; public access requires VPN or VPC peering |
+| Cost alerting / forecasting | `internal/cost` estimators exist but no alert wiring |
+| `fabrica horde scale` | No ASG in V1 |
+
+---
+
 ## File Index
 
 - `02-module-structure.md` — folder layout and package responsibilities

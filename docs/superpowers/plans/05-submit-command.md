@@ -4,8 +4,8 @@
 
 | Action | Path |
 |---|---|
-| Create | `internal/horde/buildgraph.go` |
-| Create | `internal/horde/buildgraph_test.go` |
+| Create | `internal/horde/buildgraph/buildgraph.go` |
+| Create | `internal/horde/buildgraph/buildgraph_test.go` |
 | Create | `cmd/horde/submit/client.go` |
 | Create | `cmd/horde/submit/submit.go` |
 | Create | `cmd/horde/submit/submit_test.go` |
@@ -14,17 +14,25 @@
 
 ---
 
-## Task 1: `internal/horde/buildgraph.go`
+## Task 1: `internal/horde/buildgraph/buildgraph.go`
 
-Pure XML parsing — no AWS, no HTTP.
+Pure XML parsing — no AWS, no HTTP. Lives in its own sub-package (`buildgraph`) so it can be imported by any future command without pulling in the full `internal/horde` plan layer.
+
+### Error handling for malformed files
+
+`ParseBuildGraph` returns a wrapped error in two cases:
+- File unreadable: `"reading BuildGraph file %s: %w"` — includes the path so the user knows which file failed.
+- XML malformed: `"parsing BuildGraph file %s: %w"` — same path-in-message convention. Callers (`submit.go`) re-wrap this as a command error; the original parse error is always visible in the chain.
+
+Empty `<BuildGraph>` (no agents, no nodes) is **not** an error — it produces a zero-value `BuildGraphJob`. The submit command checks `job.Name == ""` and may warn, but does not abort.
 
 ### Step 1: Write failing tests
 
 Create a minimal valid BuildGraph XML file for tests:
 
 ```go
-// internal/horde/buildgraph_test.go
-package horde
+// internal/horde/buildgraph/buildgraph_test.go
+package buildgraph
 
 import (
     "os"
@@ -91,13 +99,13 @@ func TestParseBuildGraphEmptyGraph(t *testing.T) {
 }
 ```
 
-Run: `go test ./internal/horde/... -run TestParseBuildGraph`
-Expected: FAIL (buildgraph.go doesn't exist)
+Run: `go test ./internal/horde/buildgraph/... -run TestParseBuildGraph`
+Expected: FAIL (package doesn't exist yet)
 
-### Step 2: Create `internal/horde/buildgraph.go`
+### Step 2: Create `internal/horde/buildgraph/buildgraph.go`
 
 ```go
-package horde
+package buildgraph
 
 import (
     "encoding/xml"
@@ -150,11 +158,11 @@ func ParseBuildGraph(path string) (*BuildGraphJob, error) {
 
 ### Step 3: Run tests and commit
 
-Run: `go test ./internal/horde/... -run TestParseBuildGraph`
+Run: `go test ./internal/horde/buildgraph/... -run TestParseBuildGraph`
 Expected: PASS
 
 ```bash
-git add internal/horde/buildgraph.go internal/horde/buildgraph_test.go
+git add internal/horde/buildgraph/
 git commit -m "feat: add BuildGraph XML parser"
 ```
 
@@ -170,13 +178,13 @@ package submit
 
 import (
     "context"
-    "github.com/jpvelasco/fabrica/internal/horde"
+    "github.com/jpvelasco/fabrica/internal/horde/buildgraph"
 )
 
 // HordeClient abstracts communication with the Horde REST API.
 // The interface lives here (not in internal/) because only submit needs it in V1.
 type HordeClient interface {
-    SubmitJob(ctx context.Context, job *horde.BuildGraphJob) (jobID string, err error)
+    SubmitJob(ctx context.Context, job *buildgraph.BuildGraphJob) (jobID string, err error)
     GetJobStatus(ctx context.Context, jobID string) (state string, err error)
 }
 ```
@@ -233,7 +241,7 @@ import (
 
     "github.com/jpvelasco/fabrica/cmd/globals"
     "github.com/jpvelasco/fabrica/internal/config"
-    "github.com/jpvelasco/fabrica/internal/horde"
+    "github.com/jpvelasco/fabrica/internal/horde/buildgraph"
     fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -247,7 +255,7 @@ type fakeHordeClient struct {
     statusCalls int
 }
 
-func (f *fakeHordeClient) SubmitJob(_ context.Context, _ *horde.BuildGraphJob) (string, error) {
+func (f *fakeHordeClient) SubmitJob(_ context.Context, _ *buildgraph.BuildGraphJob) (string, error) {
     f.submitCalls++
     if f.submitErr != nil {
         return "", f.submitErr
@@ -436,7 +444,7 @@ type sequentialFakeClient struct {
     idx         *int
 }
 
-func (f *sequentialFakeClient) SubmitJob(_ context.Context, _ *horde.BuildGraphJob) (string, error) {
+func (f *sequentialFakeClient) SubmitJob(_ context.Context, _ *buildgraph.BuildGraphJob) (string, error) {
     return f.submitJobID, nil
 }
 
@@ -489,7 +497,7 @@ type command struct {
 `New()` flags: positional arg `<buildgraph-file>`, `--wait`/`-w` bool flag.
 
 `run()` flow:
-1. Parse BuildGraph file: `horde.ParseBuildGraph(c.buildGraphPath)`
+1. Parse BuildGraph file: `buildgraph.ParseBuildGraph(c.buildGraphPath)`
 2. Read state; check horde module exists — if not, error `"Horde is not provisioned. Run 'fabrica horde create' first."`
 3. If `c.hordeClient == nil`: resolve private IP via `getResource` (Cloud Control Get on instance), construct `hordeHTTPClient`
 4. Call `hordeClient.SubmitJob(ctx, job)` → get `jobID`
@@ -509,7 +517,7 @@ type command struct {
 cmd.AddCommand(submit.New(runtimeSource, optionsSource, out))
 ```
 
-Run: `go test ./cmd/horde/submit/... && go test ./internal/horde/...`
+Run: `go test ./cmd/horde/submit/... && go test ./internal/horde/... ./internal/horde/buildgraph/...`
 Expected: PASS
 
 ### Step 4: Commit
