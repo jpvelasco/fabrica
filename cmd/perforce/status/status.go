@@ -70,6 +70,9 @@ type command struct {
 	now         func() time.Time
 }
 
+// New returns the "perforce status" subcommand. It accepts RuntimeSource and
+// OptionsSource closures so that global flags (--json) are resolved at
+// execution time rather than at construction time.
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
 	var wait bool
 	cmd := &cobra.Command{
@@ -77,10 +80,15 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Short: "Show Perforce Helix Core status",
 		Long: `Show the current status of the Perforce Helix Core server.
 
-Reads module state and queries the EC2 instance via Cloud Control.
-Probes TCP port 1666 to determine Helix Core readiness.
+Reads local module state and queries the EC2 instance for live details
+(instance type, private IP, EC2 state). Probes TCP port 1666 to verify
+that Helix Core is accepting connections.
 
-Use --wait / -w to poll every 15 seconds until ready (up to 10 minutes).`,
+When the server transitions from provisioning to ready for the first time,
+status automatically updates the local state file.
+
+Use --wait / -w to poll every 15 seconds until Helix Core is reachable
+(times out after 10 minutes).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
 			if err != nil {

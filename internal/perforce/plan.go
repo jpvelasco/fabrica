@@ -92,6 +92,7 @@ func ResolveVersion(flagValue, cfgValue string) string {
 	return DefaultHelixVersion
 }
 
+// validateVersion returns an error if v is not "latest", "YYYY.N", or "YYYY.N/BUILD".
 func validateVersion(v string) error {
 	if v == "latest" || reVersionMinor.MatchString(v) || reVersionBuild.MatchString(v) {
 		return nil

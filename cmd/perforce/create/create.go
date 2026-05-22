@@ -44,6 +44,9 @@ type command struct {
 	createResource func(ctx context.Context, r *cloud.Resource) error
 }
 
+// New returns the "perforce create" subcommand. It accepts RuntimeSource and
+// OptionsSource closures so that global flags (--dry-run, --yes, --json) are
+// resolved at execution time rather than at construction time.
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
 	var instanceType, version string
 	var volumeSize int
@@ -53,10 +56,18 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Short: "Provision a Perforce Helix Core server",
 		Long: `Provision a Perforce Helix Core server on AWS.
 
-Creates an EC2 security group (TCP 1666 inbound) and an EC2 instance
-running Helix Core, with a dedicated gp3 EBS data volume.
+Creates two resources in order:
+  1. EC2 Security Group — allows TCP 1666 inbound (Perforce p4d port)
+  2. EC2 Instance — runs Helix Core with a dedicated gp3 EBS data volume
 
-With --dry-run, shows a plan and cost estimate without making any AWS calls.`,
+State is written after each resource so a partial failure is recoverable:
+re-running create will detect the already-provisioned module and exit cleanly.
+
+A random admin password is generated and written to .fabrica/perforce-credentials.yaml.
+Rotate it after first login.
+
+With --dry-run, shows the provisioning plan and a monthly cost estimate without
+making any AWS calls.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
 			if err != nil {
@@ -151,6 +162,9 @@ func (c command) run(ctx context.Context) error {
 	return c.applyCreate(ctx, st, plan)
 }
 
+// applyCreate executes the provisioning plan: generates credentials, creates the
+// security group, then creates the EC2 instance. State is persisted after each
+// successful creation so partial failures leave a recoverable record.
 func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *perforce.CreatePlan) error {
 	adminPass, err := generatePassword(passwordLen)
 	if err != nil {
@@ -330,6 +344,8 @@ func (c command) defaultWriteState(st *fabricastate.State) error {
 	return fabricastate.WriteState(st)
 }
 
+// generatePassword returns a cryptographically random password of the given
+// length drawn from uppercase, lowercase, and digit characters.
 func generatePassword(length int) (string, error) {
 	chars := []byte(passwordChars)
 	out := make([]byte, length)
@@ -343,6 +359,8 @@ func generatePassword(length int) (string, error) {
 	return string(out), nil
 }
 
+// writeCredentials writes the Perforce admin password to credFile (mode 0600).
+// The directory is created with mode 0700 if it doesn't exist.
 func writeCredentials(pass string) error {
 	dir := filepath.Dir(credFile)
 	if err := os.MkdirAll(dir, 0700); err != nil {

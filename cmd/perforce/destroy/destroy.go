@@ -42,14 +42,25 @@ type command struct {
 	getResource    func(ctx context.Context, r *cloud.Resource) error
 }
 
+// New returns the "perforce destroy" subcommand. It accepts RuntimeSource and
+// OptionsSource closures so that global flags (--dry-run, --yes, --json) are
+// resolved at execution time rather than at construction time.
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "destroy",
-		Short: "Destroy the Perforce Helix Core server",
-		Long: `Permanently delete the Perforce Helix Core server and its resources.
+		Short: "Permanently delete the Perforce Helix Core server",
+		Long: `Permanently delete the Perforce Helix Core server and all its AWS resources.
 
-Deletes resources in reverse-creation order: EC2 instance first, then
-security group. State is updated after each successful deletion.
+Resources are deleted in reverse-creation order to respect dependencies:
+  1. EC2 Instance (terminated first)
+  2. EC2 Security Group
+
+State is updated after each deletion so a partial failure leaves a recoverable
+record. Re-running destroy will skip resources that are already gone.
+
+Before deleting the instance, the current EC2 state is checked:
+  - stopping / shutting-down: destroy exits with an error; retry once complete.
+  - terminated / not found: treated as already deleted; state is cleaned up.
 
 With --dry-run, shows the destroy plan without making any AWS calls.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -122,6 +133,10 @@ func (c command) run(ctx context.Context) error {
 }
 
 func (c command) applyDestroy(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, resources []cloud.Resource) error {
+	if c.deleteResource == nil {
+		return fmt.Errorf("no provider configured; re-run after 'fabrica setup'")
+	}
+
 	if !c.jsonOut {
 		fmt.Fprintln(c.out)
 	}
@@ -149,10 +164,6 @@ func (c command) applyDestroy(ctx context.Context, st *fabricastate.State, m *fa
 
 		if !c.jsonOut {
 			fmt.Fprintf(c.out, "Deleting %s %s...\n", r.TypeName, r.Identifier)
-		}
-
-		if c.deleteResource == nil {
-			return fmt.Errorf("no provider configured; cannot delete %s", r.TypeName)
 		}
 
 		if err := c.deleteResource(ctx, &r); err != nil {
