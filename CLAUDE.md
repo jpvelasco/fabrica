@@ -8,7 +8,7 @@ A Go CLI + infrastructure-as-code framework that provisions and manages game stu
 
 ## Project Status
 
-Phase 0 (CLI skeleton + AWS foundation) is underway. The state backend (S3 + DynamoDB bootstrap + locking), `doctor`, `setup`, `destroy`, and `configcmd` commands are implemented. Cloud Control API CRUD methods are stubbed (`internal/cloud/aws/cloudcontrol.go`) — resource management is not yet wired to real AWS calls.
+Phase 0 (CLI skeleton + AWS foundation) is complete. The state backend, `doctor`, `setup`, `destroy`, and `configcmd` commands are implemented. The `perforce` module (create/status/destroy) is the first fully-wired module — Cloud Control calls are live but the CloudControl stub (`internal/cloud/aws/cloudcontrol.go`) is still used for the broader resource API.
 
 The `src/` directory contains a parallel C# CDK exploration (`Fabrica.CdkApp`, `Fabrica.Cli`, `Fabrica.Constructs`, `Fabrica.Operations`) — this is not the active implementation path; Go is the chosen stack.
 
@@ -68,6 +68,20 @@ go list -deps ./internal/cloud/...
 | `internal/tags` | Tag injection helpers; `ManagedBy: fabrica` applied to all resources |
 | `internal/prompt` | `ConfirmExact` for interactive confirmation dialogs |
 | `internal/version` | Version constant |
+| `cmd/perforce` | Parent command; wires create/status/destroy subcommands |
+| `cmd/perforce/create` | Provision SG + EC2 instance in order; writes state after each; generates credentials |
+| `cmd/perforce/status` | Reads state + Cloud Control live data; TCP-probes port 1666; transitions provisioning→ready |
+| `cmd/perforce/destroy` | Deletes EC2 instance then SG in reverse order; skips already-terminated instances |
+| `internal/perforce` | Pure plan layer (no SDK): version resolution, `CreatePlan`, Cloud Control JSON builders (`SGDesiredState`, `InstanceDesiredState`), cloud-init generator, cost estimators |
+
+### Module Pattern
+
+`internal/perforce` is the canonical template for new modules:
+- **Pure plan layer** — no AWS SDK imports. Builds `CreatePlan` and Cloud Control desired-state JSON. The `cmd/<module>` layer calls the plan layer, then executes via `rt.Provider.Resources()`.
+- **VPCResolver interface** — when a module needs AWS-specific resolution (VPC, subnet), define an interface in `internal/<module>` that the provider implements. Keeps `internal/*` SDK-free.
+- **Cost estimators via `init()`** — register in `cost.Global` from `internal/<module>/cost.go`; imported transitively by the create command.
+- **`GenerateRaw`** — when a function produces base64 output, add a `*Raw` variant returning the plain string for test assertions.
+- **State written after each resource** — partial failures leave a recoverable record; re-running detects already-provisioned state and exits cleanly.
 
 ### Provider Registration
 
@@ -102,7 +116,7 @@ See `AGENTS.md` for the full coding conventions. Key additions over Ludus:
 ```
 fabrica setup                          # guided first-run provisioning wizard
 fabrica status                         # health of all modules
-fabrica perforce [setup|status|backup|restore]
+fabrica perforce create|status|destroy      # ✓ implemented; backup|restore planned
 fabrica horde [setup|status|scale|workers]
 fabrica ci [setup|trigger|status|logs]
 fabrica deploy [setup|promote|status|destroy]
