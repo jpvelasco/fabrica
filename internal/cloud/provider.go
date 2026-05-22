@@ -5,7 +5,12 @@ package cloud
 import (
 	"context"
 	"encoding/json"
+	"errors"
 )
+
+// ErrResourceNotFound is returned by ResourceClient methods when the target
+// resource does not exist in the provider (already deleted or never created).
+var ErrResourceNotFound = errors.New("resource not found")
 
 // Provider is the interface every cloud provider must satisfy.
 type Provider interface {

@@ -31,6 +31,7 @@ func newTestCommand(out *bytes.Buffer, st *fabricastate.State, deleteErr map[str
 	}
 	fake := &fakeResourceClient{deleteErr: deleteErr}
 	c.deleteResource = fake.Delete
+	c.getResource = fake.Get
 	return c
 }
 
@@ -520,6 +521,155 @@ func TestResourcesToDeleteOrder(t *testing.T) {
 	}
 }
 
+// TestDestroyNotFoundOnDeleteTreatedAsSuccess verifies ErrResourceNotFound is not fatal.
+func TestDestroyNotFoundOnDeleteTreatedAsSuccess(t *testing.T) {
+	var out bytes.Buffer
+	st := perforceState("provisioning", true)
+	c := newTestCommand(&out, st, map[string]error{
+		"AWS::EC2::Instance": cloud.ErrResourceNotFound,
+	})
+	c.assumeYes = true
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("ErrResourceNotFound must not abort destroy: %v", err)
+	}
+	// Module must be removed from state after completing.
+	if m := st.GetModule("perforce"); m != nil {
+		t.Error("module must be removed from state after destroy completes")
+	}
+}
+
+// TestDestroyNotFoundBothResourcesSucceeds verifies all-not-found path completes cleanly.
+func TestDestroyNotFoundBothResourcesSucceeds(t *testing.T) {
+	var out bytes.Buffer
+	st := perforceState("provisioning", true)
+	c := newTestCommand(&out, st, map[string]error{
+		"AWS::EC2::Instance":      cloud.ErrResourceNotFound,
+		"AWS::EC2::SecurityGroup": cloud.ErrResourceNotFound,
+	})
+	c.assumeYes = true
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("all-not-found must complete without error: %v", err)
+	}
+	if m := st.GetModule("perforce"); m != nil {
+		t.Error("module must be removed from state")
+	}
+}
+
+// TestDestroyInstanceTransitionalStateReturnsError verifies stopping/shutting-down abort early.
+func TestDestroyInstanceTransitionalStateReturnsError(t *testing.T) {
+	for _, state := range []string{"stopping", "shutting-down"} {
+		t.Run(state, func(t *testing.T) {
+			var out bytes.Buffer
+			st := perforceState("provisioning", true)
+			c := newTestCommand(&out, st, nil)
+			c.assumeYes = true
+			actualState := []byte(`{"State":{"Name":"` + state + `"}}`)
+			deleteCalled := false
+			fake := &fakeResourceClient{
+				getResponse: map[string][]byte{"AWS::EC2::Instance": actualState},
+			}
+			c.getResource = fake.Get
+			c.deleteResource = func(_ context.Context, _ *cloud.Resource) error {
+				deleteCalled = true
+				return nil
+			}
+
+			err := c.run(context.Background())
+			if err == nil {
+				t.Fatalf("expected error for transitional state %q", state)
+			}
+			assertContains(t, err.Error(), state)
+			assertContains(t, err.Error(), "transitional state")
+			if deleteCalled {
+				t.Error("delete must not be called when instance is in transitional state")
+			}
+		})
+	}
+}
+
+// TestDestroyInstanceTerminatedTreatedAsGone verifies "terminated" skips delete call.
+func TestDestroyInstanceTerminatedTreatedAsGone(t *testing.T) {
+	var out bytes.Buffer
+	st := perforceState("provisioning", true)
+	actualState := []byte(`{"State":{"Name":"terminated"}}`)
+	fake := &fakeResourceClient{
+		getResponse: map[string][]byte{"AWS::EC2::Instance": actualState},
+	}
+	deletedTypes := []string{}
+	c := newTestCommand(&out, st, nil)
+	c.assumeYes = true
+	c.getResource = fake.Get
+	c.deleteResource = func(_ context.Context, r *cloud.Resource) error {
+		deletedTypes = append(deletedTypes, r.TypeName)
+		return nil
+	}
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("terminated instance must not produce error: %v", err)
+	}
+	for _, typ := range deletedTypes {
+		if typ == "AWS::EC2::Instance" {
+			t.Error("delete must not be called for terminated instance")
+		}
+	}
+	// SG should still have been deleted.
+	found := false
+	for _, typ := range deletedTypes {
+		if typ == "AWS::EC2::SecurityGroup" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("SG should still be deleted even when instance was already terminated")
+	}
+}
+
+// TestDestroyGetResourceNotFoundBeforeDeleteTreatedAsGone verifies Get returning ErrResourceNotFound skips delete.
+func TestDestroyGetResourceNotFoundBeforeDeleteTreatedAsGone(t *testing.T) {
+	var out bytes.Buffer
+	st := perforceState("provisioning", true)
+	fake := &fakeResourceClient{
+		getErr: map[string]error{"AWS::EC2::Instance": cloud.ErrResourceNotFound},
+	}
+	deletedTypes := []string{}
+	c := newTestCommand(&out, st, nil)
+	c.assumeYes = true
+	c.getResource = fake.Get
+	c.deleteResource = func(_ context.Context, r *cloud.Resource) error {
+		deletedTypes = append(deletedTypes, r.TypeName)
+		return nil
+	}
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("Get not-found before delete must not produce error: %v", err)
+	}
+	for _, typ := range deletedTypes {
+		if typ == "AWS::EC2::Instance" {
+			t.Error("delete must not be called when Get returns ErrResourceNotFound")
+		}
+	}
+}
+
+// TestDestroyGetResourceErrorPropagates verifies Get error other than not-found is surfaced.
+func TestDestroyGetResourceErrorPropagates(t *testing.T) {
+	var out bytes.Buffer
+	st := perforceState("provisioning", true)
+	fake := &fakeResourceClient{
+		getErr: map[string]error{"AWS::EC2::Instance": errors.New("network timeout")},
+	}
+	c := newTestCommand(&out, st, nil)
+	c.assumeYes = true
+	c.getResource = fake.Get
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when getResource fails")
+	}
+	assertContains(t, err.Error(), "network timeout")
+}
+
 // ---- helpers ----
 
 func getResource(m *fabricastate.ModuleState, typeName string) (fabricastate.ModuleResource, bool) {
@@ -550,8 +700,10 @@ func assertContains(t *testing.T, s, substr string) {
 
 // fakeResourceClient tracks delete calls and returns configured errors.
 type fakeResourceClient struct {
-	deleteErr map[string]error
-	deleted   []string
+	deleteErr   map[string]error
+	getErr      map[string]error
+	getResponse map[string][]byte // TypeName → ActualState JSON to inject
+	deleted     []string
 }
 
 func (f *fakeResourceClient) Delete(_ context.Context, r *cloud.Resource) error {
@@ -562,8 +714,17 @@ func (f *fakeResourceClient) Delete(_ context.Context, r *cloud.Resource) error 
 	return nil
 }
 
+func (f *fakeResourceClient) Get(_ context.Context, r *cloud.Resource) error {
+	if err, ok := f.getErr[r.TypeName]; ok {
+		return err
+	}
+	if data, ok := f.getResponse[r.TypeName]; ok {
+		r.ActualState = data
+	}
+	return nil
+}
+
 func (f *fakeResourceClient) Create(_ context.Context, _ *cloud.Resource) error { return nil }
-func (f *fakeResourceClient) Get(_ context.Context, _ *cloud.Resource) error    { return nil }
 func (f *fakeResourceClient) Update(_ context.Context, _ *cloud.Resource) error { return nil }
 func (f *fakeResourceClient) List(_ context.Context, _ string) ([]cloud.Resource, error) {
 	return nil, nil

@@ -3,6 +3,7 @@ package destroy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -38,6 +39,7 @@ type command struct {
 	readState      func() (*fabricastate.State, error)
 	writeState     func(*fabricastate.State) error
 	deleteResource func(ctx context.Context, r *cloud.Resource) error
+	getResource    func(ctx context.Context, r *cloud.Resource) error
 }
 
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
@@ -69,6 +71,7 @@ With --dry-run, shows the destroy plan without making any AWS calls.`,
 			c.writeState = c.defaultWriteState
 			if rt.Provider != nil {
 				c.deleteResource = rt.Provider.Resources().Delete
+				c.getResource = rt.Provider.Resources().Get
 			}
 			return c.run(cmd.Context())
 		},
@@ -127,6 +130,23 @@ func (c command) applyDestroy(ctx context.Context, st *fabricastate.State, m *fa
 
 	for _, res := range resources {
 		r := res // copy for mutation
+
+		if r.TypeName == "AWS::EC2::Instance" {
+			skip, err := c.checkInstanceBeforeDelete(ctx, &r)
+			if err != nil {
+				return err
+			}
+			if skip {
+				// Instance already gone — remove from state and continue.
+				removeResource(m, r.TypeName)
+				st.UpsertModule(moduleName, m.Version, "destroying", m.Resources)
+				if err := c.writeState(st); err != nil {
+					fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
+				}
+				continue
+			}
+		}
+
 		if !c.jsonOut {
 			fmt.Fprintf(c.out, "Deleting %s %s...\n", r.TypeName, r.Identifier)
 		}
@@ -136,10 +156,14 @@ func (c command) applyDestroy(ctx context.Context, st *fabricastate.State, m *fa
 		}
 
 		if err := c.deleteResource(ctx, &r); err != nil {
-			return fmt.Errorf("deleting %s %s: %w", r.TypeName, r.Identifier, err)
-		}
-
-		if !c.jsonOut {
+			if errors.Is(err, cloud.ErrResourceNotFound) {
+				if !c.jsonOut {
+					fmt.Fprintf(c.out, "  Already deleted: %s\n", r.Identifier)
+				}
+			} else {
+				return fmt.Errorf("deleting %s %s: %w", r.TypeName, r.Identifier, err)
+			}
+		} else if !c.jsonOut {
 			fmt.Fprintf(c.out, "  Deleted: %s\n", r.Identifier)
 		}
 		destroyed = append(destroyed, r.Identifier)
@@ -169,6 +193,47 @@ func (c command) applyDestroy(ctx context.Context, st *fabricastate.State, m *fa
 		fmt.Fprintf(c.out, "  Deleted: %s\n", id)
 	}
 	return nil
+}
+
+// checkInstanceBeforeDelete calls Get on the EC2 instance to detect transitional
+// or already-terminated states before attempting a delete call.
+// Returns (skip=true, nil) when the instance is already gone (terminated or not found).
+// Returns (false, error) when the instance is in a transitional state.
+// Returns (false, nil) when the delete should proceed normally.
+func (c command) checkInstanceBeforeDelete(ctx context.Context, r *cloud.Resource) (skip bool, err error) {
+	if c.getResource == nil {
+		return false, nil
+	}
+	if err := c.getResource(ctx, r); err != nil {
+		if errors.Is(err, cloud.ErrResourceNotFound) {
+			if !c.jsonOut {
+				fmt.Fprintf(c.out, "  Already deleted: %s\n", r.Identifier)
+			}
+			return true, nil
+		}
+		return false, fmt.Errorf("querying instance %s before delete: %w", r.Identifier, err)
+	}
+	if len(r.ActualState) == 0 {
+		return false, nil
+	}
+	var actual struct {
+		State struct {
+			Name string `json:"Name"`
+		} `json:"State"`
+	}
+	if err := json.Unmarshal(r.ActualState, &actual); err != nil {
+		return false, nil
+	}
+	switch actual.State.Name {
+	case "stopping", "shutting-down":
+		return false, fmt.Errorf("instance %s is in transitional state %q — wait for it to finish and retry destroy", r.Identifier, actual.State.Name)
+	case "terminated":
+		if !c.jsonOut {
+			fmt.Fprintf(c.out, "  Already deleted: %s\n", r.Identifier)
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // resourcesToDelete returns resources in reverse-creation order: Instance → SG.
