@@ -8,9 +8,9 @@ A Go CLI + infrastructure-as-code framework that provisions and manages game stu
 
 ## Project Status
 
-Phase 0 (CLI skeleton + AWS foundation) is complete. The state backend, `doctor`, `setup`, `destroy`, and `configcmd` commands are implemented. The `perforce` module (create/status/destroy) is the first fully-wired module — Cloud Control calls are live but the CloudControl stub (`internal/cloud/aws/cloudcontrol.go`) is still used for the broader resource API.
+Phase 0 (CLI skeleton + AWS foundation) is complete. The `perforce` module (create/status/destroy) and `horde` module (create/status/submit) are fully implemented. Cloud Control calls are live; the CloudControl stub (`internal/cloud/aws/cloudcontrol.go`) is still used for the broader resource API in non-perforce/horde paths.
 
-The `src/` directory contains a parallel C# CDK exploration (`Fabrica.CdkApp`, `Fabrica.Cli`, `Fabrica.Constructs`, `Fabrica.Operations`) — this is not the active implementation path; Go is the chosen stack.
+The `src/` directory contains a parallel C# CDK exploration — this is not the active implementation path; Go is the chosen stack.
 
 ## Build Commands
 
@@ -73,15 +73,22 @@ go list -deps ./internal/cloud/...
 | `cmd/perforce/status` | Reads state + Cloud Control live data; TCP-probes port 1666; transitions provisioning→ready |
 | `cmd/perforce/destroy` | Deletes EC2 instance then SG in reverse order; skips already-terminated instances |
 | `internal/perforce` | Pure plan layer (no SDK): version resolution, `CreatePlan`, Cloud Control JSON builders (`SGDesiredState`, `InstanceDesiredState`), cloud-init generator, cost estimators |
+| `cmd/horde` | Parent command; wires create/status/submit subcommands |
+| `cmd/horde/create` | Provision SG + EC2 instance (AMI-first); generates MongoDB password; writes credentials to `.fabrica/horde-credentials.yaml` |
+| `cmd/horde/status` | Reads state + Cloud Control live data; TCP-probes port 5000 (HTTP); transitions provisioning→ready; `--json` emits `hordeUrl`/`hordeGrpc` |
+| `cmd/horde/submit` | Parses BuildGraph XML; resolves coordinator private IP via Cloud Control; POSTs to Horde REST API; supports `--wait` polling |
+| `internal/horde` | Pure plan layer: `CreatePlan`, `SGDesiredState`, `InstanceDesiredState`, cloud-init generator (`Generate`/`GenerateRaw`), `VPCResolver` interface |
+| `internal/horde/buildgraph` | Isolated sub-package: `ParseBuildGraph(path)` → `*BuildGraphJob`; XML-only, no AWS/HTTP deps |
 
 ### Module Pattern
 
-`internal/perforce` is the canonical template for new modules:
+`internal/perforce` and `internal/horde` are the canonical templates for new modules:
 - **Pure plan layer** — no AWS SDK imports. Builds `CreatePlan` and Cloud Control desired-state JSON. The `cmd/<module>` layer calls the plan layer, then executes via `rt.Provider.Resources()`.
-- **VPCResolver interface** — when a module needs AWS-specific resolution (VPC, subnet), define an interface in `internal/<module>` that the provider implements. Keeps `internal/*` SDK-free.
-- **Cost estimators via `init()`** — register in `cost.Global` from `internal/<module>/cost.go`; imported transitively by the create command.
+- **VPCResolver interface** — when a module needs AWS-specific resolution (VPC, subnet), define an interface in `internal/<module>/config.go` that the provider implements. Keeps `internal/*` SDK-free.
+- **Cost estimators** — m5/c5 (Perforce) and m7i (Horde) EC2 prices live together in `internal/perforce/cost.go`. `cost.Global.Register` panics on duplicate `TypeName` — do not register `AWS::EC2::Instance` or `AWS::EC2::Volume` from a second package.
 - **`GenerateRaw`** — when a function produces base64 output, add a `*Raw` variant returning the plain string for test assertions.
 - **State written after each resource** — partial failures leave a recoverable record; re-running detects already-provisioned state and exits cleanly.
+- **Config structs in `internal/config/config.go`** — `HordeConfig` and `PerforceConfig` both live here (not in their respective `internal/<module>` packages) to avoid circular imports.
 
 ### Provider Registration
 
@@ -99,10 +106,12 @@ Config: `fabrica.yaml` (or `fabrica-<profile>.yaml` with `--profile`). State: S3
 
 ## Test Strategy
 
-The destroy command uses a two-package test approach — a pattern to follow for other commands as they are implemented:
+Every command package uses a two-file test approach (established in `cmd/perforce/` and `cmd/horde/`):
 
-- `destroy_test.go` (`package destroy`) — white-box tests that call `command.run()` directly. Used for confirmation rejection paths, partial failures, and any behavior that requires access to unexported fields (e.g. the `confirm` injection seam).
-- `cobra_test.go` (`package destroy_test`) — black-box Cobra-layer tests that call `destroy.New(...) + ExecuteContext`. These exercise flag parsing (`--all`, `--dry-run`, `--yes`), command construction, and output. They build a minimal root command in the test to replicate the persistent-flag hierarchy (`--dry-run`, `--yes` live on root, not on destroy).
+- `*_test.go` (`package <cmd>`) — white-box tests that call `command.run()` directly with injected seams (`readState`, `writeState`, `createResource`, `probeTCP`, `hordeClient`, `sleep`, `now`). Cover partial failures, confirmation rejection, error propagation.
+- `cobra_test.go` (`package <cmd>_test`) — black-box Cobra-layer tests that call `cmd.New(...) + ExecuteContext`. Build a minimal root command in the test to replicate the persistent-flag hierarchy (`--dry-run`, `--yes`, `--json` live on root, not on the subcommand).
+
+Seam pattern: the `command` struct holds `func` fields for all I/O operations. `New()` wires real implementations; tests inject fakes. `fakeProvider` / `fakeHordeClient` patterns live in `*_test.go` files alongside the tests that use them.
 
 ## Conventions
 
@@ -114,28 +123,24 @@ See `AGENTS.md` for the full coding conventions. Key additions over Ludus:
 ## Planned Command Structure
 
 ```
-fabrica setup                          # guided first-run provisioning wizard
-fabrica status                         # health of all modules
+fabrica setup                               # guided first-run provisioning wizard
+fabrica status                              # health of all modules
 fabrica perforce create|status|destroy      # ✓ implemented; backup|restore planned
-fabrica horde [setup|status|scale|workers]
+fabrica horde create|status|submit          # ✓ implemented; destroy planned (PR #2)
+fabrica horde destroy                       # next: follows perforce/destroy pattern
 fabrica ci [setup|trigger|status|logs]
 fabrica deploy [setup|promote|status|destroy]
 fabrica workstation [create|list|stop|terminate]
 fabrica cost [report|forecast|alerts]
-fabrica doctor                         # prerequisite validation
-fabrica destroy --all                  # clean teardown
-fabrica export --format cloudformation # escape hatch
+fabrica doctor                              # prerequisite validation
+fabrica destroy --all                       # clean teardown
+fabrica export --format cloudformation      # escape hatch
 ```
 
-## V1 Scope
+## Horde-Specific Notes
 
-In scope: CLI skeleton, `fabrica setup` wizard, Perforce Helix Core (single-server + S3 backup), Horde build farm (coordinator + auto-scaling workers), BuildGraph XML ingestion from Ludus, cost estimation before provisioning, `fabrica status`, `fabrica doctor`, `fabrica destroy`.
-
-Out of scope for V1: workstations (NICE DCV), multi-region, CI/CD pipeline, web dashboard, multi-cloud, MCP server.
-
-## Open Questions
-
-- Horde vs. simpler custom job distribution for V1
-- Perforce licensing strategy for teams > 5 users
-- `fabrica.yaml` / `ludus.yaml` config sharing approach
-- Open source vs. commercial vs. open-core pricing model
+- **AMI-first provisioning** — Horde AMI must contain MongoDB 7, Redis 6.2, and the Horde server binary. Fabrica only configures and starts services via cloud-init. See `docs/horde-ami.md`.
+- **No credentials in UserData** — `ec2:DescribeInstanceAttribute` exposes UserData to anyone with that permission. MongoDB password is written to `.fabrica/horde-credentials.yaml` (mode 0600) only.
+- **Ports** — 5000 (HTTP/web UI), 5002 (gRPC for agents). Status probes port 5000 only.
+- **Submit URL** — `hordeHTTPClient` uses the instance's private IP from Cloud Control. Requires VPN or same-VPC access; no public IP in V1.
+- **`horde_service_token`** in credentials is optional; if empty the auth header is omitted (Horde returns 401 if a token is required).
