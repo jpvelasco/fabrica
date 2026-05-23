@@ -12,6 +12,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/stateutil"
 	"github.com/spf13/cobra"
 )
 
@@ -195,12 +196,12 @@ func (c command) buildInfo(ctx context.Context, m *fabricastate.ModuleState) (st
 		grpcPort:     grpcPort,
 	}
 
-	sgRes, hasSG := resourceByType(m, "AWS::EC2::SecurityGroup")
+	sgRes, hasSG := stateutil.ResourceByType(m, "AWS::EC2::SecurityGroup")
 	if hasSG {
 		info.sgID = sgRes.Identifier
 	}
 
-	instRes, hasInst := resourceByType(m, "AWS::EC2::Instance")
+	instRes, hasInst := stateutil.ResourceByType(m, "AWS::EC2::Instance")
 	if !hasInst {
 		return info, nil
 	}
@@ -348,11 +349,3 @@ func defaultProbeTCP(address string) bool {
 	return true
 }
 
-func resourceByType(m *fabricastate.ModuleState, typeName string) (fabricastate.ModuleResource, bool) {
-	for _, r := range m.Resources {
-		if r.TypeName == typeName {
-			return r, true
-		}
-	}
-	return fabricastate.ModuleResource{}, false
-}

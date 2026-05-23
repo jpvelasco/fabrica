@@ -2,17 +2,14 @@ package create
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
 	"io"
-	"math/big"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/credentials"
 	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -20,11 +17,10 @@ import (
 )
 
 const (
-	lineWidth     = 58
-	moduleName    = "horde"
-	credFile      = ".fabrica/horde-credentials.yaml" //nolint:gosec // file path, not a credential
-	passwordLen   = 24
-	passwordChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	lineWidth   = 58
+	moduleName  = "horde"
+	credFile    = ".fabrica/horde-credentials.yaml" //nolint:gosec // file path, not a credential
+	passwordLen = 24
 )
 
 type command struct {
@@ -154,12 +150,12 @@ func (c command) run(ctx context.Context) error {
 }
 
 func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *horde.CreatePlan) error {
-	mongoPass, err := generatePassword(passwordLen)
+	mongoPass, err := credentials.GeneratePassword(passwordLen)
 	if err != nil {
 		return fmt.Errorf("generating MongoDB password: %w", err)
 	}
 
-	if err := writeCredentials(mongoPass); err != nil {
+	if err := credentials.WriteCredentials(credFile, credentials.FormatHorde(mongoPass)); err != nil {
 		return fmt.Errorf("writing credentials file: %w", err)
 	}
 	fmt.Fprintf(c.out, "\nMongoDB credentials written to %s\n", credFile)
@@ -349,24 +345,3 @@ func (c command) defaultWriteState(st *fabricastate.State) error {
 	return fabricastate.WriteState(st)
 }
 
-func generatePassword(length int) (string, error) {
-	chars := []byte(passwordChars)
-	out := make([]byte, length)
-	for i := range out {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
-		if err != nil {
-			return "", err
-		}
-		out[i] = chars[n.Int64()]
-	}
-	return string(out), nil
-}
-
-func writeCredentials(mongoPass string) error {
-	dir := filepath.Dir(credFile)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-	content := fmt.Sprintf("# Horde MongoDB credentials — keep secret\nmongodb_password: %q\nhorde_service_token: \"\"\n", mongoPass)
-	return os.WriteFile(credFile, []byte(content), 0600)
-}

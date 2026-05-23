@@ -1,0 +1,50 @@
+// Package credentials provides shared helpers for generating and storing
+// per-module credential files under .fabrica/.
+package credentials
+
+import (
+	"crypto/rand"
+	"fmt"
+	"math/big"
+	"os"
+	"path/filepath"
+)
+
+// PasswordChars is the alphabet used by GeneratePassword.
+const PasswordChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+// GeneratePassword returns a cryptographically random password of the given
+// length drawn from PasswordChars (uppercase, lowercase, digits).
+func GeneratePassword(length int) (string, error) {
+	chars := []byte(PasswordChars)
+	out := make([]byte, length)
+	for i := range out {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
+		if err != nil {
+			return "", err
+		}
+		out[i] = chars[n.Int64()]
+	}
+	return string(out), nil
+}
+
+// WriteCredentials creates filepath.Dir(path) (mode 0700) and writes content
+// to path with mode 0600. It is intended for module credential YAML files
+// stored under .fabrica/.
+func WriteCredentials(path string, content string) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(content), 0600)
+}
+
+// FormatPerforce returns the YAML content for a Perforce credential file.
+func FormatPerforce(adminPassword string) string {
+	return fmt.Sprintf("# Perforce admin credentials — keep secret\nadmin_password: %q\n", adminPassword)
+}
+
+// FormatHorde returns the YAML content for a Horde credential file.
+func FormatHorde(mongoPassword string) string {
+	return fmt.Sprintf("# Horde MongoDB credentials — keep secret\nmongodb_password: %q\nhorde_service_token: \"\"\n", mongoPassword)
+}

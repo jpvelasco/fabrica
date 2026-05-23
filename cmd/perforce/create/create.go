@@ -2,17 +2,14 @@ package create
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
 	"io"
-	"math/big"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/credentials"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -20,11 +17,10 @@ import (
 )
 
 const (
-	lineWidth     = 58
-	moduleName    = "perforce"
-	credFile      = ".fabrica/perforce-credentials.yaml"
-	passwordLen   = 24
-	passwordChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	lineWidth  = 58
+	moduleName = "perforce"
+	credFile   = ".fabrica/perforce-credentials.yaml"
+	passwordLen = 24
 )
 
 type command struct {
@@ -166,12 +162,12 @@ func (c command) run(ctx context.Context) error {
 // security group, then creates the EC2 instance. State is persisted after each
 // successful creation so partial failures leave a recoverable record.
 func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *perforce.CreatePlan) error {
-	adminPass, err := generatePassword(passwordLen)
+	adminPass, err := credentials.GeneratePassword(passwordLen)
 	if err != nil {
 		return fmt.Errorf("generating admin password: %w", err)
 	}
 
-	if err := writeCredentials(adminPass); err != nil {
+	if err := credentials.WriteCredentials(credFile, credentials.FormatPerforce(adminPass)); err != nil {
 		return fmt.Errorf("writing credentials file: %w", err)
 	}
 	fmt.Fprintf(c.out, "\nAdmin credentials written to %s\n", credFile)
@@ -344,28 +340,3 @@ func (c command) defaultWriteState(st *fabricastate.State) error {
 	return fabricastate.WriteState(st)
 }
 
-// generatePassword returns a cryptographically random password of the given
-// length drawn from uppercase, lowercase, and digit characters.
-func generatePassword(length int) (string, error) {
-	chars := []byte(passwordChars)
-	out := make([]byte, length)
-	for i := range out {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
-		if err != nil {
-			return "", err
-		}
-		out[i] = chars[n.Int64()]
-	}
-	return string(out), nil
-}
-
-// writeCredentials writes the Perforce admin password to credFile (mode 0600).
-// The directory is created with mode 0700 if it doesn't exist.
-func writeCredentials(pass string) error {
-	dir := filepath.Dir(credFile)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-	content := fmt.Sprintf("# Perforce admin credentials — keep secret\nadmin_password: %q\n", pass)
-	return os.WriteFile(credFile, []byte(content), 0600)
-}
