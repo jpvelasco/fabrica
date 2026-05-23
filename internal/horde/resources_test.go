@@ -78,7 +78,9 @@ func TestSGDesiredStateAllowedCIDRAppliedToBothPorts(t *testing.T) {
 		t.Fatalf("SGDesiredState: %v", err)
 	}
 	var doc map[string]any
-	json.Unmarshal(raw, &doc)
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshalling SGDesiredState: %v", err)
+	}
 	ingress := doc["SecurityGroupIngress"].([]any)
 	for i, rule := range ingress {
 		r := rule.(map[string]any)
