@@ -11,6 +11,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/horde/buildgraph"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/stateutil"
 	"github.com/spf13/cobra"
 )
 
@@ -94,7 +95,7 @@ func (c command) run(ctx context.Context) error {
 	// Resolve the horde client if not injected (production path).
 	client := c.hordeClient
 	if client == nil {
-		instRes, hasInst := resourceByType(m, "AWS::EC2::Instance")
+		instRes, hasInst := stateutil.ResourceByType(m, "AWS::EC2::Instance")
 		if !hasInst || instRes.Identifier == "" {
 			return fmt.Errorf("Horde instance has no private IP yet. Run 'fabrica horde status' to check readiness.")
 		}
@@ -184,11 +185,3 @@ func (c command) defaultReadState() (*fabricastate.State, error) {
 	return fabricastate.ReadStateOrNew(account, region)
 }
 
-func resourceByType(m *fabricastate.ModuleState, typeName string) (fabricastate.ModuleResource, bool) {
-	for _, r := range m.Resources {
-		if r.TypeName == typeName {
-			return r, true
-		}
-	}
-	return fabricastate.ModuleResource{}, false
-}
