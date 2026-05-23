@@ -10,6 +10,8 @@ A Go CLI + infrastructure-as-code framework that provisions and manages game stu
 
 Phase 0 (CLI skeleton + AWS foundation) is complete. The `perforce` module (create/status/destroy) and `horde` module (create/status/submit) are fully implemented. Cloud Control calls are live; the CloudControl stub (`internal/cloud/aws/cloudcontrol.go`) is still used for the broader resource API in non-perforce/horde paths.
 
+`fabrica setup` is intentionally a no-op: `internal/state/bootstrap.go` returns `ErrBootstrapNotImplemented`, and `cmd/setup/setup.go` prints a warning block and exits 0. The S3 bucket and DynamoDB table must be created manually. `--dry-run` still shows the planning output and cost estimate.
+
 The `src/` directory contains a parallel C# CDK exploration — this is not the active implementation path; Go is the chosen stack.
 
 ## Build Commands
