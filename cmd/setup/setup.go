@@ -10,8 +10,8 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
-	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/config"
+	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
 	fabricav "github.com/jpvelasco/fabrica/internal/version"

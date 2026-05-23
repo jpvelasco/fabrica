@@ -19,8 +19,8 @@ import (
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
 	var opts globals.Options
 	root := &cobra.Command{
-		Use:          "fabrica",
-		SilenceUsage: true,
+		Use:           "fabrica",
+		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
 	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")

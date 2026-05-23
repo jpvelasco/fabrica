@@ -11,10 +11,10 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 		"VpcId":       plan.VPCID,
 		"SecurityGroupIngress": []map[string]any{
 			{
-				"IpProtocol": "tcp",
-				"FromPort":   1666,
-				"ToPort":     1666,
-				"CidrIp":     "0.0.0.0/0",
+				"IpProtocol":  "tcp",
+				"FromPort":    1666,
+				"ToPort":      1666,
+				"CidrIp":      "0.0.0.0/0",
 				"Description": "Perforce p4d",
 			},
 		},
@@ -30,16 +30,16 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 // Perforce EC2 instance.
 func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMessage, error) {
 	doc := map[string]any{
-		"InstanceType": plan.InstanceType,
-		"SubnetId":     plan.SubnetID,
+		"InstanceType":     plan.InstanceType,
+		"SubnetId":         plan.SubnetID,
 		"SecurityGroupIds": []string{sgID},
-		"UserData": userData,
+		"UserData":         userData,
 		"BlockDeviceMappings": []map[string]any{
 			{
 				"DeviceName": "/dev/sdf",
 				"Ebs": map[string]any{
-					"VolumeSize": plan.VolumeSize,
-					"VolumeType": "gp3",
+					"VolumeSize":          plan.VolumeSize,
+					"VolumeType":          "gp3",
 					"DeleteOnTermination": false,
 				},
 			},
