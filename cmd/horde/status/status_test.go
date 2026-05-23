@@ -34,6 +34,10 @@ func newTestCommand(out *bytes.Buffer, st *fabricastate.State, getResource func(
 }
 
 func hordeState(status string, withInstance bool) *fabricastate.State {
+	return hordeStateWithVersion(status, withInstance, "ami-test123")
+}
+
+func hordeStateWithVersion(status string, withInstance bool, amiID string) *fabricastate.State {
 	st := fabricastate.NewState("123456789012", "us-east-1")
 	resources := []fabricastate.ModuleResource{
 		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-horde123"},
@@ -44,7 +48,7 @@ func hordeState(status string, withInstance bool) *fabricastate.State {
 			Identifier: "i-horde123",
 		})
 	}
-	st.UpsertModule("horde", "", status, resources)
+	st.UpsertModule("horde", amiID, status, resources)
 	return st
 }
 
@@ -299,6 +303,34 @@ func TestStatusAlreadyReady(t *testing.T) {
 		t.Error("state must not be rewritten when module is already ready")
 	}
 	assertContains(t, out.String(), "ready")
+}
+
+// TestStatusVersionPreservedOnTransitionToReady verifies AMI version is not lost when state transitions to ready.
+func TestStatusVersionPreservedOnTransitionToReady(t *testing.T) {
+	var out bytes.Buffer
+	st := hordeStateWithVersion("provisioning", true, "ami-preserve99")
+	var writtenVersion string
+	getResource := func(_ context.Context, r *cloud.Resource) error {
+		r.ActualState = mustMarshal(map[string]any{
+			"PrivateIpAddress": "10.0.1.42",
+			"State":            map[string]any{"Name": "running"},
+		})
+		return nil
+	}
+	c := newTestCommand(&out, st, getResource, func(string) bool { return true })
+	c.writeState = func(s *fabricastate.State) error {
+		if m := s.GetModule("horde"); m != nil {
+			writtenVersion = m.Version
+		}
+		return nil
+	}
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if writtenVersion != "ami-preserve99" {
+		t.Errorf("version written = %q, want ami-preserve99", writtenVersion)
+	}
 }
 
 // TestStatusWriteStateErrorSurfacedAsWarning verifies write errors show a warning but don't fail.

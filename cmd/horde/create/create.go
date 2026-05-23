@@ -181,7 +181,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	}
 	fmt.Fprintf(c.out, "  Security group created: %s\n", sg.Identifier)
 
-	st.UpsertModule(moduleName, "", "provisioning", []fabricastate.ModuleResource{
+	st.UpsertModule(moduleName, plan.AmiID, "provisioning", []fabricastate.ModuleResource{
 		{TypeName: "AWS::EC2::SecurityGroup", Identifier: sg.Identifier},
 	})
 	if err := c.writeState(st); err != nil {
@@ -213,7 +213,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	}
 	fmt.Fprintf(c.out, "  Instance created: %s\n", instance.Identifier)
 
-	st.UpsertModule(moduleName, "", "provisioning", []fabricastate.ModuleResource{
+	st.UpsertModule(moduleName, plan.AmiID, "provisioning", []fabricastate.ModuleResource{
 		{TypeName: "AWS::EC2::SecurityGroup", Identifier: sg.Identifier},
 		{TypeName: "AWS::EC2::Instance", Identifier: instance.Identifier},
 	})
