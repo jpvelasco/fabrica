@@ -6,6 +6,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/horde/create"
 	"github.com/jpvelasco/fabrica/cmd/horde/status"
+	"github.com/jpvelasco/fabrica/cmd/horde/submit"
 	"github.com/spf13/cobra"
 )
 
@@ -19,9 +20,11 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 
 Available operations:
   create   Provision a new Horde coordinator on EC2
-  status   Show coordinator health and connection info`,
+  status   Show coordinator health and connection info
+  submit   Submit a BuildGraph job to the coordinator`,
 	}
 	cmd.AddCommand(create.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(status.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(submit.New(runtimeSource, optionsSource, out))
 	return cmd
 }
