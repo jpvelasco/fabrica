@@ -63,6 +63,10 @@ func TestEC2InstanceEstimator_AllKnownTypes(t *testing.T) {
 		{"c5.xlarge", 0.170},
 		{"c5.2xlarge", 0.340},
 		{"r5.xlarge", 0.252},
+		{"m7i.xlarge", 0.2016},
+		{"m7i.2xlarge", 0.4032},
+		{"m7i.4xlarge", 0.8064},
+		{"m7i.large", 0.1008},
 	}
 	e := ec2InstanceEstimator{}
 	for _, tc := range cases {
