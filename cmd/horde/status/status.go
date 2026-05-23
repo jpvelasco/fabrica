@@ -138,7 +138,7 @@ func (c command) run(ctx context.Context) error {
 	if info.hordeProbeAttempted && info.hordeReachable && m.Status != "ready" {
 		m.Status = "ready"
 		info.moduleStatus = "ready"
-		st.UpsertModule(moduleName, "", "ready", m.Resources)
+		st.UpsertModule(moduleName, m.Version, "ready", m.Resources)
 		if err := c.writeState(st); err != nil {
 			fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
 		}
@@ -159,7 +159,7 @@ func (c command) pollUntilReady(ctx context.Context, st *fabricastate.State, m *
 		if info.hordeProbeAttempted && info.hordeReachable {
 			m.Status = "ready"
 			info.moduleStatus = "ready"
-			st.UpsertModule(moduleName, "", "ready", m.Resources)
+			st.UpsertModule(moduleName, m.Version, "ready", m.Resources)
 			if err := c.writeState(st); err != nil {
 				fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
 			}

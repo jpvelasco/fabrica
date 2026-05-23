@@ -80,7 +80,7 @@ func TestCreateAlreadyProvisioned(t *testing.T) {
 	var out bytes.Buffer
 	provider := &fakeProvider{}
 	st := fabricastate.NewState("123456789012", "us-east-1")
-	st.UpsertModule("horde", "", "provisioning", []fabricastate.ModuleResource{
+	st.UpsertModule("horde", "ami-existing", "provisioning", []fabricastate.ModuleResource{
 		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-existing"},
 		{TypeName: "AWS::EC2::Instance", Identifier: "i-existing"},
 	})
@@ -150,6 +150,9 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	}
 	if len(m.Resources) != 2 {
 		t.Fatalf("final state has %d resources, want 2", len(m.Resources))
+	}
+	if m.Version != "ami-test123" {
+		t.Errorf("state version = %q, want ami-test123", m.Version)
 	}
 }
 
