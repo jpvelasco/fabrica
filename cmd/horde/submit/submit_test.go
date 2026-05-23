@@ -86,7 +86,9 @@ func TestSubmitBuildGraphParseError(t *testing.T) {
 	var out bytes.Buffer
 	dir := t.TempDir()
 	badXML := filepath.Join(dir, "bad.xml")
-	os.WriteFile(badXML, []byte("not xml <<<"), 0644)
+	if err := os.WriteFile(badXML, []byte("not xml <<<"), 0644); err != nil {
+		t.Fatalf("writing bad XML: %v", err)
+	}
 
 	st := hordeProvisionedState()
 	c := newTestCommand(&out, &fakeHordeClient{}, st)

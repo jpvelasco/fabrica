@@ -50,7 +50,7 @@ func (c *hordeHTTPClient) SubmitJob(ctx context.Context, job *buildgraph.BuildGr
 		req.Header.Set("Authorization", "ServiceAccount "+c.token)
 	}
 
-	resp, err := c.http.Do(req)
+	resp, err := c.http.Do(req) //nolint:gosec // URL sourced from provisioned instance state, not user input
 	if err != nil {
 		return "", fmt.Errorf("connecting to Horde at %s: %w", c.baseURL, err)
 	}
@@ -85,7 +85,7 @@ func (c *hordeHTTPClient) GetJobStatus(ctx context.Context, jobID string) (strin
 		req.Header.Set("Authorization", "ServiceAccount "+c.token)
 	}
 
-	resp, err := c.http.Do(req)
+	resp, err := c.http.Do(req) //nolint:gosec // URL sourced from provisioned instance state, not user input
 	if err != nil {
 		return "", fmt.Errorf("connecting to Horde at %s: %w", c.baseURL, err)
 	}
