@@ -2,13 +2,16 @@ package setup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
 	fabricav "github.com/jpvelasco/fabrica/internal/version"
@@ -16,11 +19,12 @@ import (
 )
 
 type command struct {
-	runtime globals.Runtime
-	dryRun  bool
-	out     io.Writer
-	costs   *fabricacost.Registry
-	version string
+	runtime   globals.Runtime
+	dryRun    bool
+	out       io.Writer
+	costs     *fabricacost.Registry
+	version   string
+	bootstrap func(ctx context.Context, provider fabricac.Provider, cfg *config.Config) ([]fabricastate.BootstrapResult, error)
 }
 
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
@@ -29,9 +33,12 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Short: "Provision the state backend",
 		Long: `Set up the Fabrica state backend (S3 bucket + DynamoDB lock table).
 
-This command detects your AWS account and creates the infrastructure
-required for Fabrica to manage state. With --dry-run, it shows what
-would be created and the estimated monthly cost.`,
+NOTE: Automated provisioning is not yet implemented. This command shows
+what would be created and the estimated monthly cost, but does NOT create
+any AWS resources. You must create the S3 bucket and DynamoDB table
+manually before using other Fabrica commands.
+
+With --dry-run, it shows the planned resources and estimated cost.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
 			if err != nil {
@@ -39,11 +46,12 @@ would be created and the estimated monthly cost.`,
 			}
 			opts := optionsSource()
 			return command{
-				runtime: rt,
-				dryRun:  opts.DryRun,
-				out:     out,
-				costs:   fabricacost.Global,
-				version: fabricav.Version,
+				runtime:   rt,
+				dryRun:    opts.DryRun,
+				out:       out,
+				costs:     fabricacost.Global,
+				version:   fabricav.Version,
+				bootstrap: fabricastate.Bootstrap,
 			}.run(cmd.Context())
 		},
 	}
@@ -90,7 +98,8 @@ func (c command) printDryRun(plan fabricastate.SetupPlan, tags map[string]string
 
 	c.printTags(tags)
 	c.printCostReport(c.costs.EstimateAll(costResources(plan.Resources)))
-	fmt.Fprintln(c.out, "Run without --dry-run to proceed.")
+	fmt.Fprintln(c.out, "NOTE: Automated provisioning is not yet implemented.")
+	fmt.Fprintln(c.out, "Resources above must be created manually.")
 }
 
 func (c command) printTags(tags map[string]string) {
@@ -144,7 +153,11 @@ func costResources(resources []fabricastate.ResourcePlan) []fabricacost.Resource
 func (c command) runApply(ctx context.Context, plan fabricastate.SetupPlan) error {
 	c.printApplyHeader(plan)
 
-	results, err := fabricastate.Bootstrap(ctx, c.runtime.Provider, c.runtime.Config)
+	results, err := c.bootstrap(ctx, c.runtime.Provider, c.runtime.Config)
+	if errors.Is(err, fabricastate.ErrBootstrapNotImplemented) {
+		c.printNotImplementedWarning()
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("bootstrap failed: %w", err)
 	}
@@ -153,6 +166,18 @@ func (c command) runApply(ctx context.Context, plan fabricastate.SetupPlan) erro
 	c.saveAccountID(plan.Account)
 	c.printCompletion(results)
 	return nil
+}
+
+func (c command) printNotImplementedWarning() {
+	fmt.Fprintln(c.out, strings.Repeat("!", 58))
+	fmt.Fprintln(c.out, "WARNING: fabrica setup is not yet functional.")
+	fmt.Fprintln(c.out)
+	fmt.Fprintln(c.out, "The S3 bucket and DynamoDB table must be created")
+	fmt.Fprintln(c.out, "manually before using Fabrica. No AWS resources")
+	fmt.Fprintln(c.out, "were created or modified.")
+	fmt.Fprintln(c.out)
+	fmt.Fprintln(c.out, "Manual setup instructions: docs/setup-manual.md")
+	fmt.Fprintln(c.out, strings.Repeat("!", 58))
 }
 
 func (c command) printApplyHeader(plan fabricastate.SetupPlan) {
