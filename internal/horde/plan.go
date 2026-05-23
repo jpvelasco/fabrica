@@ -39,7 +39,7 @@ func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region 
 
 	instanceType := cfg.InstanceType
 	if instanceType == "" {
-		instanceType = "m7i.xlarge"
+		instanceType = "m7i.2xlarge"
 	}
 	volumeSize := cfg.VolumeSize
 	if volumeSize <= 0 {

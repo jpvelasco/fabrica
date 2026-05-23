@@ -24,8 +24,8 @@ func TestNewCreatePlanDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if plan.InstanceType != "m7i.xlarge" {
-		t.Errorf("InstanceType = %q, want m7i.xlarge", plan.InstanceType)
+	if plan.InstanceType != "m7i.2xlarge" {
+		t.Errorf("InstanceType = %q, want m7i.2xlarge", plan.InstanceType)
 	}
 	if plan.VolumeSize != 100 {
 		t.Errorf("VolumeSize = %d, want 100", plan.VolumeSize)
@@ -150,6 +150,9 @@ func TestNewCreatePlanCostResources(t *testing.T) {
 	}
 	if plan.CostResources[0].TypeName != TypeAWSEC2Instance {
 		t.Errorf("CostResources[0].TypeName = %q, want %q", plan.CostResources[0].TypeName, TypeAWSEC2Instance)
+	}
+	if plan.CostResources[0].Name != "m7i.2xlarge" {
+		t.Errorf("CostResources[0].Name = %q, want m7i.2xlarge", plan.CostResources[0].Name)
 	}
 	if plan.CostResources[1].TypeName != TypeAWSEC2Volume {
 		t.Errorf("CostResources[1].TypeName = %q, want %q", plan.CostResources[1].TypeName, TypeAWSEC2Volume)
