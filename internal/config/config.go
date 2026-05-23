@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"os"
 
 	"github.com/spf13/viper"
@@ -53,7 +54,7 @@ type Config struct {
 	Cloud    Cloud          `mapstructure:"cloud"    yaml:"cloud"`
 	State    State          `mapstructure:"state"    yaml:"state"`
 	Perforce PerforceConfig `mapstructure:"perforce" yaml:"perforce"`
-	Horde    any            `mapstructure:"horde"    yaml:"horde"`
+	Horde    HordeConfig    `mapstructure:"horde"    yaml:"horde"`
 	CI       any            `mapstructure:"ci"       yaml:"ci"`
 	Cost     any            `mapstructure:"cost"     yaml:"cost"`
 }
@@ -65,6 +66,18 @@ type PerforceConfig struct {
 	VolumeSize   int    `mapstructure:"volumeSize"   yaml:"volumeSize"`
 	VPCId        string `mapstructure:"vpcId"        yaml:"vpcId"`
 	SubnetId     string `mapstructure:"subnetId"     yaml:"subnetId"`
+}
+
+// HordeConfig holds the horde: section of fabrica.yaml.
+type HordeConfig struct {
+	AmiID        string `mapstructure:"amiId"        yaml:"amiId"`
+	InstanceType string `mapstructure:"instanceType" yaml:"instanceType"`
+	VolumeSize   int    `mapstructure:"volumeSize"   yaml:"volumeSize"`
+	VPCId        string `mapstructure:"vpcId"        yaml:"vpcId"`
+	SubnetId     string `mapstructure:"subnetId"     yaml:"subnetId"`
+	Port         int    `mapstructure:"port"         yaml:"port"`
+	GRPCPort     int    `mapstructure:"grpcPort"     yaml:"grpcPort"`
+	AllowedCIDR  string `mapstructure:"allowedCidr"  yaml:"allowedCidr"`
 }
 
 type Cloud struct {
@@ -89,7 +102,7 @@ type fileConfig struct {
 	Cloud    Cloud          `yaml:"cloud"`
 	State    State          `yaml:"state"`
 	Perforce PerforceConfig `yaml:"perforce"`
-	Horde    any            `yaml:"horde"`
+	Horde    HordeConfig    `yaml:"horde"`
 	CI       any            `yaml:"ci"`
 	Cost     any            `yaml:"cost"`
 }
@@ -99,7 +112,7 @@ func (c *Config) fileConfig() fileConfig {
 		Cloud:    c.Cloud,
 		State:    c.State,
 		Perforce: c.Perforce,
-		Horde:    emptySection(c.Horde),
+		Horde:    c.Horde,
 		CI:       emptySection(c.CI),
 		Cost:     emptySection(c.Cost),
 	}
@@ -132,9 +145,7 @@ func Defaults() *Config {
 func (c *Config) Clone() *Config {
 	out := *c
 	out.Cloud.AWS.Tags = make(map[string]string, len(c.Cloud.AWS.Tags))
-	for k, v := range c.Cloud.AWS.Tags {
-		out.Cloud.AWS.Tags[k] = v
-	}
+	maps.Copy(out.Cloud.AWS.Tags, c.Cloud.AWS.Tags)
 	return &out
 }
 
