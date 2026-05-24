@@ -126,11 +126,12 @@ func TestCreateCobraVersionInvalid(t *testing.T) {
 
 // TestCreateCobraNilProviderExitsCleanly verifies nil provider is handled gracefully.
 func TestCreateCobraNilProvider(t *testing.T) {
-	got, err := runCreate(t, newNilProviderRuntime())
-	if err != nil {
-		t.Fatalf("nil provider: unexpected error: %v", err)
+	_, err := runCreate(t, newNilProviderRuntime())
+	if err == nil {
+		t.Fatal("expected error when provider is nil")
 	}
-	assertCobraContains(t, got, "No infrastructure configured")
+	assertCobraContains(t, err.Error(), "no provider configured")
+	assertCobraContains(t, err.Error(), "fabrica setup")
 }
 
 // TestCreateCobraIdentityFailure verifies identity errors surface as command errors.
