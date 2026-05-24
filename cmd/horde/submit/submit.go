@@ -184,4 +184,3 @@ func (c command) defaultReadState() (*fabricastate.State, error) {
 	}
 	return fabricastate.ReadStateOrNew(account, region)
 }
-

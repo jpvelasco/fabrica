@@ -343,4 +343,3 @@ func (c command) defaultReadState() (*fabricastate.State, error) {
 func (c command) defaultWriteState(st *fabricastate.State) error {
 	return fabricastate.WriteState(st)
 }
-
