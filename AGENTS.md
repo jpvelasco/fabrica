@@ -53,6 +53,8 @@ go list -deps ./internal/cloud/...
 
 **VPCResolver interface** — when a module needs AWS-specific resolution, define an interface in `internal/<module>/config.go` that the provider implements. Keeps `internal/*` SDK-free.
 
+**Embedded templates** — `cmd/horde/ami` ships build artifacts as `embed.FS` templates rendered with `text/template`. New file-generator commands should follow this pattern: templates under `cmd/<cmd>/templates/`, rendered via a `renderTemplate` helper on the command struct. No `RuntimeSource`/`OptionsSource` needed when the command makes no AWS calls.
+
 ## How to Add a New Command / Module
 
 1. **Create `internal/<module>/`** — pure plan layer: `CreatePlan` struct, Cloud Control desired-state JSON builders, cloud-init generator, cost estimators. No AWS SDK imports.

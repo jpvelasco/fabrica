@@ -1,7 +1,7 @@
 {
   "name": "{{ .Name }}",
-  "version": "1.0.0",
-  "description": "Horde {{ .Version }} AMI recipe for fabrica horde create",
+  "semanticVersion": "1.0.0",
+  "description": "Horde {{ .Version }} ({{ .Install }} install) AMI recipe for fabrica horde create",
   "parentImage": "{{ .BaseImage }}",
   "blockDeviceMappings": [
     {
@@ -9,29 +9,30 @@
       "ebs": {
         "volumeSize": 50,
         "volumeType": "gp3",
-        "deleteOnTermination": true
+        "deleteOnTermination": true,
+        "encrypted": true
       }
     }
   ],
   "components": [
     {
-      "componentArn": "arn:aws:imagebuilder:us-east-1:aws:component/update-linux/x.x.x"
-    },
-{{ if eq .Install "docker" -}}
-    {
-      "componentArn": "arn:aws:imagebuilder:us-east-1:aws:component/docker-ce-ubuntu/x.x.x"
+      "componentArn": "arn:aws:imagebuilder:{{ .Region }}:aws:component/update-linux/1.0.2/1"
     },
     {
-      "componentArn": "{{ .Name }}-docker-component/1.0.0",
-      "_comment": "Custom component: installs Horde via Docker Compose. See build-guide.md."
-    }
-{{ else -}}
+      "componentArn": "arn:aws:imagebuilder:{{ .Region }}:aws:component/aws-cli-version-2-linux/1.0.4/1"
+    },
     {
-      "componentArn": "{{ .Name }}-native-component/1.0.0",
-      "_comment": "Custom component: installs MongoDB 7, Redis 6.2, .NET 8, Horde {{ .Version }}. See build-guide.md."
+      "componentArn": "REPLACE_WITH_CUSTOM_COMPONENT_ARN"
+    },
+    {
+      "componentArn": "arn:aws:imagebuilder:{{ .Region }}:aws:component/reboot-linux/1.0.1/1"
     }
-{{ end -}}
   ],
+  "additionalInstanceConfiguration": {
+    "systemsManagerAgent": {
+      "uninstallAfterBuild": false
+    }
+  },
   "tags": {
     "ManagedBy": "fabrica",
     "HordeVersion": "{{ .Version }}",

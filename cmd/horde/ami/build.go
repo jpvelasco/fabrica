@@ -3,12 +3,13 @@ package ami
 import (
 	"bytes"
 	"embed"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"text/template"
-	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -16,22 +17,39 @@ import (
 //go:embed templates
 var templateFS embed.FS
 
+const (
+	maxNameLength       = 127
+	defaultBaseImage    = "ami-0c7217cdde317cfec"
+	defaultHordeVersion = "5.5.0"
+	defaultRegion       = "us-east-1"
+	defaultOutputDir    = "horde-ami"
+)
+
+var (
+	versionRE = regexp.MustCompile(`^[0-9]+\.[0-9]+(\.[0-9]+)?$`)
+	amiRE     = regexp.MustCompile(`^ami-[0-9a-f]{8,}$`)
+	regionRE  = regexp.MustCompile(`^[a-z]{2}-[a-z]+-[0-9]$`)
+	nameRE    = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+)
+
 // BuildConfig holds the parameters for AMI file generation.
 type BuildConfig struct {
 	Version       string
-	Install       string // "docker" or "native"
+	Install       string
 	BaseImage     string
+	Region        string
 	Name          string
 	OutputDir     string
 	IncludePacker bool
+	DryRun        bool
 }
 
 type buildCommand struct {
 	out io.Writer
 	cfg BuildConfig
 
-	// seam for testing
 	writeFile func(path string, data []byte, perm os.FileMode) error
+	mkdirAll  func(path string, perm os.FileMode) error
 }
 
 func newBuildCmd(out io.Writer) *cobra.Command {
@@ -40,93 +58,187 @@ func newBuildCmd(out io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "build",
 		Short: "Generate files needed to build a Horde AMI",
-		Long: `Generate files needed to build a Horde AMI.
+		Long: `Generate the files needed to build a Horde AMI suitable for "fabrica horde create".
 
-By default, outputs an AWS EC2 Image Builder recipe JSON. Use --include-packer
-to also generate a Packer HCL template.
+By default produces an AWS EC2 Image Builder Component (component.yaml) plus a
+recipe (image-builder-recipe.json). With --include-packer, also emits a Packer
+HCL template. A build-guide.md with end-to-end instructions is always included.
 
-The generated files are written to --output-dir (default: ./horde-ami).
-A build-guide.md is always included with step-by-step instructions.
+Two install methods are supported:
+  --install docker   (default; uses Epic's official compose stack)
+  --install native   (.NET 8 + MongoDB 7 + Redis from apt)
 
 Examples:
+  # Default: docker install, us-east-1, latest defaults
   fabrica horde ami build
+
+  # Native install for an air-gapped studio
   fabrica horde ami build --install native
-  fabrica horde ami build --include-packer --output-dir /tmp/horde-build
-  fabrica horde ami build --horde-version 5.5.0`,
+
+  # Pin a specific Horde version and region
+  fabrica horde ami build --horde-version 5.4.0 --region us-west-2
+
+  # Also generate a Packer template
+  fabrica horde ami build --include-packer --output-dir build/horde
+
+  # Preview without writing any files
+  fabrica horde ami build --dry-run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			bc := buildCommand{
+			if f := cmd.InheritedFlags().Lookup("dry-run"); f != nil && f.Value.String() == "true" {
+				cfg.DryRun = true
+			}
+			bc := &buildCommand{
 				out:       out,
 				cfg:       cfg,
 				writeFile: os.WriteFile,
+				mkdirAll:  os.MkdirAll,
 			}
 			return bc.run()
 		},
 	}
 
-	cmd.Flags().StringVar(&cfg.Version, "horde-version", "5.5.0", "Horde server version to install")
+	cmd.Flags().StringVar(&cfg.Version, "horde-version", defaultHordeVersion, `Horde server version to install (or "latest")`)
 	cmd.Flags().StringVar(&cfg.Install, "install", "docker", `Installation method: "docker" or "native"`)
-	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", "ami-0c7217cdde317cfec", "Base Ubuntu 22.04 LTS AMI ID (us-east-1)")
+	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", defaultBaseImage, "Base Ubuntu 22.04 LTS AMI ID")
+	cmd.Flags().StringVar(&cfg.Region, "region", defaultRegion, "AWS region for the AMI build (used in component ARNs)")
 	cmd.Flags().StringVar(&cfg.Name, "name", "", `AMI name (default: "fabrica-horde-<version>")`)
-	cmd.Flags().StringVar(&cfg.OutputDir, "output-dir", "horde-ami", "Directory to write generated files to")
+	cmd.Flags().StringVar(&cfg.OutputDir, "output-dir", defaultOutputDir, "Directory to write generated files to")
 	cmd.Flags().BoolVar(&cfg.IncludePacker, "include-packer", false, "Also generate a Packer HCL template")
 
 	return cmd
 }
 
 func (b *buildCommand) run() error {
-	if b.cfg.Install != "docker" && b.cfg.Install != "native" {
-		return fmt.Errorf("--install must be \"docker\" or \"native\", got %q", b.cfg.Install)
+	if err := b.validate(); err != nil {
+		return err
 	}
 	if b.cfg.Name == "" {
 		b.cfg.Name = fmt.Sprintf("fabrica-horde-%s", b.cfg.Version)
 	}
 
-	if err := os.MkdirAll(b.cfg.OutputDir, 0755); err != nil {
-		return fmt.Errorf("creating output dir %s: %w", b.cfg.OutputDir, err)
+	plannedFiles := []string{"image-builder-recipe.json", "component.yaml"}
+	if b.cfg.IncludePacker {
+		plannedFiles = append(plannedFiles, "packer.pkr.hcl")
+	}
+	plannedFiles = append(plannedFiles, "build-guide.md")
+
+	b.printHeader(plannedFiles)
+
+	if b.cfg.DryRun {
+		fmt.Fprintln(b.out, "Dry run — no files written.")
+		fmt.Fprintln(b.out)
+		b.printNextSteps()
+		return nil
 	}
 
-	fmt.Fprintf(b.out, "Generating Horde AMI build files\n")
-	fmt.Fprintf(b.out, "  Horde version:  %s\n", b.cfg.Version)
-	fmt.Fprintf(b.out, "  Install method: %s\n", b.cfg.Install)
-	fmt.Fprintf(b.out, "  Base image:     %s\n", b.cfg.BaseImage)
-	fmt.Fprintf(b.out, "  AMI name:       %s\n", b.cfg.Name)
-	fmt.Fprintf(b.out, "  Output dir:     %s\n", b.cfg.OutputDir)
-	fmt.Fprintln(b.out)
+	if err := b.mkdirAll(b.cfg.OutputDir, 0755); err != nil {
+		return fmt.Errorf("creating --output-dir %q: %w", b.cfg.OutputDir, err)
+	}
 
-	if err := b.writeImageBuilderRecipe(); err != nil {
+	if err := b.writeRendered("image-builder.json.tmpl", "image-builder-recipe.json", validateImageBuilderJSON); err != nil {
 		return err
 	}
-
+	if err := b.writeRendered("component.yaml.tmpl", "component.yaml", nil); err != nil {
+		return err
+	}
 	if b.cfg.IncludePacker {
-		if err := b.writePackerTemplate(); err != nil {
+		if err := b.writeRendered("packer.hcl.tmpl", "packer.pkr.hcl", nil); err != nil {
 			return err
 		}
 	}
-
-	if err := b.writeBuildGuide(); err != nil {
+	if err := b.writeRendered("build-guide.md.tmpl", "build-guide.md", nil); err != nil {
 		return err
 	}
 
-	fmt.Fprintln(b.out, "Next steps:")
-	fmt.Fprintf(b.out, "  See %s for instructions.\n", filepath.Join(b.cfg.OutputDir, "build-guide.md"))
+	fmt.Fprintln(b.out)
+	b.printNextSteps()
+	return nil
+}
+
+func (b *buildCommand) validate() error {
+	if b.cfg.Version == "" {
+		return errors.New("--horde-version is required")
+	}
+	if b.cfg.Version != "latest" && !versionRE.MatchString(b.cfg.Version) {
+		return fmt.Errorf("--horde-version is invalid: must be NN.NN(.NN) or %q, got %q", "latest", b.cfg.Version)
+	}
+	if b.cfg.Install != "docker" && b.cfg.Install != "native" {
+		return fmt.Errorf("--install is invalid: must be %q or %q, got %q", "docker", "native", b.cfg.Install)
+	}
+	if !amiRE.MatchString(b.cfg.BaseImage) {
+		return fmt.Errorf("--base-image is invalid: must match ami-<hex>, got %q", b.cfg.BaseImage)
+	}
+	if !regionRE.MatchString(b.cfg.Region) {
+		return fmt.Errorf("--region is invalid: must match <area>-<location>-<n> (e.g. us-east-1), got %q", b.cfg.Region)
+	}
+	if b.cfg.Name != "" {
+		if !nameRE.MatchString(b.cfg.Name) {
+			return fmt.Errorf("--name is invalid: only [A-Za-z0-9._-] allowed, got %q", b.cfg.Name)
+		}
+		if len(b.cfg.Name) > maxNameLength {
+			return fmt.Errorf("--name is invalid: must be <= %d chars (Image Builder limit), got %d", maxNameLength, len(b.cfg.Name))
+		}
+	}
+	if b.cfg.OutputDir == "" {
+		return errors.New("--output-dir is required")
+	}
+	return nil
+}
+
+func (b *buildCommand) printHeader(planned []string) {
+	verb := "Generating"
+	if b.cfg.DryRun {
+		verb = "Would generate"
+	}
+	fmt.Fprintf(b.out, "%s Horde AMI build files\n", verb)
+	fmt.Fprintf(b.out, "  Horde version:  %s\n", b.cfg.Version)
+	fmt.Fprintf(b.out, "  Install method: %s\n", b.cfg.Install)
+	fmt.Fprintf(b.out, "  Base image:     %s\n", b.cfg.BaseImage)
+	fmt.Fprintf(b.out, "  Region:         %s\n", b.cfg.Region)
+	fmt.Fprintf(b.out, "  AMI name:       %s\n", b.cfg.Name)
+	fmt.Fprintf(b.out, "  Output dir:     %s\n", b.cfg.OutputDir)
+	fmt.Fprintln(b.out)
+	fmt.Fprintf(b.out, "%s %d files in %s/:\n", planVerb(b.cfg.DryRun), len(planned), b.cfg.OutputDir)
+	for _, f := range planned {
+		fmt.Fprintf(b.out, "  %s\n", f)
+	}
+	fmt.Fprintln(b.out)
+}
+
+func planVerb(dryRun bool) string {
+	if dryRun {
+		return "Would write"
+	}
+	return "Writing"
+}
+
+func (b *buildCommand) writeRendered(tmplName, outName string, validate func([]byte) error) error {
+	data, err := b.renderTemplate(tmplName, b.cfg)
+	if err != nil {
+		return err
+	}
+	if validate != nil {
+		if err := validate(data); err != nil {
+			return fmt.Errorf("rendered %s is invalid: %w", outName, err)
+		}
+	}
+	path := filepath.Join(b.cfg.OutputDir, outName)
+	if err := b.writeFile(path, data, 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	fmt.Fprintf(b.out, "  wrote %s\n", path)
 	return nil
 }
 
 func (b *buildCommand) renderTemplate(name string, data any) ([]byte, error) {
-	tmplData, err := templateFS.ReadFile("templates/" + name)
+	raw, err := templateFS.ReadFile("templates/" + name)
 	if err != nil {
 		return nil, fmt.Errorf("reading template %s: %w", name, err)
 	}
-
-	funcMap := template.FuncMap{
-		"currentYear": func() int { return time.Now().UTC().Year() },
-	}
-
-	tmpl, err := template.New(name).Funcs(funcMap).Parse(string(tmplData))
+	tmpl, err := template.New(name).Parse(string(raw))
 	if err != nil {
 		return nil, fmt.Errorf("parsing template %s: %w", name, err)
 	}
-
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return nil, fmt.Errorf("rendering template %s: %w", name, err)
@@ -134,44 +246,32 @@ func (b *buildCommand) renderTemplate(name string, data any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (b *buildCommand) writeImageBuilderRecipe() error {
-	out, err := b.renderTemplate("image-builder.json.tmpl", b.cfg)
-	if err != nil {
-		return err
+func (b *buildCommand) printNextSteps() {
+	fmt.Fprintln(b.out, "Next steps:")
+	fmt.Fprintln(b.out)
+	fmt.Fprintf(b.out, "  1. Read %s\n", filepath.Join(b.cfg.OutputDir, "build-guide.md"))
+	fmt.Fprintln(b.out)
+	fmt.Fprintln(b.out, "  2. Create the Image Builder component:")
+	fmt.Fprintf(b.out, "       aws imagebuilder create-component \\\n")
+	fmt.Fprintf(b.out, "         --region %s \\\n", b.cfg.Region)
+	fmt.Fprintf(b.out, "         --name %s-%s \\\n", b.cfg.Name, b.cfg.Install)
+	fmt.Fprintf(b.out, "         --semantic-version 1.0.0 \\\n")
+	fmt.Fprintf(b.out, "         --platform Linux \\\n")
+	fmt.Fprintf(b.out, "         --supported-os-versions \"Ubuntu 22\" \\\n")
+	fmt.Fprintf(b.out, "         --data file://%s\n", filepath.Join(b.cfg.OutputDir, "component.yaml"))
+	fmt.Fprintln(b.out)
+	fmt.Fprintln(b.out, "  3. Replace REPLACE_WITH_CUSTOM_COMPONENT_ARN in image-builder-recipe.json")
+	fmt.Fprintln(b.out, "     with the ARN returned in step 2, then:")
+	fmt.Fprintf(b.out, "       aws imagebuilder create-image-recipe \\\n")
+	fmt.Fprintf(b.out, "         --region %s \\\n", b.cfg.Region)
+	fmt.Fprintf(b.out, "         --cli-input-json file://%s\n", filepath.Join(b.cfg.OutputDir, "image-builder-recipe.json"))
+	fmt.Fprintln(b.out)
+	fmt.Fprintln(b.out, "  4. Wire up an Image Builder pipeline (one-time per account) and run it.")
+	fmt.Fprintln(b.out, "     When the pipeline finishes, set horde.amiId in fabrica.yaml.")
+	if b.cfg.IncludePacker {
+		fmt.Fprintln(b.out)
+		fmt.Fprintln(b.out, "  Alternative: build with Packer instead of Image Builder:")
+		fmt.Fprintf(b.out, "       packer init %s\n", filepath.Join(b.cfg.OutputDir, "packer.pkr.hcl"))
+		fmt.Fprintf(b.out, "       packer build %s\n", filepath.Join(b.cfg.OutputDir, "packer.pkr.hcl"))
 	}
-	if err := validateImageBuilderJSON(out); err != nil {
-		return fmt.Errorf("generated recipe is invalid: %w", err)
-	}
-	path := filepath.Join(b.cfg.OutputDir, "image-builder-recipe.json")
-	if err := b.writeFile(path, out, 0644); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
-	}
-	fmt.Fprintf(b.out, "  wrote %s\n", path)
-	return nil
-}
-
-func (b *buildCommand) writePackerTemplate() error {
-	out, err := b.renderTemplate("packer.hcl.tmpl", b.cfg)
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(b.cfg.OutputDir, "packer.pkr.hcl")
-	if err := b.writeFile(path, out, 0644); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
-	}
-	fmt.Fprintf(b.out, "  wrote %s\n", path)
-	return nil
-}
-
-func (b *buildCommand) writeBuildGuide() error {
-	out, err := b.renderTemplate("build-guide.md.tmpl", b.cfg)
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(b.cfg.OutputDir, "build-guide.md")
-	if err := b.writeFile(path, out, 0644); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
-	}
-	fmt.Fprintf(b.out, "  wrote %s\n", path)
-	return nil
 }
