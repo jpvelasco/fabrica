@@ -1,0 +1,94 @@
+packer {
+  required_plugins {
+    amazon = {
+      version = ">= 1.3.0"
+      source  = "github.com/hashicorp/amazon"
+    }
+  }
+}
+
+variable "aws_region" {
+  type    = string
+  default = "us-east-1"
+}
+
+variable "horde_version" {
+  type    = string
+  default = "{{ .Version }}"
+}
+
+source "amazon-ebs" "horde" {
+  ami_name      = "{{ .Name }}-{{"{{"}}timestamp{{"}}"}}"
+  instance_type = "m7i.xlarge"
+  region        = var.aws_region
+  source_ami    = "{{ .BaseImage }}"
+  ssh_username  = "ubuntu"
+
+  ami_block_device_mappings {
+    device_name           = "/dev/sda1"
+    volume_size           = 50
+    volume_type           = "gp3"
+    delete_on_termination = true
+  }
+
+  tags = {
+    ManagedBy     = "fabrica"
+    HordeVersion  = var.horde_version
+    InstallMethod = "{{ .Install }}"
+  }
+}
+
+build {
+  sources = ["source.amazon-ebs.horde"]
+
+{{ if eq .Install "docker" -}}
+  provisioner "shell" {
+    inline = [
+      "set -euo pipefail",
+      # Install Docker CE
+      "curl -fsSL https://get.docker.com | sh",
+      "systemctl enable docker",
+      # Pull Horde images (requires GITHUB_PAT env var)
+      "echo $GITHUB_PAT | docker login ghcr.io -u $GITHUB_USERNAME --password-stdin",
+      "docker pull ghcr.io/epicgames/horde-server:${var.horde_version} || true",
+      # Horde systemd service wrapping Docker Compose
+      # See build-guide.md for the full horde.service unit
+      "systemctl disable docker --now || true",
+    ]
+    environment_vars = [
+      "GITHUB_PAT={{"{{"}}env `GITHUB_PAT`{{"}}"}}",
+      "GITHUB_USERNAME={{"{{"}}env `GITHUB_USERNAME`{{"}}"}}",
+    ]
+  }
+{{ else -}}
+  provisioner "shell" {
+    inline = [
+      "set -euo pipefail",
+      # Install .NET 8
+      "wget -q https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -O /tmp/packages-microsoft-prod.deb",
+      "dpkg -i /tmp/packages-microsoft-prod.deb",
+      "apt-get update -q && apt-get install -y dotnet-sdk-8.0",
+      # Install MongoDB 7.0
+      "curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor",
+      "echo 'deb [ arch=amd64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse' | tee /etc/apt/sources.list.d/mongodb-org-7.0.list",
+      "apt-get update -q && apt-get install -y mongodb-org",
+      "systemctl enable mongod",
+      # Install Redis 6.2+
+      "apt-get install -y redis-server",
+      "systemctl enable redis-server",
+      # Horde binary — build from UE source and copy to /opt/horde
+      # See build-guide.md for the full native install steps
+    ]
+  }
+{{ end -}}
+
+  # Verify services are enabled before baking the AMI
+  provisioner "shell" {
+    inline = [
+      "systemctl is-enabled mongod",
+      "systemctl is-enabled redis-server || systemctl is-enabled redis",
+      "systemctl is-enabled horde",
+      "mkdir -p /etc/horde",
+    ]
+  }
+}

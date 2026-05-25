@@ -1,0 +1,40 @@
+{
+  "name": "{{ .Name }}",
+  "version": "1.0.0",
+  "description": "Horde {{ .Version }} AMI recipe for fabrica horde create",
+  "parentImage": "{{ .BaseImage }}",
+  "blockDeviceMappings": [
+    {
+      "deviceName": "/dev/sda1",
+      "ebs": {
+        "volumeSize": 50,
+        "volumeType": "gp3",
+        "deleteOnTermination": true
+      }
+    }
+  ],
+  "components": [
+    {
+      "componentArn": "arn:aws:imagebuilder:us-east-1:aws:component/update-linux/x.x.x"
+    },
+{{ if eq .Install "docker" -}}
+    {
+      "componentArn": "arn:aws:imagebuilder:us-east-1:aws:component/docker-ce-ubuntu/x.x.x"
+    },
+    {
+      "componentArn": "{{ .Name }}-docker-component/1.0.0",
+      "_comment": "Custom component: installs Horde via Docker Compose. See build-guide.md."
+    }
+{{ else -}}
+    {
+      "componentArn": "{{ .Name }}-native-component/1.0.0",
+      "_comment": "Custom component: installs MongoDB 7, Redis 6.2, .NET 8, Horde {{ .Version }}. See build-guide.md."
+    }
+{{ end -}}
+  ],
+  "tags": {
+    "ManagedBy": "fabrica",
+    "HordeVersion": "{{ .Version }}",
+    "InstallMethod": "{{ .Install }}"
+  }
+}
