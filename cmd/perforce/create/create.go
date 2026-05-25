@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	lineWidth  = 58
-	moduleName = "perforce"
-	credFile   = ".fabrica/perforce-credentials.yaml"
+	lineWidth   = 58
+	moduleName  = "perforce"
+	credFile    = ".fabrica/perforce-credentials.yaml"
 	passwordLen = 24
 )
 
@@ -338,4 +338,3 @@ func (c command) defaultReadState() (*fabricastate.State, error) {
 func (c command) defaultWriteState(st *fabricastate.State) error {
 	return fabricastate.WriteState(st)
 }
-
