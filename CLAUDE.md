@@ -10,6 +10,8 @@ A Go CLI + infrastructure-as-code framework that provisions and manages game stu
 
 Phase 0 (CLI skeleton + AWS foundation) is complete. The `perforce` module (create/status/destroy) and `horde` module (create/status/submit) are fully implemented. Cloud Control calls are live; the CloudControl stub (`internal/cloud/aws/cloudcontrol.go`) is still used for the broader resource API in non-perforce/horde paths.
 
+`fabrica setup` is intentionally a no-op: `internal/state/bootstrap.go` returns `ErrBootstrapNotImplemented`, and `cmd/setup/setup.go` prints a warning block and exits 0. The S3 bucket and DynamoDB table must be created manually. `--dry-run` still shows the planning output and cost estimate.
+
 The `src/` directory contains a parallel C# CDK exploration — this is not the active implementation path; Go is the chosen stack.
 
 ## Build Commands
@@ -18,7 +20,8 @@ The `src/` directory contains a parallel C# CDK exploration — this is not the 
 go build ./...
 go vet ./...
 go test ./...                          # Windows (no -race)
-go test -race -coverprofile=coverage.out -covermode=atomic ./...  # Linux/macOS
+go test -race -v ./...                 # macOS
+go test -race -coverprofile=coverage.out -covermode=atomic ./...  # Linux only
 go test ./... -run TestName            # single test
 golangci-lint run ./...
 go tool cover -func=coverage.out       # coverage summary
@@ -96,7 +99,7 @@ go list -deps ./internal/cloud/...
 
 ### Config + State
 
-Config: `fabrica.yaml` (or `fabrica-<profile>.yaml` with `--profile`). State: S3 bucket (`fabrica-state-<account-id>`) + DynamoDB table (`fabrica-state-lock`) remote, with `.fabrica/state.json` local cache.
+Config: `fabrica.yaml` (or `fabrica-<profile>.yaml` with `--profile`). Copy `fabrica.example.yaml` for a starting point. State: S3 bucket (`fabrica-state-<account-id>`) + DynamoDB table (`fabrica-state-lock`) remote, with `.fabrica/state.json` local cache.
 
 ## Architecture Decisions (Locked)
 
@@ -126,8 +129,8 @@ See `AGENTS.md` for the full coding conventions. Key additions over Ludus:
 fabrica setup                               # guided first-run provisioning wizard
 fabrica status                              # health of all modules
 fabrica perforce create|status|destroy      # ✓ implemented; backup|restore planned
-fabrica horde create|status|submit          # ✓ implemented; destroy planned (PR #2)
-fabrica horde destroy                       # next: follows perforce/destroy pattern
+fabrica horde create|status|submit          # ✓ implemented
+fabrica horde destroy                       # planned; follows perforce/destroy pattern
 fabrica ci [setup|trigger|status|logs]
 fabrica deploy [setup|promote|status|destroy]
 fabrica workstation [create|list|stop|terminate]
