@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/jpvelasco/fabrica/internal/horde/buildgraph"
 )
@@ -60,7 +61,8 @@ func (c *hordeHTTPClient) SubmitJob(ctx context.Context, job *buildgraph.BuildGr
 		return "", fmt.Errorf("Horde rejected the request (auth): check admin token in .fabrica/horde-credentials.yaml")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("Horde returned HTTP %d", resp.StatusCode)
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return "", fmt.Errorf("Horde returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
 	}
 
 	data, err := io.ReadAll(resp.Body)
@@ -92,7 +94,8 @@ func (c *hordeHTTPClient) GetJobStatus(ctx context.Context, jobID string) (strin
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("Horde returned HTTP %d", resp.StatusCode)
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return "", fmt.Errorf("Horde returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
 	}
 
 	data, err := io.ReadAll(resp.Body)

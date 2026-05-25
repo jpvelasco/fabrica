@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	lineWidth  = 58
-	moduleName = "perforce"
-	credFile   = ".fabrica/perforce-credentials.yaml"
+	lineWidth   = 58
+	moduleName  = "perforce"
+	credFile    = ".fabrica/perforce-credentials.yaml"
 	passwordLen = 24
 )
 
@@ -99,8 +99,7 @@ making any AWS calls.`,
 
 func (c command) run(ctx context.Context) error {
 	if c.runtime.Provider == nil {
-		fmt.Fprintln(c.out, "No infrastructure configured. Run 'fabrica setup' first.")
-		return nil
+		return fmt.Errorf("no provider configured; run 'fabrica setup' first")
 	}
 
 	account, _, region, err := c.runtime.Provider.Identity(ctx)
@@ -339,4 +338,3 @@ func (c command) defaultReadState() (*fabricastate.State, error) {
 func (c command) defaultWriteState(st *fabricastate.State) error {
 	return fabricastate.WriteState(st)
 }
-

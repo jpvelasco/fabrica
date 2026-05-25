@@ -201,23 +201,24 @@ func TestCreateConfirmationRejected(t *testing.T) {
 	assertContains(t, out.String(), "Cancelled")
 }
 
-// TestCreateNilProvider verifies nil provider produces informative message.
-func TestCreateNilProvider(t *testing.T) {
+// TestCreateNilProviderReturnsError verifies nil provider returns a clear error.
+func TestCreateNilProviderReturnsError(t *testing.T) {
 	var out bytes.Buffer
 	cfg := config.Defaults()
-	st := fabricastate.NewState("", "")
 	c := command{
 		runtime: globals.Runtime{Config: cfg, Provider: nil},
 		costs:   fabricacost.Global,
 		out:     &out,
 	}
-	c.readState = func() (*fabricastate.State, error) { return st, nil }
+	c.readState = func() (*fabricastate.State, error) { return fabricastate.NewState("", ""), nil }
 	c.writeState = func(_ *fabricastate.State) error { return nil }
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("nil provider: unexpected error: %v", err)
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when provider is nil")
 	}
-	assertContains(t, out.String(), "No infrastructure configured")
+	assertContains(t, err.Error(), "no provider configured")
+	assertContains(t, err.Error(), "fabrica setup")
 }
 
 // TestCreateAllowedCIDRWarning verifies 0.0.0.0/0 warning appears in dry-run output.

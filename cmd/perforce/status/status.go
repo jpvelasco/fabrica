@@ -349,4 +349,3 @@ func defaultProbeTCP(address string) bool {
 	conn.Close()
 	return true
 }
-
