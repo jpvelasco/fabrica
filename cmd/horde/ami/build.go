@@ -58,27 +58,28 @@ func newBuildCmd(out io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "build",
 		Short: "Generate files needed to build a Horde AMI",
-		Long: `Generate the files needed to build a Horde AMI suitable for "fabrica horde create".
+		Long: `Generate the files needed to build a Horde AMI for use with "fabrica horde create".
 
-By default produces an AWS EC2 Image Builder Component (component.yaml) plus a
-recipe (image-builder-recipe.json). With --include-packer, also emits a Packer
-HCL template. A build-guide.md with end-to-end instructions is always included.
+Produces an EC2 Image Builder component (component.yaml) and recipe
+(image-builder-recipe.json). With --include-packer, also emits a Packer HCL
+template. A build-guide.md with step-by-step instructions is always included.
+No AWS calls are made — all output is written locally.
 
 Two install methods are supported:
-  --install docker   (default; uses Epic's official compose stack)
-  --install native   (.NET 8 + MongoDB 7 + Redis from apt)
+  --install docker   Install Docker CE and run Horde via docker compose (default)
+  --install native   Install .NET 8, MongoDB 7, and Redis directly from apt
 
 Examples:
-  # Default: docker install, us-east-1, current defaults
+  # Generate with defaults (docker install, us-east-1)
   fabrica horde ami build
 
-  # Native install (.NET + MongoDB + Redis) for an air-gapped studio
+  # Native install targeting a specific Horde version
   fabrica horde ami build --install native --horde-version 5.4.0
 
-  # Pin a specific region and write to a custom output directory
+  # Pin a specific region and output directory
   fabrica horde ami build --region us-west-2 --output-dir build/horde-ami
 
-  # Also generate a Packer HCL template alongside the Image Builder files
+  # Native install with Packer template for air-gapped studios
   fabrica horde ami build --install native --include-packer --output-dir build/horde
 
   # Preview what would be generated without writing any files
@@ -98,7 +99,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&cfg.Version, "horde-version", defaultHordeVersion, `Horde server version in X.Y or X.Y.Z format, or "latest"`)
-	cmd.Flags().StringVar(&cfg.Install, "install", "docker", `Installation method: "docker" or "native"`)
+	cmd.Flags().StringVar(&cfg.Install, "install", "docker", `Install method: "docker" (compose stack) or "native" (.NET + MongoDB + Redis)`)
 	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", defaultBaseImage, "Base Ubuntu 22.04 LTS AMI ID")
 	cmd.Flags().StringVar(&cfg.Region, "region", defaultRegion, "AWS region for the AMI build (used in component ARNs)")
 	cmd.Flags().StringVar(&cfg.Name, "name", "", `AMI name (default: "fabrica-horde-<version>")`)
