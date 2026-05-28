@@ -95,6 +95,7 @@ go list -deps ./internal/cloud/...
 - **`GenerateRaw`** — when a function produces base64 output, add a `*Raw` variant returning the plain string for test assertions.
 - **State written after each resource** — partial failures leave a recoverable record; re-running detects already-provisioned state and exits cleanly.
 - **Config structs in `internal/config/config.go`** — `HordeConfig` and `PerforceConfig` both live here (not in their respective `internal/<module>` packages) to avoid circular imports.
+- **Embedded templates** — file-generator commands (e.g. `cmd/horde/ami`) use `embed.FS` + `text/template` with `Option("missingkey=error")`. Templates live under `cmd/<cmd>/templates/`. No `RuntimeSource`/`OptionsSource` needed when a command makes no AWS calls.
 
 ### Provider Registration
 

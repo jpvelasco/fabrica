@@ -83,8 +83,8 @@ func TestRenderComponentTemplate_Docker(t *testing.T) {
 	if !strings.Contains(s, "InstallDocker") {
 		t.Error("docker component should have InstallDocker step")
 	}
-	if !strings.Contains(s, "InstallSystemdUnits") {
-		t.Error("docker component should have InstallSystemdUnits step")
+	if !strings.Contains(s, "InstallHordeSystemdUnit") {
+		t.Error("docker component should have InstallHordeSystemdUnit step")
 	}
 	if strings.Contains(s, "InstallDotNet") {
 		t.Error("docker component should not have InstallDotNet step")

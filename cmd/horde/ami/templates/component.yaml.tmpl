@@ -1,6 +1,6 @@
-name: {{ .Name }}-{{ .Install }}
-description: Installs Horde {{ .Version }} prerequisites ({{ .Install }} method) for fabrica horde create.
 schemaVersion: 1.0
+name: {{ .Name }}-{{ .Install }}
+description: Installs Horde {{ .Version }} prerequisites ({{ .Install }} install) for use with fabrica horde create.
 
 phases:
   - name: build
@@ -14,24 +14,13 @@ phases:
             - curl -fsSL https://get.docker.com | sh
             - systemctl enable docker
             - usermod -aG docker ubuntu
-      - name: InstallComposeStack
+      - name: PrepareHordeDirectories
         action: ExecuteBash
         inputs:
           commands:
             - set -euo pipefail
             - mkdir -p /opt/horde /etc/horde
-            - |
-              cat >/opt/horde/docker-compose.yml <<'YAML'
-              # Replace this file with the official Horde docker-compose.yml
-              # from Engine/Source/Programs/Horde/HordeServer/docker-compose.yml
-              # before baking the AMI. This stub is a placeholder so the
-              # systemd unit has something to start.
-              version: "3.8"
-              services:
-                placeholder:
-                  image: hello-world
-              YAML
-      - name: InstallSystemdUnits
+      - name: InstallHordeSystemdUnit
         action: ExecuteBash
         inputs:
           commands:
