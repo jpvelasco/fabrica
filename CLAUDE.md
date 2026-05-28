@@ -82,6 +82,9 @@ go list -deps ./internal/cloud/...
 | `cmd/horde/submit` | Parses BuildGraph XML; resolves coordinator private IP via Cloud Control; POSTs to Horde REST API; supports `--wait` polling |
 | `internal/horde` | Pure plan layer: `CreatePlan`, `SGDesiredState`, `InstanceDesiredState`, cloud-init generator (`Generate`/`GenerateRaw`), `VPCResolver` interface |
 | `internal/horde/buildgraph` | Isolated sub-package: `ParseBuildGraph(path)` → `*BuildGraphJob`; XML-only, no AWS/HTTP deps |
+| `cmd/horde/ami` | Local file generator — no AWS calls, no `RuntimeSource`. `build` subcommand renders embedded templates (`embed.FS`) to an output dir: EC2 Image Builder recipe JSON + optional Packer HCL + build-guide.md |
+| `internal/credentials` | Shared helpers: `GeneratePassword`, `WriteCredentials` — write per-module credential YAML files to `.fabrica/` (mode 0600) |
+| `internal/stateutil` | Shared helpers: `ResourceByType` — query module state without repeating the lookup loop |
 
 ### Module Pattern
 
@@ -130,6 +133,7 @@ fabrica setup                               # guided first-run provisioning wiza
 fabrica status                              # health of all modules
 fabrica perforce create|status|destroy      # ✓ implemented; backup|restore planned
 fabrica horde create|status|submit          # ✓ implemented
+fabrica horde ami build                     # ✓ implemented; generates Image Builder recipe + optional Packer HCL
 fabrica horde destroy                       # planned; follows perforce/destroy pattern
 fabrica ci [setup|trigger|status|logs]
 fabrica deploy [setup|promote|status|destroy]

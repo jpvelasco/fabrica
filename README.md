@@ -130,6 +130,19 @@ Parses a BuildGraph XML file and POSTs the job to the Horde REST API via the coo
 
 Requires VPN or same-VPC access; no public IP is assigned in V1.
 
+#### `fabrica horde ami build`
+
+Generates the files needed to build a Horde AMI. Produces an EC2 Image Builder component (`component.yaml`) and recipe (`image-builder-recipe.json`) by default, an optional Packer HCL template (`--include-packer`), and a `build-guide.md` with end-to-end instructions. No AWS calls are made — all output is written to a local directory.
+
+Two install methods are supported:
+
+```
+--install docker   (default) Epic's official docker compose stack
+--install native   .NET 8 + MongoDB 7 + Redis installed directly from apt
+```
+
+Key flags: `--horde-version`, `--base-image`, `--region`, `--output-dir`, `--include-packer`, `--dry-run`.
+
 ### Other
 
 #### `fabrica version`

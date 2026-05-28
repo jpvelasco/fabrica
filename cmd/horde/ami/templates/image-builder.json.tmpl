@@ -1,0 +1,41 @@
+{
+  "name": "{{ .Name }}",
+  "semanticVersion": "1.0.0",
+  "description": "Horde {{ .Version }} ({{ .Install }} install) AMI recipe for fabrica horde create",
+  "parentImage": "{{ .BaseImage }}",
+  "blockDeviceMappings": [
+    {
+      "deviceName": "/dev/sda1",
+      "ebs": {
+        "volumeSize": 50,
+        "volumeType": "gp3",
+        "deleteOnTermination": true,
+        "encrypted": true
+      }
+    }
+  ],
+  "components": [
+    {
+      "componentArn": "arn:aws:imagebuilder:{{ .Region }}:aws:component/update-linux/1.0.2/1"
+    },
+    {
+      "componentArn": "arn:aws:imagebuilder:{{ .Region }}:aws:component/aws-cli-version-2-linux/1.0.4/1"
+    },
+    {
+      "componentArn": "REPLACE_WITH_CUSTOM_COMPONENT_ARN"
+    },
+    {
+      "componentArn": "arn:aws:imagebuilder:{{ .Region }}:aws:component/reboot-linux/1.0.1/1"
+    }
+  ],
+  "additionalInstanceConfiguration": {
+    "systemsManagerAgent": {
+      "uninstallAfterBuild": false
+    }
+  },
+  "tags": {
+    "ManagedBy": "fabrica",
+    "HordeVersion": "{{ .Version }}",
+    "InstallMethod": "{{ .Install }}"
+  }
+}
