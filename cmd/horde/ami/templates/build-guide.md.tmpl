@@ -29,6 +29,23 @@ Fabrica's cloud-init only configures and starts services — it does not install
 ## Path A — AWS EC2 Image Builder (Recommended)
 
 Image Builder runs your component inside a managed pipeline and handles AMI hardening, tagging, and distribution. The two artifacts (`component.yaml` + `image-builder-recipe.json`) compose into one pipeline.
+{{- if eq .Install "native" }}
+
+### Prerequisites (native install only)
+
+The `component.yaml` installs Horde by syncing binaries from S3. Before proceeding:
+
+1. Publish the Horde server binaries from your UE source checkout:
+   ```bash
+   cd Engine/Source/Programs/Horde
+   dotnet publish HordeServer/HordeServer.csproj -c Release -o /tmp/horde-bin
+   ```
+2. Upload them to an S3 bucket your Image Builder instance profile can read:
+   ```bash
+   aws s3 sync /tmp/horde-bin/ s3://YOUR_BUCKET/horde-bin/
+   ```
+3. Open `component.yaml` and replace `REPLACE_WITH_YOUR_BUCKET` with your actual bucket name.
+{{- end }}
 
 ### 1. Create the custom component
 

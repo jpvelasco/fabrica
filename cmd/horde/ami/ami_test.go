@@ -316,6 +316,24 @@ func TestValidateImageBuilderJSON(t *testing.T) {
 	}
 }
 
+func TestValidateComponentYAML(t *testing.T) {
+	valid := []byte("name: test\nschemaVersion: 1.0\nphases:\n  - name: build\n")
+	if err := validateComponentYAML(valid); err != nil {
+		t.Errorf("unexpected error on valid YAML: %v", err)
+	}
+
+	cases := map[string][]byte{
+		"missing schemaVersion": []byte("name: test\nphases:\n  - name: build\n"),
+		"missing phases":        []byte("name: test\nschemaVersion: 1.0\n"),
+		"missing name":          []byte("schemaVersion: 1.0\nphases:\n  - name: build\n"),
+	}
+	for label, data := range cases {
+		if err := validateComponentYAML(data); err == nil {
+			t.Errorf("%s: expected error, got nil", label)
+		}
+	}
+}
+
 func keysOf(m map[string][]byte) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

@@ -21,6 +21,25 @@ type componentReference struct {
 	ComponentArn string `json:"componentArn"`
 }
 
+// validateComponentYAML checks that a rendered Image Builder Component document
+// has the required top-level fields. Placeholders like REPLACE_WITH_YOUR_BUCKET
+// are intentional — users substitute them before uploading to AWS.
+func validateComponentYAML(data []byte) error {
+	for _, required := range []string{"schemaVersion:", "phases:", "name:"} {
+		found := false
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, required) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("component YAML is missing required top-level field %q", required)
+		}
+	}
+	return nil
+}
+
 // validateImageBuilderJSON parses rendered Image Builder JSON and returns a
 // descriptive error if any required field is missing or malformed. The
 // "REPLACE_WITH_CUSTOM_COMPONENT_ARN" placeholder is allowed at this stage

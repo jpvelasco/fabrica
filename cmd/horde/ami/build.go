@@ -138,7 +138,7 @@ func (b *buildCommand) run() error {
 	if err := b.writeRendered("image-builder.json.tmpl", "image-builder-recipe.json", validateImageBuilderJSON); err != nil {
 		return err
 	}
-	if err := b.writeRendered("component.yaml.tmpl", "component.yaml", nil); err != nil {
+	if err := b.writeRendered("component.yaml.tmpl", "component.yaml", validateComponentYAML); err != nil {
 		return err
 	}
 	if b.cfg.IncludePacker {
@@ -235,7 +235,7 @@ func (b *buildCommand) renderTemplate(name string, data any) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading template %s: %w", name, err)
 	}
-	tmpl, err := template.New(name).Parse(string(raw))
+	tmpl, err := template.New(name).Option("missingkey=error").Parse(string(raw))
 	if err != nil {
 		return nil, fmt.Errorf("parsing template %s: %w", name, err)
 	}
