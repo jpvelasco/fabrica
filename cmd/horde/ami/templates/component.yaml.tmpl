@@ -89,6 +89,8 @@ phases:
           commands:
             - set -euo pipefail
             - mkdir -p /opt/horde /etc/horde
+            - aws s3 sync s3://REPLACE_WITH_YOUR_BUCKET/horde-bin/ /opt/horde/ --exact-timestamps
+            - chmod +x /opt/horde/HordeServer
             - |
               cat >/etc/horde/env <<'ENV'
               ASPNETCORE_ENVIRONMENT=Production
@@ -106,14 +108,13 @@ phases:
               WorkingDirectory=/opt/horde
               EnvironmentFile=/etc/horde/env
               Restart=on-failure
+              RestartSec=5
 
               [Install]
               WantedBy=multi-user.target
               UNIT
             - systemctl daemon-reload
             - systemctl enable horde
-            - echo "Copy your published Horde binaries to /opt/horde before baking the AMI."
-            - echo "Build them with: dotnet publish HordeServer/HordeServer.csproj -c Release -o /opt/horde"
 {{- end }}
 
   - name: validate

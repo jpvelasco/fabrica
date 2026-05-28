@@ -217,7 +217,7 @@ func TestBuildCommandValidate(t *testing.T) {
 		{
 			name:    "bad version",
 			cfg:     BuildConfig{Version: "5.x", Install: "docker", BaseImage: "ami-0123456789abcdef", Region: "us-east-1", OutputDir: "x"},
-			wantErr: "--horde-version is invalid",
+			wantErr: "--horde-version must be in the format",
 		},
 		{
 			name:    "version latest",
@@ -232,27 +232,27 @@ func TestBuildCommandValidate(t *testing.T) {
 		{
 			name:    "bad install",
 			cfg:     BuildConfig{Version: "5.5.0", Install: "podman", BaseImage: "ami-0123456789abcdef", Region: "us-east-1", OutputDir: "x"},
-			wantErr: "--install is invalid",
+			wantErr: "--install must be",
 		},
 		{
 			name:    "bad base image",
 			cfg:     BuildConfig{Version: "5.5.0", Install: "docker", BaseImage: "bogus", Region: "us-east-1", OutputDir: "x"},
-			wantErr: "--base-image is invalid",
+			wantErr: "--base-image must be a valid AMI ID",
 		},
 		{
 			name:    "bad region",
 			cfg:     BuildConfig{Version: "5.5.0", Install: "docker", BaseImage: "ami-0123456789abcdef", Region: "bogus", OutputDir: "x"},
-			wantErr: "--region is invalid",
+			wantErr: "--region must be a valid AWS region",
 		},
 		{
 			name:    "name with slash",
 			cfg:     BuildConfig{Version: "5.5.0", Install: "docker", BaseImage: "ami-0123456789abcdef", Region: "us-east-1", Name: "../escape", OutputDir: "x"},
-			wantErr: "--name is invalid",
+			wantErr: "--name can only contain",
 		},
 		{
 			name:    "name too long",
 			cfg:     BuildConfig{Version: "5.5.0", Install: "docker", BaseImage: "ami-0123456789abcdef", Region: "us-east-1", Name: strings.Repeat("a", 128), OutputDir: "x"},
-			wantErr: "--name is invalid",
+			wantErr: "--name must be",
 		},
 		{
 			name:    "empty output dir",

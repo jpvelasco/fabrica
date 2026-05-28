@@ -69,19 +69,19 @@ Two install methods are supported:
   --install native   (.NET 8 + MongoDB 7 + Redis from apt)
 
 Examples:
-  # Default: docker install, us-east-1, latest defaults
+  # Default: docker install, us-east-1, current defaults
   fabrica horde ami build
 
-  # Native install for an air-gapped studio
-  fabrica horde ami build --install native
+  # Native install (.NET + MongoDB + Redis) for an air-gapped studio
+  fabrica horde ami build --install native --horde-version 5.4.0
 
-  # Pin a specific Horde version and region
-  fabrica horde ami build --horde-version 5.4.0 --region us-west-2
+  # Pin a specific region and write to a custom output directory
+  fabrica horde ami build --region us-west-2 --output-dir build/horde-ami
 
-  # Also generate a Packer template
-  fabrica horde ami build --include-packer --output-dir build/horde
+  # Also generate a Packer HCL template alongside the Image Builder files
+  fabrica horde ami build --install native --include-packer --output-dir build/horde
 
-  # Preview without writing any files
+  # Preview what would be generated without writing any files
   fabrica horde ami build --dry-run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if f := cmd.InheritedFlags().Lookup("dry-run"); f != nil && f.Value.String() == "true" {
@@ -97,7 +97,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&cfg.Version, "horde-version", defaultHordeVersion, `Horde server version to install (or "latest")`)
+	cmd.Flags().StringVar(&cfg.Version, "horde-version", defaultHordeVersion, `Horde server version in X.Y or X.Y.Z format, or "latest"`)
 	cmd.Flags().StringVar(&cfg.Install, "install", "docker", `Installation method: "docker" or "native"`)
 	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", defaultBaseImage, "Base Ubuntu 22.04 LTS AMI ID")
 	cmd.Flags().StringVar(&cfg.Region, "region", defaultRegion, "AWS region for the AMI build (used in component ARNs)")
@@ -160,23 +160,23 @@ func (b *buildCommand) validate() error {
 		return errors.New("--horde-version is required")
 	}
 	if b.cfg.Version != "latest" && !versionRE.MatchString(b.cfg.Version) {
-		return fmt.Errorf("--horde-version is invalid: must be NN.NN(.NN) or %q, got %q", "latest", b.cfg.Version)
+		return fmt.Errorf("--horde-version must be in the format X.Y or X.Y.Z (e.g. 5.4.0), or the literal %q; got %q", "latest", b.cfg.Version)
 	}
 	if b.cfg.Install != "docker" && b.cfg.Install != "native" {
-		return fmt.Errorf("--install is invalid: must be %q or %q, got %q", "docker", "native", b.cfg.Install)
+		return fmt.Errorf("--install must be %q or %q; got %q", "docker", "native", b.cfg.Install)
 	}
 	if !amiRE.MatchString(b.cfg.BaseImage) {
-		return fmt.Errorf("--base-image is invalid: must match ami-<hex>, got %q", b.cfg.BaseImage)
+		return fmt.Errorf("--base-image must be a valid AMI ID (ami- followed by 8+ hex digits); got %q", b.cfg.BaseImage)
 	}
 	if !regionRE.MatchString(b.cfg.Region) {
-		return fmt.Errorf("--region is invalid: must match <area>-<location>-<n> (e.g. us-east-1), got %q", b.cfg.Region)
+		return fmt.Errorf("--region must be a valid AWS region (e.g. us-east-1, eu-west-2); got %q", b.cfg.Region)
 	}
 	if b.cfg.Name != "" {
 		if !nameRE.MatchString(b.cfg.Name) {
-			return fmt.Errorf("--name is invalid: only [A-Za-z0-9._-] allowed, got %q", b.cfg.Name)
+			return fmt.Errorf("--name can only contain letters, numbers, dots, underscores, and hyphens; got %q", b.cfg.Name)
 		}
 		if len(b.cfg.Name) > maxNameLength {
-			return fmt.Errorf("--name is invalid: must be <= %d chars (Image Builder limit), got %d", maxNameLength, len(b.cfg.Name))
+			return fmt.Errorf("--name must be %d characters or fewer (Image Builder limit); got %d", maxNameLength, len(b.cfg.Name))
 		}
 	}
 	if b.cfg.OutputDir == "" {
