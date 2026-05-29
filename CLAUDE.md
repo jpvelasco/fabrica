@@ -8,7 +8,7 @@ A Go CLI + infrastructure-as-code framework that provisions and manages game stu
 
 ## Project Status
 
-Phase 0 (CLI skeleton + AWS foundation) is complete. The `perforce` module (create/status/destroy) and `horde` module (create/status/submit) are fully implemented. Cloud Control calls are live; the CloudControl stub (`internal/cloud/aws/cloudcontrol.go`) is still used for the broader resource API in non-perforce/horde paths.
+Phase 0 (CLI skeleton + AWS foundation) is complete. The `perforce` module (create/status/destroy) and `horde` module (create/status/submit) are fully implemented. All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` without routing through module-specific SDK wrappers.
 
 `fabrica setup` is intentionally a no-op: `internal/state/bootstrap.go` returns `ErrBootstrapNotImplemented`, and `cmd/setup/setup.go` prints a warning block and exits 0. The S3 bucket and DynamoDB table must be created manually. `--dry-run` still shows the planning output and cost estimate.
 
@@ -25,6 +25,7 @@ go test -race -coverprofile=coverage.out -covermode=atomic ./...  # Linux only
 go test ./... -run TestName            # single test
 golangci-lint run ./...
 go tool cover -func=coverage.out       # coverage summary
+gofmt -w .                             # format all Go files
 ```
 
 CI runs lint + build + test cross-platform (ubuntu/windows/macos) on push/PR to main.
@@ -119,6 +120,17 @@ Every command package uses a two-file test approach (established in `cmd/perforc
 - `cobra_test.go` (`package <cmd>_test`) — black-box Cobra-layer tests that call `cmd.New(...) + ExecuteContext`. Build a minimal root command in the test to replicate the persistent-flag hierarchy (`--dry-run`, `--yes`, `--json` live on root, not on the subcommand).
 
 Seam pattern: the `command` struct holds `func` fields for all I/O operations. `New()` wires real implementations; tests inject fakes. `fakeProvider` / `fakeHordeClient` patterns live in `*_test.go` files alongside the tests that use them.
+
+## How to Add a New Module
+
+1. **`internal/<module>/`** — pure plan layer, no AWS SDK imports: `CreatePlan` struct, Cloud Control desired-state JSON builders, cloud-init generator, cost estimators.
+2. **`cmd/<module>/`** — Cobra command with `RuntimeSource` + `OptionsSource` closures; seam fields on the `command` struct for all I/O.
+3. **Config struct** — add to `internal/config/config.go` (not `internal/<module>/`) with `mapstructure:` tags to avoid circular imports.
+4. **Cost estimators** — register via `cost.Global.Register` in the plan layer. Do not re-register `AWS::EC2::Instance` or `AWS::EC2::Volume` — already registered in `internal/perforce/cost.go`.
+5. **Wire** the parent command in `cmd/root/root.go`.
+6. **Tests** — two-file pattern: white-box `*_test.go` + black-box `cobra_test.go` with a minimal root that replicates the persistent-flag hierarchy.
+
+Reference: `cmd/perforce/` + `internal/perforce/` are the canonical templates.
 
 ## Conventions
 
