@@ -127,11 +127,16 @@ Then run Packer with the path to those binaries:
 packer build -var "horde_source_dir=/tmp/horde-bin" packer.pkr.hcl
 ```
 {{- else -}}
+> **Before running Packer:** `/opt/horde/docker-compose.yml` is **not** baked into this AMI.
+> The `horde` systemd unit runs `docker compose up -d` from `/opt/horde/`, so this file must
+> exist before the instance boots. Add a `file` provisioner (or a heredoc in the shell provisioner)
+> to write your `docker-compose.yml` — use the official copy from
+> `Engine/Source/Programs/Horde/HordeServer/docker-compose.yml` in your UE source checkout.
+> See the `TODO` comment at the top of `packer.pkr.hcl` for the exact provisioner pattern.
+
 ```bash
 packer build packer.pkr.hcl
 ```
-
-The placeholder `docker-compose.yml` baked into the AMI is a `hello-world` stub. Replace `/opt/horde/docker-compose.yml` with the official `Engine/Source/Programs/Horde/HordeServer/docker-compose.yml` from your UE source checkout before running production traffic — either by editing the template before `packer build`, or via a follow-up provisioner.
 {{- end }}
 
 Packer prints the new AMI ID at the end. Update `fabrica.yaml`:

@@ -151,11 +151,18 @@ func TestRenderPackerTemplate_Docker(t *testing.T) {
 	if strings.Contains(s, "GITHUB_PAT") {
 		t.Error("packer template should not reference GITHUB_PAT")
 	}
-	// Ensure no inline # comments inside list literals (invalid HCL)
+	// Ensure no # comments inside inline = [...] list literals (invalid HCL)
+	inInlineList := false
 	for _, line := range strings.Split(s, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "#") {
-			t.Errorf("packer template must not contain standalone comment lines (invalid inside HCL lists): %q", trimmed)
+		if strings.Contains(trimmed, "inline = [") {
+			inInlineList = true
+		}
+		if inInlineList && trimmed == "]" {
+			inInlineList = false
+		}
+		if inInlineList && strings.HasPrefix(trimmed, "#") {
+			t.Errorf("packer template must not contain comment lines inside inline lists (invalid HCL): %q", trimmed)
 		}
 	}
 }

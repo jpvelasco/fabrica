@@ -152,6 +152,7 @@ func (b *buildCommand) run() error {
 	}
 
 	fmt.Fprintln(b.out)
+	b.printSuccess(plannedFiles)
 	b.printNextSteps()
 	return nil
 }
@@ -245,6 +246,14 @@ func (b *buildCommand) renderTemplate(name string, data any) ([]byte, error) {
 		return nil, fmt.Errorf("rendering template %s: %w", name, err)
 	}
 	return buf.Bytes(), nil
+}
+
+func (b *buildCommand) printSuccess(files []string) {
+	fmt.Fprintf(b.out, "Generated %d files in %s/:\n", len(files), b.cfg.OutputDir)
+	for _, f := range files {
+		fmt.Fprintf(b.out, "  %s/%s\n", b.cfg.OutputDir, f)
+	}
+	fmt.Fprintln(b.out)
 }
 
 func (b *buildCommand) printNextSteps() {
