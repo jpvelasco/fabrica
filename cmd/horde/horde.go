@@ -6,6 +6,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/horde/ami"
 	"github.com/jpvelasco/fabrica/cmd/horde/create"
+	"github.com/jpvelasco/fabrica/cmd/horde/destroy"
 	"github.com/jpvelasco/fabrica/cmd/horde/status"
 	"github.com/jpvelasco/fabrica/cmd/horde/submit"
 	"github.com/spf13/cobra"
@@ -23,11 +24,13 @@ Available operations:
   create   Provision a new Horde coordinator on EC2
   status   Show coordinator health and connection info
   submit   Submit a BuildGraph job to the coordinator
+  destroy  Permanently delete the coordinator and its AWS resources
   ami      Tools for building a Horde AMI`,
 	}
 	cmd.AddCommand(create.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(status.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(submit.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(destroy.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(ami.New(out))
 	return cmd
 }
