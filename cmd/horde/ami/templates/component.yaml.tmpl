@@ -120,7 +120,6 @@ phases:
             - systemctl is-enabled mongod
             - systemctl is-enabled redis-server
 {{- end }}
-            - test -d /etc/horde
 
   - name: test
     steps:

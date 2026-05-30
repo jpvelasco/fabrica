@@ -57,6 +57,19 @@ source "amazon-ebs" "horde" {
   }
 }
 
+# TODO (docker install): /opt/horde/docker-compose.yml is NOT baked into this AMI.
+# You must provide it before the horde service can start. Options:
+#   a) Add a "file" provisioner below that copies your compose file into place:
+#        provisioner "file" {
+#          source      = "path/to/your/docker-compose.yml"
+#          destination = "/tmp/docker-compose.yml"
+#        }
+#      Then move it in the shell provisioner: "mv /tmp/docker-compose.yml /opt/horde/docker-compose.yml"
+#   b) Write it via a heredoc in the shell provisioner using the real Horde compose file from
+#      Engine/Source/Programs/Horde/HordeServer/docker-compose.yml in your UE source checkout.
+# The horde systemd unit (installed below) runs `docker compose up -d` from /opt/horde/,
+# so the file must exist at that path before the instance boots.
+
 build {
   sources = ["source.amazon-ebs.horde"]
 {{ if eq .Install "native" }}
@@ -74,7 +87,6 @@ build {
       "systemctl enable docker",
       "usermod -aG docker ubuntu",
       "mkdir -p /opt/horde /etc/horde",
-      "cat >/opt/horde/docker-compose.yml <<'YAML'\nversion: \"3.8\"\nservices:\n  placeholder:\n    image: hello-world\nYAML",
       "cat >/etc/systemd/system/horde.service <<'UNIT'\n[Unit]\nDescription=Horde Server (docker compose)\nAfter=network-online.target docker.service\nRequires=docker.service\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nWorkingDirectory=/opt/horde\nExecStart=/usr/bin/docker compose up -d\nExecStop=/usr/bin/docker compose down\nExecReload=/bin/sh -c '/usr/bin/docker compose pull && /usr/bin/docker compose up -d'\n\n[Install]\nWantedBy=multi-user.target\nUNIT",
       "systemctl daemon-reload",
       "systemctl enable horde",
