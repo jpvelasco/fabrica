@@ -134,10 +134,23 @@ Reference: `cmd/perforce/` + `internal/perforce/` are the canonical templates.
 
 ## Conventions
 
-See `AGENTS.md` for the full coding conventions. Key additions over Ludus:
-- `mapstructure:` tags required on all config structs
-- `gofmt` only (no goimports/gofumpt)
-- Coverage target: 60%+ for `internal/*`; tests use mocked SDK interfaces — no real AWS calls
+**Naming:**
+- Packages: lowercase single-word (`perforce`, `horde`, `state`)
+- Files: `snake_case.go`
+- Acronyms fully uppercase: `ID`, `ARN`, `URL`, `AWS`, `IAM`
+- `New*` constructors return pointers; single-letter receivers
+
+**Imports:** stdlib group, blank line, then everything else. `gofmt` only — no goimports or gofumpt.
+
+**Config structs:** always add `mapstructure:` tags. Live in `internal/config/config.go`.
+
+**Error handling:** `fmt.Errorf("context: %w", err)`. Messages state what went wrong AND what to do. No sentinel errors.
+
+**Cost estimation:** every new resource type needs a cost estimator registered by `TypeName` via `cost.Global.Register`. Do not re-register `AWS::EC2::Instance` or `AWS::EC2::Volume` — already registered in `internal/perforce/cost.go`.
+
+**No logging library:** `fmt.Printf`/`Println` only.
+
+**Coverage target:** 60%+ for `internal/*`; tests use mocked SDK interfaces — no real AWS calls.
 
 ## Planned Command Structure
 
