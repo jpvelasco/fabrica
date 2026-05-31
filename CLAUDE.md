@@ -12,8 +12,6 @@ Phase 0 (CLI skeleton + AWS foundation) is complete. The `perforce` module (crea
 
 `fabrica setup` is intentionally a no-op: `internal/state/bootstrap.go` returns `ErrBootstrapNotImplemented`, and `cmd/setup/setup.go` prints a warning block and exits 0. The S3 bucket and DynamoDB table must be created manually. `--dry-run` still shows the planning output and cost estimate.
 
-The `src/` directory contains a parallel C# CDK exploration — this is not the active implementation path; Go is the chosen stack.
-
 ## Build Commands
 
 ```bash
@@ -77,13 +75,14 @@ go list -deps ./internal/cloud/...
 | `cmd/perforce/status` | Reads state + Cloud Control live data; TCP-probes port 1666; transitions provisioning→ready |
 | `cmd/perforce/destroy` | Deletes EC2 instance then SG in reverse order; skips already-terminated instances |
 | `internal/perforce` | Pure plan layer (no SDK): version resolution, `CreatePlan`, Cloud Control JSON builders (`SGDesiredState`, `InstanceDesiredState`), cloud-init generator, cost estimators |
-| `cmd/horde` | Parent command; wires create/status/submit subcommands |
+| `cmd/horde` | Parent command; wires create/status/submit/destroy/ami subcommands |
 | `cmd/horde/create` | Provision SG + EC2 instance (AMI-first); generates MongoDB password; writes credentials to `.fabrica/horde-credentials.yaml` |
 | `cmd/horde/status` | Reads state + Cloud Control live data; TCP-probes port 5000 (HTTP); transitions provisioning→ready; `--json` emits `hordeUrl`/`hordeGrpc` |
 | `cmd/horde/submit` | Parses BuildGraph XML; resolves coordinator private IP via Cloud Control; POSTs to Horde REST API; supports `--wait` polling |
+| `cmd/horde/destroy` | Deletes EC2 instance then SG in reverse order; skips already-terminated instances; mirrors perforce/destroy pattern |
+| `cmd/horde/ami` | Local file generator — no AWS calls, no `RuntimeSource`. `build` subcommand renders embedded templates (`embed.FS`) to an output dir: EC2 Image Builder recipe JSON + optional Packer HCL + build-guide.md |
 | `internal/horde` | Pure plan layer: `CreatePlan`, `SGDesiredState`, `InstanceDesiredState`, cloud-init generator (`Generate`/`GenerateRaw`), `VPCResolver` interface |
 | `internal/horde/buildgraph` | Isolated sub-package: `ParseBuildGraph(path)` → `*BuildGraphJob`; XML-only, no AWS/HTTP deps |
-| `cmd/horde/ami` | Local file generator — no AWS calls, no `RuntimeSource`. `build` subcommand renders embedded templates (`embed.FS`) to an output dir: EC2 Image Builder recipe JSON + optional Packer HCL + build-guide.md |
 | `internal/credentials` | Shared helpers: `GeneratePassword`, `WriteCredentials` — write per-module credential YAML files to `.fabrica/` (mode 0600) |
 | `internal/stateutil` | Shared helpers: `ResourceByType` — query module state without repeating the lookup loop |
 
@@ -158,9 +157,8 @@ Reference: `cmd/perforce/` + `internal/perforce/` are the canonical templates.
 fabrica setup                               # guided first-run provisioning wizard
 fabrica status                              # health of all modules
 fabrica perforce create|status|destroy      # ✓ implemented; backup|restore planned
-fabrica horde create|status|submit          # ✓ implemented
+fabrica horde create|status|submit|destroy  # ✓ implemented
 fabrica horde ami build                     # ✓ implemented; generates Image Builder recipe + optional Packer HCL
-fabrica horde destroy                       # planned; follows perforce/destroy pattern
 fabrica ci [setup|trigger|status|logs]
 fabrica deploy [setup|promote|status|destroy]
 fabrica workstation [create|list|stop|terminate]
