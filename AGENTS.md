@@ -11,7 +11,7 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 | Module | Commands | What it does |
 |--------|----------|--------------|
 | `perforce` | `create`, `status`, `destroy` | Provisions a Perforce Helix Core EC2 instance with security group; tracks provisioning state; detects readiness via TCP probe on port 1666 |
-| `horde` | `create`, `status`, `submit` | Provisions an Unreal Horde build coordinator (AMI-first, m7i.xlarge); probes port 5000; parses BuildGraph XML and POSTs jobs to the Horde REST API |
+| `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Provisions an Unreal Horde build coordinator (AMI-first, m7i.2xlarge); probes port 5000; parses BuildGraph XML and POSTs jobs to the Horde REST API; generates EC2 Image Builder recipe + optional Packer HCL for building the required AMI |
 
 **Perforce** provisions a Helix Core version control server on EC2 — security group, instance, and credentials — then tracks whether the server is accepting connections. It's the source-of-truth for a game studio's asset and code history.
 
@@ -21,7 +21,6 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 
 - **`fabrica setup` is not yet functional.** The S3 bucket and DynamoDB lock table must be created manually before using any other Fabrica commands. Running `fabrica setup` without `--dry-run` prints a warning and exits — it does not create any AWS resources. See [docs/setup-manual.md](docs/setup-manual.md) once that document exists, or create the resources manually.
 - **Horde requires a user-provided AMI.** `fabrica horde create` is AMI-first: your AMI must already contain MongoDB 7, Redis 6.2, and the Horde server binary. Fabrica does not build or publish this AMI. See [docs/horde-ami.md](docs/horde-ami.md) for requirements.
-- **`fabrica horde destroy` is not yet implemented.** To tear down a Horde deployment, terminate the EC2 instance and delete the security group recorded in `.fabrica/state.json` via the AWS console or CLI.
 
 ## Architecture Overview
 

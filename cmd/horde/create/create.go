@@ -86,7 +86,7 @@ making any AWS calls.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&instanceType, "instance-type", "", "EC2 instance type (default: m7i.xlarge)")
+	cmd.Flags().StringVar(&instanceType, "instance-type", "", "EC2 instance type (default: m7i.2xlarge)")
 	cmd.Flags().IntVar(&volumeSize, "volume-size", 0, "EBS data volume size in GiB (default: 100)")
 	return cmd
 }

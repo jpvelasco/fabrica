@@ -134,7 +134,7 @@ func (c command) run(ctx context.Context) error {
 
 func (c command) applyDestroy(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, resources []cloud.Resource) error {
 	if c.deleteResource == nil {
-		return fmt.Errorf("no provider configured; re-run after 'fabrica setup'")
+		return fmt.Errorf("no provider configured; run 'fabrica setup' first")
 	}
 
 	if !c.jsonOut {
