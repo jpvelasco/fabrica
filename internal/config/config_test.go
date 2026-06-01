@@ -3,7 +3,10 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 func TestDefaults(t *testing.T) {
@@ -182,4 +185,46 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestWorkstationConfigDefaults(t *testing.T) {
+	cfg := Defaults()
+	if cfg.Workstation.InstanceType != "" {
+		t.Errorf("expected empty InstanceType default, got %q", cfg.Workstation.InstanceType)
+	}
+}
+
+func TestWorkstationConfigUnmarshal(t *testing.T) {
+	yaml := `
+workstation:
+  amiId: ami-12345678
+  instanceType: g4dn.xlarge
+  volumeSize: 200
+  vpcId: vpc-abc
+  subnetId: subnet-def
+  idleTimeoutMinutes: 30
+  allowedCidr: 10.0.0.0/8
+`
+	v := viper.New()
+	v.SetConfigType("yaml")
+	v.ReadConfig(strings.NewReader(yaml))
+	cfg := Defaults()
+	if err := v.Unmarshal(cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cfg.Workstation.AmiID != "ami-12345678" {
+		t.Errorf("AmiID = %q, want ami-12345678", cfg.Workstation.AmiID)
+	}
+	if cfg.Workstation.InstanceType != "g4dn.xlarge" {
+		t.Errorf("InstanceType = %q, want g4dn.xlarge", cfg.Workstation.InstanceType)
+	}
+	if cfg.Workstation.VolumeSize != 200 {
+		t.Errorf("VolumeSize = %d, want 200", cfg.Workstation.VolumeSize)
+	}
+	if cfg.Workstation.IdleTimeoutMinutes != 30 {
+		t.Errorf("IdleTimeoutMinutes = %d, want 30", cfg.Workstation.IdleTimeoutMinutes)
+	}
+	if cfg.Workstation.AllowedCIDR != "10.0.0.0/8" {
+		t.Errorf("AllowedCIDR = %q, want 10.0.0.0/8", cfg.Workstation.AllowedCIDR)
+	}
 }
