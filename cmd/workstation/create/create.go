@@ -274,7 +274,7 @@ func (c command) printConfirmInstructions(phrase string) {
 	fmt.Fprintln(c.out, "Any other input cancels.")
 }
 
-func (c command) printPostCreate(plan *workstation.CreatePlan, instanceID string) {
+func (c command) printPostCreate(_ *workstation.CreatePlan, instanceID string) {
 	fmt.Fprintln(c.out)
 	fmt.Fprintln(c.out, "Cloud Workstation provisioned.")
 	fmt.Fprintln(c.out)
