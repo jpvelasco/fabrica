@@ -207,7 +207,9 @@ workstation:
 `
 	v := viper.New()
 	v.SetConfigType("yaml")
-	v.ReadConfig(strings.NewReader(yaml))
+	if err := v.ReadConfig(strings.NewReader(yaml)); err != nil {
+		t.Fatalf("ReadConfig: %v", err)
+	}
 	cfg := Defaults()
 	if err := v.Unmarshal(cfg); err != nil {
 		t.Fatalf("unmarshal: %v", err)

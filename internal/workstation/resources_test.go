@@ -1,6 +1,7 @@
 package workstation
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -9,7 +10,7 @@ import (
 
 func testPlan(t *testing.T) *CreatePlan {
 	t.Helper()
-	plan, err := NewCreatePlan(nil, config.WorkstationConfig{
+	plan, err := NewCreatePlan(context.Background(), config.WorkstationConfig{
 		AmiID:    "ami-abc123",
 		VPCId:    "vpc-test",
 		SubnetId: "subnet-test",
@@ -93,7 +94,9 @@ func TestInstanceDesiredStateVolume(t *testing.T) {
 		t.Fatalf("InstanceDesiredState: %v", err)
 	}
 	var doc map[string]any
-	json.Unmarshal(raw, &doc)
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
 	bdm, ok := doc["BlockDeviceMappings"].([]any)
 	if !ok || len(bdm) == 0 {
 		t.Fatal("BlockDeviceMappings missing")
