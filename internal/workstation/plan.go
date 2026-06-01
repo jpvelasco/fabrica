@@ -24,7 +24,6 @@ type CreatePlan struct {
 	DCVPort            int
 	IdleTimeoutMinutes int
 	AllowedCIDR        string
-	MountPerforce      bool
 	VPCID              string
 	SubnetID           string
 	DefaultVPC         bool

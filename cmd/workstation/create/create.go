@@ -122,8 +122,7 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("reading state: %w", err)
 	}
 	if m := st.GetModule(moduleName); m != nil {
-		fmt.Fprintf(c.out, "Workstation is already provisioned. Run 'fabrica workstation status' to check health.\n")
-		fmt.Fprintf(c.out, "Use 'fabrica workstation terminate' to remove it first.\n")
+		fmt.Fprintf(c.out, "Workstation is already provisioned. Run 'fabrica workstation list' to view details.\n")
 		return nil
 	}
 
@@ -224,6 +223,12 @@ func (c command) printDryRun(plan *workstation.CreatePlan) {
 	} else if plan.VPCID != "" {
 		fmt.Fprintf(c.out, "  VPC:              %s\n", plan.VPCID)
 	}
+	if plan.AllowedCIDR == "0.0.0.0/0" {
+		fmt.Fprintln(c.out)
+		fmt.Fprintln(c.out, "  WARNING: allowedCidr is 0.0.0.0/0 — port 8443 is open to")
+		fmt.Fprintln(c.out, "           the internet. Set workstation.allowedCidr in fabrica.yaml")
+		fmt.Fprintln(c.out, "           before deploying to production.")
+	}
 	fmt.Fprintln(c.out)
 	fmt.Fprintln(c.out, "Resources to create:")
 	fmt.Fprintf(c.out, "  Security Group:   %s\n", plan.SGName)
@@ -259,6 +264,12 @@ func (c command) printApplyPlan(plan *workstation.CreatePlan) {
 	fmt.Fprintf(c.out, "  AWS account:   %s\n", plan.Account)
 	fmt.Fprintf(c.out, "  AWS region:    %s\n", plan.Region)
 	fmt.Fprintf(c.out, "  Instance type: %s\n", plan.InstanceType)
+	if plan.AllowedCIDR == "0.0.0.0/0" {
+		fmt.Fprintln(c.out)
+		fmt.Fprintln(c.out, "  WARNING: allowedCidr is 0.0.0.0/0 — port 8443 is open to")
+		fmt.Fprintln(c.out, "           the internet. Set workstation.allowedCidr in fabrica.yaml")
+		fmt.Fprintln(c.out, "           before deploying to production.")
+	}
 	fmt.Fprintln(c.out)
 	fmt.Fprintln(c.out, "Resources to create:")
 	fmt.Fprintf(c.out, "  Security Group: %s\n", plan.SGName)

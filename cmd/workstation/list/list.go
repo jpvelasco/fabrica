@@ -71,8 +71,7 @@ func (c command) run(_ context.Context) error {
 	m := st.GetModule(moduleName)
 
 	if c.jsonOut {
-		c.printJSON(m)
-		return nil
+		return c.printJSON(m)
 	}
 
 	c.printText(m)
@@ -96,7 +95,7 @@ func (c command) printText(m *fabricastate.ModuleState) {
 	}
 }
 
-func (c command) printJSON(m *fabricastate.ModuleState) {
+func (c command) printJSON(m *fabricastate.ModuleState) error {
 	out := ListOutput{Workstations: []WorkstationEntry{}}
 	if m != nil {
 		entry := WorkstationEntry{Status: m.Status}
@@ -108,8 +107,12 @@ func (c command) printJSON(m *fabricastate.ModuleState) {
 		}
 		out.Workstations = append(out.Workstations, entry)
 	}
-	data, _ := json.MarshalIndent(out, "", "  ")
+	data, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling workstations to JSON: %w", err)
+	}
 	fmt.Fprintln(c.out, string(data))
+	return nil
 }
 
 func (c command) defaultReadState() (*fabricastate.State, error) {

@@ -242,6 +242,49 @@ func TestCreateInstanceTypeFlagOverridesConfig(t *testing.T) {
 	assertContains(t, out.String(), "g5.2xlarge")
 }
 
+func TestCreateReadStateError(t *testing.T) {
+	var out bytes.Buffer
+	provider := &fakeProvider{}
+	c := newTestCommand(&out, provider, nil)
+	c.readState = func() (*fabricastate.State, error) {
+		return nil, errors.New("disk read failure")
+	}
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when readState fails")
+	}
+	if provider.createCalls != 0 {
+		t.Fatal("readState failure: create was called")
+	}
+	assertContains(t, err.Error(), "reading state")
+}
+
+func TestCreateWriteStateErrorAfterSG(t *testing.T) {
+	var out bytes.Buffer
+	provider := &fakeProvider{}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	callCount := 0
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.writeState = func(_ *fabricastate.State) error {
+		callCount++
+		if callCount == 1 {
+			return errors.New("S3 write failed")
+		}
+		return nil
+	}
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when writeState fails after SG")
+	}
+	if provider.createCalls != 1 {
+		t.Fatalf("expected 1 create call (SG only), got %d", provider.createCalls)
+	}
+	assertContains(t, err.Error(), "writing state after SG creation")
+}
+
 type fakeProvider struct {
 	identityErr       error
 	sgCreateErr       error

@@ -112,6 +112,22 @@ func TestCreateCobraVolumeSizeFlag(t *testing.T) {
 	assertCobraContains(t, got, "200 GiB")
 }
 
+func TestCreateCobraAmiIDMissing(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Workstation.AmiID = ""
+	cfg.Workstation.VPCId = "vpc-test"
+	cfg.Workstation.SubnetId = "subnet-test"
+	provider := &cobraFakeProvider{}
+	rt := globals.Runtime{Config: cfg, Provider: provider}
+	runtimeSource := func() (globals.Runtime, error) { return rt, nil }
+
+	_, err := runCreate(t, runtimeSource, "--dry-run")
+	if err == nil {
+		t.Fatal("expected error when AmiID is missing")
+	}
+	assertCobraContains(t, err.Error(), "workstation.amiId")
+}
+
 type cobraFakeProvider struct {
 	createCalls int
 }
