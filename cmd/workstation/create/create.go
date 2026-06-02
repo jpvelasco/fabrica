@@ -26,16 +26,16 @@ const (
 )
 
 type command struct {
-	runtime        globals.Runtime
-	dryRun         bool
-	assumeYes      bool
-	instanceType   string
-	volumeSize     int
-	template       string
-	mountPerforce  bool
-	out            io.Writer
-	costs          *fabricacost.Registry
-	confirm        func(string, string) bool
+	runtime       globals.Runtime
+	dryRun        bool
+	assumeYes     bool
+	instanceType  string
+	volumeSize    int
+	template      string
+	mountPerforce bool
+	out           io.Writer
+	costs         *fabricacost.Registry
+	confirm       func(string, string) bool
 
 	readState      func() (*fabricastate.State, error)
 	writeState     func(*fabricastate.State) error
