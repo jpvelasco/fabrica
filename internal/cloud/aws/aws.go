@@ -16,6 +16,7 @@ type awsProvider struct {
 	cfg                      *config.Config
 	awsCfg                   awsConfig
 	clients                  resourceClients
+	ec2Mgr                   ec2Manager
 	loadConfig               stateBackendConfigLoader
 	newS3StateClient         stateBackendS3ClientFactory
 	newDynamoDBStateClient   stateBackendDynamoDBClientFactory
@@ -42,6 +43,7 @@ type resourceClients struct {
 }
 
 var _ fabricac.Provider = (*awsProvider)(nil)
+var _ fabricac.EC2InstanceManager = (*awsProvider)(nil)
 
 func newProvider(cfg *config.Config) (fabricac.Provider, error) {
 	return &awsProvider{
@@ -67,6 +69,24 @@ func (p *awsProvider) Resources() fabricac.ResourceClient {
 		p.clients.version = fabricav.Version
 	}
 	return &p.clients
+}
+
+func (p *awsProvider) EC2Manager() fabricac.EC2InstanceManager {
+	if p.ec2Mgr.awsCfg == (awsConfig{}) {
+		p.ec2Mgr.awsCfg = p.awsCfg
+	}
+	return &p.ec2Mgr
+}
+
+// StopInstance delegates to the ec2Manager, satisfying the cloud.EC2InstanceManager
+// interface so that type assertions in workstation commands work correctly.
+func (p *awsProvider) StopInstance(ctx context.Context, instanceID string) error {
+	return p.EC2Manager().StopInstance(ctx, instanceID)
+}
+
+// StartInstance delegates to the ec2Manager.
+func (p *awsProvider) StartInstance(ctx context.Context, instanceID string) error {
+	return p.EC2Manager().StartInstance(ctx, instanceID)
 }
 
 func init() {

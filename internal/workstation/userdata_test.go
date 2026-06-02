@@ -67,3 +67,48 @@ func TestGenerateRawDefaultIdleTimeout(t *testing.T) {
 		t.Error("default idle timeout 60 should appear in userdata")
 	}
 }
+
+func TestGenerateRawMountPerforceRequiresAddr(t *testing.T) {
+	_, err := GenerateRaw(UserDataConfig{
+		SessionPassword: "pw",
+		MountPerforce:   true,
+		// PerforceServerAddr intentionally empty
+	})
+	if err == nil {
+		t.Fatal("expected error when MountPerforce=true and PerforceServerAddr is empty")
+	}
+	if !containsStr(err.Error(), "PerforceServerAddr") {
+		t.Errorf("error %q should mention PerforceServerAddr", err.Error())
+	}
+}
+
+func TestGenerateRawMountPerforceInjectsP4Config(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{
+		SessionPassword:    "pw",
+		MountPerforce:      true,
+		PerforceServerAddr: "10.0.1.5:1666",
+	})
+	if err != nil {
+		t.Fatalf("GenerateRaw: %v", err)
+	}
+	for _, want := range []string{
+		"helix-cli",
+		"p4config",
+		"10.0.1.5:1666",
+		"P4PORT",
+	} {
+		if !containsStr(got, want) {
+			t.Errorf("mount-perforce userdata does not contain %q", want)
+		}
+	}
+}
+
+func TestGenerateRawNoMountPerforceNoP4Block(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{SessionPassword: "pw"})
+	if err != nil {
+		t.Fatalf("GenerateRaw: %v", err)
+	}
+	if containsStr(got, "helix-cli") {
+		t.Error("without --mount-perforce, userdata must not contain helix-cli")
+	}
+}

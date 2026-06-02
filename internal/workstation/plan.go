@@ -11,6 +11,19 @@ import (
 const (
 	typeEC2Instance = "AWS::EC2::Instance"
 	typeEC2Volume   = "AWS::EC2::Volume"
+
+	// TemplateArtist targets GPU-heavy workloads (NVIDIA L4).
+	TemplateArtist = "artist"
+	// TemplateProgrammer targets CPU-bound development workloads.
+	TemplateProgrammer = "programmer"
+
+	// Artist template defaults (g6.xlarge — NVIDIA L4 GPU).
+	ArtistInstanceType = "g6.xlarge"
+	ArtistVolumeSize   = 200
+
+	// Programmer template defaults (c7i.xlarge — Intel Sapphire Rapids).
+	ProgrammerInstanceType = "c7i.xlarge"
+	ProgrammerVolumeSize   = 100
 )
 
 // CreatePlan holds everything needed to provision a workstation. No AWS SDK
@@ -27,6 +40,8 @@ type CreatePlan struct {
 	VPCID              string
 	SubnetID           string
 	DefaultVPC         bool
+	MountPerforce      bool
+	PerforceServerAddr string
 
 	SGName       string
 	InstanceName string
@@ -36,16 +51,32 @@ type CreatePlan struct {
 
 // NewCreatePlan validates inputs and builds a CreatePlan. VPCResolver is called
 // only when VPCId/SubnetId are absent from cfg; pass nil to skip resolution.
-func NewCreatePlan(ctx context.Context, cfg config.WorkstationConfig, account, region string, resolver VPCResolver) (*CreatePlan, error) {
+// template overrides instanceType and volumeSize when non-empty.
+// mountPerforce and perforceAddr are threaded through to UserDataConfig at apply time.
+func NewCreatePlan(ctx context.Context, cfg config.WorkstationConfig, account, region string, resolver VPCResolver, tmpl, mountPerforce string) (*CreatePlan, error) {
 	if cfg.AmiID == "" {
 		return nil, fmt.Errorf("workstation.amiId is required. Provide a NICE DCV-enabled AMI ID.\nSee: https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-installing.html")
 	}
 
 	instanceType := cfg.InstanceType
+	volumeSize := cfg.VolumeSize
+
+	switch tmpl {
+	case TemplateArtist:
+		instanceType = ArtistInstanceType
+		volumeSize = ArtistVolumeSize
+	case TemplateProgrammer:
+		instanceType = ProgrammerInstanceType
+		volumeSize = ProgrammerVolumeSize
+	case "":
+		// no template — fall through to individual defaults below
+	default:
+		return nil, fmt.Errorf("unknown template %q: must be %q or %q", tmpl, TemplateArtist, TemplateProgrammer)
+	}
+
 	if instanceType == "" {
 		instanceType = DefaultInstanceType
 	}
-	volumeSize := cfg.VolumeSize
 	if volumeSize <= 0 {
 		volumeSize = DefaultVolumeSize
 	}
@@ -83,6 +114,8 @@ func NewCreatePlan(ctx context.Context, cfg config.WorkstationConfig, account, r
 		VPCID:              vpcID,
 		SubnetID:           subnetID,
 		DefaultVPC:         defaultVPC,
+		MountPerforce:      mountPerforce != "",
+		PerforceServerAddr: mountPerforce,
 		SGName:             "fabrica-workstation-sg",
 		InstanceName:       "fabrica-workstation",
 		CostResources: []cost.Resource{

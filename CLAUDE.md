@@ -8,7 +8,7 @@ A Go CLI + infrastructure-as-code framework that provisions and manages game stu
 
 ## Project Status
 
-Phase 0 (CLI skeleton + AWS foundation) is complete. Three modules are fully implemented: `perforce` (create/status/destroy), `horde` (create/status/submit/destroy/ami), and `workstation` (create/list). All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` without routing through module-specific SDK wrappers.
+Phase 0 (CLI skeleton + AWS foundation) is complete. Three modules are fully implemented: `perforce` (create/status/destroy), `horde` (create/status/submit/destroy/ami), and `workstation` (create/list/stop/start/terminate). All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` without routing through module-specific SDK wrappers.
 
 `fabrica setup` is intentionally a no-op: `internal/state/bootstrap.go` returns `ErrBootstrapNotImplemented`, and `cmd/setup/setup.go` prints a warning block and exits 0. The S3 bucket and DynamoDB table must be created manually. `--dry-run` still shows the planning output and cost estimate.
 
@@ -63,12 +63,12 @@ go list -deps ./internal/cloud/...
 | `cmd/globals` | `Runtime` (Config + Provider + ConfigPath), `Options`, `Store.Init()`, dependency injection types |
 | `cmd/{destroy,doctor,setup,configcmd,version}` | Subcommands; each `New()` accepts `RuntimeSource` + `OptionsSource` closures — no direct globals access |
 | `internal/config` | `Config` struct, Viper loading from `fabrica.yaml` (scoped here only), YAML serialization, defaults |
-| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `StateBackendDestroyer` |
-| `internal/cloud/aws` | AWS implementation registered via `init()` in `internal/cloud/registry.go`; wraps `cloudcontrol`, `s3`, `dynamodb`, `iam` SDK clients |
+| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `StateBackendDestroyer`, `EC2InstanceManager` |
+| `internal/cloud/aws` | AWS implementation registered via `init()` in `internal/cloud/registry.go`; wraps `cloudcontrol`, `s3`, `dynamodb`, `iam`, `ec2` SDK clients; `awsProvider` satisfies both `Provider` and `EC2InstanceManager` |
 | `internal/state` | `State`/`ModuleState`/`ModuleResource` types, `Backend` interface, S3+DynamoDB bootstrap, DynamoDB locking |
 | `internal/cost` | Cost estimator interface + Phase 0 estimators; registered by resource `TypeName` |
 | `internal/tags` | Tag injection helpers; `ManagedBy: fabrica` applied to all resources |
-| `internal/prompt` | `ConfirmExact` for interactive confirmation dialogs |
+| `internal/prompt` | `Confirm` (y/N) and `ConfirmExact` (typed phrase) for interactive confirmation dialogs |
 | `internal/version` | Version constant |
 | `cmd/perforce` | Parent command; wires create/status/destroy subcommands |
 | `cmd/perforce/create` | Provision SG + EC2 instance in order; writes state after each; generates credentials |
@@ -83,10 +83,13 @@ go list -deps ./internal/cloud/...
 | `cmd/horde/ami` | Local file generator — no AWS calls, no `RuntimeSource`. `build` subcommand renders embedded templates (`embed.FS`) to an output dir: EC2 Image Builder recipe JSON + optional Packer HCL + build-guide.md |
 | `internal/horde` | Pure plan layer: `CreatePlan`, `SGDesiredState`, `InstanceDesiredState`, cloud-init generator (`Generate`/`GenerateRaw`), `VPCResolver` interface |
 | `internal/horde/buildgraph` | Isolated sub-package: `ParseBuildGraph(path)` → `*BuildGraphJob`; XML-only, no AWS/HTTP deps |
-| `cmd/workstation` | Parent command; wires create/list subcommands |
-| `cmd/workstation/create` | Provision SG + EC2 instance (AMI-first, NICE DCV); generates DCV session password; writes credentials to `.fabrica/workstation-credentials.yaml`; warns when `allowedCidr` is `0.0.0.0/0` |
+| `cmd/workstation` | Parent command; wires create/list/stop/start/terminate subcommands |
+| `cmd/workstation/create` | Provision SG + EC2 instance (AMI-first, NICE DCV); `--template artist\|programmer` sets instance type + volume presets; `--mount-perforce` injects p4 CLI + `~/.p4config` via cloud-init using Perforce private IP from local state; writes credentials to `.fabrica/workstation-credentials.yaml` |
 | `cmd/workstation/list` | Reads local state; prints workstation status + resource IDs; `--json` emits `WorkstationEntry` array |
-| `internal/workstation` | Pure plan layer: `CreatePlan`, `SGDesiredState`, `InstanceDesiredState`, cloud-init generator (`Generate`/`GenerateRaw`), `VPCResolver` interface. GPU instance prices (g4dn/g5) live in `internal/perforce/cost.go` alongside the shared EC2 estimators. |
+| `cmd/workstation/stop` | Calls `EC2InstanceManager.StopInstance`; updates state status to `"stopped"`; simple y/N confirmation (not typed phrase) |
+| `cmd/workstation/start` | Calls `EC2InstanceManager.StartInstance`; updates state status to `"ready"`; no-ops when already running |
+| `cmd/workstation/terminate` | Ordered delete (instance → SG) with incremental state cleanup; mirrors `perforce/destroy` exactly |
+| `internal/workstation` | Pure plan layer: `CreatePlan` (accepts `tmpl` + `perforceAddr` args), `SGDesiredState`, `InstanceDesiredState`, cloud-init generator (`Generate`/`GenerateRaw`), `VPCResolver` interface. GPU instance prices (g4dn/g5/g6) live in `internal/perforce/cost.go` alongside the shared EC2 estimators. |
 | `internal/credentials` | Shared helpers: `GeneratePassword`, `WriteCredentials` — write per-module credential YAML files to `.fabrica/` (mode 0600) |
 | `internal/stateutil` | Shared helpers: `ResourceByType` — query module state without repeating the lookup loop |
 
@@ -95,7 +98,8 @@ go list -deps ./internal/cloud/...
 `internal/perforce` and `internal/horde` are the canonical templates for new modules:
 - **Pure plan layer** — no AWS SDK imports. Builds `CreatePlan` and Cloud Control desired-state JSON. The `cmd/<module>` layer calls the plan layer, then executes via `rt.Provider.Resources()`.
 - **VPCResolver interface** — when a module needs AWS-specific resolution (VPC, subnet), define an interface in `internal/<module>/config.go` that the provider implements. Keeps `internal/*` SDK-free.
-- **Cost estimators** — m5/c5 (Perforce) and m7i (Horde) EC2 prices live together in `internal/perforce/cost.go`. `cost.Global.Register` panics on duplicate `TypeName` — do not register `AWS::EC2::Instance` or `AWS::EC2::Volume` from a second package.
+- **EC2InstanceManager** — Cloud Control cannot stop or start EC2 instances. Use the `cloud.EC2InstanceManager` auxiliary interface (defined in `internal/cloud/ec2manager.go`, implemented by `awsProvider` in `internal/cloud/aws/`). Access via type assertion: `rt.Provider.(cloud.EC2InstanceManager)`. Follow the `state_backend.go` pattern when adding future provider-specific capabilities.
+- **Cost estimators** — m5/c5 (Perforce), m7i (Horde), and g4dn/g5/g6/c7i (workstation) EC2 prices live together in `internal/perforce/cost.go`. `cost.Global.Register` panics on duplicate `TypeName` — do not register `AWS::EC2::Instance` or `AWS::EC2::Volume` from a second package.
 - **`GenerateRaw`** — when a function produces base64 output, add a `*Raw` variant returning the plain string for test assertions.
 - **State written after each resource** — partial failures leave a recoverable record; re-running detects already-provisioned state and exits cleanly.
 - **Config structs in `internal/config/config.go`** — `HordeConfig`, `PerforceConfig`, and `WorkstationConfig` all live here (not in their respective `internal/<module>` packages) to avoid circular imports.
@@ -165,8 +169,7 @@ fabrica horde create|status|submit|destroy  # ✓ implemented
 fabrica horde ami build                     # ✓ implemented; generates Image Builder recipe + optional Packer HCL
 fabrica ci [setup|trigger|status|logs]
 fabrica deploy [setup|promote|status|destroy]
-fabrica workstation create|list              # ✓ implemented; stop/terminate planned
-fabrica workstation [stop|terminate]
+fabrica workstation create|list|stop|start|terminate  # ✓ implemented
 fabrica cost [report|forecast|alerts]
 fabrica doctor                              # prerequisite validation
 fabrica destroy --all                       # clean teardown
@@ -179,7 +182,11 @@ fabrica export --format cloudformation      # escape hatch
 - **No credentials in UserData** — DCV session password is written to `.fabrica/workstation-credentials.yaml` (mode 0600) only; never embedded in UserData.
 - **Port** — 8443 (NICE DCV HTTPS). The default `allowedCidr` is `0.0.0.0/0`; the create command warns when this default is used. Restrict to a VPN CIDR in production via `workstation.allowedCidr` in `fabrica.yaml`.
 - **State version** — `UpsertModule` stores `plan.AmiID` as the module version (same pattern as horde), so state tracks which AMI was used.
-- **GPU instance prices** — g4dn and g5 family prices live in `internal/perforce/cost.go` alongside the shared EC2/EBS estimators. Do not add a separate cost registration for workstation resources.
+- **State status transitions** — `provisioning` → `ready` (set by future status command); `stop` sets `"stopped"`; `start` sets `"ready"`; `terminate` removes the module entirely.
+- **Templates** — `--template artist` → `g6.xlarge` + 200 GiB; `--template programmer` → `c7i.xlarge` + 100 GiB. Template overrides config defaults; explicit `--instance-type`/`--volume-size` flags further override.
+- **`--mount-perforce`** — reads the Perforce module's instance private IP from local state via `rt.Provider.Resources().Get(...)`, then injects `P4PORT=<ip>:1666` into `~/.p4config` via cloud-init. Requires the `perforce` module to be provisioned. Developer runs `p4 sync` manually.
+- **Stop/start confirmation** — uses `prompt.Confirm` (simple y/N), not `prompt.ConfirmExact` (typed phrase). Terminate uses `ConfirmExact` (same as perforce/horde destroy).
+- **GPU instance prices** — g4dn, g5, g6, and c7i family prices live in `internal/perforce/cost.go` alongside the shared EC2/EBS estimators. Do not add a separate cost registration for workstation resources.
 
 ## Horde-Specific Notes
 

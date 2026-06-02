@@ -23,7 +23,7 @@ Game studios aren't web apps. You need Perforce for terabyte asset histories, Ho
 | `horde` | `create`, `status`, `submit` | Complete |
 | `ci` | `setup`, `trigger`, `status`, `logs` | Planned |
 | `deploy` | `setup`, `promote`, `status`, `destroy` | Planned |
-| `workstation` | `create`, `list`, `stop`, `terminate` | Planned |
+| `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Complete |
 | `cost` | `report`, `forecast`, `alerts` | Planned |
 
 > **Note:** `fabrica setup` does not yet create AWS resources. The S3 state bucket and DynamoDB lock table must be created manually before using any Fabrica commands. Run `fabrica setup --dry-run` to see the expected resource names, then create them yourself.
@@ -144,6 +144,41 @@ Two install methods are supported:
 Key flags: `--horde-version`, `--base-image`, `--region`, `--output-dir`, `--include-packer`, `--dry-run`.
 
 ### Other
+
+### Workstation
+
+> **AMI requirement:** `fabrica workstation create` is AMI-first. Your AMI must already have NICE DCV installed. Fabrica only configures and starts the DCV session via cloud-init. Port 8443 (NICE DCV HTTPS) is opened inbound; restrict `workstation.allowedCidr` in `fabrica.yaml` for production.
+
+#### `fabrica workstation create`
+
+Provisions a NICE DCV cloud workstation: creates an EC2 security group (port 8443) and launches an EC2 instance. Generates a DCV session password to `.fabrica/workstation-credentials.yaml` (mode 0600).
+
+Key flags:
+
+```
+--instance-type    EC2 instance type (default: g4dn.xlarge)
+--volume-size      EBS root volume size in GiB (default: 100)
+--template         Preset: "artist" (g6.xlarge, 200 GiB) or "programmer" (c7i.xlarge, 100 GiB)
+--mount-perforce   Install Perforce CLI and write ~/.p4config from local Fabrica state
+```
+
+When `--mount-perforce` is set, `create` reads the Perforce server's private IP from local state (requires `fabrica perforce create` to have run first) and writes `~/.p4config` on the workstation with `P4PORT` set. The developer still runs `p4 sync` manually.
+
+#### `fabrica workstation list`
+
+Displays provisioned workstation status and resource IDs. Supports `--json`.
+
+#### `fabrica workstation stop`
+
+Stops the EC2 instance to pause compute billing. Data and configuration are preserved. Supports `--dry-run`, `--yes`, `--json`.
+
+#### `fabrica workstation start`
+
+Starts a previously stopped workstation. Supports `--dry-run`, `--yes`, `--json`.
+
+#### `fabrica workstation terminate`
+
+Permanently terminates the workstation EC2 instance and security group. Deletes resources in reverse-creation order. Idempotent — already-terminated instances are skipped. Supports `--dry-run`, `--yes`, `--json`.
 
 #### `fabrica version`
 
