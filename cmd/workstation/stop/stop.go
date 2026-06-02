@@ -33,7 +33,7 @@ type command struct {
 	assumeYes bool
 	jsonOut   bool
 	out       io.Writer
-	confirm   func(string) bool
+	confirm   func(string, string) bool
 
 	// seams for testing
 	readState    func() (*fabricastate.State, error)
@@ -65,7 +65,7 @@ With --dry-run, shows what would happen without calling the EC2 API.`,
 				assumeYes: opts.AssumeYes,
 				jsonOut:   opts.JSONOutput,
 				out:       out,
-				confirm:   prompt.Confirm,
+				confirm:   prompt.ConfirmExact,
 			}
 			c.readState = c.defaultReadState
 			c.writeState = c.defaultWriteState
@@ -122,10 +122,13 @@ func (c command) run(ctx context.Context) error {
 
 	if !c.assumeYes {
 		fmt.Fprintln(c.out)
-		if !c.confirm(fmt.Sprintf("Stop workstation instance %s?", instanceID)) {
+		phrase := confirmPhrase(instanceID)
+		c.printConfirmInstructions(phrase)
+		if !c.confirm("Enter confirmation phrase", phrase) {
 			fmt.Fprintln(c.out, "Cancelled. No AWS calls were made.")
 			return nil
 		}
+		fmt.Fprintln(c.out, "Confirmation accepted.")
 	} else if !c.jsonOut {
 		fmt.Fprintln(c.out, "Proceeding without interactive confirmation (--yes flag set).")
 	}
@@ -187,6 +190,19 @@ func (c command) printStopPlan(m *fabricastate.ModuleState, instanceID string) {
 func (c command) printJSON(out StopOutput) {
 	data, _ := json.MarshalIndent(out, "", "  ")
 	fmt.Fprintln(c.out, string(data))
+}
+
+func confirmPhrase(instanceID string) string {
+	return fmt.Sprintf("stop workstation %s", instanceID)
+}
+
+func (c command) printConfirmInstructions(phrase string) {
+	fmt.Fprintln(c.out, "Confirmation required.")
+	fmt.Fprintln(c.out, "Type this exact phrase to continue:")
+	fmt.Fprintln(c.out)
+	fmt.Fprintf(c.out, "  %s\n", phrase)
+	fmt.Fprintln(c.out)
+	fmt.Fprintln(c.out, "Any other input cancels.")
 }
 
 func (c command) defaultReadState() (*fabricastate.State, error) {

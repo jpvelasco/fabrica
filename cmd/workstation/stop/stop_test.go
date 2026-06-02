@@ -18,7 +18,7 @@ func newTestCommand(out *bytes.Buffer, st *fabricastate.State, stopErr error) co
 	c := command{
 		runtime: globals.Runtime{Config: cfg, Provider: nil},
 		out:     out,
-		confirm: func(_ string) bool { return true },
+		confirm: func(_, _ string) bool { return true },
 	}
 	c.readState = func() (*fabricastate.State, error) { return st, nil }
 	c.writeState = func(_ *fabricastate.State) error { return nil }
@@ -130,7 +130,7 @@ func TestStopConfirmationRejected(t *testing.T) {
 	st := workstationState("ready")
 	stopCalled := false
 	c := newTestCommand(&out, st, nil)
-	c.confirm = func(_ string) bool { return false }
+	c.confirm = func(_, _ string) bool { return false }
 	c.stopInstance = func(_ context.Context, _ string) error {
 		stopCalled = true
 		return nil
@@ -272,7 +272,7 @@ func TestStopAssumeYesSkipsPrompt(t *testing.T) {
 	confirmCalled := false
 	c := newTestCommand(&out, st, nil)
 	c.assumeYes = true
-	c.confirm = func(_ string) bool {
+	c.confirm = func(_, _ string) bool {
 		confirmCalled = true
 		return true
 	}
