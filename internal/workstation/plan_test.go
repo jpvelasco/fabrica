@@ -20,7 +20,7 @@ func (f *fakeVPCResolver) ResolveDefaultVPC(_ context.Context) (string, string, 
 
 func TestNewCreatePlanRequiresAmiID(t *testing.T) {
 	cfg := config.WorkstationConfig{}
-	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, "", "")
 	if err == nil {
 		t.Fatal("expected error when AmiID is empty")
 	}
@@ -33,7 +33,7 @@ func TestNewCreatePlanDefaults(t *testing.T) {
 	cfg := config.WorkstationConfig{AmiID: "ami-abc123"}
 	resolver := &fakeVPCResolver{vpcID: "vpc-default", subnetID: "subnet-default"}
 
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver)
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestNewCreatePlanDefaults(t *testing.T) {
 	if plan.VPCID != "vpc-default" {
 		t.Errorf("VPCID = %q, want vpc-default", plan.VPCID)
 	}
-	if plan.DefaultVPC != true {
+	if !plan.DefaultVPC {
 		t.Error("DefaultVPC should be true when resolver was used")
 	}
 	if plan.SGName != "fabrica-workstation-sg" {
@@ -72,7 +72,7 @@ func TestNewCreatePlanExplicitVPC(t *testing.T) {
 		VPCId:    "vpc-explicit",
 		SubnetId: "subnet-explicit",
 	}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestNewCreatePlanExplicitVPC(t *testing.T) {
 func TestNewCreatePlanVPCResolverError(t *testing.T) {
 	cfg := config.WorkstationConfig{AmiID: "ami-abc123"}
 	resolver := &fakeVPCResolver{err: errors.New("no default VPC")}
-	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver)
+	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, "", "")
 	if err == nil {
 		t.Fatal("expected error when resolver fails")
 	}
@@ -106,7 +106,7 @@ func TestNewCreatePlanConfigOverrides(t *testing.T) {
 		VPCId:              "vpc-x",
 		SubnetId:           "subnet-x",
 	}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -121,6 +121,71 @@ func TestNewCreatePlanConfigOverrides(t *testing.T) {
 	}
 	if plan.AllowedCIDR != "10.0.0.0/8" {
 		t.Errorf("AllowedCIDR = %q, want 10.0.0.0/8", plan.AllowedCIDR)
+	}
+}
+
+func TestNewCreatePlanTemplateArtist(t *testing.T) {
+	cfg := config.WorkstationConfig{
+		AmiID:    "ami-abc123",
+		VPCId:    "vpc-x",
+		SubnetId: "subnet-x",
+	}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, TemplateArtist, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if plan.InstanceType != ArtistInstanceType {
+		t.Errorf("InstanceType = %q, want %q", plan.InstanceType, ArtistInstanceType)
+	}
+	if plan.VolumeSize != ArtistVolumeSize {
+		t.Errorf("VolumeSize = %d, want %d", plan.VolumeSize, ArtistVolumeSize)
+	}
+}
+
+func TestNewCreatePlanTemplateProgrammer(t *testing.T) {
+	cfg := config.WorkstationConfig{
+		AmiID:    "ami-abc123",
+		VPCId:    "vpc-x",
+		SubnetId: "subnet-x",
+	}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, TemplateProgrammer, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if plan.InstanceType != ProgrammerInstanceType {
+		t.Errorf("InstanceType = %q, want %q", plan.InstanceType, ProgrammerInstanceType)
+	}
+	if plan.VolumeSize != ProgrammerVolumeSize {
+		t.Errorf("VolumeSize = %d, want %d", plan.VolumeSize, ProgrammerVolumeSize)
+	}
+}
+
+func TestNewCreatePlanTemplateUnknownErrors(t *testing.T) {
+	cfg := config.WorkstationConfig{AmiID: "ami-abc123"}
+	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, "designer", "")
+	if err == nil {
+		t.Fatal("expected error for unknown template")
+	}
+	if !containsStr(err.Error(), "unknown template") {
+		t.Errorf("error %q should mention unknown template", err.Error())
+	}
+}
+
+func TestNewCreatePlanMountPerforce(t *testing.T) {
+	cfg := config.WorkstationConfig{
+		AmiID:    "ami-abc123",
+		VPCId:    "vpc-x",
+		SubnetId: "subnet-x",
+	}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, "", "10.0.1.5:1666")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !plan.MountPerforce {
+		t.Error("MountPerforce should be true when perforceAddr is non-empty")
+	}
+	if plan.PerforceServerAddr != "10.0.1.5:1666" {
+		t.Errorf("PerforceServerAddr = %q, want 10.0.1.5:1666", plan.PerforceServerAddr)
 	}
 }
 

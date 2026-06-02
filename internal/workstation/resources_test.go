@@ -14,7 +14,7 @@ func testPlan(t *testing.T) *CreatePlan {
 		AmiID:    "ami-abc123",
 		VPCId:    "vpc-test",
 		SubnetId: "subnet-test",
-	}, "123456789012", "us-east-1", nil)
+	}, "123456789012", "us-east-1", nil, "", "")
 	if err != nil {
 		t.Fatalf("NewCreatePlan: %v", err)
 	}

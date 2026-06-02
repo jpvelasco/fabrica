@@ -12,7 +12,7 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 |--------|----------|--------------|
 | `perforce` | `create`, `status`, `destroy` | Provisions a Perforce Helix Core EC2 instance with security group; tracks provisioning state; detects readiness via TCP probe on port 1666 |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Provisions an Unreal Horde build coordinator (AMI-first, m7i.2xlarge); probes port 5000; parses BuildGraph XML and POSTs jobs to the Horde REST API; generates EC2 Image Builder recipe + optional Packer HCL for building the required AMI |
-| `workstation` | `create`, `list` | Provisions a NICE DCV cloud workstation on EC2 (AMI-first, g4dn.xlarge default); allows TCP 8443 inbound; writes DCV session credentials to `.fabrica/workstation-credentials.yaml` |
+| `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Provisions a NICE DCV cloud workstation on EC2 (AMI-first, g4dn.xlarge default); allows TCP 8443 inbound; writes DCV session credentials to `.fabrica/workstation-credentials.yaml`; supports stop/start via EC2InstanceManager and permanent termination |
 
 **Perforce** provisions a Helix Core version control server on EC2 — security group, instance, and credentials — then tracks whether the server is accepting connections. It's the source-of-truth for a game studio's asset and code history.
 
@@ -41,7 +41,9 @@ go list -deps ./internal/cloud/...
 
 ### Key Patterns
 
-**SDK-free `internal/*`** — `internal/perforce` and `internal/horde` are pure plan layers with no AWS SDK imports. They build `CreatePlan` structs and Cloud Control desired-state JSON. The `cmd/<module>` layer calls the plan layer, then executes via `rt.Provider.Resources()`.
+**SDK-free `internal/*`** — `internal/perforce`, `internal/horde`, and `internal/workstation` are pure plan layers with no AWS SDK imports. They build `CreatePlan` structs and Cloud Control desired-state JSON. The `cmd/<module>` layer calls the plan layer, then executes via `rt.Provider.Resources()`.
+
+**EC2InstanceManager for stop/start** — Cloud Control API only does CRUD and cannot stop or start EC2 instances. The `cloud.EC2InstanceManager` interface (defined in `internal/cloud/ec2manager.go`) exposes `StopInstance` / `StartInstance`. The AWS provider implements it in `internal/cloud/aws/ec2manager.go` via the EC2 SDK. Commands access it via type assertion: `rt.Provider.(cloud.EC2InstanceManager)`. Follow the `state_backend.go` auxiliary-interface pattern for any future provider-specific capabilities.
 
 **Seam injection for testability** — the `command` struct holds `func` fields for all I/O operations (`readState`, `writeState`, `createResource`, `probeTCP`, etc.). `New()` wires real implementations; tests inject fakes. No global state, no `init()` side effects in tests.
 
@@ -120,6 +122,13 @@ gofmt -w .
 go list -deps ./internal/cloud/...
 ```
 
+## Workstation-Specific Notes
+
+- **Templates** — `--template artist` sets `g6.xlarge` + 200 GiB; `--template programmer` sets `c7i.xlarge` + 100 GiB. Explicitly passing `--instance-type` or `--volume-size` overrides the config but a `--template` overrides config (not the explicit flags — flags win when set after template processing).
+- **`--mount-perforce`** — reads the Perforce module's instance private IP from local state via Cloud Control `Get`, then injects `P4PORT=<ip>:1666` into `~/.p4config` via cloud-init. Requires Perforce to be provisioned first. Developer still runs `p4 sync` manually.
+- **Stop/start state** — after a successful stop, `ModuleState.Status` is set to `"stopped"`. After a successful start, it is set to `"ready"`. The EC2 API call is fire-and-accept; Fabrica does not wait for the instance to reach a terminal state.
+- **Terminate vs destroy** — the workstation module uses `terminate` as the permanent deletion command (not `destroy`). Follows the same ordered-delete + incremental state pattern as `perforce destroy` and `horde destroy`.
+
 ## Key Decisions (Locked)
 
 - **Module path:** `github.com/jpvelasco/fabrica`
@@ -127,3 +136,4 @@ go list -deps ./internal/cloud/...
 - **State backend:** S3 + DynamoDB (locking) + `.fabrica/state.json` (local cache)
 - **Config:** Viper + YAML (`fabrica.yaml`) — Viper scoped inside `internal/config` only
 - **No logging library:** `fmt.Printf`/`Println` only
+- **EC2 stop/start:** uses `cloud.EC2InstanceManager` (auxiliary interface) + EC2 SDK, not Cloud Control
