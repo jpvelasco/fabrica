@@ -14,6 +14,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/perforce"
 	"github.com/jpvelasco/fabrica/cmd/setup"
 	"github.com/jpvelasco/fabrica/cmd/version"
+	"github.com/jpvelasco/fabrica/cmd/workstation"
 	_ "github.com/jpvelasco/fabrica/internal/cloud/aws"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
@@ -60,6 +61,7 @@ func New(out io.Writer) *cobra.Command {
 	cmd.AddCommand(configcmd.New(runtimeSource, out))
 	cmd.AddCommand(perforce.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(horde.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(workstation.New(runtimeSource, optionsSource, out))
 
 	return cmd
 }

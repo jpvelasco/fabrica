@@ -51,12 +51,13 @@ func (c *Config) YAML() ([]byte, error) {
 }
 
 type Config struct {
-	Cloud    Cloud          `mapstructure:"cloud"    yaml:"cloud"`
-	State    State          `mapstructure:"state"    yaml:"state"`
-	Perforce PerforceConfig `mapstructure:"perforce" yaml:"perforce"`
-	Horde    HordeConfig    `mapstructure:"horde"    yaml:"horde"`
-	CI       any            `mapstructure:"ci"       yaml:"ci"`
-	Cost     any            `mapstructure:"cost"     yaml:"cost"`
+	Cloud       Cloud             `mapstructure:"cloud"       yaml:"cloud"`
+	State       State             `mapstructure:"state"       yaml:"state"`
+	Perforce    PerforceConfig    `mapstructure:"perforce"    yaml:"perforce"`
+	Horde       HordeConfig       `mapstructure:"horde"       yaml:"horde"`
+	Workstation WorkstationConfig `mapstructure:"workstation" yaml:"workstation"`
+	CI          any               `mapstructure:"ci"          yaml:"ci"`
+	Cost        any               `mapstructure:"cost"        yaml:"cost"`
 }
 
 // PerforceConfig holds the perforce: section of fabrica.yaml.
@@ -80,6 +81,17 @@ type HordeConfig struct {
 	AllowedCIDR  string `mapstructure:"allowedCidr"  yaml:"allowedCidr"`
 }
 
+// WorkstationConfig holds the workstation: section of fabrica.yaml.
+type WorkstationConfig struct {
+	AmiID              string `mapstructure:"amiId"              yaml:"amiId"`
+	InstanceType       string `mapstructure:"instanceType"       yaml:"instanceType"`
+	VolumeSize         int    `mapstructure:"volumeSize"         yaml:"volumeSize"`
+	VPCId              string `mapstructure:"vpcId"              yaml:"vpcId"`
+	SubnetId           string `mapstructure:"subnetId"           yaml:"subnetId"`
+	IdleTimeoutMinutes int    `mapstructure:"idleTimeoutMinutes" yaml:"idleTimeoutMinutes"`
+	AllowedCIDR        string `mapstructure:"allowedCidr"        yaml:"allowedCidr"`
+}
+
 type Cloud struct {
 	Provider string `mapstructure:"provider" yaml:"provider"`
 	AWS      AWS    `mapstructure:"aws" yaml:"aws"`
@@ -99,22 +111,24 @@ type State struct {
 }
 
 type fileConfig struct {
-	Cloud    Cloud          `yaml:"cloud"`
-	State    State          `yaml:"state"`
-	Perforce PerforceConfig `yaml:"perforce"`
-	Horde    HordeConfig    `yaml:"horde"`
-	CI       any            `yaml:"ci"`
-	Cost     any            `yaml:"cost"`
+	Cloud       Cloud             `yaml:"cloud"`
+	State       State             `yaml:"state"`
+	Perforce    PerforceConfig    `yaml:"perforce"`
+	Horde       HordeConfig       `yaml:"horde"`
+	Workstation WorkstationConfig `yaml:"workstation"`
+	CI          any               `yaml:"ci"`
+	Cost        any               `yaml:"cost"`
 }
 
 func (c *Config) fileConfig() fileConfig {
 	return fileConfig{
-		Cloud:    c.Cloud,
-		State:    c.State,
-		Perforce: c.Perforce,
-		Horde:    c.Horde,
-		CI:       emptySection(c.CI),
-		Cost:     emptySection(c.Cost),
+		Cloud:       c.Cloud,
+		State:       c.State,
+		Perforce:    c.Perforce,
+		Horde:       c.Horde,
+		Workstation: c.Workstation,
+		CI:          emptySection(c.CI),
+		Cost:        emptySection(c.Cost),
 	}
 }
 

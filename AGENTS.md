@@ -4,7 +4,7 @@
 
 Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, zero external dependencies. Sister tool to [Ludus](https://github.com/jpvelasco/ludus) — Ludus orchestrates game builds, Fabrica gives them somewhere to run.
 
-**Current state:** Phase 0 (CLI skeleton + AWS foundation) complete. Two modules fully implemented: `perforce` (Helix Core provisioning) and `horde` (build farm provisioning + job submission).
+**Current state:** Phase 0 (CLI skeleton + AWS foundation) complete. Three modules fully implemented: `perforce` (Helix Core provisioning), `horde` (build farm provisioning + job submission), and `workstation` (NICE DCV cloud workstation provisioning).
 
 ## Current Modules
 
@@ -12,6 +12,7 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 |--------|----------|--------------|
 | `perforce` | `create`, `status`, `destroy` | Provisions a Perforce Helix Core EC2 instance with security group; tracks provisioning state; detects readiness via TCP probe on port 1666 |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Provisions an Unreal Horde build coordinator (AMI-first, m7i.2xlarge); probes port 5000; parses BuildGraph XML and POSTs jobs to the Horde REST API; generates EC2 Image Builder recipe + optional Packer HCL for building the required AMI |
+| `workstation` | `create`, `list` | Provisions a NICE DCV cloud workstation on EC2 (AMI-first, g4dn.xlarge default); allows TCP 8443 inbound; writes DCV session credentials to `.fabrica/workstation-credentials.yaml` |
 
 **Perforce** provisions a Helix Core version control server on EC2 — security group, instance, and credentials — then tracks whether the server is accepting connections. It's the source-of-truth for a game studio's asset and code history.
 

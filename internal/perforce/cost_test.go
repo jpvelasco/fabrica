@@ -124,3 +124,26 @@ func TestCostRegistryDuplicatePanics(t *testing.T) {
 	// init() already registered these; registering again must panic.
 	cost.Global.Register(TypeAWSEC2Instance, ec2InstanceEstimator{})
 }
+
+func TestGPUInstancePrices(t *testing.T) {
+	for _, tc := range []struct {
+		typ    string
+		hourly float64
+	}{
+		{"g4dn.xlarge", 0.526},
+		{"g4dn.2xlarge", 0.752},
+		{"g5.xlarge", 1.006},
+		{"g5.2xlarge", 1.212},
+	} {
+		r := cost.Resource{TypeName: TypeAWSEC2Instance, Name: tc.typ}
+		got, err := cost.Global.Estimate(TypeAWSEC2Instance, r)
+		if err != nil {
+			t.Errorf("%s: %v", tc.typ, err)
+			continue
+		}
+		want := tc.hourly * hoursPerMonth
+		if !almostEqual(got.Amount, want) {
+			t.Errorf("%s: amount = %.4f, want %.4f", tc.typ, got.Amount, want)
+		}
+	}
+}

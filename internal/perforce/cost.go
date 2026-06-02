@@ -37,6 +37,15 @@ var ec2InstancePrices = map[string]float64{
 	"m7i.8xlarge":  1.6128,
 	"m7i.12xlarge": 2.4192,
 	"m7i.16xlarge": 3.2256,
+	// GPU instances for cloud workstations (us-east-1, Linux, on-demand, 2024-Q4).
+	"g4dn.xlarge":  0.526,
+	"g4dn.2xlarge": 0.752,
+	"g4dn.4xlarge": 1.204,
+	"g4dn.8xlarge": 2.264,
+	"g5.xlarge":    1.006,
+	"g5.2xlarge":   1.212,
+	"g5.4xlarge":   1.624,
+	"g5.8xlarge":   2.448,
 }
 
 const hoursPerMonth = 730.0
