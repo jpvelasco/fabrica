@@ -15,7 +15,7 @@ Phase 0 (CLI skeleton + AWS foundation) is complete. Three modules are fully imp
 ## Build Commands
 
 ```bash
-go build ./...
+go build ./...                         # requires Go 1.25+
 go vet ./...
 go test ./...                          # Windows (no -race)
 go test -race -v ./...                 # macOS
@@ -126,7 +126,7 @@ Every command package uses a two-file test approach (established in `cmd/perforc
 - `*_test.go` (`package <cmd>`) — white-box tests that call `command.run()` directly with injected seams (`readState`, `writeState`, `createResource`, `probeTCP`, `hordeClient`, `sleep`, `now`). Cover partial failures, confirmation rejection, error propagation.
 - `cobra_test.go` (`package <cmd>_test`) — black-box Cobra-layer tests that call `cmd.New(...) + ExecuteContext`. Build a minimal root command in the test to replicate the persistent-flag hierarchy (`--dry-run`, `--yes`, `--json` live on root, not on the subcommand).
 
-Seam pattern: the `command` struct holds `func` fields for all I/O operations. `New()` wires real implementations; tests inject fakes. `fakeProvider` / `fakeHordeClient` patterns live in `*_test.go` files alongside the tests that use them.
+Seam pattern: the `command` struct holds `func` fields for all I/O operations. `New()` wires real implementations; tests inject fakes. `fakeProvider` / `fakeHordeClient` patterns live in `*_test.go` files alongside the tests that use them. When a command uses both `Provider` and `EC2InstanceManager` (e.g. workstation stop/start), cobra tests use a single `cobraFakeProvider` that implements both interfaces to avoid the type assertion in tests.
 
 ## How to Add a New Module
 
