@@ -15,7 +15,8 @@ Phase 0 (CLI skeleton + AWS foundation) is complete. Three modules are fully imp
 ## Build Commands
 
 ```bash
-go build ./...                         # requires Go 1.25+
+go build ./...                         # requires Go 1.25+; defaults to Version=dev Commit=unknown
+go build -ldflags "-X github.com/jpvelasco/fabrica/internal/version.Version=v1.0.0 -X github.com/jpvelasco/fabrica/internal/version.Commit=$(git rev-parse --short HEAD)" .  # release build
 go vet ./...
 go test ./...                          # Windows (no -race)
 go test -race -v ./...                 # macOS
@@ -63,7 +64,7 @@ go list -deps ./internal/cloud/...
 | `cmd/globals` | `Runtime` (Config + Provider + ConfigPath), `Options`, `Store.Init()`, dependency injection types |
 | `cmd/{destroy,doctor,setup,configcmd,version}` | Subcommands; each `New()` accepts `RuntimeSource` + `OptionsSource` closures — no direct globals access |
 | `internal/config` | `Config` struct, Viper loading from `fabrica.yaml` (scoped here only), YAML serialization, defaults |
-| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `StateBackendDestroyer`, `EC2InstanceManager` |
+| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `EC2InstanceManager`, `StateBackendChecker` (doctor: bucket/table exists checks), `StateBackendDestroyer` (destroy --all: delete bucket/table) |
 | `internal/cloud/aws` | AWS implementation registered via `init()` in `internal/cloud/registry.go`; wraps `cloudcontrol`, `s3`, `dynamodb`, `iam`, `ec2` SDK clients; `awsProvider` satisfies both `Provider` and `EC2InstanceManager` |
 | `internal/state` | `State`/`ModuleState`/`ModuleResource` types, `Backend` interface, S3+DynamoDB bootstrap, DynamoDB locking |
 | `internal/cost` | Cost estimator interface + Phase 0 estimators; registered by resource `TypeName` |
@@ -187,6 +188,7 @@ fabrica export --format cloudformation      # escape hatch
 - **`--mount-perforce`** — reads the Perforce module's instance private IP from local state via `rt.Provider.Resources().Get(...)`, then injects `P4PORT=<ip>:1666` into `~/.p4config` via cloud-init. Requires the `perforce` module to be provisioned. Developer runs `p4 sync` manually.
 - **Stop/start confirmation** — uses `prompt.Confirm` (simple y/N), not `prompt.ConfirmExact` (typed phrase). Terminate uses `ConfirmExact` (same as perforce/horde destroy).
 - **GPU instance prices** — g4dn, g5, g6, and c7i family prices live in `internal/perforce/cost.go` alongside the shared EC2/EBS estimators. Do not add a separate cost registration for workstation resources.
+- **Idle timeout** — `workstation.idleTimeoutMinutes` in `fabrica.yaml` (default 60) is injected into the DCV cloud-init; the constant `DefaultIdleTimeoutMinutes` lives in `internal/workstation/config.go`.
 
 ## Horde-Specific Notes
 
