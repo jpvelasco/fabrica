@@ -6,6 +6,16 @@ status and sequencing. When they disagree, this file wins.
 
 Last updated: 2026-06-23.
 
+## Vision
+
+Fabrica is the studio infrastructure command center. It provisions and manages
+production-grade AWS resources so game studios can focus on making games instead
+of wrestling with cloud infrastructure — provision, check status, and tear down
+the full stack (source control, build farms, CI/CD, deploy targets, cost
+visibility) from a single YAML config, with cost estimates before anything
+touches the account and DynamoDB-backed state so engineers don't clobber each
+other's runs.
+
 ## The Praetorium constellation
 
 Fabrica is one tool in a larger family of game-infrastructure tooling —
@@ -54,27 +64,56 @@ See [`PHASE_0_PLAN.md`](PHASE_0_PLAN.md) for the detailed record.
 
 ### Phase 1 — Production-ready core 🚧 In progress
 
-Turn the skeleton into a cohesive, production-grade tool: the three provisioning
-modules (done), real state bootstrap, an aggregate health view, and the
-remaining studio modules (CI, deploy, cost).
+Turn the skeleton into a cohesive, production-grade tool. The three provisioning
+modules and real Cloud Control CRUD are done; the work below is sequenced into
+ordered milestones.
+
+**Foundation already landed:**
 
 - ✅ Perforce module (`create`/`status`/`destroy`)
 - ✅ Horde module (`create`/`status`/`submit`/`destroy`/`ami build`)
 - ✅ Workstation module (`create`/`list`/`stop`/`start`/`terminate`)
 - ✅ Cloud Control CRUD against the real AWS API (all five `ResourceClient` methods)
-- ⬜ **`fabrica setup`** — wire real `state.Bootstrap()` (S3 bucket + DynamoDB table); remove the intentional no-op
-- ⬜ **`fabrica status`** — aggregate health across all modules
-- ⬜ **`ci`** module — `setup`/`trigger`/`status`/`logs`
-- ⬜ **`deploy`** module — `setup`/`promote`/`status`/`destroy`
-- ⬜ **`cost`** command family — `report`/`forecast`/`alerts`
-- ⬜ Perforce `backup`/`restore`
+
+**Milestone 1 — Foundation & first-run experience** *(highest priority)*
+
+- ⬜ Real **`fabrica setup`** — fully functional S3 + DynamoDB bootstrap with proper idempotency, cost preview, and safety; remove the `ErrBootstrapNotImplemented` no-op
+- ⬜ Aggregate **`fabrica status`** — single command showing health across all modules
+- ⬜ Polish first-run experience and error messaging
+
+**Milestone 2 — CI module**
+
+- ⬜ `fabrica ci setup`/`trigger`/`status`/`logs`
+- ⬜ Integration with Horde + Perforce
+
+**Milestone 3 — Deploy module**
+
+- ⬜ `fabrica deploy setup`/`promote`/`status`/`destroy`
+- ⬜ GameLift deployment orchestration, blue/green support, rollback safety
+
+**Milestone 4 — Cost management**
+
+- ⬜ `fabrica cost report`/`forecast`/`alerts`
+- ⬜ Multi-module reporting and budget guardrails
+
+**Milestone 5 — Polish & release readiness**
+
+- ⬜ End-to-end testing + teardown
+- ⬜ Comprehensive documentation and examples
+- ⬜ Final architecture + consistency review
+- ⬜ v0.1 / v1.0 release preparation
+
+**Also tracked under Phase 1:** Perforce `backup`/`restore`.
 
 ### Phase 2+ — Expansion 🔭 Future
 
+- Lore support (production server management)
+- Advanced DDC (distributed Zen / ScyllaDB)
 - MCP server wrapping the same business-logic functions
-- Second cloud provider (GCP/Azure) against the existing `cloud.Provider` interface
+- Multi-cloud / provider extensibility (GCP/Azure against the existing `cloud.Provider` interface)
+- Export capabilities — `fabrica export --format cloudformation|terraform`
+- Monitoring, alerts, and operational tools
 - Drift detection + `--fix` auto-remediation
-- `fabrica export --format cloudformation` escape hatch
 - Vigiles integration: telemetry + cost-data feed
 - Multi-region state, state encryption key rotation
 
@@ -83,16 +122,16 @@ remaining studio modules (CI, deploy, cost).
 | Module | Commands | Status |
 |--------|----------|--------|
 | Foundation | `doctor`, `config show`, `version` | ✅ Complete |
-| `setup` | `setup` (`--dry-run`) | ⚠️ No-op — bucket/table created manually ([Phase 1](#phase-1--production-ready-core--in-progress)) |
+| `setup` | `setup` (`--dry-run`) | ⚠️ No-op — bucket/table created manually (Phase 1, Milestone 1) |
 | `perforce` | `create`, `status`, `destroy` | ✅ Complete (`backup`/`restore` planned) |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | ✅ Complete |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | ✅ Complete |
-| `status` (aggregate) | `status` | ⬜ Planned (Phase 1) |
-| `ci` | `setup`, `trigger`, `status`, `logs` | ⬜ Planned (Phase 1) |
-| `deploy` | `setup`, `promote`, `status`, `destroy` | ⬜ Planned (Phase 1) |
-| `cost` | `report`, `forecast`, `alerts` | ⬜ Planned (Phase 1) |
+| `status` (aggregate) | `status` | ⬜ Planned (Phase 1, Milestone 1) |
+| `ci` | `setup`, `trigger`, `status`, `logs` | ⬜ Planned (Phase 1, Milestone 2) |
+| `deploy` | `setup`, `promote`, `status`, `destroy` | ⬜ Planned (Phase 1, Milestone 3) |
+| `cost` | `report`, `forecast`, `alerts` | ⬜ Planned (Phase 1, Milestone 4) |
 | `destroy --all` | clean teardown | ⚠️ Skeleton wired |
-| `export` | `--format cloudformation` | ⬜ Planned (Phase 2+) |
+| `export` | `--format cloudformation\|terraform` | ⬜ Planned (Phase 2+) |
 
 ## Architecture decisions (locked)
 
