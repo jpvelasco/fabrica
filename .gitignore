@@ -12,6 +12,7 @@ fabrica.yaml
 # Go toolchain
 vendor/
 coverage.out
+coverage.html
 *.test
 *.go.[0-9]*
 
