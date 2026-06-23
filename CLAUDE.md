@@ -8,6 +8,8 @@ A Go CLI + infrastructure-as-code framework that provisions and manages game stu
 
 ## Project Status
 
+[`ROADMAP.md`](ROADMAP.md) is the single source of truth for phases, module status, and the Praetorium vision. Update it when module status changes.
+
 Phase 0 (CLI skeleton + AWS foundation) is complete. Three modules are fully implemented: `perforce` (create/status/destroy), `horde` (create/status/submit/destroy/ami), and `workstation` (create/list/stop/start/terminate). All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` without routing through module-specific SDK wrappers.
 
 `fabrica setup` is intentionally a no-op: `internal/state/bootstrap.go` returns `ErrBootstrapNotImplemented`, and `cmd/setup/setup.go` prints a warning block and exits 0. The S3 bucket and DynamoDB table must be created manually. `--dry-run` still shows the planning output and cost estimate.
@@ -161,6 +163,8 @@ Reference: `cmd/perforce/` + `internal/perforce/` are the canonical templates.
 **Coverage target:** 60%+ for `internal/*`; tests use mocked SDK interfaces — no real AWS calls.
 
 ## Planned Command Structure
+
+Per-module status and phase sequencing live in [`ROADMAP.md`](ROADMAP.md) — the command tree below is the full target surface.
 
 ```
 fabrica setup                               # guided first-run provisioning wizard
