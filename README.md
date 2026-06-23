@@ -14,23 +14,24 @@ Game studios aren't web apps. You need Perforce for terabyte asset histories, Ho
 
 ## Current Status
 
-**Phase 0 complete. Perforce and Horde modules are implemented.**
+**Phase 0 complete. Perforce, Horde, and Workstation modules are implemented.**
+See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium vision, and what's next.
 
 | Module | Commands | Status |
 |--------|----------|--------|
 | `setup` / `doctor` | Foundation | Complete (setup is manual — see below) |
 | `perforce` | `create`, `status`, `destroy` | Complete |
-| `horde` | `create`, `status`, `submit` | Complete |
+| `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Complete |
+| `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Complete |
 | `ci` | `setup`, `trigger`, `status`, `logs` | Planned |
 | `deploy` | `setup`, `promote`, `status`, `destroy` | Planned |
-| `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Complete |
 | `cost` | `report`, `forecast`, `alerts` | Planned |
 
 > **Note:** `fabrica setup` does not yet create AWS resources. The S3 state bucket and DynamoDB lock table must be created manually before using any Fabrica commands. Run `fabrica setup --dry-run` to see the expected resource names, then create them yourself.
 
 ## Requirements
 
-- Go 1.21+
+- Go 1.25.9+
 - AWS credentials with permissions to create EC2 instances, security groups, S3 buckets, and DynamoDB tables
 - IAM permission for `sts:GetCallerIdentity`
 
@@ -143,8 +144,6 @@ Two install methods are supported:
 
 Key flags: `--horde-version`, `--base-image`, `--region`, `--output-dir`, `--include-packer`, `--dry-run`.
 
-### Other
-
 ### Workstation
 
 > **AMI requirement:** `fabrica workstation create` is AMI-first. Your AMI must already have NICE DCV installed. Fabrica only configures and starts the DCV session via cloud-init. Port 8443 (NICE DCV HTTPS) is opened inbound; restrict `workstation.allowedCidr` in `fabrica.yaml` for production.
@@ -179,6 +178,8 @@ Starts a previously stopped workstation. Supports `--dry-run`, `--yes`, `--json`
 #### `fabrica workstation terminate`
 
 Permanently terminates the workstation EC2 instance and security group. Deletes resources in reverse-creation order. Idempotent — already-terminated instances are skipped. Supports `--dry-run`, `--yes`, `--json`.
+
+### Other
 
 #### `fabrica version`
 
