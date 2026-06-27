@@ -92,6 +92,14 @@ func TestCallerIdentity_STSError(t *testing.T) {
 	assertStringContains(t, err.Error(), "AccessDenied")
 }
 
+func TestIdentityDefaultClientFactory(t *testing.T) {
+	// Exercise the real default factory (no network call — NewFromConfig only
+	// constructs the client) so the SDK boundary line is covered.
+	if identityNewClient(aws.Config{Region: "us-east-1"}) == nil {
+		t.Fatal("default identityNewClient returned nil")
+	}
+}
+
 func TestCallerIdentity_NilAccountDoesNotPanic(t *testing.T) {
 	// A nil Account in the STS response must not panic (defensive against
 	// unusual identities / mocked responses).
