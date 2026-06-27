@@ -52,9 +52,16 @@ jobs:
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6
         with:
           go-version-file: go.mod
+      - name: Install gotestsum (Linux)
+        if: runner.os == 'Linux'
+        run: go install gotest.tools/gotestsum@v1.13.0
       - name: Run tests with race detection and coverage (Linux)
         if: runner.os == 'Linux'
-        run: go test -race -coverprofile=coverage.out -covermode=atomic -v ./...
+        # gotestsum runs the suite once, prints readable output, and writes a
+        # JUnit XML for Codecov Test Analytics. Flags after -- go to `go test`.
+        run: |
+          gotestsum --junitfile junit.xml --format pkgname -- \
+            -race -coverprofile=coverage.out -covermode=atomic ./...
       - name: Run tests with race detection (macOS)
         if: runner.os == 'macOS'
         run: go test -race -v ./...
@@ -74,3 +81,11 @@ jobs:
           use_oidc: true
           files: ./coverage.out
           fail_ci_if_error: true
+      - name: Upload test results to Codecov
+        # Runs even when tests fail (that's the point of Test Analytics: failed-
+        # test reporting + flaky detection). Same OIDC + fork guard as coverage.
+        if: ${{ !cancelled() && runner.os == 'Linux' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3  # v1.2.1
+        with:
+          use_oidc: true
+          files: ./junit.xml

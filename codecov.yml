@@ -14,8 +14,26 @@ coverage:
       default:
         target: 80%        # new/changed lines must be >=80% covered
 
+# Virtual coverage groupings by path — no upload changes required. Lets the
+# dashboard and PR comment break coverage down by architectural layer.
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: auto
+        threshold: 1%
+  individual_components:
+    - component_id: cmd
+      name: cmd (CLI layer)
+      paths:
+        - cmd/**
+    - component_id: internal
+      name: internal (core)
+      paths:
+        - internal/**
+
 comment:
-  layout: "reach, diff, flags, files"
+  layout: "reach, diff, flags, components, files"
   behavior: default
   require_changes: false
 
