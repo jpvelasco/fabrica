@@ -41,31 +41,9 @@ systemctl enable helix-p4d
 systemctl start helix-p4d
 `))
 
-// Generate renders the cloud-init user data script and returns it base64-encoded
-// (the format EC2 expects for UserData in Cloud Control).
-func Generate(cfg UserDataConfig) (string, error) {
-	if cfg.DataDevice == "" {
-		cfg.DataDevice = "/dev/nvme1n1"
-	}
-	if cfg.DataMount == "" {
-		cfg.DataMount = "/hxdepots"
-	}
-	if cfg.ServerID == "" {
-		cfg.ServerID = "fabrica-perforce"
-	}
-	if cfg.AdminPass == "" {
-		return "", fmt.Errorf("AdminPass must not be empty")
-	}
-
-	var buf bytes.Buffer
-	if err := userDataTmpl.Execute(&buf, cfg); err != nil {
-		return "", fmt.Errorf("rendering userdata template: %w", err)
-	}
-	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
-}
-
-// GenerateRaw renders the cloud-init script without base64 encoding.
-// Used in tests to inspect the script content directly.
+// GenerateRaw renders the cloud-init script without base64 encoding,
+// applying defaults for any unset fields. Used in tests to inspect the
+// script content directly.
 func GenerateRaw(cfg UserDataConfig) (string, error) {
 	if cfg.DataDevice == "" {
 		cfg.DataDevice = "/dev/nvme1n1"
@@ -85,4 +63,14 @@ func GenerateRaw(cfg UserDataConfig) (string, error) {
 		return "", fmt.Errorf("rendering userdata template: %w", err)
 	}
 	return buf.String(), nil
+}
+
+// Generate renders the cloud-init user data script and returns it base64-encoded
+// (the format EC2 expects for UserData in Cloud Control).
+func Generate(cfg UserDataConfig) (string, error) {
+	raw, err := GenerateRaw(cfg)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString([]byte(raw)), nil
 }

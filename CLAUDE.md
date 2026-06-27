@@ -31,6 +31,14 @@ gofmt -w .                             # format all Go files
 
 CI runs lint + build + test cross-platform (ubuntu/windows/macos) on push/PR to main.
 
+### Linting
+
+`.golangci.yml` (v2 schema) starts from `default: none` and explicitly enables: `errcheck`, `govet`, `ineffassign`, `staticcheck`, `unused`, `gocritic`, `misspell`, `unconvert`, `gosec`, `dupl`. `gofmt` is the only formatter. `gosec` excludes G104/G301/G304/G306 (intentional best-effort cleanup, standard dir perms, config-file reads/writes) — match these rationales before adding new suppressions. Codacy mirrors this via `.codacy.yml` (govet + staticcheck engines); `.github/instructions/codacy.instructions.md` drives the Codacy MCP integration.
+
+## Orphaned .NET Test Project (Ignore)
+
+`tests/Fabrica.Tests/` is a C#/xUnit project (`Fabrica.Tests.csproj`) left over from an abandoned C# design. It references a `src/Fabrica.Cli`, `src/Fabrica.Constructs`, and `src/Fabrica.Operations` tree that **does not exist** — it will not build. Fabrica is pure Go. Do not add to it, fix it, or treat its references as real; the only test suite is the Go one (`go test ./...`).
+
 ## Git Hooks
 
 Hooks live in `.githooks/` (tracked). Activate once per clone:
