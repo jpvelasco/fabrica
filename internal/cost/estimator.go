@@ -11,7 +11,9 @@ package cost
 
 import (
 	"fmt"
+	"io"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -61,6 +63,29 @@ type Report struct {
 	Results    []EstimateResult
 	Total      float64
 	Confidence ConfidenceLevel
+}
+
+// Render writes the cost estimate as a formatted table to out. width controls
+// the divider line length. Resources whose estimate failed are shown with a
+// "(no estimate)" marker rather than a dollar amount.
+func (r Report) Render(out io.Writer, width int) {
+	divider := strings.Repeat("-", width)
+	fmt.Fprintln(out, "Cost estimate:")
+	fmt.Fprintln(out, divider)
+	fmt.Fprintf(out, "  %-30s %10s  %s\n", "Resource", "Cost/mo", "Confidence")
+	fmt.Fprintln(out, divider)
+	for _, result := range r.Results {
+		if result.Err != nil {
+			fmt.Fprintf(out, "  %-30s %10s  %s\n", result.Resource.Name, "-", "(no estimate)")
+			continue
+		}
+		fmt.Fprintf(out, "  %-30s  $%-8.2f  %s\n", result.Resource.Name, result.Monthly.Amount, result.Monthly.Confidence)
+	}
+	fmt.Fprintln(out, divider)
+	fmt.Fprintf(out, "  %-30s  $%-8.2f\n", "Total:", r.Total)
+	fmt.Fprintln(out)
+	fmt.Fprintf(out, "Confidence: %s\n", r.Confidence)
+	fmt.Fprintln(out)
 }
 
 // Estimator produces a monthly cost estimate for a single resource.

@@ -302,28 +302,8 @@ func (c command) printDryRun(plan *workstation.CreatePlan) {
 	fmt.Fprintf(c.out, "  Security Group:   %s\n", plan.SGName)
 	fmt.Fprintf(c.out, "  EC2 Instance:     %s\n", plan.InstanceName)
 	fmt.Fprintln(c.out)
-	c.printCostReport(plan)
+	c.costs.EstimateAll(plan.CostResources).Render(c.out, lineWidth)
 	fmt.Fprintln(c.out, "Run without --dry-run to proceed.")
-}
-
-func (c command) printCostReport(plan *workstation.CreatePlan) {
-	report := c.costs.EstimateAll(plan.CostResources)
-	fmt.Fprintln(c.out, "Cost estimate:")
-	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	fmt.Fprintf(c.out, "  %-30s %10s  %s\n", "Resource", "Cost/mo", "Confidence")
-	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	for _, result := range report.Results {
-		if result.Err != nil {
-			fmt.Fprintf(c.out, "  %-30s %10s  %s\n", result.Resource.Name, "-", "(no estimate)")
-			continue
-		}
-		fmt.Fprintf(c.out, "  %-30s  $%-8.2f  %s\n", result.Resource.Name, result.Monthly.Amount, result.Monthly.Confidence)
-	}
-	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	fmt.Fprintf(c.out, "  %-30s  $%-8.2f\n", "Total:", report.Total)
-	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "Confidence: %s\n", report.Confidence)
-	fmt.Fprintln(c.out)
 }
 
 func (c command) printApplyPlan(plan *workstation.CreatePlan) {
