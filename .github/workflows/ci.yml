@@ -22,6 +22,19 @@ jobs:
         with:
           version: v2.10.1
 
+  vuln:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6
+        with:
+          go-version-file: go.mod
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
   build:
     name: Build
     strategy:
@@ -65,9 +78,9 @@ jobs:
       - name: Run tests with race detection (macOS)
         if: runner.os == 'macOS'
         run: go test -race -v ./...
-      - name: Run tests (Windows)
+      - name: Run tests with race detection (Windows)
         if: runner.os == 'Windows'
-        run: go test -v ./...
+        run: go test -race -v ./...
       - name: Display coverage summary
         if: runner.os == 'Linux'
         run: go tool cover -func=coverage.out

@@ -137,7 +137,7 @@ ordered milestones.
 
 - **IaC:** AWS Cloud Control API — no Terraform, Pulumi, or external binaries
 - **Module path:** `github.com/jpvelasco/fabrica`
-- **Go version:** 1.25.9
+- **Go version:** 1.25.11
 - **Config:** Viper + YAML, scoped inside `internal/config` only; `fmt.Print*` for output, no logging library
 - **State:** S3 bucket (`fabrica-state-<account-id>`) + DynamoDB lock table (`fabrica-state-lock`); local `.fabrica/state.json` cache
 - **Cost:** estimators registered by resource `TypeName`, provider-agnostic
