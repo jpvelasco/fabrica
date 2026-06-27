@@ -45,7 +45,7 @@ fmt: ## Format all Go files
 
 .PHONY: vuln
 vuln: ## Scan for known vulnerabilities (matches CI)
-	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
 .PHONY: tidy
 tidy: ## Tidy go.mod/go.sum
