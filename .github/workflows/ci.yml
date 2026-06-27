@@ -65,7 +65,10 @@ jobs:
         if: runner.os == 'Linux'
         run: go tool cover -func=coverage.out
       - name: Upload coverage to Codecov
-        if: runner.os == 'Linux'
+        # Skip on PRs from forks: OIDC tokens aren't issued to forked-repo runs,
+        # and with no CODECOV_TOKEN fallback the tokenless upload would fail a
+        # private-repo PR (fail_ci_if_error is true). Always runs on push to main.
+        if: runner.os == 'Linux' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
         with:
           use_oidc: true
