@@ -23,7 +23,6 @@ type ModuleState struct {
 	Version   string           `json:"version"`
 	Status    string           `json:"status"`
 	Resources []ModuleResource `json:"resources"`
-	Provision string           `json:"provision"`
 }
 
 // ModuleResource is a single resource tracked in state.
@@ -62,7 +61,6 @@ func (s *State) UpsertModule(name, version, status string, resources []ModuleRes
 			s.Modules[i].Version = version
 			s.Modules[i].Status = status
 			s.Modules[i].Resources = resources
-			s.Modules[i].Provision = now.Format(time.RFC3339)
 			s.Updated = now
 			return
 		}
@@ -72,7 +70,6 @@ func (s *State) UpsertModule(name, version, status string, resources []ModuleRes
 		Version:   version,
 		Status:    status,
 		Resources: resources,
-		Provision: now.Format(time.RFC3339),
 	})
 	s.Updated = now
 }
