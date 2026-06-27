@@ -42,6 +42,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # id-token lets the Linux job authenticate the Codecov upload via OIDC,
+    # so no CODECOV_TOKEN secret is stored in the repo.
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6
@@ -59,3 +64,13 @@ jobs:
       - name: Display coverage summary
         if: runner.os == 'Linux'
         run: go tool cover -func=coverage.out
+      - name: Upload coverage to Codecov
+        # Skip on PRs from forks: OIDC tokens aren't issued to forked-repo runs,
+        # and with no CODECOV_TOKEN fallback the tokenless upload would fail a
+        # private-repo PR (fail_ci_if_error is true). Always runs on push to main.
+        if: runner.os == 'Linux' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
+        with:
+          use_oidc: true
+          files: ./coverage.out
+          fail_ci_if_error: true
