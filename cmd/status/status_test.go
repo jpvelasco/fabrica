@@ -210,11 +210,11 @@ func TestRunBackendHealth(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	s := out.String()
-	if !strings.Contains(s, "my-bucket [yes]") {
-		t.Errorf("expected bucket yes; got:\n%s", s)
+	if !strings.Contains(s, "[OK]") || !strings.Contains(s, "my-bucket") {
+		t.Errorf("expected bucket OK indicator; got:\n%s", s)
 	}
-	if !strings.Contains(s, "my-table [no]") {
-		t.Errorf("expected table no; got:\n%s", s)
+	if !strings.Contains(s, "[WARN]") || !strings.Contains(s, "my-table") {
+		t.Errorf("expected table WARN indicator; got:\n%s", s)
 	}
 }
 
@@ -236,6 +236,55 @@ func TestRunGetResourceFailureDegrades(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "perforce") {
 		t.Errorf("expected module line despite CC failure; got:\n%s", out.String())
+	}
+}
+
+func TestRunSummaryLine(t *testing.T) {
+	st := fabricastate.NewState("123", "us-west-2")
+	st.UpsertModule("perforce", "v", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-a"},
+	})
+	st.UpsertModule("horde", "v", "provisioning", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-b"},
+	})
+	out := &bytes.Buffer{}
+	c := command{
+		out:       out,
+		readState: func() (*fabricastate.State, error) { return st, nil },
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.Contains(out.String(), "2 modules • 1 healthy • 1 provisioning • 2 resources") {
+		t.Errorf("expected health summary line; got:\n%s", out.String())
+	}
+}
+
+func TestRunProbeSkippedNoAddress(t *testing.T) {
+	st := fabricastate.NewState("123", "us-west-2")
+	st.UpsertModule("perforce", "v", "provisioning", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-abc"},
+	})
+	out := &bytes.Buffer{}
+	c := command{
+		out:       out,
+		probe:     true,
+		readState: func() (*fabricastate.State, error) { return st, nil },
+		getResource: func(ctx context.Context, r *cloud.Resource) error {
+			// No PrivateIpAddress → probe cannot reach the instance.
+			r.ActualState = []byte(`{"State":{"Name":"pending"}}`)
+			return nil
+		},
+		probeTCP: func(address string) bool {
+			t.Errorf("probeTCP must not be dialed without an address")
+			return false
+		},
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.Contains(out.String(), "skipped (no reachable address)") {
+		t.Errorf("expected graceful probe skip; got:\n%s", out.String())
 	}
 }
 
