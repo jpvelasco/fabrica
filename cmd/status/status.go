@@ -91,6 +91,14 @@ state via Cloud Control. This command never modifies state.
 Use --probe to additionally TCP-probe each module's readiness port. Probing
 requires network reachability to the (private) instance IPs — typically a VPN
 or in-VPC session — and is off by default.`,
+		Example: `  # Overview of all modules and the state backend:
+  fabrica status
+
+  # Also TCP-probe each module's port (run from a VPN / in-VPC session):
+  fabrica status --probe
+
+  # Machine-readable output for scripts:
+  fabrica status --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
 			if err != nil {

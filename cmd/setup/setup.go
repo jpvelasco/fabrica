@@ -43,6 +43,17 @@ re-running reconciles their configuration.
 You are asked to confirm before any resources are created; pass --yes to
 skip the prompt. With --dry-run, it shows the planned resources and the
 estimated monthly cost without creating anything.`,
+		Example: `  # Preview what would be created, with a cost estimate (no changes):
+  fabrica setup --dry-run
+
+  # Create the state backend, confirming interactively:
+  fabrica setup
+
+  # Create it non-interactively (CI / automation):
+  fabrica setup --yes
+
+  # Target a specific account profile and config:
+  fabrica setup --profile studio --config ./fabrica.studio.yaml`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
 			if err != nil {

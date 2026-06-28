@@ -21,15 +21,13 @@ See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium vision, and what's next.
 
 | Module | Commands | Status |
 |--------|----------|--------|
-| `setup` / `doctor` | Foundation | Complete (setup is manual — see below) |
+| `setup` / `doctor` / `status` | Foundation | Complete |
 | `perforce` | `create`, `status`, `destroy` | Complete |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Complete |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Complete |
 | `ci` | `setup`, `trigger`, `status`, `logs` | Planned |
 | `deploy` | `setup`, `promote`, `status`, `destroy` | Planned |
 | `cost` | `report`, `forecast`, `alerts` | Planned |
-
-> **Note:** `fabrica setup` does not yet create AWS resources. The S3 state bucket and DynamoDB lock table must be created manually before using any Fabrica commands. Run `fabrica setup --dry-run` to see the expected resource names, then create them yourself.
 
 ## Requirements
 
@@ -45,36 +43,43 @@ cd fabrica
 go build -o fabrica .
 ```
 
-## Quick Start
+## Getting Started
+
+The ideal first five commands, in order:
 
 ```bash
 # 1. Build the binary
 go build -o fabrica .
 
-# 2. Copy and edit the config
+# 2. Copy and edit the config — set your AWS region (and optionally accountId)
 cp fabrica.example.yaml fabrica.yaml
-# Set your region and (optionally) account_id
 
-# 3. Create the state backend manually
-#    Run --dry-run to get the exact resource names:
-fabrica setup --dry-run
-#    Then create the S3 bucket and DynamoDB table in AWS before proceeding.
+# 3. Create the state backend (S3 bucket + DynamoDB lock table).
+#    Preview first, then create — setup is idempotent and asks before it writes:
+fabrica setup --dry-run      # shows the plan + monthly cost estimate, no changes
+fabrica setup                # creates the backend (prompts y/N; use --yes in CI)
 
-# 4. Verify your environment is ready
-fabrica doctor
+# 4. Confirm everything is healthy
+fabrica doctor               # checks credentials, region, bucket, lock table
+fabrica status               # one-line health overview across all modules
 
-# 5. Provision a Perforce Helix Core server
+# 5. Provision your first module
 fabrica perforce create
+fabrica perforce status      # watch it become ready (probes port 1666)
+```
 
-# 6. Check when it's ready (probes port 1666)
-fabrica perforce status
+Then grow the studio from there:
 
-# 7. Provision an Unreal Horde build coordinator
-#    IMPORTANT: You must supply a Horde AMI first — see docs/horde-ami.md
+```bash
+# Unreal Horde build coordinator (supply a Horde AMI first — see docs/horde-ami.md)
 fabrica horde create
-
-# 8. Submit a BuildGraph job
 fabrica horde submit --buildgraph path/to/BuildGraph.xml --target "Compile UnrealGame Win64"
+
+# A cloud workstation
+fabrica workstation create
+
+# Re-run any time for an aggregate view (add --probe from a VPN to test reachability)
+fabrica status
 ```
 
 ## Commands
@@ -87,9 +92,15 @@ Checks your environment: Go version, AWS credentials, region, S3 state bucket, D
 
 #### `fabrica setup`
 
-> **Not yet functional for resource creation.** Shows a planning preview (`--dry-run`) and a cost estimate, but does not create any AWS resources. You must create the S3 bucket and DynamoDB table manually.
+Creates the state backend for this account: the S3 bucket (versioning, encryption, and public-access block) and the DynamoDB lock table. Idempotent — re-running reconciles configuration and leaves existing resources in place.
 
-Run `fabrica setup --dry-run` to see expected resource names and estimated monthly cost (~$0.15).
+- `fabrica setup --dry-run` — preview resource names and estimated monthly cost (~$0.15), no changes.
+- `fabrica setup` — create the backend after a y/N confirmation.
+- `fabrica setup --yes` — skip the prompt (CI / automation).
+
+#### `fabrica status`
+
+Read-only aggregate overview of every provisioned module plus the state backend: a one-line health summary, per-module status with `[OK]`/`[WARN]` indicators and resource counts, and context-aware next steps. `--json` for scripts; `--probe` adds TCP readiness checks (requires VPN / in-VPC reachability).
 
 #### `fabrica config show`
 
