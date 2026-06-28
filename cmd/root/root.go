@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/jpvelasco/fabrica/cmd/ci"
 	"github.com/jpvelasco/fabrica/cmd/configcmd"
 	"github.com/jpvelasco/fabrica/cmd/destroy"
 	"github.com/jpvelasco/fabrica/cmd/doctor"
@@ -64,6 +65,7 @@ func New(out io.Writer) *cobra.Command {
 	cmd.AddCommand(perforce.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(horde.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(workstation.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(ci.New(runtimeSource, optionsSource, out))
 
 	return cmd
 }
