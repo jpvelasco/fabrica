@@ -223,15 +223,17 @@ func TestResolveBackendNames(t *testing.T) {
 	}
 }
 
-func TestNewSetupPlanAppliesBackendNames(t *testing.T) {
+func TestNewSetupPlanResolvesBackendNames(t *testing.T) {
 	cfg := config.Defaults()
 
 	plan := NewSetupPlan(cfg, "123456789012", "us-east-1")
 	if plan.Backend.Bucket != "fabrica-state-123456789012" {
 		t.Fatalf("Bucket = %q", plan.Backend.Bucket)
 	}
-	if cfg.State.Bucket != plan.Backend.Bucket {
-		t.Fatalf("plan did not apply bucket to config")
+	// NewSetupPlan must not mutate the caller's config — it only resolves names
+	// into the returned plan.
+	if cfg.State.Bucket != "" {
+		t.Fatalf("NewSetupPlan mutated cfg.State.Bucket to %q; expected no side effect", cfg.State.Bucket)
 	}
 	if len(plan.Resources) != 2 {
 		t.Fatalf("resource count = %d, want 2", len(plan.Resources))

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
 )
@@ -32,7 +33,7 @@ type CreatePlan struct {
 	CostResources []cost.Resource
 }
 
-func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region string, resolver VPCResolver) (*CreatePlan, error) {
+func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region string, resolver cloud.VPCResolver) (*CreatePlan, error) {
 	if cfg.AmiID == "" {
 		return nil, fmt.Errorf("horde.amiId is required. Provide an AMI ID that contains MongoDB, Redis,\nand the Horde server. See: https://github.com/jpvelasco/fabrica/blob/main/docs/horde-ami.md")
 	}

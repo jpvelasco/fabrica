@@ -60,19 +60,9 @@ func ResolveBackendNames(cfg *config.Config, account string) BackendNames {
 	return names
 }
 
-// ApplyBackendNames writes resolved state-backend names back into cfg.
-func ApplyBackendNames(cfg *config.Config, account string) BackendNames {
-	names := ResolveBackendNames(cfg, account)
-	if cfg != nil {
-		cfg.State.Bucket = names.Bucket
-		cfg.State.Table = names.Table
-	}
-	return names
-}
-
 // NewSetupPlan builds the Phase 0 state-backend resource plan.
 func NewSetupPlan(cfg *config.Config, account, region string) SetupPlan {
-	backend := ApplyBackendNames(cfg, account)
+	backend := ResolveBackendNames(cfg, account)
 	return SetupPlan{
 		Account: account,
 		Region:  region,
