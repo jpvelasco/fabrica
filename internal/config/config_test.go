@@ -230,3 +230,34 @@ workstation:
 		t.Errorf("AllowedCIDR = %q, want 10.0.0.0/8", cfg.Workstation.AllowedCIDR)
 	}
 }
+
+func TestLoadDeployConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fabrica.yaml")
+	if err := os.WriteFile(path, []byte(`
+cloud:
+  provider: aws
+deploy:
+  instanceType: c5.large
+  fleetType: ON_DEMAND
+  launchPath: /local/game/ServerApp
+  buildBucket: my-build-bucket
+  desiredInstances: 2
+  activationTimeoutMinutes: 30
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Deploy.InstanceType != "c5.large" {
+		t.Errorf("InstanceType = %q", cfg.Deploy.InstanceType)
+	}
+	if cfg.Deploy.DesiredInstances != 2 {
+		t.Errorf("DesiredInstances = %d", cfg.Deploy.DesiredInstances)
+	}
+	if cfg.Deploy.ActivationTimeoutMinutes != 30 {
+		t.Errorf("ActivationTimeoutMinutes = %d", cfg.Deploy.ActivationTimeoutMinutes)
+	}
+}
