@@ -22,6 +22,9 @@ type awsProvider struct {
 	newDynamoDBStateClient   stateBackendDynamoDBClientFactory
 	newBucketNotExistsWaiter stateBackendBucketWaiterFactory
 	newTableNotExistsWaiter  stateBackendTableWaiterFactory
+	newTableExistsWaiter     stateBackendTableExistsWaiterFactory
+	newCodeBuildClient       codeBuildClientFactory
+	newCWLogsClient          cwLogsClientFactory
 }
 
 type awsConfig struct {
@@ -44,6 +47,7 @@ type resourceClients struct {
 
 var _ fabricac.Provider = (*awsProvider)(nil)
 var _ fabricac.EC2InstanceManager = (*awsProvider)(nil)
+var _ fabricac.StateBackendBootstrapper = (*awsProvider)(nil)
 
 func newProvider(cfg *config.Config) (fabricac.Provider, error) {
 	return &awsProvider{

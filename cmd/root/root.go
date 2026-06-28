@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/jpvelasco/fabrica/cmd/ci"
 	"github.com/jpvelasco/fabrica/cmd/configcmd"
 	"github.com/jpvelasco/fabrica/cmd/destroy"
 	"github.com/jpvelasco/fabrica/cmd/doctor"
@@ -13,6 +14,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/horde"
 	"github.com/jpvelasco/fabrica/cmd/perforce"
 	"github.com/jpvelasco/fabrica/cmd/setup"
+	"github.com/jpvelasco/fabrica/cmd/status"
 	"github.com/jpvelasco/fabrica/cmd/version"
 	"github.com/jpvelasco/fabrica/cmd/workstation"
 	_ "github.com/jpvelasco/fabrica/internal/cloud/aws"
@@ -56,12 +58,14 @@ func New(out io.Writer) *cobra.Command {
 
 	cmd.AddCommand(version.Cmd)
 	cmd.AddCommand(doctor.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(status.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(setup.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(destroy.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(configcmd.New(runtimeSource, out))
 	cmd.AddCommand(perforce.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(horde.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(workstation.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(ci.New(runtimeSource, optionsSource, out))
 
 	return cmd
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/horde/destroy"
+	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
@@ -120,7 +121,7 @@ func TestDestroyCobraJSONNotProvisioned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var result destroy.DestroyOutput
+	var result teardown.Output
 	if err := json.Unmarshal([]byte(got), &result); err != nil {
 		t.Fatalf("invalid JSON: %v\noutput: %s", err, got)
 	}
@@ -139,7 +140,7 @@ func TestDestroyCobraJSONDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var result destroy.DestroyOutput
+	var result teardown.Output
 	if err := json.Unmarshal([]byte(got), &result); err != nil {
 		t.Fatalf("invalid JSON: %v\noutput: %s", err, got)
 	}
@@ -161,7 +162,7 @@ func TestDestroyCobraJSONYes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var result destroy.DestroyOutput
+	var result teardown.Output
 	if err := json.Unmarshal([]byte(got), &result); err != nil {
 		t.Fatalf("invalid JSON: %v\noutput: %s", err, got)
 	}

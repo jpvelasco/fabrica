@@ -77,14 +77,14 @@ ordered milestones.
 
 **Milestone 1 — Foundation & first-run experience** *(highest priority)*
 
-- ⬜ Real **`fabrica setup`** — fully functional S3 + DynamoDB bootstrap with proper idempotency, cost preview, and safety; remove the `ErrBootstrapNotImplemented` no-op
-- ⬜ Aggregate **`fabrica status`** — single command showing health across all modules
+- ✅ Real **`fabrica setup`** — S3 (versioning + encryption + public-access-block) + DynamoDB bootstrap via `StateBackendBootstrapper`, idempotent, with cost preview, y/N confirmation (`--yes` skips), and dry-run
+- ✅ Aggregate **`fabrica status`** — single read-only command showing backend health + per-module status, resource counts, and next steps; `--probe` opt-in TCP readiness checks
 - ⬜ Polish first-run experience and error messaging
 
 **Milestone 2 — CI module**
 
-- ⬜ `fabrica ci setup`/`trigger`/`status`/`logs`
-- ⬜ Integration with Horde + Perforce
+- ✅ `fabrica ci setup`/`trigger`/`status`/`logs` — CodeBuild orchestration layer over Horde (IAM role via Cloud Control, CodeBuild project via SDK runner)
+- ✅ Integration with Horde (trigger resolves coordinator address, submits BuildGraph job) + Perforce (IAM read access; active sync deferred)
 
 **Milestone 3 — Deploy module**
 
@@ -122,12 +122,12 @@ ordered milestones.
 | Module | Commands | Status |
 |--------|----------|--------|
 | Foundation | `doctor`, `config show`, `version` | ✅ Complete |
-| `setup` | `setup` (`--dry-run`) | ⚠️ No-op — bucket/table created manually (Phase 1, Milestone 1) |
+| `setup` | `setup` (`--dry-run`, `--yes`) | ✅ Complete — creates S3 bucket + DynamoDB table (idempotent, confirmed) |
 | `perforce` | `create`, `status`, `destroy` | ✅ Complete (`backup`/`restore` planned) |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | ✅ Complete |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | ✅ Complete |
-| `status` (aggregate) | `status` | ⬜ Planned (Phase 1, Milestone 1) |
-| `ci` | `setup`, `trigger`, `status`, `logs` | ⬜ Planned (Phase 1, Milestone 2) |
+| `status` (aggregate) | `status` (`--probe`, `--json`) | ✅ Complete — read-only health overview across all modules |
+| `ci` | `setup`, `trigger`, `status`, `logs` | ✅ Complete — CodeBuild orchestration over Horde |
 | `deploy` | `setup`, `promote`, `status`, `destroy` | ⬜ Planned (Phase 1, Milestone 3) |
 | `cost` | `report`, `forecast`, `alerts` | ⬜ Planned (Phase 1, Milestone 4) |
 | `destroy --all` | clean teardown | ⚠️ Skeleton wired |

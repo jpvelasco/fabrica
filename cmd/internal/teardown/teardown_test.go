@@ -1,4 +1,4 @@
-package destroy
+package teardown
 
 import (
 	"bytes"
@@ -13,29 +13,39 @@ import (
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
-// newTestCommand builds a destroy command with injected state and fake delete seam.
-func newTestCommand(out *bytes.Buffer, st *fabricastate.State, deleteErr map[string]error) command {
+// testSpec mirrors the perforce destroy spec — the engine is module-agnostic,
+// so one representative spec exercises all shared logic.
+var testSpec = Spec{
+	ModuleName:     "perforce",
+	Verb:           "destroy",
+	VersionLabel:   "Version",
+	Title:          "Perforce Helix Core",
+	NotProvisioned: "Perforce is not provisioned. Nothing to destroy.",
+	PlanHeader:     "Perforce Helix Core — destroy plan",
+	DryRunHeader:   "Perforce Helix Core (destroy dry run)",
+	Irreversible:   "IRREVERSIBLE: This will permanently delete the Perforce server and its data.",
+	SuccessMessage: "Perforce Helix Core destroyed.",
+}
+
+// newTestCommand builds a teardown command with injected state and fake delete seam.
+func newTestCommand(out *bytes.Buffer, st *fabricastate.State, deleteErr map[string]error) Command {
 	cfg := config.Defaults()
 	cfg.Cloud.AWS.AccountID = "123456789012"
-	c := command{
-		runtime: globals.Runtime{Config: cfg, Provider: nil},
-		out:     out,
-		confirm: func(_, _ string) bool { return true },
+	c := Command{
+		Spec:    testSpec,
+		Runtime: globals.Runtime{Config: cfg, Provider: nil},
+		Out:     out,
+		Confirm: func(_, _ string) bool { return true },
 	}
-	c.readState = func() (*fabricastate.State, error) { return st, nil }
-	var written []*fabricastate.State
-	c.writeState = func(s *fabricastate.State) error {
-		copy := *s
-		written = append(written, &copy)
-		return nil
-	}
+	c.ReadState = func() (*fabricastate.State, error) { return st, nil }
+	c.WriteState = func(s *fabricastate.State) error { return nil }
 	fake := &fakeResourceClient{deleteErr: deleteErr}
-	c.deleteResource = fake.Delete
-	c.getResource = fake.Get
+	c.DeleteResource = fake.Delete
+	c.GetResource = fake.Get
 	return c
 }
 
-func perforceState(status string, withInstance bool) *fabricastate.State {
+func moduleState(status string, withInstance bool) *fabricastate.State {
 	st := fabricastate.NewState("123456789012", "us-east-1")
 	resources := []fabricastate.ModuleResource{
 		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-abc123"},
@@ -50,32 +60,30 @@ func perforceState(status string, withInstance bool) *fabricastate.State {
 	return st
 }
 
-// TestDestroyNotProvisioned verifies clean exit when no module is in state.
-func TestDestroyNotProvisioned(t *testing.T) {
+func TestRunNotProvisioned(t *testing.T) {
 	var out bytes.Buffer
 	st := fabricastate.NewState("123456789012", "us-east-1")
 	c := newTestCommand(&out, st, nil)
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 	assertContains(t, out.String(), "not provisioned")
 }
 
-// TestDestroyDryRunNoDeleteCalls verifies --dry-run makes zero provider calls.
-func TestDestroyDryRunNoDeleteCalls(t *testing.T) {
+func TestRunDryRunNoDeleteCalls(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	deleteCalled := false
 	c := newTestCommand(&out, st, nil)
-	c.dryRun = true
-	c.deleteResource = func(_ context.Context, _ *cloud.Resource) error {
+	c.DryRun = true
+	c.DeleteResource = func(_ context.Context, _ *cloud.Resource) error {
 		deleteCalled = true
 		return nil
 	}
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 	if deleteCalled {
 		t.Error("dry-run made delete calls")
@@ -83,15 +91,14 @@ func TestDestroyDryRunNoDeleteCalls(t *testing.T) {
 	assertContains(t, out.String(), "dry run")
 }
 
-// TestDestroyDryRunOutputFields verifies plan content in dry-run output.
-func TestDestroyDryRunOutputFields(t *testing.T) {
+func TestRunDryRunOutputFields(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	c := newTestCommand(&out, st, nil)
-	c.dryRun = true
+	c.DryRun = true
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 	got := out.String()
 	for _, want := range []string{
@@ -105,20 +112,19 @@ func TestDestroyDryRunOutputFields(t *testing.T) {
 	}
 }
 
-// TestDestroyDeleteOrderInstanceBeforeSG verifies Instance is deleted before SG.
-func TestDestroyDeleteOrderInstanceBeforeSG(t *testing.T) {
+func TestRunDeleteOrderInstanceBeforeSG(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	var deletedTypes []string
 	c := newTestCommand(&out, st, nil)
-	c.assumeYes = true
-	c.deleteResource = func(_ context.Context, r *cloud.Resource) error {
+	c.AssumeYes = true
+	c.DeleteResource = func(_ context.Context, r *cloud.Resource) error {
 		deletedTypes = append(deletedTypes, r.TypeName)
 		return nil
 	}
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 	if len(deletedTypes) != 2 {
 		t.Fatalf("expected 2 deletes, got %d: %v", len(deletedTypes), deletedTypes)
@@ -131,34 +137,32 @@ func TestDestroyDeleteOrderInstanceBeforeSG(t *testing.T) {
 	}
 }
 
-// TestDestroyHappyPathModuleRemovedFromState verifies module is absent after full destroy.
-func TestDestroyHappyPathModuleRemovedFromState(t *testing.T) {
+func TestRunHappyPathModuleRemovedFromState(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	var lastState *fabricastate.State
 	c := newTestCommand(&out, st, nil)
-	c.assumeYes = true
-	c.writeState = func(s *fabricastate.State) error {
-		copy := *s
-		lastState = &copy
+	c.AssumeYes = true
+	c.WriteState = func(s *fabricastate.State) error {
+		cp := *s
+		lastState = &cp
 		return nil
 	}
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 	if lastState == nil {
 		t.Fatal("state was never written")
 	}
 	if m := lastState.GetModule("perforce"); m != nil {
-		t.Error("perforce module must be removed from state after successful destroy")
+		t.Error("module must be removed from state after successful destroy")
 	}
 }
 
-// TestDestroyPartialStateWrittenAfterEachDelete verifies incremental state cleanup.
-func TestDestroyPartialStateWrittenAfterEachDelete(t *testing.T) {
+func TestRunPartialStateWrittenAfterEachDelete(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 
 	type snapshot struct {
 		moduleExists  bool
@@ -166,8 +170,8 @@ func TestDestroyPartialStateWrittenAfterEachDelete(t *testing.T) {
 	}
 	var snapshots []snapshot
 	c := newTestCommand(&out, st, nil)
-	c.assumeYes = true
-	c.writeState = func(s *fabricastate.State) error {
+	c.AssumeYes = true
+	c.WriteState = func(s *fabricastate.State) error {
 		m := s.GetModule("perforce")
 		snap := snapshot{moduleExists: m != nil}
 		if m != nil {
@@ -179,16 +183,14 @@ func TestDestroyPartialStateWrittenAfterEachDelete(t *testing.T) {
 		return nil
 	}
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 
-	// Should have written: after instance delete, after SG delete, after module removal = 3 writes.
 	if len(snapshots) < 3 {
 		t.Fatalf("expected at least 3 state writes, got %d", len(snapshots))
 	}
 
-	// After first write (instance deleted): module still exists, instance removed, SG present.
 	s0 := snapshots[0]
 	if !s0.moduleExists {
 		t.Fatal("module should still exist after first delete")
@@ -208,55 +210,50 @@ func TestDestroyPartialStateWrittenAfterEachDelete(t *testing.T) {
 		t.Error("SG should still be in state after first delete")
 	}
 
-	// Final write: module removed entirely.
 	lastSnap := snapshots[len(snapshots)-1]
 	if lastSnap.moduleExists {
 		t.Error("module must be absent in final state write")
 	}
 }
 
-// TestDestroyInstanceFailureLeavesStateIntact verifies state preserved on instance delete error.
-func TestDestroyInstanceFailureLeavesStateIntact(t *testing.T) {
+func TestRunInstanceFailureLeavesStateIntact(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	c := newTestCommand(&out, st, map[string]error{
 		"AWS::EC2::Instance": errors.New("instance termination failed"),
 	})
-	c.assumeYes = true
+	c.AssumeYes = true
 
-	err := c.run(context.Background())
+	err := c.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error on instance delete failure")
 	}
 	assertContains(t, err.Error(), "deleting AWS::EC2::Instance")
-	// Module must still be in state.
 	if m := st.GetModule("perforce"); m == nil {
 		t.Error("module must remain in state after failed delete")
 	}
 }
 
-// TestDestroySGFailureAfterInstanceSuccess verifies partial state: instance gone, SG still in error.
-func TestDestroySGFailureAfterInstanceSuccess(t *testing.T) {
+func TestRunSGFailureAfterInstanceSuccess(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	var lastState *fabricastate.State
 	c := newTestCommand(&out, st, map[string]error{
 		"AWS::EC2::SecurityGroup": errors.New("sg in use"),
 	})
-	c.assumeYes = true
-	c.writeState = func(s *fabricastate.State) error {
+	c.AssumeYes = true
+	c.WriteState = func(s *fabricastate.State) error {
 		cp := *s
 		lastState = &cp
 		return nil
 	}
 
-	err := c.run(context.Background())
+	err := c.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error on SG delete failure")
 	}
 	assertContains(t, err.Error(), "deleting AWS::EC2::SecurityGroup")
 
-	// Instance should have been removed from state (it was deleted successfully).
 	if lastState == nil {
 		t.Fatal("state was never written")
 	}
@@ -274,40 +271,38 @@ func TestDestroySGFailureAfterInstanceSuccess(t *testing.T) {
 	}
 }
 
-// TestDestroySGOnlyNoInstance verifies partial state (only SG) is handled gracefully.
-func TestDestroySGOnlyNoInstance(t *testing.T) {
+func TestRunSGOnlyNoInstance(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", false) // SG only
+	st := moduleState("provisioning", false) // SG only
 	var deletedTypes []string
 	c := newTestCommand(&out, st, nil)
-	c.assumeYes = true
-	c.deleteResource = func(_ context.Context, r *cloud.Resource) error {
+	c.AssumeYes = true
+	c.DeleteResource = func(_ context.Context, r *cloud.Resource) error {
 		deletedTypes = append(deletedTypes, r.TypeName)
 		return nil
 	}
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 	if len(deletedTypes) != 1 || deletedTypes[0] != "AWS::EC2::SecurityGroup" {
 		t.Errorf("expected 1 SG delete, got: %v", deletedTypes)
 	}
 }
 
-// TestDestroyConfirmationRejectedNoDeleteCalls verifies cancellation skips delete.
-func TestDestroyConfirmationRejectedNoDeleteCalls(t *testing.T) {
+func TestRunConfirmationRejectedNoDeleteCalls(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	deleteCalled := false
 	c := newTestCommand(&out, st, nil)
-	c.confirm = func(_, _ string) bool { return false }
-	c.deleteResource = func(_ context.Context, _ *cloud.Resource) error {
+	c.Confirm = func(_, _ string) bool { return false }
+	c.DeleteResource = func(_ context.Context, _ *cloud.Resource) error {
 		deleteCalled = true
 		return nil
 	}
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 	if deleteCalled {
 		t.Error("delete was called after confirmation rejected")
@@ -315,93 +310,89 @@ func TestDestroyConfirmationRejectedNoDeleteCalls(t *testing.T) {
 	assertContains(t, out.String(), "Cancelled")
 }
 
-// TestDestroyConfirmationPhrase verifies the exact phrase shown to the user.
-func TestDestroyConfirmationPhrase(t *testing.T) {
+func TestRunConfirmationPhrase(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	var capturedPhrase string
 	c := newTestCommand(&out, st, nil)
-	c.confirm = func(_, phrase string) bool {
+	c.Confirm = func(_, phrase string) bool {
 		capturedPhrase = phrase
 		return false
 	}
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
-	if capturedPhrase != "destroy perforce 123456789012" {
-		t.Errorf("phrase = %q, want %q", capturedPhrase, "destroy perforce 123456789012")
+	want := "destroy perforce 123456789012"
+	if capturedPhrase != want {
+		t.Errorf("phrase = %q, want %q", capturedPhrase, want)
 	}
-	assertContains(t, out.String(), "destroy perforce 123456789012")
+	assertContains(t, out.String(), want)
 }
 
-// TestDestroyReadStateError verifies error is surfaced before any delete call.
-func TestDestroyReadStateError(t *testing.T) {
+func TestRunReadStateError(t *testing.T) {
 	var out bytes.Buffer
 	c := newTestCommand(&out, nil, nil)
-	c.readState = func() (*fabricastate.State, error) {
+	c.ReadState = func() (*fabricastate.State, error) {
 		return nil, errors.New("disk read failure")
 	}
 	deleteCalled := false
-	c.deleteResource = func(_ context.Context, _ *cloud.Resource) error {
+	c.DeleteResource = func(_ context.Context, _ *cloud.Resource) error {
 		deleteCalled = true
 		return nil
 	}
 
-	err := c.run(context.Background())
+	err := c.Run(context.Background())
 	if err == nil {
-		t.Fatal("expected error when readState fails")
+		t.Fatal("expected error when ReadState fails")
 	}
 	assertContains(t, err.Error(), "reading state")
 	if deleteCalled {
-		t.Error("delete was called after readState failure")
+		t.Error("delete was called after ReadState failure")
 	}
 }
 
-// TestDestroyNilProviderErrors verifies a nil deleteResource seam returns an error.
-func TestDestroyNilProviderErrors(t *testing.T) {
+func TestRunNilProviderErrors(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	c := newTestCommand(&out, st, nil)
-	c.assumeYes = true
-	c.deleteResource = nil // simulate nil provider
+	c.AssumeYes = true
+	c.DeleteResource = nil // simulate nil provider
 
-	err := c.run(context.Background())
+	err := c.Run(context.Background())
 	if err == nil {
-		t.Fatal("expected error with nil deleteResource")
+		t.Fatal("expected error with nil DeleteResource")
 	}
 	assertContains(t, err.Error(), "no provider configured")
 }
 
-// TestDestroyWriteStateErrorSurfacedAsWarning verifies write errors don't abort the destroy.
-func TestDestroyWriteStateErrorSurfacedAsWarning(t *testing.T) {
+func TestRunWriteStateErrorSurfacedAsWarning(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	c := newTestCommand(&out, st, nil)
-	c.assumeYes = true
-	c.writeState = func(_ *fabricastate.State) error {
+	c.AssumeYes = true
+	c.WriteState = func(_ *fabricastate.State) error {
 		return errors.New("disk full")
 	}
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("writeState failure must not abort destroy: %v", err)
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("WriteState failure must not abort destroy: %v", err)
 	}
 	assertContains(t, out.String(), "Warning")
 	assertContains(t, out.String(), "disk full")
 }
 
-// TestDestroyJSONNotProvisioned verifies JSON output when not provisioned.
-func TestDestroyJSONNotProvisioned(t *testing.T) {
+func TestRunJSONNotProvisioned(t *testing.T) {
 	var out bytes.Buffer
 	st := fabricastate.NewState("123456789012", "us-east-1")
 	c := newTestCommand(&out, st, nil)
-	c.jsonOut = true
+	c.JSONOut = true
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
-	var result DestroyOutput
-	if err := parseJSON(out.Bytes(), &result); err != nil {
+	var result Output
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("invalid JSON: %v\noutput: %s", err, out.String())
 	}
 	if len(result.Destroyed) != 0 {
@@ -409,19 +400,18 @@ func TestDestroyJSONNotProvisioned(t *testing.T) {
 	}
 }
 
-// TestDestroyJSONDryRun verifies JSON dry-run output contains resource IDs.
-func TestDestroyJSONDryRun(t *testing.T) {
+func TestRunJSONDryRun(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	c := newTestCommand(&out, st, nil)
-	c.dryRun = true
-	c.jsonOut = true
+	c.DryRun = true
+	c.JSONOut = true
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
-	var result DestroyOutput
-	if err := parseJSON(out.Bytes(), &result); err != nil {
+	var result Output
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("invalid JSON: %v\noutput: %s", err, out.String())
 	}
 	if !result.DryRun {
@@ -432,19 +422,18 @@ func TestDestroyJSONDryRun(t *testing.T) {
 	}
 }
 
-// TestDestroyJSONHappyPath verifies JSON output after successful destroy.
-func TestDestroyJSONHappyPath(t *testing.T) {
+func TestRunJSONHappyPath(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	c := newTestCommand(&out, st, nil)
-	c.assumeYes = true
-	c.jsonOut = true
+	c.AssumeYes = true
+	c.JSONOut = true
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
-	var result DestroyOutput
-	if err := parseJSON(out.Bytes(), &result); err != nil {
+	var result Output
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("invalid JSON: %v\noutput: %s", err, out.String())
 	}
 	if result.DryRun {
@@ -455,27 +444,25 @@ func TestDestroyJSONHappyPath(t *testing.T) {
 	}
 }
 
-// TestDestroyAssumeYesSkipsPrompt verifies --yes proceeds without confirmation.
-func TestDestroyAssumeYesSkipsPrompt(t *testing.T) {
+func TestRunAssumeYesSkipsPrompt(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	confirmCalled := false
 	c := newTestCommand(&out, st, nil)
-	c.assumeYes = true
-	c.confirm = func(_, _ string) bool {
+	c.AssumeYes = true
+	c.Confirm = func(_, _ string) bool {
 		confirmCalled = true
 		return true
 	}
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 	if confirmCalled {
 		t.Error("confirm must not be called when --yes is set")
 	}
 }
 
-// TestResourcesToDeleteOrder verifies Instance before SG regardless of storage order.
 func TestResourcesToDeleteOrder(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -521,35 +508,32 @@ func TestResourcesToDeleteOrder(t *testing.T) {
 	}
 }
 
-// TestDestroyNotFoundOnDeleteTreatedAsSuccess verifies ErrResourceNotFound is not fatal.
-func TestDestroyNotFoundOnDeleteTreatedAsSuccess(t *testing.T) {
+func TestRunNotFoundOnDeleteTreatedAsSuccess(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	c := newTestCommand(&out, st, map[string]error{
 		"AWS::EC2::Instance": cloud.ErrResourceNotFound,
 	})
-	c.assumeYes = true
+	c.AssumeYes = true
 
-	if err := c.run(context.Background()); err != nil {
+	if err := c.Run(context.Background()); err != nil {
 		t.Fatalf("ErrResourceNotFound must not abort destroy: %v", err)
 	}
-	// Module must be removed from state after completing.
 	if m := st.GetModule("perforce"); m != nil {
 		t.Error("module must be removed from state after destroy completes")
 	}
 }
 
-// TestDestroyNotFoundBothResourcesSucceeds verifies all-not-found path completes cleanly.
-func TestDestroyNotFoundBothResourcesSucceeds(t *testing.T) {
+func TestRunNotFoundBothResourcesSucceeds(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	c := newTestCommand(&out, st, map[string]error{
 		"AWS::EC2::Instance":      cloud.ErrResourceNotFound,
 		"AWS::EC2::SecurityGroup": cloud.ErrResourceNotFound,
 	})
-	c.assumeYes = true
+	c.AssumeYes = true
 
-	if err := c.run(context.Background()); err != nil {
+	if err := c.Run(context.Background()); err != nil {
 		t.Fatalf("all-not-found must complete without error: %v", err)
 	}
 	if m := st.GetModule("perforce"); m != nil {
@@ -557,26 +541,25 @@ func TestDestroyNotFoundBothResourcesSucceeds(t *testing.T) {
 	}
 }
 
-// TestDestroyInstanceTransitionalStateReturnsError verifies stopping/shutting-down abort early.
-func TestDestroyInstanceTransitionalStateReturnsError(t *testing.T) {
+func TestRunInstanceTransitionalStateReturnsError(t *testing.T) {
 	for _, state := range []string{"stopping", "shutting-down"} {
 		t.Run(state, func(t *testing.T) {
 			var out bytes.Buffer
-			st := perforceState("provisioning", true)
+			st := moduleState("provisioning", true)
 			c := newTestCommand(&out, st, nil)
-			c.assumeYes = true
+			c.AssumeYes = true
 			actualState := []byte(`{"State":{"Name":"` + state + `"}}`)
 			deleteCalled := false
 			fake := &fakeResourceClient{
 				getResponse: map[string][]byte{"AWS::EC2::Instance": actualState},
 			}
-			c.getResource = fake.Get
-			c.deleteResource = func(_ context.Context, _ *cloud.Resource) error {
+			c.GetResource = fake.Get
+			c.DeleteResource = func(_ context.Context, _ *cloud.Resource) error {
 				deleteCalled = true
 				return nil
 			}
 
-			err := c.run(context.Background())
+			err := c.Run(context.Background())
 			if err == nil {
 				t.Fatalf("expected error for transitional state %q", state)
 			}
@@ -589,24 +572,23 @@ func TestDestroyInstanceTransitionalStateReturnsError(t *testing.T) {
 	}
 }
 
-// TestDestroyInstanceTerminatedTreatedAsGone verifies "terminated" skips delete call.
-func TestDestroyInstanceTerminatedTreatedAsGone(t *testing.T) {
+func TestRunInstanceTerminatedTreatedAsGone(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	actualState := []byte(`{"State":{"Name":"terminated"}}`)
 	fake := &fakeResourceClient{
 		getResponse: map[string][]byte{"AWS::EC2::Instance": actualState},
 	}
 	deletedTypes := []string{}
 	c := newTestCommand(&out, st, nil)
-	c.assumeYes = true
-	c.getResource = fake.Get
-	c.deleteResource = func(_ context.Context, r *cloud.Resource) error {
+	c.AssumeYes = true
+	c.GetResource = fake.Get
+	c.DeleteResource = func(_ context.Context, r *cloud.Resource) error {
 		deletedTypes = append(deletedTypes, r.TypeName)
 		return nil
 	}
 
-	if err := c.run(context.Background()); err != nil {
+	if err := c.Run(context.Background()); err != nil {
 		t.Fatalf("terminated instance must not produce error: %v", err)
 	}
 	for _, typ := range deletedTypes {
@@ -614,7 +596,6 @@ func TestDestroyInstanceTerminatedTreatedAsGone(t *testing.T) {
 			t.Error("delete must not be called for terminated instance")
 		}
 	}
-	// SG should still have been deleted.
 	found := false
 	for _, typ := range deletedTypes {
 		if typ == "AWS::EC2::SecurityGroup" {
@@ -626,23 +607,22 @@ func TestDestroyInstanceTerminatedTreatedAsGone(t *testing.T) {
 	}
 }
 
-// TestDestroyGetResourceNotFoundBeforeDeleteTreatedAsGone verifies Get returning ErrResourceNotFound skips delete.
-func TestDestroyGetResourceNotFoundBeforeDeleteTreatedAsGone(t *testing.T) {
+func TestRunGetResourceNotFoundBeforeDeleteTreatedAsGone(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	fake := &fakeResourceClient{
 		getErr: map[string]error{"AWS::EC2::Instance": cloud.ErrResourceNotFound},
 	}
 	deletedTypes := []string{}
 	c := newTestCommand(&out, st, nil)
-	c.assumeYes = true
-	c.getResource = fake.Get
-	c.deleteResource = func(_ context.Context, r *cloud.Resource) error {
+	c.AssumeYes = true
+	c.GetResource = fake.Get
+	c.DeleteResource = func(_ context.Context, r *cloud.Resource) error {
 		deletedTypes = append(deletedTypes, r.TypeName)
 		return nil
 	}
 
-	if err := c.run(context.Background()); err != nil {
+	if err := c.Run(context.Background()); err != nil {
 		t.Fatalf("Get not-found before delete must not produce error: %v", err)
 	}
 	for _, typ := range deletedTypes {
@@ -652,22 +632,30 @@ func TestDestroyGetResourceNotFoundBeforeDeleteTreatedAsGone(t *testing.T) {
 	}
 }
 
-// TestDestroyGetResourceErrorPropagates verifies Get error other than not-found is surfaced.
-func TestDestroyGetResourceErrorPropagates(t *testing.T) {
+func TestRunGetResourceErrorPropagates(t *testing.T) {
 	var out bytes.Buffer
-	st := perforceState("provisioning", true)
+	st := moduleState("provisioning", true)
 	fake := &fakeResourceClient{
 		getErr: map[string]error{"AWS::EC2::Instance": errors.New("network timeout")},
 	}
 	c := newTestCommand(&out, st, nil)
-	c.assumeYes = true
-	c.getResource = fake.Get
+	c.AssumeYes = true
+	c.GetResource = fake.Get
 
-	err := c.run(context.Background())
+	err := c.Run(context.Background())
 	if err == nil {
-		t.Fatal("expected error when getResource fails")
+		t.Fatal("expected error when GetResource fails")
 	}
 	assertContains(t, err.Error(), "network timeout")
+}
+
+// TestSpecVerbInConfirmPhrase confirms the Spec's verb/module compose the phrase,
+// covering the terminate variant (verb "terminate") not exercised by testSpec.
+func TestSpecVerbInConfirmPhrase(t *testing.T) {
+	c := Command{Spec: Spec{ModuleName: "workstation", Verb: "terminate"}}
+	if got := c.confirmPhrase("acct"); got != "terminate workstation acct" {
+		t.Errorf("confirmPhrase = %q, want %q", got, "terminate workstation acct")
+	}
 }
 
 // ---- helpers ----
@@ -679,10 +667,6 @@ func getResource(m *fabricastate.ModuleState, typeName string) (fabricastate.Mod
 		}
 	}
 	return fabricastate.ModuleResource{}, false
-}
-
-func parseJSON(data []byte, v any) error {
-	return json.Unmarshal(data, v) //nolint:wrapcheck
 }
 
 func assertContains(t *testing.T, s, substr string) {

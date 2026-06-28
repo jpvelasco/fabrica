@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/credentials"
@@ -77,8 +78,8 @@ making any AWS calls.`,
 				costs:        fabricacost.Global,
 				confirm:      prompt.ConfirmExact,
 			}
-			c.readState = c.defaultReadState
-			c.writeState = c.defaultWriteState
+			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
+			c.writeState = fabricastate.WriteState
 			if rt.Provider != nil {
 				c.createResource = rt.Provider.Resources().Create
 			}
@@ -133,8 +134,8 @@ func (c command) run(ctx context.Context) error {
 
 	if !c.assumeYes {
 		fmt.Fprintln(c.out)
-		c.printConfirmInstructions(plan)
-		phrase := fmt.Sprintf("create horde %s", account)
+		phrase := provision.ConfirmPhrase(moduleName, account)
+		provision.PrintConfirmInstructions(c.out, phrase)
 		if !c.confirm("Enter confirmation phrase", phrase) {
 			fmt.Fprintln(c.out, "Cancelled. No AWS calls were made.")
 			return nil
@@ -270,16 +271,6 @@ func (c command) printApplyPlan(plan *horde.CreatePlan) {
 	fmt.Fprintf(c.out, "  EC2 Instance:     %s\n", plan.InstanceName)
 }
 
-func (c command) printConfirmInstructions(plan *horde.CreatePlan) {
-	phrase := fmt.Sprintf("create horde %s", plan.Account)
-	fmt.Fprintln(c.out, "Confirmation required.")
-	fmt.Fprintln(c.out, "Type this exact phrase to continue:")
-	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "  %s\n", phrase)
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Any other input cancels.")
-}
-
 func (c command) printPostCreate(plan *horde.CreatePlan, instanceID string) {
 	fmt.Fprintln(c.out)
 	fmt.Fprintln(c.out, "Horde coordinator provisioned.")
@@ -309,17 +300,4 @@ func (c command) printPostCreate(plan *horde.CreatePlan, instanceID string) {
 	fmt.Fprintln(c.out)
 	fmt.Fprintln(c.out, "If the coordinator doesn't become ready within 10 minutes, check:")
 	fmt.Fprintln(c.out, "  /var/log/fabrica-horde-init.log  on the instance")
-}
-
-func (c command) defaultReadState() (*fabricastate.State, error) {
-	account, region := "", ""
-	if c.runtime.Config != nil {
-		account = c.runtime.Config.Cloud.AWS.AccountID
-		region = c.runtime.Config.Cloud.AWS.Region
-	}
-	return fabricastate.ReadStateOrNew(account, region)
-}
-
-func (c command) defaultWriteState(st *fabricastate.State) error {
-	return fabricastate.WriteState(st)
 }

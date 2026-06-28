@@ -2,6 +2,7 @@ package setup
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -54,37 +55,164 @@ func TestAllResourcesExisted(t *testing.T) {
 	}
 }
 
-func TestRunApplyPrintsNotImplementedWarning(t *testing.T) {
+func testApplyRuntime() globals.Runtime {
+	cfg := config.Defaults()
+	// Pre-set the account ID so saveAccountID is a no-op and the test never
+	// touches the filesystem.
+	cfg.Cloud.AWS.AccountID = "123456789012"
+	return globals.Runtime{
+		Provider: &fakeSetupProvider{},
+		Config:   cfg,
+	}
+}
+
+func okBootstrap(called *bool) func(context.Context, fabricac.Provider, *config.Config) ([]fabricastate.BootstrapResult, error) {
+	return func(_ context.Context, _ fabricac.Provider, _ *config.Config) ([]fabricastate.BootstrapResult, error) {
+		if called != nil {
+			*called = true
+		}
+		return []fabricastate.BootstrapResult{
+			{Name: "S3 bucket b", Existed: false},
+			{Name: "DynamoDB table t", Existed: false},
+		}, nil
+	}
+}
+
+func TestRunApplyConfirmYesCreates(t *testing.T) {
+	var buf strings.Builder
+	var bootstrapCalled bool
+	cmd := command{
+		runtime:   testApplyRuntime(),
+		out:       &buf,
+		costs:     fabricacost.Global,
+		bootstrap: okBootstrap(&bootstrapCalled),
+		confirm:   func(string) bool { return true },
+	}
+	plan := fabricastate.SetupPlan{
+		Account: "123456789012",
+		Region:  "us-east-1",
+		Backend: fabricastate.BackendNames{Bucket: "fabrica-state-123456789012", Table: "fabrica-state-lock"},
+		Resources: []fabricastate.ResourcePlan{
+			{TypeName: "AWS::S3::Bucket", Label: "S3 bucket", Identifier: "fabrica-state-123456789012"},
+			{TypeName: "AWS::DynamoDB::Table", Label: "DynamoDB table", Identifier: "fabrica-state-lock"},
+		},
+	}
+
+	if err := cmd.runApply(context.Background(), plan); err != nil {
+		t.Fatalf("runApply: %v", err)
+	}
+	if !bootstrapCalled {
+		t.Error("bootstrap should be called when confirmed")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Setup complete") {
+		t.Errorf("expected completion message, got:\n%s", out)
+	}
+	if !strings.Contains(out, "What just happened:") {
+		t.Errorf("expected 'What just happened' recap, got:\n%s", out)
+	}
+	if !strings.Contains(out, "fabrica-state-123456789012") || !strings.Contains(out, "fabrica-state-lock") {
+		t.Errorf("completion should name the bucket and table, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Estimated cost:") {
+		t.Errorf("completion should show estimated cost, got:\n%s", out)
+	}
+	if !strings.Contains(out, "fabrica status") || !strings.Contains(out, "fabrica perforce create") {
+		t.Errorf("completion should guide toward status + provisioning, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Run 'fabrica status' to see the current state of your studio infrastructure.") {
+		t.Errorf("completion should close with the status nudge, got:\n%s", out)
+	}
+}
+
+func TestRunApplyBootstrapErrorShowsRecovery(t *testing.T) {
 	var buf strings.Builder
 	cmd := command{
-		runtime: globals.Runtime{
-			Provider: &fakeSetupProvider{},
-			Config:   &config.Config{},
+		runtime:   testApplyRuntime(),
+		assumeYes: true,
+		out:       &buf,
+		bootstrap: func(context.Context, fabricac.Provider, *config.Config) ([]fabricastate.BootstrapResult, error) {
+			return nil, errors.New("AccessDenied")
 		},
-		out: &buf,
-		bootstrap: func(_ context.Context, _ fabricac.Provider, _ *config.Config) ([]fabricastate.BootstrapResult, error) {
-			return nil, fabricastate.ErrBootstrapNotImplemented
-		},
+		confirm: func(string) bool { return true },
+	}
+	plan := fabricastate.SetupPlan{
+		Account: "123456789012",
+		Region:  "us-east-1",
+		Backend: fabricastate.BackendNames{Bucket: "b", Table: "t"},
+	}
+
+	err := cmd.runApply(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "safe to recover") || !strings.Contains(out, "run 'fabrica setup' again") {
+		t.Errorf("expected recovery guidance, got:\n%s", out)
+	}
+}
+
+func TestRunApplyConfirmNoCancels(t *testing.T) {
+	var buf strings.Builder
+	var bootstrapCalled bool
+	cmd := command{
+		runtime:   testApplyRuntime(),
+		out:       &buf,
+		bootstrap: okBootstrap(&bootstrapCalled),
+		confirm:   func(string) bool { return false },
 	}
 	plan := fabricastate.SetupPlan{Account: "123456789012", Region: "us-east-1"}
 
 	if err := cmd.runApply(context.Background(), plan); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("runApply: %v", err)
 	}
-
-	out := buf.String()
-	if !strings.Contains(out, "WARNING: fabrica setup is not yet functional") {
-		t.Errorf("expected WARNING in output, got:\n%s", out)
+	if bootstrapCalled {
+		t.Error("bootstrap should NOT be called when declined")
 	}
-	if strings.Contains(out, "Setup complete") {
-		t.Errorf("output must not contain 'Setup complete', got:\n%s", out)
-	}
-	if !strings.Contains(out, "docs/setup-manual.md") {
-		t.Errorf("expected manual setup link in output, got:\n%s", out)
+	if !strings.Contains(buf.String(), "Setup cancelled") {
+		t.Errorf("expected cancellation message, got:\n%s", buf.String())
 	}
 }
 
-func TestDryRunShowsNotImplementedNote(t *testing.T) {
+func TestRunApplyAssumeYesSkipsConfirm(t *testing.T) {
+	var buf strings.Builder
+	confirmCalled := false
+	cmd := command{
+		runtime:   testApplyRuntime(),
+		assumeYes: true,
+		out:       &buf,
+		bootstrap: okBootstrap(nil),
+		confirm:   func(string) bool { confirmCalled = true; return true },
+	}
+	plan := fabricastate.SetupPlan{Account: "123456789012", Region: "us-east-1"}
+
+	if err := cmd.runApply(context.Background(), plan); err != nil {
+		t.Fatalf("runApply: %v", err)
+	}
+	if confirmCalled {
+		t.Error("confirm must be skipped when assumeYes is set")
+	}
+}
+
+func TestRunApplyBootstrapErrorPropagates(t *testing.T) {
+	var buf strings.Builder
+	cmd := command{
+		runtime:   testApplyRuntime(),
+		assumeYes: true,
+		out:       &buf,
+		bootstrap: func(context.Context, fabricac.Provider, *config.Config) ([]fabricastate.BootstrapResult, error) {
+			return nil, errors.New("boom")
+		},
+		confirm: func(string) bool { return true },
+	}
+	plan := fabricastate.SetupPlan{Account: "123456789012", Region: "us-east-1"}
+
+	if err := cmd.runApply(context.Background(), plan); err == nil {
+		t.Fatal("expected error to propagate")
+	}
+}
+
+func TestDryRunShowsRunWithoutDryRunHint(t *testing.T) {
 	var buf strings.Builder
 	cmd := command{
 		costs:   fabricacost.Global,
@@ -106,11 +234,11 @@ func TestDryRunShowsNotImplementedNote(t *testing.T) {
 	cmd.printDryRun(plan, map[string]string{})
 
 	out := buf.String()
-	if !strings.Contains(out, "Automated provisioning is not yet implemented") {
-		t.Errorf("expected NOT YET note in dry-run output, got:\n%s", out)
+	if !strings.Contains(out, "Run without --dry-run to create these resources.") {
+		t.Errorf("expected dry-run hint, got:\n%s", out)
 	}
-	if strings.Contains(out, "Run without --dry-run to proceed") {
-		t.Errorf("dry-run must not say 'Run without --dry-run' (implies it works), got:\n%s", out)
+	if strings.Contains(out, "not yet implemented") {
+		t.Errorf("dry-run must not claim 'not yet implemented', got:\n%s", out)
 	}
 }
 
