@@ -713,3 +713,45 @@ func (f *fakeResourceClient) Update(_ context.Context, _ *cloud.Resource) error 
 func (f *fakeResourceClient) List(_ context.Context, _ string) ([]cloud.Resource, error) {
 	return nil, nil
 }
+
+func TestResourceOrderCustomHook(t *testing.T) {
+	called := false
+	spec := testSpec
+	spec.ResourceOrder = func(m *fabricastate.ModuleState) []cloud.Resource {
+		called = true
+		// reverse the resources to prove the hook drives ordering
+		out := make([]cloud.Resource, 0, len(m.Resources))
+		for i := len(m.Resources) - 1; i >= 0; i-- {
+			out = append(out, cloud.Resource{TypeName: m.Resources[i].TypeName, Identifier: m.Resources[i].Identifier})
+		}
+		return out
+	}
+	m := &fabricastate.ModuleState{
+		Name: "perforce",
+		Resources: []fabricastate.ModuleResource{
+			{TypeName: "AWS::GameLift::Fleet", Identifier: "fleet-1"},
+			{TypeName: "AWS::GameLift::Build", Identifier: "build-1"},
+		},
+	}
+	got := resourcesToDelete2(spec, m)
+	if !called {
+		t.Fatal("ResourceOrder hook not invoked")
+	}
+	if len(got) != 2 || got[0].Identifier != "build-1" {
+		t.Fatalf("custom order not applied: %+v", got)
+	}
+}
+
+func TestResourceOrderNilDefault(t *testing.T) {
+	m := &fabricastate.ModuleState{
+		Name: "perforce",
+		Resources: []fabricastate.ModuleResource{
+			{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-1"},
+			{TypeName: "AWS::EC2::Instance", Identifier: "i-1"},
+		},
+	}
+	got := resourcesToDelete2(testSpec, m) // testSpec.ResourceOrder is nil
+	if len(got) != 2 || got[0].TypeName != "AWS::EC2::Instance" {
+		t.Fatalf("default EC2->SG order broken: %+v", got)
+	}
+}
