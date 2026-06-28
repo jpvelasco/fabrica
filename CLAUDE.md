@@ -10,7 +10,7 @@ A Go CLI + infrastructure-as-code framework that provisions and manages game stu
 
 [`ROADMAP.md`](ROADMAP.md) is the single source of truth for phases, module status, and the Praetorium vision. Update it when module status changes.
 
-Phase 0 (CLI skeleton + AWS foundation) is complete. Three modules are fully implemented: `perforce` (create/status/destroy), `horde` (create/status/submit/destroy/ami), and `workstation` (create/list/stop/start/terminate). All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` without routing through module-specific SDK wrappers.
+Phase 0 (CLI skeleton + AWS foundation) is complete; Phase 1 Milestones 1–2 are done. Implemented modules: `perforce` (create/status/destroy), `horde` (create/status/submit/destroy/ami), `workstation` (create/list/stop/start/terminate), and `ci` (setup/trigger/status/logs — CodeBuild orchestration over Horde). All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` for resource types Cloud Control supports (verify first; see the CI notes for the CodeBuild exception).
 
 `fabrica setup` is fully functional: `internal/state/bootstrap.go` type-asserts the provider to `cloud.StateBackendBootstrapper` and creates the S3 state bucket (versioning + encryption + public-access-block) and the DynamoDB lock table, idempotently. `cmd/setup/setup.go` shows the plan + cost estimate, then prompts for y/N confirmation before any AWS write (`--yes` skips; `--dry-run` shows the plan and cost without creating anything). `fabrica status` is the aggregate read-only overview: state-backend health + per-module status, resource counts, and actionable next steps, with `--probe` for opt-in TCP readiness checks (off by default because modules use private IPs); it never mutates state.
 
@@ -117,6 +117,7 @@ go list -deps ./internal/cloud/...
 - **Pure plan layer** — no AWS SDK imports. Builds `CreatePlan` and Cloud Control desired-state JSON. The `cmd/<module>` layer calls the plan layer, then executes via `rt.Provider.Resources()`.
 - **VPCResolver interface** — when a module needs AWS-specific resolution (VPC, subnet), define an interface in `internal/<module>/config.go` that the provider implements. Keeps `internal/*` SDK-free.
 - **EC2InstanceManager** — Cloud Control cannot stop or start EC2 instances. Use the `cloud.EC2InstanceManager` auxiliary interface (defined in `internal/cloud/ec2manager.go`, implemented by `awsProvider` in `internal/cloud/aws/`). Access via type assertion: `rt.Provider.(cloud.EC2InstanceManager)`. Follow the `state_backend.go` pattern when adding future provider-specific capabilities.
+- **Verify Cloud Control support per resource type** — not every CloudFormation type supports the Cloud Control CREATE action. `AWS::CodeBuild::Project` returns `UnsupportedActionException`, so the `ci` module creates it through the `cloud.CodeBuildRunner` SDK auxiliary interface while the IAM role still goes through Cloud Control. When adding a new resource type, confirm support before assuming `rt.Provider.Resources().Create` works; if it doesn't, add an SDK-backed auxiliary interface (the `EC2InstanceManager` / `StateBackendBootstrapper` / `CodeBuildRunner` pattern).
 - **Cost estimators** — m5/c5 (Perforce), m7i (Horde), and g4dn/g5/g6/c7i (workstation) EC2 prices live together in `internal/perforce/cost.go`. `cost.Global.Register` panics on duplicate `TypeName` — do not register `AWS::EC2::Instance` or `AWS::EC2::Volume` from a second package.
 - **`GenerateRaw`** — when a function produces base64 output, add a `*Raw` variant returning the plain string for test assertions.
 - **State written after each resource** — partial failures leave a recoverable record; re-running detects already-provisioned state and exits cleanly.
@@ -159,13 +160,14 @@ Seam pattern: the `command` struct holds `func` fields for all I/O operations. `
 ## How to Add a New Module
 
 1. **`internal/<module>/`** — pure plan layer, no AWS SDK imports: `CreatePlan` struct, Cloud Control desired-state JSON builders, cloud-init generator, cost estimators.
-2. **`cmd/<module>/`** — Cobra command with `RuntimeSource` + `OptionsSource` closures; seam fields on the `command` struct for all I/O.
-3. **Config struct** — add to `internal/config/config.go` (not `internal/<module>/`) with `mapstructure:` tags to avoid circular imports.
-4. **Cost estimators** — register via `cost.Global.Register` in the plan layer. Do not re-register `AWS::EC2::Instance` or `AWS::EC2::Volume` — already registered in `internal/perforce/cost.go`.
-5. **Wire** the parent command in `cmd/root/root.go`.
-6. **Tests** — two-file pattern: white-box `*_test.go` + black-box `cobra_test.go` with a minimal root that replicates the persistent-flag hierarchy.
+2. **Confirm Cloud Control support** for each resource type the module provisions. If a type lacks a CREATE action (or needs runtime ops Cloud Control doesn't expose), add an SDK-backed auxiliary interface in `internal/cloud/` + `internal/cloud/aws/` and reach it via type assertion — don't force it through `Resources()`.
+3. **`cmd/<module>/`** — Cobra command with `RuntimeSource` + `OptionsSource` closures; seam fields on the `command` struct for all I/O.
+4. **Config struct** — add to `internal/config/config.go` (not `internal/<module>/`) with `mapstructure:` tags to avoid circular imports.
+5. **Cost estimators** — register via `cost.Global.Register` in the plan layer. Do not re-register `AWS::EC2::Instance` or `AWS::EC2::Volume` — already registered in `internal/perforce/cost.go`.
+6. **Wire** the parent command in `cmd/root/root.go`.
+7. **Tests** — two-file pattern: white-box `*_test.go` + black-box `cobra_test.go` with a minimal root that replicates the persistent-flag hierarchy.
 
-Reference: `cmd/perforce/` + `internal/perforce/` are the canonical templates.
+Reference: `cmd/perforce/` + `internal/perforce/` are the canonical templates for a Cloud-Control-only module; `cmd/ci/` + `internal/ci/` show the mixed pattern (Cloud Control IAM role + SDK-backed CodeBuild project).
 
 ## Conventions
 
@@ -197,7 +199,7 @@ fabrica status                              # health of all modules
 fabrica perforce create|status|destroy      # ✓ implemented; backup|restore planned
 fabrica horde create|status|submit|destroy  # ✓ implemented
 fabrica horde ami build                     # ✓ implemented; generates Image Builder recipe + optional Packer HCL
-fabrica ci [setup|trigger|status|logs]
+fabrica ci setup|trigger|status|logs        # ✓ implemented; CodeBuild orchestration over Horde
 fabrica deploy [setup|promote|status|destroy]
 fabrica workstation create|list|stop|start|terminate  # ✓ implemented
 fabrica cost [report|forecast|alerts]
