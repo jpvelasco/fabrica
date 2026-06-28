@@ -24,11 +24,17 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 	cmd := &cobra.Command{
 		Use:   "logs <build-id>",
 		Short: "Fetch logs for a specific build",
-		Long: `Fetch the CloudWatch log output for a CodeBuild build.
+		Long: `Fetch the CloudWatch log output for a CodeBuild build and print it to stdout.
 
-Get the build ID from 'fabrica ci trigger' output or 'fabrica ci status'.`,
-		Example: `  fabrica ci logs fabrica-ci:1a2b3c4d-...`,
-		Args:    cobra.ExactArgs(1),
+Get the build ID from 'fabrica ci trigger' output or 'fabrica ci status'. Logs
+appear once the build reaches its build phase; very early or queued builds may
+have none yet.`,
+		Example: `  # Fetch logs for a build (id from 'ci trigger' or 'ci status'):
+  fabrica ci logs fabrica-ci:1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d
+
+  # Save logs to a file:
+  fabrica ci logs fabrica-ci:1a2b3c4d-... > build.log`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
 			if err != nil {
@@ -52,7 +58,7 @@ Get the build ID from 'fabrica ci trigger' output or 'fabrica ci status'.`,
 
 func (c command) run(ctx context.Context) error {
 	if c.runner == nil {
-		return fmt.Errorf("cloud provider does not support CodeBuild operations")
+		return fmt.Errorf("no CodeBuild-capable cloud provider configured — check your credentials and that cloud.provider is \"aws\"")
 	}
 	log, err := c.runner.BuildLog(ctx, c.buildID)
 	if err != nil {

@@ -56,8 +56,14 @@ values as environment overrides. The build's buildspec submits the job to Horde.
 Requires 'fabrica ci setup' and a provisioned, reachable Horde coordinator.
 
 Use --wait / -w to poll until the build reaches a terminal state (60m timeout).`,
-		Example: `  fabrica ci trigger BuildGraph.xml
-  fabrica ci trigger BuildGraph.xml --wait`,
+		Example: `  # Fire-and-forget — prints a build ID you can track later:
+  fabrica ci trigger BuildGraph.xml
+
+  # Block until the build finishes (or 60m timeout), exit non-zero on failure:
+  fabrica ci trigger BuildGraph.xml --wait
+
+  # Prereqs: 'fabrica ci setup' has run and Horde is reachable
+  # ('fabrica horde status' shows ready).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
@@ -96,7 +102,7 @@ func (c command) run(ctx context.Context) error {
 	}
 
 	if c.runner == nil {
-		return fmt.Errorf("cloud provider does not support CodeBuild operations")
+		return fmt.Errorf("no CodeBuild-capable cloud provider configured — check your credentials and that cloud.provider is \"aws\"")
 	}
 
 	st, err := c.readState()
@@ -185,7 +191,7 @@ func (c command) pollUntilDone(ctx context.Context, buildID string) error {
 
 		if isTerminal(info.Status) {
 			if info.Status != "SUCCEEDED" {
-				return fmt.Errorf("build %s finished with status %s", buildID, info.Status)
+				return fmt.Errorf("build %s finished with status %s — inspect logs with 'fabrica ci logs %s'", buildID, info.Status, buildID)
 			}
 			return nil
 		}
