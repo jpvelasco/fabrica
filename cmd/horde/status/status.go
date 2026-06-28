@@ -1,18 +1,15 @@
 package status
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"strings"
 	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
-	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
-	"github.com/jpvelasco/fabrica/internal/stateutil"
 	"github.com/spf13/cobra"
 )
 
@@ -20,30 +17,11 @@ const (
 	lineWidth  = 58
 	moduleName = "horde"
 
-	probeTimeout = 3 * time.Second
-	waitInterval = 15 * time.Second
-	waitDeadline = 10 * time.Minute
-
 	defaultPort     = 5000
 	defaultGRPCPort = 5002
 )
 
-type statusInfo struct {
-	moduleStatus string
-	instanceID   string
-	sgID         string
-
-	instanceType  string
-	privateIP     string
-	instanceState string
-	port          int
-	grpcPort      int
-
-	hordeReachable      bool
-	hordeProbeAttempted bool
-}
-
-// StatusOutput is the JSON-serialisable view of statusInfo.
+// StatusOutput is the JSON-serialisable view of a Horde status.
 type StatusOutput struct {
 	Provisioned  bool   `json:"provisioned"`
 	Status       string `json:"status"`
@@ -56,22 +34,15 @@ type StatusOutput struct {
 	HordeStatus  string `json:"hordeStatus,omitempty"` // "responding" | "unreachable" | "setting up"
 }
 
-type command struct {
-	runtime globals.Runtime
-	jsonOut bool
-	wait    bool
-	out     io.Writer
-
-	// seams for testing
-	readState   func() (*fabricastate.State, error)
-	writeState  func(*fabricastate.State) error
-	getResource func(ctx context.Context, r *cloud.Resource) error
-	probeTCP    func(address string) bool
-	sleep       func(d time.Duration)
-	now         func() time.Time
+// renderer implements modstatus.Renderer for Horde-specific output. It carries
+// the resolved HTTP/gRPC ports so endpoint URLs render correctly.
+type renderer struct {
+	port     int
+	grpcPort int
 }
 
-// New returns the "horde status" subcommand.
+// New returns the "horde status" subcommand. Global flags (--json) are
+// resolved at execution time via the source closures.
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
 	var wait bool
 	cmd := &cobra.Command{
@@ -94,257 +65,137 @@ Use --wait / -w to poll every 15 seconds until Horde is reachable
 				return err
 			}
 			opts := optionsSource()
-			c := command{
-				runtime: rt,
-				jsonOut: opts.JSONOutput,
-				wait:    wait,
-				out:     out,
+
+			port, grpcPort := resolvePorts(rt)
+			c := modstatus.Command{
+				Spec: modstatus.Spec{
+					ModuleName:  moduleName,
+					ProbePort:   port,
+					DisplayName: "Horde",
+				},
+				Renderer:   renderer{port: port, grpcPort: grpcPort},
+				Runtime:    rt,
+				JSONOut:    opts.JSONOutput,
+				Wait:       wait,
+				Out:        out,
+				ReadState:  func() (*fabricastate.State, error) { return readState(rt) },
+				WriteState: fabricastate.WriteState,
+				ProbeTCP:   modstatus.DefaultProbeTCP,
+				Sleep:      time.Sleep,
+				Now:        time.Now,
 			}
-			c.readState = c.defaultReadState
-			c.writeState = c.defaultWriteState
-			c.probeTCP = defaultProbeTCP
-			c.sleep = time.Sleep
-			c.now = time.Now
 			if rt.Provider != nil {
-				c.getResource = rt.Provider.Resources().Get
+				c.GetResource = rt.Provider.Resources().Get
 			}
-			return c.run(cmd.Context())
+			return c.Run(cmd.Context())
 		},
 	}
 	cmd.Flags().BoolVarP(&wait, "wait", "w", false, "Poll until ready or 10 minutes elapsed")
 	return cmd
 }
 
-func (c command) run(ctx context.Context) error {
-	st, err := c.readState()
-	if err != nil {
-		return fmt.Errorf("reading state: %w", err)
-	}
-
-	m := st.GetModule(moduleName)
-	if m == nil {
-		c.printNotProvisioned()
-		return nil
-	}
-
-	if c.wait {
-		return c.pollUntilReady(ctx, st, m)
-	}
-
-	info, err := c.buildInfo(ctx, m)
-	if err != nil {
-		return err
-	}
-
-	if info.hordeProbeAttempted && info.hordeReachable && m.Status != "ready" {
-		m.Status = "ready"
-		info.moduleStatus = "ready"
-		st.UpsertModule(moduleName, m.Version, "ready", m.Resources)
-		if err := c.writeState(st); err != nil {
-			fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
+// resolvePorts returns the configured Horde HTTP and gRPC ports, falling back
+// to defaults when unset.
+func resolvePorts(rt globals.Runtime) (port, grpcPort int) {
+	port, grpcPort = defaultPort, defaultGRPCPort
+	if rt.Config != nil {
+		if rt.Config.Horde.Port > 0 {
+			port = rt.Config.Horde.Port
+		}
+		if rt.Config.Horde.GRPCPort > 0 {
+			grpcPort = rt.Config.Horde.GRPCPort
 		}
 	}
-
-	c.printResult(info)
-	return nil
+	return port, grpcPort
 }
 
-func (c command) pollUntilReady(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState) error {
-	deadline := c.now().Add(waitDeadline)
-	for {
-		info, err := c.buildInfo(ctx, m)
-		if err != nil {
-			return err
-		}
-
-		if info.hordeProbeAttempted && info.hordeReachable {
-			m.Status = "ready"
-			info.moduleStatus = "ready"
-			st.UpsertModule(moduleName, m.Version, "ready", m.Resources)
-			if err := c.writeState(st); err != nil {
-				fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
-			}
-			c.printResult(info)
-			return nil
-		}
-
-		c.printResult(info)
-
-		if c.now().After(deadline) {
-			fmt.Fprintln(c.out, "Timed out waiting for Horde to become ready (10 minutes).")
-			return nil
-		}
-
-		fmt.Fprintf(c.out, "Waiting %s before next check...\n\n", waitInterval)
-		c.sleep(waitInterval)
-	}
-}
-
-func (c command) buildInfo(ctx context.Context, m *fabricastate.ModuleState) (statusInfo, error) {
-	port := c.runtime.Config.Horde.Port
-	if port <= 0 {
-		port = defaultPort
-	}
-	grpcPort := c.runtime.Config.Horde.GRPCPort
-	if grpcPort <= 0 {
-		grpcPort = defaultGRPCPort
-	}
-
-	info := statusInfo{
-		moduleStatus: m.Status,
-		port:         port,
-		grpcPort:     grpcPort,
-	}
-
-	sgRes, hasSG := stateutil.ResourceByType(m, "AWS::EC2::SecurityGroup")
-	if hasSG {
-		info.sgID = sgRes.Identifier
-	}
-
-	instRes, hasInst := stateutil.ResourceByType(m, "AWS::EC2::Instance")
-	if !hasInst {
-		return info, nil
-	}
-	info.instanceID = instRes.Identifier
-
-	if c.getResource != nil && info.instanceID != "" {
-		r := &cloud.Resource{
-			TypeName:   "AWS::EC2::Instance",
-			Identifier: info.instanceID,
-		}
-		if err := c.getResource(ctx, r); err != nil {
-			return info, fmt.Errorf("querying instance %s via Cloud Control: %w", info.instanceID, err)
-		}
-		parseInstanceActualState(r, &info)
-	}
-
-	if info.privateIP != "" {
-		info.hordeProbeAttempted = true
-		info.hordeReachable = c.probeTCP(fmt.Sprintf("%s:%d", info.privateIP, port))
-	}
-
-	return info, nil
-}
-
-func parseInstanceActualState(r *cloud.Resource, info *statusInfo) {
-	if len(r.ActualState) == 0 {
+func (renderer) NotProvisioned(out io.Writer, jsonOut bool) {
+	if jsonOut {
+		o := StatusOutput{Provisioned: false, Status: "not_provisioned"}
+		data, _ := json.MarshalIndent(o, "", "  ")
+		fmt.Fprintln(out, string(data))
 		return
 	}
-	var actual struct {
-		InstanceType     string `json:"InstanceType"`
-		PrivateIPAddress string `json:"PrivateIpAddress"`
-		State            struct {
-			Name string `json:"Name"`
-		} `json:"State"`
-	}
-	if err := json.Unmarshal(r.ActualState, &actual); err != nil {
-		return
-	}
-	info.instanceType = actual.InstanceType
-	info.privateIP = actual.PrivateIPAddress
-	info.instanceState = actual.State.Name
+	fmt.Fprintln(out, "Horde is not provisioned. Run 'fabrica horde create' to set it up.")
 }
 
-func (c command) printNotProvisioned() {
-	if c.jsonOut {
-		out := StatusOutput{Provisioned: false, Status: "not_provisioned"}
-		data, _ := json.MarshalIndent(out, "", "  ")
-		fmt.Fprintln(c.out, string(data))
+func (r renderer) Result(out io.Writer, info modstatus.Info, jsonOut bool) {
+	if jsonOut {
+		r.printJSON(out, info)
 		return
 	}
-	fmt.Fprintln(c.out, "Horde is not provisioned. Run 'fabrica horde create' to set it up.")
+	r.printText(out, info)
 }
 
-func (c command) printResult(info statusInfo) {
-	if c.jsonOut {
-		c.printJSON(info)
-		return
-	}
-	c.printText(info)
-}
+func (r renderer) printText(out io.Writer, info modstatus.Info) {
+	fmt.Fprintln(out, "Horde build coordinator")
+	fmt.Fprintln(out, strings.Repeat("-", lineWidth))
+	fmt.Fprintf(out, "  Status:        %s\n", info.ModuleStatus)
 
-func (c command) printText(info statusInfo) {
-	fmt.Fprintln(c.out, "Horde build coordinator")
-	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	fmt.Fprintf(c.out, "  Status:        %s\n", info.moduleStatus)
-
-	if info.instanceID != "" {
-		label := info.instanceID
-		if info.instanceState != "" {
-			label += fmt.Sprintf("  (%s)", info.instanceState)
+	if info.InstanceID != "" {
+		label := info.InstanceID
+		if info.InstanceState != "" {
+			label += fmt.Sprintf("  (%s)", info.InstanceState)
 		}
-		fmt.Fprintf(c.out, "  Instance ID:   %s\n", label)
+		fmt.Fprintf(out, "  Instance ID:   %s\n", label)
 	}
 
-	if info.instanceType != "" {
-		fmt.Fprintf(c.out, "  Instance type: %s\n", info.instanceType)
+	if info.InstanceType != "" {
+		fmt.Fprintf(out, "  Instance type: %s\n", info.InstanceType)
 	}
 
-	if info.privateIP != "" {
-		fmt.Fprintf(c.out, "  Private IP:    %s\n", info.privateIP)
-		fmt.Fprintf(c.out, "  Horde HTTP:    http://%s:%d\n", info.privateIP, info.port)
-		fmt.Fprintf(c.out, "  Horde gRPC:    %s:%d\n", info.privateIP, info.grpcPort)
+	if info.PrivateIP != "" {
+		fmt.Fprintf(out, "  Private IP:    %s\n", info.PrivateIP)
+		fmt.Fprintf(out, "  Horde HTTP:    http://%s:%d\n", info.PrivateIP, r.port)
+		fmt.Fprintf(out, "  Horde gRPC:    %s:%d\n", info.PrivateIP, r.grpcPort)
 	}
 
-	if info.sgID != "" {
-		fmt.Fprintf(c.out, "  Security Group: %s\n", info.sgID)
+	if info.SGID != "" {
+		fmt.Fprintf(out, "  Security Group: %s\n", info.SGID)
 	}
 
-	if info.hordeProbeAttempted {
-		if info.hordeReachable {
-			fmt.Fprintln(c.out, "  Horde:         responding")
+	if info.ProbeAttempted {
+		if info.Reachable {
+			fmt.Fprintln(out, "  Horde:         responding")
 		} else {
-			fmt.Fprintln(c.out, "  Horde:         unreachable from this machine (check VPN/network)")
+			fmt.Fprintln(out, "  Horde:         unreachable from this machine (check VPN/network)")
 		}
-	} else if info.moduleStatus == "provisioning" {
-		fmt.Fprintln(c.out, "  Horde:         setting up... (~3 min from launch)")
+	} else if info.ModuleStatus == "provisioning" {
+		fmt.Fprintln(out, "  Horde:         setting up... (~3 min from launch)")
 	}
 }
 
-func (c command) printJSON(info statusInfo) {
-	out := StatusOutput{
+func (r renderer) printJSON(out io.Writer, info modstatus.Info) {
+	o := StatusOutput{
 		Provisioned:  true,
-		Status:       info.moduleStatus,
-		InstanceID:   info.instanceID,
-		SGID:         info.sgID,
-		InstanceType: info.instanceType,
-		PrivateIP:    info.privateIP,
+		Status:       info.ModuleStatus,
+		InstanceID:   info.InstanceID,
+		SGID:         info.SGID,
+		InstanceType: info.InstanceType,
+		PrivateIP:    info.PrivateIP,
 	}
-	if info.privateIP != "" {
-		out.HordeURL = fmt.Sprintf("http://%s:%d", info.privateIP, info.port)
-		out.HordeGRPC = fmt.Sprintf("%s:%d", info.privateIP, info.grpcPort)
+	if info.PrivateIP != "" {
+		o.HordeURL = fmt.Sprintf("http://%s:%d", info.PrivateIP, r.port)
+		o.HordeGRPC = fmt.Sprintf("%s:%d", info.PrivateIP, r.grpcPort)
 	}
-	if info.hordeProbeAttempted {
-		if info.hordeReachable {
-			out.HordeStatus = "responding"
+	if info.ProbeAttempted {
+		if info.Reachable {
+			o.HordeStatus = "responding"
 		} else {
-			out.HordeStatus = "unreachable"
+			o.HordeStatus = "unreachable"
 		}
-	} else if info.moduleStatus == "provisioning" {
-		out.HordeStatus = "setting up"
+	} else if info.ModuleStatus == "provisioning" {
+		o.HordeStatus = "setting up"
 	}
-	data, _ := json.MarshalIndent(out, "", "  ")
-	fmt.Fprintln(c.out, string(data))
+	data, _ := json.MarshalIndent(o, "", "  ")
+	fmt.Fprintln(out, string(data))
 }
 
-func (c command) defaultReadState() (*fabricastate.State, error) {
+func readState(rt globals.Runtime) (*fabricastate.State, error) {
 	account, region := "", ""
-	if c.runtime.Config != nil {
-		account = c.runtime.Config.Cloud.AWS.AccountID
-		region = c.runtime.Config.Cloud.AWS.Region
+	if rt.Config != nil {
+		account = rt.Config.Cloud.AWS.AccountID
+		region = rt.Config.Cloud.AWS.Region
 	}
 	return fabricastate.ReadStateOrNew(account, region)
-}
-
-func (c command) defaultWriteState(st *fabricastate.State) error {
-	return fabricastate.WriteState(st)
-}
-
-func defaultProbeTCP(address string) bool {
-	conn, err := net.DialTimeout("tcp", address, probeTimeout)
-	if err != nil {
-		return false
-	}
-	conn.Close()
-	return true
 }
