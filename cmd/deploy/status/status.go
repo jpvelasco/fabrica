@@ -107,10 +107,11 @@ func (c command) run(ctx context.Context) error {
 			Role:         r.Properties["role"],
 			LiveStatus:   c.liveStatus(ctx, r.Identifier),
 		}
-		if r.Properties["role"] == "active" {
+		switch r.Properties["role"] {
+		case "active":
 			fc := f
 			active = &fc
-		} else if r.Properties["role"] == "superseded" {
+		case "superseded":
 			candidates = append(candidates, f)
 		}
 	}
