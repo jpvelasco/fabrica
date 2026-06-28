@@ -95,8 +95,12 @@ func TestRunApplyConfirmYesCreates(t *testing.T) {
 	if !bootstrapCalled {
 		t.Error("bootstrap should be called when confirmed")
 	}
-	if !strings.Contains(buf.String(), "Setup complete") {
-		t.Errorf("expected completion message, got:\n%s", buf.String())
+	out := buf.String()
+	if !strings.Contains(out, "Setup complete") {
+		t.Errorf("expected completion message, got:\n%s", out)
+	}
+	if !strings.Contains(out, "fabrica status") || !strings.Contains(out, "fabrica perforce create") {
+		t.Errorf("completion should guide toward status + provisioning, got:\n%s", out)
 	}
 }
 

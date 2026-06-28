@@ -66,7 +66,7 @@ estimated monthly cost without creating anything.`,
 func (c command) run(ctx context.Context) error {
 	account, _, region, err := c.runtime.Provider.Identity(ctx)
 	if err != nil {
-		return fmt.Errorf("could not resolve AWS identity — check your credentials: %w", err)
+		return fmt.Errorf("could not resolve AWS identity — check your credentials and region (try 'aws sts get-caller-identity', or run 'fabrica doctor'): %w", err)
 	}
 
 	cfg := c.runtime.Config
@@ -159,7 +159,7 @@ func (c command) runApply(ctx context.Context, plan fabricastate.SetupPlan) erro
 	c.printApplyHeader(plan)
 
 	if !c.assumeYes {
-		if !c.confirm("Create these resources?") {
+		if !c.confirm("Create the S3 bucket and DynamoDB table shown above?") {
 			fmt.Fprintln(c.out, "Setup cancelled. No AWS resources were created.")
 			return nil
 		}
@@ -217,8 +217,8 @@ func (c command) printCompletion(results []fabricastate.BootstrapResult) {
 	fmt.Fprintln(c.out)
 	fmt.Fprintln(c.out, "Next steps:")
 	fmt.Fprintln(c.out, "  fabrica doctor               Verify environment health")
-	fmt.Fprintln(c.out, "  fabrica config show          Inspect configuration")
-	fmt.Fprintln(c.out, "  fabrica version              Show version information")
+	fmt.Fprintln(c.out, "  fabrica status               Overview of all modules")
+	fmt.Fprintln(c.out, "  fabrica perforce create      Provision Perforce Helix Core")
 }
 
 func allResourcesExisted(results []fabricastate.BootstrapResult) bool {
