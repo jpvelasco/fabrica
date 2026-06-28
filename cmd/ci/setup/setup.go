@@ -75,8 +75,10 @@ With --dry-run, it shows the planned resources and estimated monthly cost.`,
 				confirm:    prompt.Confirm,
 			}
 			if rt.Provider != nil {
-				c.createResource = rt.Provider.Resources().Create
-				c.getResource = rt.Provider.Resources().Get
+				if rc := rt.Provider.Resources(); rc != nil {
+					c.createResource = rc.Create
+					c.getResource = rc.Get
+				}
 			}
 			return c.run(cmd.Context())
 		},
@@ -133,7 +135,7 @@ func (c command) apply(ctx context.Context, plan *ci.CreatePlan) error {
 		return fmt.Errorf("writing state: %w", err)
 	}
 
-	c.printCompletion(plan)
+	c.printCompletion()
 	return nil
 }
 
@@ -246,7 +248,7 @@ func (c command) printPlanDetails(plan *ci.CreatePlan) {
 	fmt.Fprintln(c.out)
 }
 
-func (c command) printCompletion(plan *ci.CreatePlan) {
+func (c command) printCompletion() {
 	fmt.Fprintln(c.out)
 	fmt.Fprintln(c.out, "CI setup complete.")
 	fmt.Fprintln(c.out)

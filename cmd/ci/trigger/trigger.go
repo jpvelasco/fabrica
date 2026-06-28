@@ -74,7 +74,9 @@ Use --wait / -w to poll until the build reaches a terminal state (60m timeout).`
 				now:            time.Now,
 			}
 			if rt.Provider != nil {
-				c.getResource = rt.Provider.Resources().Get
+				if rc := rt.Provider.Resources(); rc != nil {
+					c.getResource = rc.Get
+				}
 				if r, ok := rt.Provider.(cloud.CodeBuildRunner); ok {
 					c.runner = r
 				}
