@@ -206,7 +206,7 @@ Starts a build run. Parses the BuildGraph XML for the job name and target, resol
 
 #### `fabrica ci status`
 
-Shows the CI infrastructure (CodeBuild project + IAM role) from local state. Pass `--build <id>` to also show live build status; `--json` for machine-readable output.
+Shows the CI infrastructure (CodeBuild project + IAM role) from local state, with `[OK]`/`[WARN]` indicators and a one-line summary. Pass `--build <id>` to also query live build status; `--json` for machine-readable output. Read-only.
 
 #### `fabrica ci logs <build-id>`
 
