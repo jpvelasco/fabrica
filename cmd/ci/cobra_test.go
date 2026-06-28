@@ -91,3 +91,16 @@ func TestCIRuntimeError(t *testing.T) {
 		t.Fatal("expected runtime error to surface")
 	}
 }
+
+// TestCILogsAndTriggerWired exercises the logs/trigger New() wiring end-to-end.
+// The fake provider does not implement CodeBuildRunner, so each command reaches
+// its "does not support CodeBuild" / parse path without panicking.
+func TestCILogsAndTriggerWired(t *testing.T) {
+	if _, err := run(t, cobraRuntime(), "ci", "logs", "build-1"); err == nil {
+		t.Error("expected error: provider lacks CodeBuildRunner")
+	}
+	// trigger with a nonexistent buildgraph file fails fast on parse.
+	if _, err := run(t, cobraRuntime(), "ci", "trigger", "does-not-exist.xml"); err == nil {
+		t.Error("expected error: missing buildgraph file")
+	}
+}
