@@ -56,7 +56,7 @@ type Config struct {
 	Perforce    PerforceConfig    `mapstructure:"perforce"    yaml:"perforce"`
 	Horde       HordeConfig       `mapstructure:"horde"       yaml:"horde"`
 	Workstation WorkstationConfig `mapstructure:"workstation" yaml:"workstation"`
-	CI          any               `mapstructure:"ci"          yaml:"ci"`
+	CI          CIConfig          `mapstructure:"ci"          yaml:"ci"`
 	Cost        any               `mapstructure:"cost"        yaml:"cost"`
 }
 
@@ -79,6 +79,15 @@ type HordeConfig struct {
 	Port         int    `mapstructure:"port"         yaml:"port"`
 	GRPCPort     int    `mapstructure:"grpcPort"     yaml:"grpcPort"`
 	AllowedCIDR  string `mapstructure:"allowedCidr"  yaml:"allowedCidr"`
+}
+
+// CIConfig holds the ci: section of fabrica.yaml. Defaults are applied in the
+// ci plan layer (internal/ci), matching the Horde/Workstation pattern.
+type CIConfig struct {
+	ProjectName  string `mapstructure:"projectName"  yaml:"projectName"`
+	ComputeType  string `mapstructure:"computeType"  yaml:"computeType"`
+	Image        string `mapstructure:"image"        yaml:"image"`
+	BuildTimeout int    `mapstructure:"buildTimeout" yaml:"buildTimeout"`
 }
 
 // WorkstationConfig holds the workstation: section of fabrica.yaml.
@@ -116,7 +125,7 @@ type fileConfig struct {
 	Perforce    PerforceConfig    `yaml:"perforce"`
 	Horde       HordeConfig       `yaml:"horde"`
 	Workstation WorkstationConfig `yaml:"workstation"`
-	CI          any               `yaml:"ci"`
+	CI          CIConfig          `yaml:"ci"`
 	Cost        any               `yaml:"cost"`
 }
 
@@ -127,7 +136,7 @@ func (c *Config) fileConfig() fileConfig {
 		Perforce:    c.Perforce,
 		Horde:       c.Horde,
 		Workstation: c.Workstation,
-		CI:          emptySection(c.CI),
+		CI:          c.CI,
 		Cost:        emptySection(c.Cost),
 	}
 }

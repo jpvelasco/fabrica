@@ -5,6 +5,26 @@ import (
 	"testing"
 )
 
+// tagsAsMap extracts the "Tags" array from a desired-state JSON document into a
+// key→value map for assertions.
+func tagsAsMap(t *testing.T, raw json.RawMessage) map[string]string {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("result is not JSON: %v", err)
+	}
+	arr, ok := m["Tags"].([]any)
+	if !ok {
+		t.Fatalf("no Tags array in result: %s", raw)
+	}
+	out := map[string]string{}
+	for _, item := range arr {
+		obj := item.(map[string]any)
+		out[obj["Key"].(string)] = obj["Value"].(string)
+	}
+	return out
+}
+
 func TestInjectFabricaTags(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -19,7 +39,6 @@ func TestInjectFabricaTags(t *testing.T) {
 			state:    `{}`,
 			module:   "horde",
 			version:  "0.1.0",
-			extra:    nil,
 			wantTags: map[string]string{"ManagedBy": "fabrica", "FabricaModule": "horde", "FabricaVersion": "0.1.0"},
 		},
 		{
@@ -27,15 +46,13 @@ func TestInjectFabricaTags(t *testing.T) {
 			state:    "",
 			module:   "perforce",
 			version:  "0.1.0",
-			extra:    nil,
 			wantTags: map[string]string{"ManagedBy": "fabrica", "FabricaModule": "perforce", "FabricaVersion": "0.1.0"},
 		},
 		{
-			name:     "existing tags are preserved and new tags added",
-			state:    `{"tags": {"existing": "val"}, "name": "my-bucket"}`,
+			name:     "existing Tags array is preserved and new tags added",
+			state:    `{"Tags": [{"Key": "existing", "Value": "val"}], "Name": "my-bucket"}`,
 			module:   "setup",
 			version:  "0.2.0",
-			extra:    nil,
 			wantTags: map[string]string{"existing": "val", "ManagedBy": "fabrica", "FabricaModule": "setup", "FabricaVersion": "0.2.0"},
 		},
 		{
@@ -47,11 +64,17 @@ func TestInjectFabricaTags(t *testing.T) {
 			wantTags: map[string]string{"ManagedBy": "fabrica", "FabricaModule": "horde", "FabricaVersion": "0.1.0", "env": "staging", "team": "platform"},
 		},
 		{
+			name:     "standard tag overrides existing same-key tag",
+			state:    `{"Tags": [{"Key": "ManagedBy", "Value": "someone-else"}]}`,
+			module:   "horde",
+			version:  "0.1.0",
+			wantTags: map[string]string{"ManagedBy": "fabrica", "FabricaModule": "horde", "FabricaVersion": "0.1.0"},
+		},
+		{
 			name:     "non-json input returned unchanged",
 			state:    `not json`,
 			module:   "horde",
 			version:  "0.1.0",
-			extra:    nil,
 			wantTags: nil,
 		},
 	}
@@ -67,19 +90,19 @@ func TestInjectFabricaTags(t *testing.T) {
 				return
 			}
 
+			// Must not emit a lowercase "tags" key (Cloud Control rejects it).
 			var m map[string]any
 			if err := json.Unmarshal(result, &m); err != nil {
 				t.Fatalf("result is not JSON: %v", err)
 			}
-
-			tags, ok := m["tags"].(map[string]any)
-			if !ok {
-				t.Fatalf("no tags field in result: %s", result)
+			if _, bad := m["tags"]; bad {
+				t.Errorf("result must not contain lowercase 'tags' key: %s", result)
 			}
 
+			tags := tagsAsMap(t, result)
 			for k, v := range tt.wantTags {
 				if tags[k] != v {
-					t.Errorf("tag %s = %v, want %q", k, tags[k], v)
+					t.Errorf("tag %s = %q, want %q", k, tags[k], v)
 				}
 			}
 		})

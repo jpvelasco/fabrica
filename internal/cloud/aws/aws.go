@@ -23,6 +23,8 @@ type awsProvider struct {
 	newBucketNotExistsWaiter stateBackendBucketWaiterFactory
 	newTableNotExistsWaiter  stateBackendTableWaiterFactory
 	newTableExistsWaiter     stateBackendTableExistsWaiterFactory
+	newCodeBuildClient       codeBuildClientFactory
+	newCWLogsClient          cwLogsClientFactory
 }
 
 type awsConfig struct {

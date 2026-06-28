@@ -75,7 +75,7 @@ go list -deps ./internal/cloud/...
 | `cmd/{destroy,doctor,setup,status,configcmd,version}` | Subcommands; each `New()` accepts `RuntimeSource` + `OptionsSource` closures — no direct globals access |
 | `cmd/status` | Aggregate read-only overview: state-backend health + per-module status, resource counts, and next steps; `--probe` opt-in TCP readiness checks; `--json`; never writes state |
 | `internal/config` | `Config` struct, Viper loading from `fabrica.yaml` (scoped here only), YAML serialization, defaults |
-| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `EC2InstanceManager`, `StateBackendChecker` (doctor/status: bucket/table exists checks), `StateBackendBootstrapper` (setup: create bucket/table), `StateBackendDestroyer` (destroy --all: delete bucket/table) |
+| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `EC2InstanceManager`, `StateBackendChecker` (doctor/status: bucket/table exists checks), `StateBackendBootstrapper` (setup: create bucket/table), `StateBackendDestroyer` (destroy --all: delete bucket/table), `CodeBuildRunner` (ci: create/delete CodeBuild project + start/query builds — AWS::CodeBuild::Project has no Cloud Control CREATE) |
 | `internal/cloud/aws` | AWS implementation registered via `init()` in `internal/cloud/registry.go`; wraps `cloudcontrol`, `s3`, `dynamodb`, `iam`, `ec2` SDK clients; `awsProvider` satisfies both `Provider` and `EC2InstanceManager` |
 | `internal/state` | `State`/`ModuleState`/`ModuleResource` types, `Backend` interface, S3+DynamoDB bootstrap, DynamoDB locking |
 | `internal/cost` | Cost estimator interface + Phase 0 estimators; registered by resource `TypeName` |
@@ -104,6 +104,12 @@ go list -deps ./internal/cloud/...
 | `internal/workstation` | Pure plan layer: `CreatePlan` (accepts `tmpl` + `perforceAddr` args), `SGDesiredState`, `InstanceDesiredState`, cloud-init generator (`Generate`/`GenerateRaw`), `VPCResolver` interface. GPU instance prices (g4dn/g5/g6) live in `internal/perforce/cost.go` alongside the shared EC2 estimators. |
 | `internal/credentials` | Shared helpers: `GeneratePassword`, `WriteCredentials` — write per-module credential YAML files to `.fabrica/` (mode 0600) |
 | `internal/stateutil` | Shared helpers: `ResourceByType` — query module state without repeating the lookup loop |
+| `cmd/ci` | Parent command; wires setup/trigger/status/logs subcommands |
+| `cmd/ci/setup` | Provision IAM role (Cloud Control) + CodeBuild project (`CodeBuildRunner.EnsureProject`); dry-run, cost, y/N confirm, idempotent |
+| `cmd/ci/trigger` | Parse BuildGraph (reuses `internal/horde/buildgraph`), resolve Horde private IP from state, `StartBuild` with `BUILDGRAPH`/`TARGET`/`HORDE_URL` env; `--wait` polls `BuildStatus` |
+| `cmd/ci/status` | Reads CI module state (project + role); `--build <id>` shows live `BuildStatus`; `--json` |
+| `cmd/ci/logs` | Fetches CloudWatch logs for a build via `CodeBuildRunner.BuildLog` |
+| `internal/ci` | Pure plan layer: `CreatePlan`, `RoleDesiredState` (Cloud Control IAM), `ProjectSpec` (CodeBuild SDK), buildspec generator (`Buildspec`/`BuildspecRaw`), cost estimators (CodeBuild + IAM) |
 
 ### Module Pattern
 
@@ -220,3 +226,12 @@ fabrica export --format cloudformation      # escape hatch
 - **Ports** — 5000 (HTTP/web UI), 5002 (gRPC for agents). Status probes port 5000 only.
 - **Submit URL** — `hordeHTTPClient` uses the instance's private IP from Cloud Control. Requires VPN or same-VPC access; no public IP in V1.
 - **`horde_service_token`** in credentials is optional; if empty the auth header is omitted (Horde returns 401 if a token is required).
+
+## CI-Specific Notes
+
+- **Orchestration layer over Horde** — `ci` does not replace Horde; CodeBuild is the conductor and Horde stays the BuildGraph executor. `ci trigger` parses the BuildGraph (reusing `internal/horde/buildgraph`), resolves Horde's private IP from state, and starts a CodeBuild build whose buildspec POSTs the job to Horde. `horde submit` remains the low-level direct-to-Horde path.
+- **CodeBuild is NOT Cloud Control** — `AWS::CodeBuild::Project` returns `UnsupportedActionException` for the Cloud Control CREATE action. The project is created/deleted via the `cloud.CodeBuildRunner` SDK auxiliary interface (`internal/cloud/aws/codebuild.go`); only the IAM role goes through Cloud Control. This is the same Cloud-Control-plus-SDK split as `EC2InstanceManager`/`StateBackendBootstrapper`. When adding resource types, verify Cloud Control support before assuming `rt.Provider.Resources().Create` works.
+- **`ci trigger` semantics** — V1 starts the CodeBuild project directly. The design intends `trigger` to start a CodePipeline execution once CodePipeline orchestration is added (deferred); the command surface stays stable.
+- **Idempotency** — `EnsureProject` checks `BatchGetProjects` before creating, so re-running `ci setup` is safe. `DeleteProject` is idempotent on the AWS side.
+- **Tags** — Cloud Control desired-state and the CodeBuild SDK both take tags as a capitalized `Tags`/`[]Tag` shape; `injectFabricaTags` (applied to every Cloud Control create) merges into the `Tags` array, never a lowercase `tags` key (which Cloud Control schemas reject).
+- **Out of scope (V1)** — CodePipeline + source wiring, `ci destroy`/teardown in `destroy --all`, active Perforce sync inside builds (buildspec has a documented placeholder).
