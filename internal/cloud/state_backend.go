@@ -27,3 +27,15 @@ type StateBackendDestroyer interface {
 	DeleteStateBucket(ctx context.Context, bucket string) (StateBackendDeleteResult, error)
 	DeleteStateLockTable(ctx context.Context, table string) (StateBackendDeleteResult, error)
 }
+
+// StateBackendCreateResult describes one idempotent state-backend creation.
+type StateBackendCreateResult struct {
+	Identifier string
+	Created    bool // false => already existed (idempotent no-op)
+}
+
+// StateBackendBootstrapper creates the storage primitives used by Fabrica state.
+type StateBackendBootstrapper interface {
+	EnsureStateBucket(ctx context.Context, bucket, region string) (StateBackendCreateResult, error)
+	EnsureStateLockTable(ctx context.Context, table string) (StateBackendCreateResult, error)
+}
