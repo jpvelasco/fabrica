@@ -25,6 +25,7 @@ type awsProvider struct {
 	newTableExistsWaiter     stateBackendTableExistsWaiterFactory
 	newCodeBuildClient       codeBuildClientFactory
 	newCWLogsClient          cwLogsClientFactory
+	newGameLiftClient        gameLiftClientFactory
 }
 
 type awsConfig struct {

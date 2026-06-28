@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.69.4
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.59.0
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.308.0
+	github.com/aws/aws-sdk-go-v2/service/gamelift v1.56.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.104.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.3
 	github.com/aws/smithy-go v1.27.3
