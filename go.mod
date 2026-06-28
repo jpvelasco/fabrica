@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.308.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.104.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.3
-	github.com/aws/smithy-go v1.27.1
+	github.com/aws/smithy-go v1.27.3
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	go.yaml.in/yaml/v3 v3.0.4
