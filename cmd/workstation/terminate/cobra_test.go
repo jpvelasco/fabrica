@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/cmd/workstation/terminate"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
@@ -103,7 +104,7 @@ func TestTerminateCobraJSONYes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var result terminate.TerminateOutput
+	var result teardown.Output
 	if err := json.Unmarshal([]byte(got), &result); err != nil {
 		t.Fatalf("invalid JSON: %v\noutput: %s", err, got)
 	}
@@ -122,7 +123,7 @@ func TestTerminateCobraJSONNotProvisioned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var result terminate.TerminateOutput
+	var result teardown.Output
 	if err := json.Unmarshal([]byte(got), &result); err != nil {
 		t.Fatalf("invalid JSON: %v\noutput: %s", err, got)
 	}
