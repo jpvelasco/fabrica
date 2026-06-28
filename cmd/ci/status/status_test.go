@@ -68,6 +68,36 @@ func TestStatusShowsInfra(t *testing.T) {
 	if !strings.Contains(s, "fabrica-ci") || !strings.Contains(s, "fabrica-ci-codebuild") {
 		t.Errorf("expected project + role:\n%s", s)
 	}
+	if !strings.Contains(s, "[OK]") {
+		t.Errorf("expected [OK] indicators for present resources:\n%s", s)
+	}
+	if !strings.Contains(s, "infrastructure ready") {
+		t.Errorf("expected summary line:\n%s", s)
+	}
+}
+
+func TestStatusIncompleteInfraWarns(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	// Role recorded but project missing → incomplete infra.
+	st.UpsertModule("ci", "fabrica-ci", "provisioning", []fabricastate.ModuleResource{
+		{TypeName: "AWS::IAM::Role", Identifier: "fabrica-ci-codebuild"},
+	})
+	var out bytes.Buffer
+	c := command{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		out:       &out,
+		readState: func() (*fabricastate.State, error) { return st, nil },
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	s := out.String()
+	if !strings.Contains(s, "[WARN]") {
+		t.Errorf("expected [WARN] for missing project:\n%s", s)
+	}
+	if !strings.Contains(s, "infrastructure incomplete") {
+		t.Errorf("expected incomplete summary:\n%s", s)
+	}
 }
 
 func TestStatusWithBuildID(t *testing.T) {

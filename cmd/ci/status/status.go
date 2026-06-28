@@ -49,11 +49,18 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show CI infrastructure and recent build status",
-		Long: `Show the CI infrastructure (CodeBuild project + IAM role) from local state.
+		Long: `Show the CI infrastructure (CodeBuild project + IAM role) from local state,
+with [OK]/[WARN] indicators and a one-line summary. Read-only — never mutates state.
 
-Pass --build <id> to also show the live status of a specific build.`,
-		Example: `  fabrica ci status
-  fabrica ci status --build <build-id>
+Pass --build <id> to also query the live status of a specific build (id from
+'fabrica ci trigger' output).`,
+		Example: `  # Show CI infrastructure status:
+  fabrica ci status
+
+  # Also show the live status of a specific build:
+  fabrica ci status --build fabrica-ci:1a2b3c4d-...
+
+  # Machine-readable output for scripts:
   fabrica ci status --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
@@ -132,14 +139,55 @@ func (c command) printJSON(o StatusOutput) error {
 func (c command) printText(o StatusOutput) {
 	fmt.Fprintln(c.out, "Fabrica CI")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	fmt.Fprintf(c.out, "  CodeBuild project: %s\n", orDash(o.Project))
-	fmt.Fprintf(c.out, "  IAM role:          %s\n", orDash(o.Role))
+	fmt.Fprintf(c.out, "%s\n", ciSummaryLine(o))
+	fmt.Fprintln(c.out)
+
+	fmt.Fprintf(c.out, "  %s CodeBuild project:  %s\n", presenceSymbol(o.Project), orDash(o.Project))
+	fmt.Fprintf(c.out, "  %s IAM role:           %s\n", presenceSymbol(o.Role), orDash(o.Role))
+
 	if o.BuildStatus != "" {
 		fmt.Fprintln(c.out)
-		fmt.Fprintf(c.out, "  Build %s: %s (%s)\n", o.LastBuildID, o.BuildStatus, o.BuildPhase)
+		fmt.Fprintf(c.out, "  %s Build %s\n", buildSymbol(o.BuildStatus), o.LastBuildID)
+		fmt.Fprintf(c.out, "       status: %s  phase: %s\n", o.BuildStatus, orDash(o.BuildPhase))
 	}
+
 	fmt.Fprintln(c.out)
 	fmt.Fprintln(c.out, "Trigger a build with: fabrica ci trigger <buildgraph.xml>")
+}
+
+// ciSummaryLine is the one-line overview: whether the infra is ready and the
+// latest build outcome (when a --build id was queried).
+func ciSummaryLine(o StatusOutput) string {
+	infra := "infrastructure ready"
+	if o.Project == "" || o.Role == "" {
+		infra = "infrastructure incomplete"
+	}
+	if o.BuildStatus == "" {
+		return infra
+	}
+	return fmt.Sprintf("%s • last build %s", infra, o.BuildStatus)
+}
+
+// presenceSymbol is [OK] when a resource is recorded, [WARN] when it's missing.
+func presenceSymbol(id string) string {
+	if id == "" {
+		return "[WARN]"
+	}
+	return "[OK]  "
+}
+
+// buildSymbol maps a CodeBuild status to a status indicator.
+func buildSymbol(status string) string {
+	switch status {
+	case "SUCCEEDED":
+		return "[OK]  "
+	case "IN_PROGRESS":
+		return "[....]"
+	case "FAILED", "FAULT", "STOPPED", "TIMED_OUT":
+		return "[FAIL]"
+	default:
+		return "[????]"
+	}
 }
 
 func orDash(s string) string {

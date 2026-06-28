@@ -108,3 +108,47 @@ func TestInjectFabricaTags(t *testing.T) {
 		})
 	}
 }
+
+// TestInjectFabricaTagsModuleShape guards the real-module case: desired states
+// emit a Tags array already containing ManagedBy + Name (see
+// internal/{perforce,horde,workstation,ci}/resources.go). The injected standard
+// tags must merge by key — overriding ManagedBy in place, preserving Name, and
+// never producing duplicate Key entries (which would be ambiguous to AWS).
+func TestInjectFabricaTagsModuleShape(t *testing.T) {
+	state := `{"GroupName":"fabrica-horde-sg","Tags":[{"Key":"ManagedBy","Value":"fabrica"},{"Key":"Name","Value":"fabrica-horde-sg"}]}`
+
+	result := injectFabricaTags(json.RawMessage(state), "horde", "1.0.0", nil)
+
+	var m map[string]any
+	if err := json.Unmarshal(result, &m); err != nil {
+		t.Fatalf("result is not JSON: %v", err)
+	}
+	arr, ok := m["Tags"].([]any)
+	if !ok {
+		t.Fatalf("Tags is not an array: %s", result)
+	}
+
+	// No duplicate keys.
+	seen := map[string]int{}
+	for _, item := range arr {
+		obj := item.(map[string]any)
+		seen[obj["Key"].(string)]++
+	}
+	for k, n := range seen {
+		if n != 1 {
+			t.Errorf("tag key %q appears %d times, want 1: %s", k, n, result)
+		}
+	}
+
+	tags := tagsAsMap(t, result)
+	if tags["Name"] != "fabrica-horde-sg" {
+		t.Errorf("Name tag not preserved: %q", tags["Name"])
+	}
+	if tags["ManagedBy"] != "fabrica" || tags["FabricaModule"] != "horde" {
+		t.Errorf("standard tags missing/wrong: %+v", tags)
+	}
+	// Non-tag fields must survive untouched.
+	if m["GroupName"] != "fabrica-horde-sg" {
+		t.Errorf("GroupName clobbered: %v", m["GroupName"])
+	}
+}

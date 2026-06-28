@@ -94,7 +94,7 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("no cloud provider configured — check your config and credentials")
 	}
 	if !c.dryRun && c.ensureProject == nil {
-		return fmt.Errorf("cloud provider %s does not support CodeBuild project creation", c.runtime.Provider.Name())
+		return fmt.Errorf("cloud provider %q does not support CodeBuild project creation — only AWS is supported in V1", c.runtime.Provider.Name())
 	}
 
 	account, _, region, err := c.runtime.Provider.Identity(ctx)
