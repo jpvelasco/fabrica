@@ -88,8 +88,7 @@ ordered milestones.
 
 **Milestone 3 — Deploy module**
 
-- ⬜ `fabrica deploy setup`/`promote`/`status`/`destroy`
-- ⬜ GameLift deployment orchestration, blue/green support, rollback safety
+- ✅ `fabrica deploy setup`/`promote`/`rollback`/`status`/`destroy` — GameLift blue/green deployment orchestration, alias-flip promotion, instant rollback to retained fleets
 
 **Milestone 4 — Cost management**
 
@@ -128,7 +127,7 @@ ordered milestones.
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | ✅ Complete |
 | `status` (aggregate) | `status` (`--probe`, `--json`) | ✅ Complete — read-only health overview across all modules |
 | `ci` | `setup`, `trigger`, `status`, `logs` | ✅ Complete — CodeBuild orchestration over Horde |
-| `deploy` | `setup`, `promote`, `status`, `destroy` | ⬜ Planned (Phase 1, Milestone 3) |
+| `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | ✅ Complete — GameLift blue/green deploy orchestration |
 | `cost` | `report`, `forecast`, `alerts` | ⬜ Planned (Phase 1, Milestone 4) |
 | `destroy --all` | clean teardown | ⚠️ Skeleton wired |
 | `export` | `--format cloudformation\|terraform` | ⬜ Planned (Phase 2+) |

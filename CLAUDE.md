@@ -10,7 +10,7 @@ A Go CLI + infrastructure-as-code framework that provisions and manages game stu
 
 [`ROADMAP.md`](ROADMAP.md) is the single source of truth for phases, module status, and the Praetorium vision. Update it when module status changes.
 
-Phase 0 (CLI skeleton + AWS foundation) is complete; Phase 1 Milestones 1–2 are done. Implemented modules: `perforce` (create/status/destroy), `horde` (create/status/submit/destroy/ami), `workstation` (create/list/stop/start/terminate), and `ci` (setup/trigger/status/logs — CodeBuild orchestration over Horde). All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` for resource types Cloud Control supports (verify first; see the CI notes for the CodeBuild exception).
+Phase 0 (CLI skeleton + AWS foundation) is complete; Phase 1 Milestones 1–3 are done. Implemented modules: `perforce` (create/status/destroy), `horde` (create/status/submit/destroy/ami), `workstation` (create/list/stop/start/terminate), `ci` (setup/trigger/status/logs — CodeBuild orchestration over Horde), and `deploy` (setup/promote/rollback/status/destroy — GameLift blue/green orchestration). All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` for resource types Cloud Control supports (verify first; see the CI notes for the CodeBuild exception).
 
 `fabrica setup` is fully functional: `internal/state/bootstrap.go` type-asserts the provider to `cloud.StateBackendBootstrapper` and creates the S3 state bucket (versioning + encryption + public-access-block) and the DynamoDB lock table, idempotently. `cmd/setup/setup.go` shows the plan + cost estimate, then prompts for y/N confirmation before any AWS write (`--yes` skips; `--dry-run` shows the plan and cost without creating anything). `fabrica status` is the aggregate read-only overview: state-backend health + per-module status, resource counts, and actionable next steps, with `--probe` for opt-in TCP readiness checks (off by default because modules use private IPs); it never mutates state.
 
@@ -110,6 +110,13 @@ go list -deps ./internal/cloud/...
 | `cmd/ci/status` | Reads CI module state (project + role); `--build <id>` shows live `BuildStatus`; `--json` |
 | `cmd/ci/logs` | Fetches CloudWatch logs for a build via `CodeBuildRunner.BuildLog` |
 | `internal/ci` | Pure plan layer: `CreatePlan`, `RoleDesiredState` (Cloud Control IAM), `ProjectSpec` (CodeBuild SDK), buildspec generator (`Buildspec`/`BuildspecRaw`), cost estimators (CodeBuild + IAM) |
+| `cmd/deploy` | Parent command; wires setup/promote/rollback/status/destroy subcommands |
+| `cmd/deploy/setup` | Provision IAM role (Cloud Control) + GameLift alias; idempotent; cost estimate + y/N confirm |
+| `cmd/deploy/promote` | Register build from S3, create fleet (non-blocking via `CreateFleetAsync`), wait for ACTIVE, flip alias; reuses `cmd/internal/teardown` for fleet/build ordering |
+| `cmd/deploy/rollback` | Flip alias back to most-recent retained fleet; instant operation |
+| `cmd/deploy/status` | Show alias target + active fleet + rollback candidates with live fleet status; `--json` |
+| `cmd/deploy/destroy` | Delete fleets + builds (default); `--all` also removes alias + role; reuses `cmd/internal/teardown` |
+| `internal/deploy` | Pure plan layer: `CreatePlan`, `RoleDesiredState` + `BuildDesiredState` + `FleetDesiredState` + `AliasDesiredState` (Cloud Control), cost estimators (IAM + GameLift); `ResourceOrder` hook for teardown sequencing |
 
 ### Module Pattern
 
@@ -200,7 +207,7 @@ fabrica perforce create|status|destroy      # ✓ implemented; backup|restore pl
 fabrica horde create|status|submit|destroy  # ✓ implemented
 fabrica horde ami build                     # ✓ implemented; generates Image Builder recipe + optional Packer HCL
 fabrica ci setup|trigger|status|logs        # ✓ implemented; CodeBuild orchestration over Horde
-fabrica deploy [setup|promote|status|destroy]
+fabrica deploy setup|promote|rollback|status|destroy  # ✓ implemented; GameLift blue/green deployment
 fabrica workstation create|list|stop|start|terminate  # ✓ implemented
 fabrica cost [report|forecast|alerts]
 fabrica doctor                              # prerequisite validation
@@ -237,3 +244,13 @@ fabrica export --format cloudformation      # escape hatch
 - **Idempotency** — `EnsureProject` checks `BatchGetProjects` before creating, so re-running `ci setup` is safe. `DeleteProject` is idempotent on the AWS side.
 - **Tags** — Cloud Control desired-state and the CodeBuild SDK both take tags as a capitalized `Tags`/`[]Tag` shape; `injectFabricaTags` (applied to every Cloud Control create) merges into the `Tags` array, never a lowercase `tags` key (which Cloud Control schemas reject).
 - **Out of scope (V1)** — CodePipeline + source wiring, `ci destroy`/teardown in `destroy --all`, active Perforce sync inside builds (buildspec has a documented placeholder).
+
+## Deploy-Specific Notes
+
+- **GameLiftManager SDK split** — Like CI's `CodeBuildRunner`, GameLift resource operations that Cloud Control doesn't fully support (fleet activation polling, fleet events retrieval) go through the `cloud.GameLiftManager` SDK auxiliary interface (`internal/cloud/aws/gamelift.go`) while Build, Fleet, and Alias creation use Cloud Control. Fleet activation (20–40 min) cannot be exposed by Cloud Control's blocking waiters because they don't surface fleet phases or activation-failure events; `FleetStatus` + `FleetEvents` bridge this gap.
+- **Non-blocking fleet create via CreateFleetAsync** — `promote` starts fleet creation with a non-blocking Cloud Control path that returns as soon as the FleetId is assigned, then immediately polls `FleetStatus` to wait for ACTIVE state. This avoids tying up the CLI while the fleet provisions.
+- **Alias-flip blue/green** — `promote` always creates a new fleet and flips the alias to it only once ACTIVE. The previous fleet is retained (not deleted) so `rollback` is an instant alias flip — no re-provisioning. This is the canonical GameLift blue/green pattern.
+- **Retain prior fleet for rollback** — `promote` stores the previous active fleet ID in state so `rollback` can flip the alias back instantly. `status` shows rollback candidates — fleets with a prior alias-flip history. Only the most recent prior fleet is a rollback target; older fleets remain in state but cannot be rolled back to.
+- **Destroy default vs. `--all` semantics** — `destroy` (default) deletes fleets + builds but leaves the alias and IAM role in place so the alias your game backend references survives teardown and you can re-promote later. `--all` also removes the alias + role — use only if tearing down the entire deploy infrastructure. The `cmd/internal/teardown` engine handles resource deletion order via the `ResourceOrder` hook.
+- **`deploy.buildBucket` required** — The S3 bucket where CI/Horde uploads packaged builds must be set in `fabrica.yaml`. `promote` uses the convention `s3://<buildBucket>/builds/<build-version>/server.zip` by default; override with `--s3-bucket`/`--s3-key`.
+- **S3 build convention** — CI/Horde outputs are expected at `s3://<buildBucket>/builds/<build-version>/server.zip`. This path is hardcoded in the build registration; Fabrica does not upload builds, only registers and deploys what's already there.
