@@ -83,8 +83,8 @@ ordered milestones.
 
 **Milestone 2 — CI module**
 
-- ⬜ `fabrica ci setup`/`trigger`/`status`/`logs`
-- ⬜ Integration with Horde + Perforce
+- ✅ `fabrica ci setup`/`trigger`/`status`/`logs` — CodeBuild orchestration layer over Horde (IAM role via Cloud Control, CodeBuild project via SDK runner)
+- ✅ Integration with Horde (trigger resolves coordinator address, submits BuildGraph job) + Perforce (IAM read access; active sync deferred)
 
 **Milestone 3 — Deploy module**
 
@@ -127,7 +127,7 @@ ordered milestones.
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | ✅ Complete |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | ✅ Complete |
 | `status` (aggregate) | `status` (`--probe`, `--json`) | ✅ Complete — read-only health overview across all modules |
-| `ci` | `setup`, `trigger`, `status`, `logs` | ⬜ Planned (Phase 1, Milestone 2) |
+| `ci` | `setup`, `trigger`, `status`, `logs` | ✅ Complete — CodeBuild orchestration over Horde |
 | `deploy` | `setup`, `promote`, `status`, `destroy` | ⬜ Planned (Phase 1, Milestone 3) |
 | `cost` | `report`, `forecast`, `alerts` | ⬜ Planned (Phase 1, Milestone 4) |
 | `destroy --all` | clean teardown | ⚠️ Skeleton wired |

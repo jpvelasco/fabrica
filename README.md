@@ -25,7 +25,7 @@ See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium vision, and what's next.
 | `perforce` | `create`, `status`, `destroy` | Complete |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Complete |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Complete |
-| `ci` | `setup`, `trigger`, `status`, `logs` | Planned |
+| `ci` | `setup`, `trigger`, `status`, `logs` | Complete |
 | `deploy` | `setup`, `promote`, `status`, `destroy` | Planned |
 | `cost` | `report`, `forecast`, `alerts` | Planned |
 
@@ -191,6 +191,41 @@ Starts a previously stopped workstation. Supports `--dry-run`, `--yes`, `--json`
 #### `fabrica workstation terminate`
 
 Permanently terminates the workstation EC2 instance and security group. Deletes resources in reverse-creation order. Idempotent — already-terminated instances are skipped. Supports `--dry-run`, `--yes`, `--json`.
+
+### CI
+
+> **Orchestration over Horde:** `fabrica ci` provisions a CodeBuild project that orchestrates Horde BuildGraph jobs. CodeBuild is the conductor; Horde stays the executor. The IAM service role is created via Cloud Control; the CodeBuild project via the AWS SDK (Cloud Control does not support CodeBuild project creation).
+
+#### `fabrica ci setup`
+
+Provisions the CI infrastructure for this account: an IAM service role and a CodeBuild project. Idempotent — existing resources are detected and left in place. Shows a plan + monthly cost estimate, then prompts before creating (use `--yes` to skip, `--dry-run` to preview).
+
+#### `fabrica ci trigger <buildgraph.xml>`
+
+Starts a build run. Parses the BuildGraph XML for the job name and target, resolves the Horde coordinator's address from local state, and starts the CodeBuild project with those values as environment overrides; the build submits the job to Horde. Requires `fabrica ci setup` and a provisioned, reachable Horde coordinator. Use `--wait` to poll until the build reaches a terminal state.
+
+#### `fabrica ci status`
+
+Shows the CI infrastructure (CodeBuild project + IAM role) from local state. Pass `--build <id>` to also show live build status; `--json` for machine-readable output.
+
+#### `fabrica ci logs <build-id>`
+
+Fetches the CloudWatch log output for a specific build.
+
+**Example pipeline:**
+
+```bash
+# One-time: provision the CI infrastructure
+fabrica ci setup
+
+# Trigger a build for a BuildGraph script and watch it run
+fabrica ci trigger BuildGraph.xml --wait
+
+# Or fire-and-forget, then check status / logs by build ID
+fabrica ci trigger BuildGraph.xml
+fabrica ci status --build <build-id>
+fabrica ci logs <build-id>
+```
 
 ### Other
 
