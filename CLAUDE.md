@@ -116,6 +116,16 @@ go list -deps ./internal/cloud/...
 - **Config structs in `internal/config/config.go`** — `HordeConfig`, `PerforceConfig`, and `WorkstationConfig` all live here (not in their respective `internal/<module>` packages) to avoid circular imports.
 - **Embedded templates** — file-generator commands (e.g. `cmd/horde/ami`) use `embed.FS` + `text/template` with `Option("missingkey=error")`. Templates live under `cmd/<cmd>/templates/`. No `RuntimeSource`/`OptionsSource` needed when a command makes no AWS calls.
 
+### Shared command helpers (`cmd/internal/*`)
+
+Cross-module command logic lives under `cmd/internal/` (importable only within `cmd/`). Extract here only when modules share *substance*, not merely *shape* — over-abstracting look-alike-but-different commands hurts readability more than the duplication costs.
+
+- **`cmd/internal/teardown`** — full engine for the three teardown commands (`perforce destroy`, `horde destroy`, `workstation terminate`). They were byte-identical except presentational strings, so a `teardown.Command` + `teardown.Spec` (the varying strings) consolidates everything. Each command's `New()` is a thin `Spec` + wiring.
+- **`cmd/internal/modstatus`** — orchestration engine for `perforce status` / `horde status`. The flow (read state → query EC2 → TCP-probe → transition → poll) is shared, but **rendering differs** (P4PORT vs hordeUrl), so each command implements a `modstatus.Renderer` over the engine's `Info` while the engine owns the flow.
+- **`cmd/internal/provision`** — small helpers for the three `create` commands (`ReadState`, `ConfirmPhrase`, `PrintConfirmInstructions`). Create was deliberately **not** given a full engine: the `applyCreate` steps look parallel but each calls module-specific code (credentials, desired-state builders, plan types), so a generic engine would add indirection without removing real duplication. Only the genuinely-identical boilerplate was extracted; `applyCreate` and `print*` stay local to each command. See issue #37 for the rationale.
+
+The rule of thumb across these three: **teardown shared everything (engine + Spec), status shared the spine but split rendering (engine + Renderer), create shared only leaf helpers.** Match the abstraction to how much is genuinely common.
+
 ### Provider Registration
 
 `internal/cloud/aws/aws.go` registers the AWS provider via a blank-import side-effect (`_ "github.com/jpvelasco/fabrica/internal/cloud/aws"` in `cmd/root`). New providers follow the same `init()` pattern against `internal/cloud/registry.go`.
