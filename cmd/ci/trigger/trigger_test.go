@@ -41,6 +41,10 @@ func (f *fakeRunner) BuildStatus(_ context.Context, _ string) (cloud.BuildInfo, 
 }
 
 func (f *fakeRunner) BuildLog(_ context.Context, _ string) (string, error) { return "", nil }
+func (f *fakeRunner) EnsureProject(_ context.Context, _ cloud.CodeBuildProjectSpec) (bool, error) {
+	return true, nil
+}
+func (f *fakeRunner) DeleteProject(_ context.Context, _ string) error { return nil }
 
 func writeTempBuildGraph(t *testing.T) string {
 	t.Helper()

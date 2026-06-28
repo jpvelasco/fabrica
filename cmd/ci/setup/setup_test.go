@@ -47,6 +47,13 @@ func newCmd(out *bytes.Buffer, createErr error, confirmResult bool) (*command, *
 			r.Identifier = r.TypeName + "-id"
 			return nil
 		},
+		ensureProject: func(_ context.Context, spec cloud.CodeBuildProjectSpec) (bool, error) {
+			if createErr != nil {
+				return false, createErr
+			}
+			*created = append(*created, "AWS::CodeBuild::Project")
+			return true, nil
+		},
 		confirm: func(string) bool { return confirmResult },
 	}
 	return c, created
@@ -138,13 +145,17 @@ func TestSetupIdempotentSkipsExisting(t *testing.T) {
 			*created = append(*created, r.TypeName)
 			return nil
 		},
+		// Project already exists in AWS → EnsureProject reports not-created.
+		ensureProject: func(_ context.Context, _ cloud.CodeBuildProjectSpec) (bool, error) {
+			return false, nil
+		},
 		confirm: func(string) bool { return true },
 	}
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if len(*created) != 0 {
-		t.Errorf("idempotent run should create nothing, got %v", *created)
+		t.Errorf("idempotent run should create nothing via Cloud Control, got %v", *created)
 	}
 	if !strings.Contains(out.String(), "already exists") {
 		t.Errorf("expected skip messages:\n%s", out.String())

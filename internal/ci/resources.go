@@ -1,6 +1,33 @@
 package ci
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/jpvelasco/fabrica/internal/cloud"
+)
+
+// ProjectSpec builds the provider-agnostic CodeBuild project spec for this plan.
+// CodeBuild projects are created via the cloud.CodeBuildRunner SDK path (not
+// Cloud Control, which does not support AWS::CodeBuild::Project CREATE).
+func ProjectSpec(plan *CreatePlan, roleARN string) cloud.CodeBuildProjectSpec {
+	return cloud.CodeBuildProjectSpec{
+		Name:           plan.ProjectName,
+		ServiceRoleARN: roleARN,
+		ComputeType:    plan.ComputeType,
+		Image:          plan.Image,
+		BuildTimeout:   plan.BuildTimeout,
+		Buildspec:      BuildspecRaw(plan),
+		EnvDefaults: map[string]string{
+			"HORDE_URL":      plan.HordeURL,
+			"FABRICA_REGION": plan.Region,
+		},
+		Tags: map[string]string{
+			"ManagedBy":     "fabrica",
+			"FabricaModule": "ci",
+			"Name":          plan.ProjectName,
+		},
+	}
+}
 
 // RoleDesiredState returns the Cloud Control desired-state JSON for the IAM role
 // CodeBuild assumes. The trust policy allows codebuild.amazonaws.com; a single
@@ -28,39 +55,6 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 		"Tags": []map[string]string{
 			{"Key": "ManagedBy", "Value": "fabrica"},
 			{"Key": "Name", "Value": plan.RoleName},
-		},
-	}
-	return json.Marshal(doc)
-}
-
-// ProjectDesiredState returns the Cloud Control desired-state JSON for the
-// CodeBuild project. Uses NO_SOURCE with an inline buildspec (Fabrica drives the
-// build via env overrides at trigger time, not from a source repo in V1).
-func ProjectDesiredState(plan *CreatePlan, roleARN string) (json.RawMessage, error) {
-	doc := map[string]any{
-		"Name":             plan.ProjectName,
-		"Description":      "Fabrica-managed CI project orchestrating Horde BuildGraph jobs",
-		"ServiceRole":      roleARN,
-		"TimeoutInMinutes": plan.BuildTimeout,
-		"Artifacts": map[string]any{
-			"Type": "NO_ARTIFACTS",
-		},
-		"Environment": map[string]any{
-			"Type":        "LINUX_CONTAINER",
-			"ComputeType": plan.ComputeType,
-			"Image":       plan.Image,
-			"EnvironmentVariables": []map[string]any{
-				{"Name": "HORDE_URL", "Value": plan.HordeURL, "Type": "PLAINTEXT"},
-				{"Name": "FABRICA_REGION", "Value": plan.Region, "Type": "PLAINTEXT"},
-			},
-		},
-		"Source": map[string]any{
-			"Type":      "NO_SOURCE",
-			"BuildSpec": BuildspecRaw(plan),
-		},
-		"Tags": []map[string]string{
-			{"Key": "ManagedBy", "Value": "fabrica"},
-			{"Key": "Name", "Value": plan.ProjectName},
 		},
 	}
 	return json.Marshal(doc)

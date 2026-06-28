@@ -23,6 +23,10 @@ func (f fakeRunner) BuildStatus(context.Context, string) (cloud.BuildInfo, error
 	return cloud.BuildInfo{}, nil
 }
 func (f fakeRunner) BuildLog(context.Context, string) (string, error) { return f.log, f.err }
+func (f fakeRunner) EnsureProject(context.Context, cloud.CodeBuildProjectSpec) (bool, error) {
+	return true, nil
+}
+func (f fakeRunner) DeleteProject(context.Context, string) error { return nil }
 
 func TestLogsPrintsOutput(t *testing.T) {
 	var out bytes.Buffer

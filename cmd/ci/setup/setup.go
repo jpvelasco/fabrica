@@ -36,6 +36,7 @@ type command struct {
 	writeState     func(*fabricastate.State) error
 	createResource func(ctx context.Context, r *cloud.Resource) error
 	getResource    func(ctx context.Context, r *cloud.Resource) error
+	ensureProject  func(ctx context.Context, spec cloud.CodeBuildProjectSpec) (bool, error)
 	confirm        func(string) bool
 }
 
@@ -79,6 +80,9 @@ With --dry-run, it shows the planned resources and estimated monthly cost.`,
 					c.createResource = rc.Create
 					c.getResource = rc.Get
 				}
+				if r, ok := rt.Provider.(cloud.CodeBuildRunner); ok {
+					c.ensureProject = r.EnsureProject
+				}
 			}
 			return c.run(cmd.Context())
 		},
@@ -88,6 +92,9 @@ With --dry-run, it shows the planned resources and estimated monthly cost.`,
 func (c command) run(ctx context.Context) error {
 	if c.runtime.Provider == nil {
 		return fmt.Errorf("no cloud provider configured — check your config and credentials")
+	}
+	if !c.dryRun && c.ensureProject == nil {
+		return fmt.Errorf("cloud provider %s does not support CodeBuild project creation", c.runtime.Provider.Name())
 	}
 
 	account, _, region, err := c.runtime.Provider.Identity(ctx)
@@ -165,22 +172,18 @@ func (c command) applyResources(ctx context.Context, st *fabricastate.State, pla
 		_ = c.writeState(st)
 	}
 
-	if existing, ok := existingResource(st, ci.TypeAWSCodeBuildProject); ok {
-		fmt.Fprintf(c.out, "  CodeBuild project already exists — skipping: %s\n", existing.Identifier)
-		resources = appendUnique(resources, existing)
-		return resources, nil
-	}
-
-	projState, err := ci.ProjectDesiredState(plan, roleARN)
+	// CodeBuild projects are created via the CodeBuildRunner SDK path —
+	// AWS::CodeBuild::Project does not support Cloud Control CREATE.
+	created, err := c.ensureProject(ctx, ci.ProjectSpec(plan, roleARN))
 	if err != nil {
-		return nil, fmt.Errorf("building CodeBuild project desired state: %w", err)
-	}
-	pr := &cloud.Resource{TypeName: ci.TypeAWSCodeBuildProject, DesiredState: projState}
-	if err := c.createResource(ctx, pr); err != nil {
 		return nil, fmt.Errorf("creating CodeBuild project: %w", err)
 	}
-	fmt.Fprintf(c.out, "  created CodeBuild project: %s\n", pr.Identifier)
-	resources = append(resources, fabricastate.ModuleResource{TypeName: ci.TypeAWSCodeBuildProject, Identifier: pr.Identifier})
+	if created {
+		fmt.Fprintf(c.out, "  created CodeBuild project: %s\n", plan.ProjectName)
+	} else {
+		fmt.Fprintf(c.out, "  CodeBuild project already exists — skipping: %s\n", plan.ProjectName)
+	}
+	resources = appendUnique(resources, fabricastate.ModuleResource{TypeName: ci.TypeAWSCodeBuildProject, Identifier: plan.ProjectName})
 	return resources, nil
 }
 

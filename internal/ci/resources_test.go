@@ -37,33 +37,25 @@ func TestRoleDesiredState(t *testing.T) {
 	}
 }
 
-func TestProjectDesiredState(t *testing.T) {
-	raw, err := ProjectDesiredState(testPlan(), "arn:aws:iam::123456789012:role/fabrica-ci-codebuild")
-	if err != nil {
-		t.Fatalf("ProjectDesiredState: %v", err)
+func TestProjectSpec(t *testing.T) {
+	spec := ProjectSpec(testPlan(), "arn:aws:iam::123456789012:role/fabrica-ci-codebuild")
+
+	if spec.Name != defaultProjectName {
+		t.Errorf("Name = %q", spec.Name)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	if spec.ServiceRoleARN != "arn:aws:iam::123456789012:role/fabrica-ci-codebuild" {
+		t.Errorf("ServiceRoleARN = %q", spec.ServiceRoleARN)
 	}
-	if doc["Name"] != defaultProjectName {
-		t.Errorf("Name = %v", doc["Name"])
+	if spec.ComputeType != defaultComputeType {
+		t.Errorf("ComputeType = %q", spec.ComputeType)
 	}
-	if doc["ServiceRole"] != "arn:aws:iam::123456789012:role/fabrica-ci-codebuild" {
-		t.Errorf("ServiceRole = %v", doc["ServiceRole"])
+	if spec.EnvDefaults["HORDE_URL"] != "http://10.0.1.5:5000" {
+		t.Errorf("HORDE_URL = %q", spec.EnvDefaults["HORDE_URL"])
 	}
-	env, ok := doc["Environment"].(map[string]any)
-	if !ok {
-		t.Fatalf("Environment missing or wrong type")
+	if spec.Buildspec == "" {
+		t.Error("Buildspec is empty")
 	}
-	if env["ComputeType"] != defaultComputeType {
-		t.Errorf("ComputeType = %v", env["ComputeType"])
-	}
-	src, ok := doc["Source"].(map[string]any)
-	if !ok || src["Type"] != "NO_SOURCE" {
-		t.Errorf("Source = %v, want NO_SOURCE", doc["Source"])
-	}
-	if _, ok := src["BuildSpec"].(string); !ok {
-		t.Errorf("Source.BuildSpec missing")
+	if spec.Tags["ManagedBy"] != "fabrica" {
+		t.Errorf("ManagedBy tag = %q", spec.Tags["ManagedBy"])
 	}
 }

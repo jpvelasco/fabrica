@@ -10,6 +10,7 @@ import (
 	cwltypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	codebuildtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
+	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 )
 
 type fakeCodeBuildClient struct {
@@ -19,6 +20,11 @@ type fakeCodeBuildClient struct {
 	builds     []codebuildtypes.Build
 	batchErr   error
 	batchedIDs []string
+
+	createInput      *codebuild.CreateProjectInput
+	createErr        error
+	deletedProject   string
+	existingProjects []codebuildtypes.Project
 }
 
 func (f *fakeCodeBuildClient) StartBuild(_ context.Context, in *codebuild.StartBuildInput, _ ...func(*codebuild.Options)) (*codebuild.StartBuildOutput, error) {
@@ -35,6 +41,23 @@ func (f *fakeCodeBuildClient) BatchGetBuilds(_ context.Context, in *codebuild.Ba
 		return nil, f.batchErr
 	}
 	return &codebuild.BatchGetBuildsOutput{Builds: f.builds}, nil
+}
+
+func (f *fakeCodeBuildClient) CreateProject(_ context.Context, in *codebuild.CreateProjectInput, _ ...func(*codebuild.Options)) (*codebuild.CreateProjectOutput, error) {
+	f.createInput = in
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
+	return &codebuild.CreateProjectOutput{}, nil
+}
+
+func (f *fakeCodeBuildClient) DeleteProject(_ context.Context, in *codebuild.DeleteProjectInput, _ ...func(*codebuild.Options)) (*codebuild.DeleteProjectOutput, error) {
+	f.deletedProject = awssdk.ToString(in.Name)
+	return &codebuild.DeleteProjectOutput{}, nil
+}
+
+func (f *fakeCodeBuildClient) BatchGetProjects(_ context.Context, _ *codebuild.BatchGetProjectsInput, _ ...func(*codebuild.Options)) (*codebuild.BatchGetProjectsOutput, error) {
+	return &codebuild.BatchGetProjectsOutput{Projects: f.existingProjects}, nil
 }
 
 type fakeCWLogsClient struct {
@@ -57,6 +80,61 @@ func newCodeBuildTestProvider(cb *fakeCodeBuildClient, logs *fakeCWLogsClient) *
 		},
 		newCodeBuildClient: func(awssdk.Config) codeBuildClient { return cb },
 		newCWLogsClient:    func(awssdk.Config) cwLogsClient { return logs },
+	}
+}
+
+func TestEnsureProjectCreatesWhenAbsent(t *testing.T) {
+	cb := &fakeCodeBuildClient{} // no existing projects
+	p := newCodeBuildTestProvider(cb, nil)
+
+	created, err := p.EnsureProject(context.Background(), fabricac.CodeBuildProjectSpec{
+		Name:           "fabrica-ci",
+		ServiceRoleARN: "arn:aws:iam::123:role/fabrica-ci-codebuild",
+		ComputeType:    "BUILD_GENERAL1_SMALL",
+		Image:          "aws/codebuild/x:1",
+		BuildTimeout:   60,
+		Buildspec:      "version: 0.2",
+		EnvDefaults:    map[string]string{"HORDE_URL": "http://10.0.0.5:5000"},
+		Tags:           map[string]string{"ManagedBy": "fabrica"},
+	})
+	if err != nil {
+		t.Fatalf("EnsureProject: %v", err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+	if cb.createInput == nil || awssdk.ToString(cb.createInput.Name) != "fabrica-ci" {
+		t.Errorf("CreateProject not called with project name")
+	}
+	if string(cb.createInput.Environment.ComputeType) != "BUILD_GENERAL1_SMALL" {
+		t.Errorf("ComputeType = %q", cb.createInput.Environment.ComputeType)
+	}
+}
+
+func TestEnsureProjectIdempotent(t *testing.T) {
+	cb := &fakeCodeBuildClient{existingProjects: []codebuildtypes.Project{{Name: awssdk.String("fabrica-ci")}}}
+	p := newCodeBuildTestProvider(cb, nil)
+
+	created, err := p.EnsureProject(context.Background(), fabricac.CodeBuildProjectSpec{Name: "fabrica-ci"})
+	if err != nil {
+		t.Fatalf("EnsureProject: %v", err)
+	}
+	if created {
+		t.Error("created = true, want false for existing project")
+	}
+	if cb.createInput != nil {
+		t.Error("CreateProject must not be called when project exists")
+	}
+}
+
+func TestDeleteProject(t *testing.T) {
+	cb := &fakeCodeBuildClient{}
+	p := newCodeBuildTestProvider(cb, nil)
+	if err := p.DeleteProject(context.Background(), "fabrica-ci"); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+	if cb.deletedProject != "fabrica-ci" {
+		t.Errorf("deleted = %q, want fabrica-ci", cb.deletedProject)
 	}
 }
 

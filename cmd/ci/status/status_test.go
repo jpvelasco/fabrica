@@ -25,6 +25,10 @@ func (f fakeRunner) BuildStatus(context.Context, string) (cloud.BuildInfo, error
 	return f.info, f.err
 }
 func (f fakeRunner) BuildLog(context.Context, string) (string, error) { return "", nil }
+func (f fakeRunner) EnsureProject(context.Context, cloud.CodeBuildProjectSpec) (bool, error) {
+	return true, nil
+}
+func (f fakeRunner) DeleteProject(context.Context, string) error { return nil }
 
 func provisionedState() *fabricastate.State {
 	st := fabricastate.NewState("123456789012", "us-east-1")
