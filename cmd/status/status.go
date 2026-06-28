@@ -60,6 +60,8 @@ type StatusModule struct {
 type StatusSummary struct {
 	ModuleCount   int `json:"moduleCount"`
 	ResourceCount int `json:"resourceCount"`
+	Healthy       int `json:"healthy"`
+	Provisioning  int `json:"provisioning"`
 }
 
 type command struct {
@@ -89,6 +91,14 @@ state via Cloud Control. This command never modifies state.
 Use --probe to additionally TCP-probe each module's readiness port. Probing
 requires network reachability to the (private) instance IPs — typically a VPN
 or in-VPC session — and is off by default.`,
+		Example: `  # Overview of all modules and the state backend:
+  fabrica status
+
+  # Also TCP-probe each module's port (run from a VPN / in-VPC session):
+  fabrica status --probe
+
+  # Machine-readable output for scripts:
+  fabrica status --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
 			if err != nil {
@@ -128,7 +138,7 @@ func (c command) run(ctx context.Context) error {
 	report := StatusReport{
 		Backend: backend,
 		Modules: modules,
-		Summary: StatusSummary{ModuleCount: len(modules), ResourceCount: st.ModuleCount()},
+		Summary: summarize(modules, st.ModuleCount()),
 	}
 
 	if c.jsonOut {
@@ -184,8 +194,15 @@ func (c command) buildModules(ctx context.Context, st *fabricastate.State) []Sta
 			sm.InstanceID = inst.Identifier
 			ecState, privateIP := c.liveInstance(ctx, inst.Identifier)
 			sm.InstanceState = ecState
-			if c.probe && privateIP != "" {
-				sm.Probe = c.probeModule(m.Name, privateIP)
+			if c.probe {
+				// Degrade gracefully: when the private IP is unknown (off-VPC,
+				// Cloud Control unavailable, or no port mapping) say so rather
+				// than silently omitting the probe result.
+				if privateIP == "" {
+					sm.Probe = "skipped (no reachable address)"
+				} else {
+					sm.Probe = c.probeModule(m.Name, privateIP)
+				}
 			}
 		}
 		out = append(out, sm)
@@ -220,6 +237,33 @@ func parseInstanceState(raw []byte) (state, privateIP string) {
 	return actual.State.Name, actual.PrivateIPAddress
 }
 
+// printEmptyState renders the no-modules view. When the state backend isn't
+// ready it leads firmly with `fabrica setup` as the required first step;
+// otherwise it lists the modules the user can provision.
+func (c command) printEmptyState(backend StatusBackend) {
+	backendReady := backend.BucketExists == "yes"
+
+	if !backendReady {
+		fmt.Fprintln(c.out, "Nothing provisioned yet, and your state backend isn't set up.")
+		fmt.Fprintln(c.out)
+		fmt.Fprintln(c.out, "Start here:")
+		fmt.Fprintln(c.out, "  fabrica setup                 Create the state backend (required first step)")
+		fmt.Fprintln(c.out)
+		fmt.Fprintln(c.out, "Once setup completes, you can provision modules:")
+		fmt.Fprintln(c.out, "  fabrica perforce create       Provision Perforce Helix Core")
+		fmt.Fprintln(c.out, "  fabrica horde create          Provision Unreal Horde")
+		fmt.Fprintln(c.out, "  fabrica workstation create    Provision a cloud workstation")
+		return
+	}
+
+	fmt.Fprintln(c.out, "State backend is ready, but no modules are provisioned yet.")
+	fmt.Fprintln(c.out)
+	fmt.Fprintln(c.out, "Next steps:")
+	fmt.Fprintln(c.out, "  fabrica perforce create       Provision Perforce Helix Core")
+	fmt.Fprintln(c.out, "  fabrica horde create          Provision Unreal Horde")
+	fmt.Fprintln(c.out, "  fabrica workstation create    Provision a cloud workstation")
+}
+
 func (c command) printJSON(report StatusReport) error {
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
@@ -232,31 +276,70 @@ func (c command) printJSON(report StatusReport) error {
 func (c command) printText(report StatusReport) {
 	fmt.Fprintln(c.out, "Fabrica status")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
+	fmt.Fprintf(c.out, "%s\n", summaryLine(report.Summary))
+	fmt.Fprintln(c.out)
+
 	c.printBackend(report.Backend)
 	fmt.Fprintln(c.out)
 
 	if len(report.Modules) == 0 {
-		fmt.Fprintln(c.out, "No modules provisioned yet.")
-		fmt.Fprintln(c.out)
-		fmt.Fprintln(c.out, "Next steps:")
-		fmt.Fprintln(c.out, "  fabrica setup                 Provision the state backend")
-		fmt.Fprintln(c.out, "  fabrica perforce create       Provision Perforce Helix Core")
-		fmt.Fprintln(c.out, "  fabrica horde create          Provision Unreal Horde")
-		fmt.Fprintln(c.out, "  fabrica workstation create    Provision a cloud workstation")
+		c.printEmptyState(report.Backend)
 		return
 	}
 
+	fmt.Fprintf(c.out, "  %-7s %-13s %-13s %s\n", "", "MODULE", "STATUS", "DETAIL")
 	for _, m := range report.Modules {
 		c.printModule(m)
 	}
-	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "%d module(s) · %d resource(s)\n", report.Summary.ModuleCount, report.Summary.ResourceCount)
 	c.printNextSteps(report.Modules)
 }
 
+// summaryLine is the one-line health overview, e.g.
+// "3 modules • 2 healthy • 1 provisioning • 7 resources".
+func summaryLine(s StatusSummary) string {
+	if s.ModuleCount == 0 {
+		return "No modules provisioned"
+	}
+	parts := []string{fmt.Sprintf("%d %s", s.ModuleCount, plural(s.ModuleCount, "module", "modules"))}
+	if s.Healthy > 0 {
+		parts = append(parts, fmt.Sprintf("%d healthy", s.Healthy))
+	}
+	if s.Provisioning > 0 {
+		parts = append(parts, fmt.Sprintf("%d provisioning", s.Provisioning))
+	}
+	parts = append(parts, fmt.Sprintf("%d %s", s.ResourceCount, plural(s.ResourceCount, "resource", "resources")))
+	return strings.Join(parts, " • ")
+}
+
+func summarize(modules []StatusModule, resourceCount int) StatusSummary {
+	s := StatusSummary{ModuleCount: len(modules), ResourceCount: resourceCount}
+	for _, m := range modules {
+		switch m.Status {
+		case "ready":
+			s.Healthy++
+		case "provisioning":
+			s.Provisioning++
+		}
+	}
+	return s
+}
+
 func (c command) printBackend(b StatusBackend) {
-	fmt.Fprintf(c.out, "  State bucket:  %s [%s]\n", orNotConfigured(b.Bucket), b.BucketExists)
-	fmt.Fprintf(c.out, "  Lock table:    %s [%s]\n", orNotConfigured(b.Table), b.TableExists)
+	fmt.Fprintf(c.out, "  %s State bucket:  %s\n", existsSymbol(b.BucketExists), orNotConfigured(b.Bucket))
+	fmt.Fprintf(c.out, "  %s Lock table:    %s\n", existsSymbol(b.TableExists), orNotConfigured(b.Table))
+}
+
+// existsSymbol maps a yes/no/unknown existence result to a status indicator.
+// "no" is a warning (run setup), not a failure — the backend is simply absent.
+func existsSymbol(exists string) string {
+	switch exists {
+	case "yes":
+		return "[OK]  "
+	case "no":
+		return "[WARN]"
+	default:
+		return "[????]"
+	}
 }
 
 func orNotConfigured(s string) string {
@@ -267,21 +350,42 @@ func orNotConfigured(s string) string {
 }
 
 func (c command) printModule(m StatusModule) {
-	line := fmt.Sprintf("  %-12s %-12s %d resource(s)", m.Name, m.Status, m.ResourceCount)
+	detail := moduleDetail(m)
+	fmt.Fprintf(c.out, "  %-7s %-13s %-13s %s\n", moduleSymbol(m.Status), m.Name, m.Status, detail)
+}
+
+// moduleSymbol maps a module status to a status indicator.
+func moduleSymbol(status string) string {
+	switch status {
+	case "ready":
+		return "[OK]  "
+	case "provisioning":
+		return "[WARN]"
+	case "stopped":
+		return "[----]"
+	default:
+		return "[????]"
+	}
+}
+
+// moduleDetail builds the right-hand detail column (resource count + live EC2
+// state + probe result when available).
+func moduleDetail(m StatusModule) string {
+	parts := []string{fmt.Sprintf("%d %s", m.ResourceCount, plural(m.ResourceCount, "resource", "resources"))}
 	if m.InstanceState != "" {
-		line += fmt.Sprintf("  ec2:%s", m.InstanceState)
+		parts = append(parts, "ec2:"+m.InstanceState)
 	}
 	if m.Probe != "" {
-		line += fmt.Sprintf("  probe:%s", m.Probe)
+		parts = append(parts, "probe:"+m.Probe)
 	}
-	fmt.Fprintln(c.out, line)
+	return strings.Join(parts, "  ")
 }
 
 func (c command) printNextSteps(modules []StatusModule) {
 	var steps []string
 	for _, m := range modules {
 		if m.Status == "provisioning" {
-			steps = append(steps, fmt.Sprintf("  fabrica %s status     Watch %s become ready", m.Name, m.Name))
+			steps = append(steps, fmt.Sprintf("  fabrica %s status     Watch %s finish provisioning", m.Name, m.Name))
 		}
 	}
 	sort.Strings(steps)
@@ -295,10 +399,17 @@ func (c command) printNextSteps(modules []StatusModule) {
 	}
 }
 
+func plural(n int, singular, pluralForm string) string {
+	if n == 1 {
+		return singular
+	}
+	return pluralForm
+}
+
 func (c command) probeModule(module, privateIP string) string {
 	port, ok := probePorts[module]
 	if !ok || c.probeTCP == nil {
-		return ""
+		return "skipped (no known port)"
 	}
 	if c.probeTCP(fmt.Sprintf("%s:%d", privateIP, port)) {
 		return "responding"

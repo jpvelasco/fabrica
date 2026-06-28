@@ -84,10 +84,19 @@ func TestRunApplyConfirmYesCreates(t *testing.T) {
 	cmd := command{
 		runtime:   testApplyRuntime(),
 		out:       &buf,
+		costs:     fabricacost.Global,
 		bootstrap: okBootstrap(&bootstrapCalled),
 		confirm:   func(string) bool { return true },
 	}
-	plan := fabricastate.SetupPlan{Account: "123456789012", Region: "us-east-1"}
+	plan := fabricastate.SetupPlan{
+		Account: "123456789012",
+		Region:  "us-east-1",
+		Backend: fabricastate.BackendNames{Bucket: "fabrica-state-123456789012", Table: "fabrica-state-lock"},
+		Resources: []fabricastate.ResourcePlan{
+			{TypeName: "AWS::S3::Bucket", Label: "S3 bucket", Identifier: "fabrica-state-123456789012"},
+			{TypeName: "AWS::DynamoDB::Table", Label: "DynamoDB table", Identifier: "fabrica-state-lock"},
+		},
+	}
 
 	if err := cmd.runApply(context.Background(), plan); err != nil {
 		t.Fatalf("runApply: %v", err)
@@ -99,8 +108,47 @@ func TestRunApplyConfirmYesCreates(t *testing.T) {
 	if !strings.Contains(out, "Setup complete") {
 		t.Errorf("expected completion message, got:\n%s", out)
 	}
+	if !strings.Contains(out, "What just happened:") {
+		t.Errorf("expected 'What just happened' recap, got:\n%s", out)
+	}
+	if !strings.Contains(out, "fabrica-state-123456789012") || !strings.Contains(out, "fabrica-state-lock") {
+		t.Errorf("completion should name the bucket and table, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Estimated cost:") {
+		t.Errorf("completion should show estimated cost, got:\n%s", out)
+	}
 	if !strings.Contains(out, "fabrica status") || !strings.Contains(out, "fabrica perforce create") {
 		t.Errorf("completion should guide toward status + provisioning, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Run 'fabrica status' to see the current state of your studio infrastructure.") {
+		t.Errorf("completion should close with the status nudge, got:\n%s", out)
+	}
+}
+
+func TestRunApplyBootstrapErrorShowsRecovery(t *testing.T) {
+	var buf strings.Builder
+	cmd := command{
+		runtime:   testApplyRuntime(),
+		assumeYes: true,
+		out:       &buf,
+		bootstrap: func(context.Context, fabricac.Provider, *config.Config) ([]fabricastate.BootstrapResult, error) {
+			return nil, errors.New("AccessDenied")
+		},
+		confirm: func(string) bool { return true },
+	}
+	plan := fabricastate.SetupPlan{
+		Account: "123456789012",
+		Region:  "us-east-1",
+		Backend: fabricastate.BackendNames{Bucket: "b", Table: "t"},
+	}
+
+	err := cmd.runApply(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "safe to recover") || !strings.Contains(out, "run 'fabrica setup' again") {
+		t.Errorf("expected recovery guidance, got:\n%s", out)
 	}
 }
 

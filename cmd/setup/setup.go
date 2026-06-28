@@ -43,6 +43,17 @@ re-running reconciles their configuration.
 You are asked to confirm before any resources are created; pass --yes to
 skip the prompt. With --dry-run, it shows the planned resources and the
 estimated monthly cost without creating anything.`,
+		Example: `  # Preview what would be created, with a cost estimate (no changes):
+  fabrica setup --dry-run
+
+  # Create the state backend, confirming interactively:
+  fabrica setup
+
+  # Create it non-interactively (CI / automation):
+  fabrica setup --yes
+
+  # Target a specific account profile and config:
+  fabrica setup --profile studio --config ./fabrica.studio.yaml`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
 			if err != nil {
@@ -66,7 +77,8 @@ estimated monthly cost without creating anything.`,
 func (c command) run(ctx context.Context) error {
 	account, _, region, err := c.runtime.Provider.Identity(ctx)
 	if err != nil {
-		return fmt.Errorf("could not resolve AWS identity — check your credentials and region (try 'aws sts get-caller-identity', or run 'fabrica doctor'): %w", err)
+		c.printIdentityHelp()
+		return fmt.Errorf("could not resolve AWS identity: %w", err)
 	}
 
 	cfg := c.runtime.Config
@@ -79,6 +91,17 @@ func (c command) run(ctx context.Context) error {
 	}
 
 	return c.runApply(ctx, plan)
+}
+
+// printIdentityHelp lists the common causes of an identity failure so the user
+// can self-diagnose before reading the wrapped SDK error.
+func (c command) printIdentityHelp() {
+	fmt.Fprintln(c.out, "Could not authenticate with AWS. Common causes:")
+	fmt.Fprintln(c.out, "  - Missing or expired credentials — refresh them (e.g. 'aws sso login') and retry.")
+	fmt.Fprintln(c.out, "  - Wrong profile — set 'cloud.aws.profile' in fabrica.yaml or pass --profile.")
+	fmt.Fprintln(c.out, "  - Region not set or unreachable — set 'cloud.aws.region' in fabrica.yaml.")
+	fmt.Fprintln(c.out, "Verify with 'aws sts get-caller-identity', then run 'fabrica doctor'.")
+	fmt.Fprintln(c.out)
 }
 
 func setupTags(version string, extra map[string]string) map[string]string {
@@ -170,13 +193,26 @@ func (c command) runApply(ctx context.Context, plan fabricastate.SetupPlan) erro
 
 	results, err := c.bootstrap(ctx, c.runtime.Provider, c.runtime.Config)
 	if err != nil {
+		c.printRecovery(plan)
 		return fmt.Errorf("bootstrap failed: %w", err)
 	}
 
 	c.printBootstrapResults(results)
 	c.saveAccountID(plan.Account)
-	c.printCompletion(results)
+	c.printCompletion(plan, results)
 	return nil
+}
+
+// printRecovery explains how to recover from a partial bootstrap failure.
+// Setup is idempotent, so the fix is almost always "address the error and
+// re-run" — already-created resources are detected and left in place.
+func (c command) printRecovery(plan fabricastate.SetupPlan) {
+	fmt.Fprintln(c.out)
+	fmt.Fprintln(c.out, "Setup did not finish — but this is safe to recover from:")
+	fmt.Fprintln(c.out, "  - setup is idempotent: fix the error above, then run 'fabrica setup' again.")
+	fmt.Fprintln(c.out, "    Any resource already created is detected and left untouched.")
+	fmt.Fprintln(c.out, "  - run 'fabrica doctor' to see which resources already exist.")
+	fmt.Fprintf(c.out, "  - expected resources: S3 bucket %s, DynamoDB table %s.\n", plan.Backend.Bucket, plan.Backend.Table)
 }
 
 func (c command) printApplyHeader(plan fabricastate.SetupPlan) {
@@ -207,18 +243,43 @@ func (c command) saveAccountID(account string) {
 	}
 }
 
-func (c command) printCompletion(results []fabricastate.BootstrapResult) {
-	if allResourcesExisted(results) {
-		fmt.Fprintln(c.out, "All resources already exist. Nothing changed.")
+func (c command) printCompletion(plan fabricastate.SetupPlan, results []fabricastate.BootstrapResult) {
+	allExisted := allResourcesExisted(results)
+	if allExisted {
+		fmt.Fprintln(c.out, "Nothing to do — your state backend is already set up.")
 	} else {
-		fmt.Fprintln(c.out, "Setup complete.")
+		fmt.Fprintln(c.out, "Setup complete — your state backend is ready.")
 	}
+	fmt.Fprintln(c.out)
+
+	// What just happened: name the resources backing remote state.
+	verb := "Created"
+	if allExisted {
+		verb = "Verified"
+	}
+	fmt.Fprintln(c.out, "What just happened:")
+	fmt.Fprintf(c.out, "  %s the S3 bucket %q (versioned, encrypted, public access blocked)\n", verb, plan.Backend.Bucket)
+	fmt.Fprintf(c.out, "  %s the DynamoDB table %q (state locking)\n", verb, plan.Backend.Table)
+	fmt.Fprintln(c.out, "  Together these store and lock Fabrica's remote state for this account.")
+	c.printRunningCost(plan)
 
 	fmt.Fprintln(c.out)
 	fmt.Fprintln(c.out, "Next steps:")
 	fmt.Fprintln(c.out, "  fabrica doctor               Verify environment health")
 	fmt.Fprintln(c.out, "  fabrica status               Overview of all modules")
 	fmt.Fprintln(c.out, "  fabrica perforce create      Provision Perforce Helix Core")
+	fmt.Fprintln(c.out)
+	fmt.Fprintln(c.out, "Run 'fabrica status' to see the current state of your studio infrastructure.")
+}
+
+// printRunningCost prints the estimated monthly cost of the state backend, so
+// the user knows what the just-created resources will cost to keep running.
+func (c command) printRunningCost(plan fabricastate.SetupPlan) {
+	if c.costs == nil {
+		return
+	}
+	report := c.costs.EstimateAll(costResources(plan.Resources))
+	fmt.Fprintf(c.out, "  Estimated cost: ~$%.2f/month (%s confidence)\n", report.Total, report.Confidence)
 }
 
 func allResourcesExisted(results []fabricastate.BootstrapResult) bool {
