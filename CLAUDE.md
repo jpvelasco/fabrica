@@ -17,7 +17,7 @@ Phase 0 (CLI skeleton + AWS foundation) is complete. Three modules are fully imp
 ## Build Commands
 
 ```bash
-go build ./...                         # requires Go 1.25.9+; defaults to Version=dev Commit=unknown
+go build ./...                         # requires Go 1.25.11+; defaults to Version=dev Commit=unknown
 go build -ldflags "-X github.com/jpvelasco/fabrica/internal/version.Version=v1.0.0 -X github.com/jpvelasco/fabrica/internal/version.Commit=$(git rev-parse --short HEAD)" .  # release build
 go vet ./...
 go test ./...                          # Windows (no -race)

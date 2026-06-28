@@ -1,5 +1,7 @@
 # Fabrica
 
+[![codecov](https://codecov.io/gh/jpvelasco/fabrica/graph/badge.svg?token=YOUR_GRAPH_TOKEN)](https://codecov.io/gh/jpvelasco/fabrica)
+
 Game studio infrastructure as code for AWS.
 
 Fabrica provisions the foundational systems a game development team needs to operate at scale — Perforce Helix Core repositories, Horde build farms, CI/CD pipelines, and cost visibility — from a single YAML configuration file.
@@ -31,7 +33,7 @@ See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium vision, and what's next.
 
 ## Requirements
 
-- Go 1.25.9+
+- Go 1.25.11+
 - AWS credentials with permissions to create EC2 instances, security groups, S3 buckets, and DynamoDB tables
 - IAM permission for `sts:GetCallerIdentity`
 
