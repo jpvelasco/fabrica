@@ -237,6 +237,33 @@ func parseInstanceState(raw []byte) (state, privateIP string) {
 	return actual.State.Name, actual.PrivateIPAddress
 }
 
+// printEmptyState renders the no-modules view. When the state backend isn't
+// ready it leads firmly with `fabrica setup` as the required first step;
+// otherwise it lists the modules the user can provision.
+func (c command) printEmptyState(backend StatusBackend) {
+	backendReady := backend.BucketExists == "yes"
+
+	if !backendReady {
+		fmt.Fprintln(c.out, "Nothing provisioned yet, and your state backend isn't set up.")
+		fmt.Fprintln(c.out)
+		fmt.Fprintln(c.out, "Start here:")
+		fmt.Fprintln(c.out, "  fabrica setup                 Create the state backend (required first step)")
+		fmt.Fprintln(c.out)
+		fmt.Fprintln(c.out, "Once setup completes, you can provision modules:")
+		fmt.Fprintln(c.out, "  fabrica perforce create       Provision Perforce Helix Core")
+		fmt.Fprintln(c.out, "  fabrica horde create          Provision Unreal Horde")
+		fmt.Fprintln(c.out, "  fabrica workstation create    Provision a cloud workstation")
+		return
+	}
+
+	fmt.Fprintln(c.out, "State backend is ready, but no modules are provisioned yet.")
+	fmt.Fprintln(c.out)
+	fmt.Fprintln(c.out, "Next steps:")
+	fmt.Fprintln(c.out, "  fabrica perforce create       Provision Perforce Helix Core")
+	fmt.Fprintln(c.out, "  fabrica horde create          Provision Unreal Horde")
+	fmt.Fprintln(c.out, "  fabrica workstation create    Provision a cloud workstation")
+}
+
 func (c command) printJSON(report StatusReport) error {
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
@@ -256,15 +283,7 @@ func (c command) printText(report StatusReport) {
 	fmt.Fprintln(c.out)
 
 	if len(report.Modules) == 0 {
-		fmt.Fprintln(c.out, "No modules provisioned yet — your account is ready for its first module.")
-		fmt.Fprintln(c.out)
-		fmt.Fprintln(c.out, "Next steps:")
-		if report.Backend.BucketExists != "yes" {
-			fmt.Fprintln(c.out, "  fabrica setup                 Provision the state backend (start here)")
-		}
-		fmt.Fprintln(c.out, "  fabrica perforce create       Provision Perforce Helix Core")
-		fmt.Fprintln(c.out, "  fabrica horde create          Provision Unreal Horde")
-		fmt.Fprintln(c.out, "  fabrica workstation create    Provision a cloud workstation")
+		c.printEmptyState(report.Backend)
 		return
 	}
 

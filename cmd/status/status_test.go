@@ -43,8 +43,32 @@ func TestRunEmptyState(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if !strings.Contains(out.String(), "fabrica setup") {
-		t.Errorf("empty state should suggest setup; got:\n%s", out.String())
+	got := out.String()
+	if !strings.Contains(got, "fabrica setup") {
+		t.Errorf("empty state should suggest setup; got:\n%s", got)
+	}
+	if !strings.Contains(got, "Start here:") || !strings.Contains(got, "required first step") {
+		t.Errorf("empty state should strongly nudge toward setup; got:\n%s", got)
+	}
+}
+
+func TestRunEmptyStateBackendReady(t *testing.T) {
+	out := &bytes.Buffer{}
+	c := command{
+		runtime:   globals.Runtime{Config: configWithBackend("b", "t")},
+		out:       out,
+		readState: func() (*fabricastate.State, error) { return fabricastate.NewState("123", "us-west-2"), nil },
+		backend:   fakeBackendChecker{bucket: true, table: true},
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "State backend is ready") {
+		t.Errorf("expected backend-ready empty state; got:\n%s", got)
+	}
+	if strings.Contains(got, "required first step") {
+		t.Errorf("should not nudge toward setup when backend is ready; got:\n%s", got)
 	}
 }
 

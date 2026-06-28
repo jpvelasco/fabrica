@@ -120,6 +120,9 @@ func TestRunApplyConfirmYesCreates(t *testing.T) {
 	if !strings.Contains(out, "fabrica status") || !strings.Contains(out, "fabrica perforce create") {
 		t.Errorf("completion should guide toward status + provisioning, got:\n%s", out)
 	}
+	if !strings.Contains(out, "Run 'fabrica status' to see the current state of your studio infrastructure.") {
+		t.Errorf("completion should close with the status nudge, got:\n%s", out)
+	}
 }
 
 func TestRunApplyBootstrapErrorShowsRecovery(t *testing.T) {

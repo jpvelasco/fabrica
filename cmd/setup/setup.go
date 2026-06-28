@@ -268,6 +268,8 @@ func (c command) printCompletion(plan fabricastate.SetupPlan, results []fabricas
 	fmt.Fprintln(c.out, "  fabrica doctor               Verify environment health")
 	fmt.Fprintln(c.out, "  fabrica status               Overview of all modules")
 	fmt.Fprintln(c.out, "  fabrica perforce create      Provision Perforce Helix Core")
+	fmt.Fprintln(c.out)
+	fmt.Fprintln(c.out, "Run 'fabrica status' to see the current state of your studio infrastructure.")
 }
 
 // printRunningCost prints the estimated monthly cost of the state backend, so
