@@ -1,49 +1,25 @@
 package status
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"strings"
 	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
-	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
-	"github.com/jpvelasco/fabrica/internal/stateutil"
 	"github.com/spf13/cobra"
 )
 
 const (
 	lineWidth  = 58
 	moduleName = "perforce"
-
-	probeTimeout = 3 * time.Second
-	waitInterval = 15 * time.Second
-	waitDeadline = 10 * time.Minute
+	p4Port     = 1666
 )
 
-// statusInfo holds everything known about the Perforce module at query time.
-type statusInfo struct {
-	// from state
-	moduleStatus string
-	instanceID   string
-	sgID         string
-	version      string
-
-	// from provider.Resources().Get (may be empty when Cloud Control is stubbed)
-	instanceType  string
-	privateIP     string
-	instanceState string // e.g. "running", "stopped"
-
-	// from TCP probe (only attempted when privateIP is known)
-	p4Reachable      bool
-	p4ProbeAttempted bool
-}
-
-// StatusOutput is the JSON-serialisable view of statusInfo.
+// StatusOutput is the JSON-serialisable view of a Perforce status.
 type StatusOutput struct {
 	Provisioned  bool   `json:"provisioned"`
 	Status       string `json:"status"`
@@ -56,24 +32,11 @@ type StatusOutput struct {
 	HelixCore    string `json:"helixCore,omitempty"`
 }
 
-type command struct {
-	runtime globals.Runtime
-	jsonOut bool
-	wait    bool
-	out     io.Writer
+// renderer implements modstatus.Renderer for Perforce-specific output.
+type renderer struct{}
 
-	// seams for testing
-	readState   func() (*fabricastate.State, error)
-	writeState  func(*fabricastate.State) error
-	getResource func(ctx context.Context, r *cloud.Resource) error
-	probeTCP    func(address string) bool
-	sleep       func(d time.Duration)
-	now         func() time.Time
-}
-
-// New returns the "perforce status" subcommand. It accepts RuntimeSource and
-// OptionsSource closures so that global flags (--json) are resolved at
-// execution time rather than at construction time.
+// New returns the "perforce status" subcommand. Global flags (--json) are
+// resolved at execution time via the source closures.
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
 	var wait bool
 	cmd := &cobra.Command{
@@ -96,256 +59,123 @@ Use --wait / -w to poll every 15 seconds until Helix Core is reachable
 				return err
 			}
 			opts := optionsSource()
-			c := command{
-				runtime: rt,
-				jsonOut: opts.JSONOutput,
-				wait:    wait,
-				out:     out,
+			c := modstatus.Command{
+				Spec: modstatus.Spec{
+					ModuleName:  moduleName,
+					ProbePort:   p4Port,
+					DisplayName: "Perforce",
+				},
+				Renderer:   renderer{},
+				Runtime:    rt,
+				JSONOut:    opts.JSONOutput,
+				Wait:       wait,
+				Out:        out,
+				ReadState:  func() (*fabricastate.State, error) { return readState(rt) },
+				WriteState: fabricastate.WriteState,
+				ProbeTCP:   modstatus.DefaultProbeTCP,
+				Sleep:      time.Sleep,
+				Now:        time.Now,
 			}
-			c.readState = c.defaultReadState
-			c.writeState = c.defaultWriteState
-			c.probeTCP = defaultProbeTCP
-			c.sleep = time.Sleep
-			c.now = time.Now
 			if rt.Provider != nil {
-				c.getResource = rt.Provider.Resources().Get
+				c.GetResource = rt.Provider.Resources().Get
 			}
-			return c.run(cmd.Context())
+			return c.Run(cmd.Context())
 		},
 	}
 	cmd.Flags().BoolVarP(&wait, "wait", "w", false, "Poll until ready or 10 minutes elapsed")
 	return cmd
 }
 
-func (c command) run(ctx context.Context) error {
-	st, err := c.readState()
-	if err != nil {
-		return fmt.Errorf("reading state: %w", err)
-	}
-
-	m := st.GetModule(moduleName)
-	if m == nil {
-		c.printNotProvisioned()
-		return nil
-	}
-
-	if c.wait {
-		return c.pollUntilReady(ctx, st, m)
-	}
-
-	info, err := c.buildInfo(ctx, m)
-	if err != nil {
-		return err
-	}
-
-	// Transition provisioning → ready when TCP probe first succeeds.
-	if info.p4ProbeAttempted && info.p4Reachable && m.Status != "ready" {
-		m.Status = "ready"
-		info.moduleStatus = "ready"
-		st.UpsertModule(moduleName, m.Version, "ready", m.Resources)
-		if err := c.writeState(st); err != nil {
-			fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
-		}
-	}
-
-	c.printResult(info)
-	return nil
-}
-
-func (c command) pollUntilReady(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState) error {
-	deadline := c.now().Add(waitDeadline)
-	for {
-		info, err := c.buildInfo(ctx, m)
-		if err != nil {
-			return err
-		}
-
-		if info.p4ProbeAttempted && info.p4Reachable {
-			m.Status = "ready"
-			info.moduleStatus = "ready"
-			st.UpsertModule(moduleName, m.Version, "ready", m.Resources)
-			if err := c.writeState(st); err != nil {
-				fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
-			}
-			c.printResult(info)
-			return nil
-		}
-
-		c.printResult(info)
-
-		if c.now().After(deadline) {
-			fmt.Fprintln(c.out, "Timed out waiting for Perforce to become ready (10 minutes).")
-			return nil
-		}
-
-		fmt.Fprintf(c.out, "Waiting %s before next check...\n\n", waitInterval)
-		c.sleep(waitInterval)
-	}
-}
-
-// buildInfo queries Cloud Control and probes TCP to produce a statusInfo.
-func (c command) buildInfo(ctx context.Context, m *fabricastate.ModuleState) (statusInfo, error) {
-	info := statusInfo{
-		moduleStatus: m.Status,
-		version:      m.Version,
-	}
-
-	sgRes, hasSG := stateutil.ResourceByType(m, "AWS::EC2::SecurityGroup")
-	if hasSG {
-		info.sgID = sgRes.Identifier
-	}
-
-	instRes, hasInst := stateutil.ResourceByType(m, "AWS::EC2::Instance")
-	if !hasInst {
-		return info, nil
-	}
-	info.instanceID = instRes.Identifier
-
-	// Query Cloud Control for live instance details.
-	if c.getResource != nil && info.instanceID != "" {
-		r := &cloud.Resource{
-			TypeName:   "AWS::EC2::Instance",
-			Identifier: info.instanceID,
-		}
-		if err := c.getResource(ctx, r); err != nil {
-			return info, fmt.Errorf("querying instance %s via Cloud Control: %w", info.instanceID, err)
-		}
-		parseInstanceActualState(r, &info)
-	}
-
-	// Probe TCP 1666 only if we have a private IP.
-	if info.privateIP != "" {
-		info.p4ProbeAttempted = true
-		info.p4Reachable = c.probeTCP(info.privateIP + ":1666")
-	}
-
-	return info, nil
-}
-
-// parseInstanceActualState extracts fields from the Cloud Control ActualState JSON.
-// Silently ignores unparseable or nil ActualState (Cloud Control is currently stubbed).
-func parseInstanceActualState(r *cloud.Resource, info *statusInfo) {
-	if len(r.ActualState) == 0 {
+func (renderer) NotProvisioned(out io.Writer, jsonOut bool) {
+	if jsonOut {
+		o := StatusOutput{Provisioned: false, Status: "not_provisioned"}
+		data, _ := json.MarshalIndent(o, "", "  ")
+		fmt.Fprintln(out, string(data))
 		return
 	}
-	var actual struct {
-		InstanceType     string `json:"InstanceType"`
-		PrivateIPAddress string `json:"PrivateIpAddress"`
-		State            struct {
-			Name string `json:"Name"`
-		} `json:"State"`
-	}
-	if err := json.Unmarshal(r.ActualState, &actual); err != nil {
-		return
-	}
-	info.instanceType = actual.InstanceType
-	info.privateIP = actual.PrivateIPAddress
-	info.instanceState = actual.State.Name
+	fmt.Fprintln(out, "Perforce is not provisioned. Run 'fabrica perforce create' to set it up.")
 }
 
-func (c command) printNotProvisioned() {
-	if c.jsonOut {
-		out := StatusOutput{Provisioned: false, Status: "not_provisioned"}
-		data, _ := json.MarshalIndent(out, "", "  ")
-		fmt.Fprintln(c.out, string(data))
+func (renderer) Result(out io.Writer, info modstatus.Info, jsonOut bool) {
+	if jsonOut {
+		printJSON(out, info)
 		return
 	}
-	fmt.Fprintln(c.out, "Perforce is not provisioned. Run 'fabrica perforce create' to set it up.")
+	printText(out, info)
 }
 
-func (c command) printResult(info statusInfo) {
-	if c.jsonOut {
-		c.printJSON(info)
-		return
-	}
-	c.printText(info)
-}
+func printText(out io.Writer, info modstatus.Info) {
+	fmt.Fprintln(out, "Perforce Helix Core")
+	fmt.Fprintln(out, strings.Repeat("-", lineWidth))
+	fmt.Fprintf(out, "  Status:        %s\n", info.ModuleStatus)
 
-func (c command) printText(info statusInfo) {
-	fmt.Fprintln(c.out, "Perforce Helix Core")
-	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	fmt.Fprintf(c.out, "  Status:        %s\n", info.moduleStatus)
-
-	if info.instanceID != "" {
-		label := info.instanceID
-		if info.instanceState != "" {
-			label += fmt.Sprintf("  (%s)", info.instanceState)
+	if info.InstanceID != "" {
+		label := info.InstanceID
+		if info.InstanceState != "" {
+			label += fmt.Sprintf("  (%s)", info.InstanceState)
 		}
-		fmt.Fprintf(c.out, "  Instance ID:   %s\n", label)
+		fmt.Fprintf(out, "  Instance ID:   %s\n", label)
 	}
 
-	if info.instanceType != "" {
-		fmt.Fprintf(c.out, "  Instance type: %s\n", info.instanceType)
+	if info.InstanceType != "" {
+		fmt.Fprintf(out, "  Instance type: %s\n", info.InstanceType)
 	}
 
-	if info.privateIP != "" {
-		fmt.Fprintf(c.out, "  Private IP:    %s\n", info.privateIP)
-		fmt.Fprintf(c.out, "  P4PORT:        tcp:%s:1666\n", info.privateIP)
+	if info.PrivateIP != "" {
+		fmt.Fprintf(out, "  Private IP:    %s\n", info.PrivateIP)
+		fmt.Fprintf(out, "  P4PORT:        tcp:%s:%d\n", info.PrivateIP, p4Port)
 	}
 
-	if info.sgID != "" {
-		fmt.Fprintf(c.out, "  Security Group: %s\n", info.sgID)
+	if info.SGID != "" {
+		fmt.Fprintf(out, "  Security Group: %s\n", info.SGID)
 	}
 
-	if info.version != "" {
-		fmt.Fprintf(c.out, "  Version:       %s\n", info.version)
+	if info.Version != "" {
+		fmt.Fprintf(out, "  Version:       %s\n", info.Version)
 	}
 
-	if info.p4ProbeAttempted {
-		if info.p4Reachable {
-			fmt.Fprintf(c.out, "  Helix Core:    %s (responding)\n", info.version)
+	if info.ProbeAttempted {
+		if info.Reachable {
+			fmt.Fprintf(out, "  Helix Core:    %s (responding)\n", info.Version)
 		} else {
-			fmt.Fprintln(c.out, "  Helix Core:    unreachable from this machine (check VPN/network)")
+			fmt.Fprintln(out, "  Helix Core:    unreachable from this machine (check VPN/network)")
 		}
-	} else if info.moduleStatus == "provisioning" {
-		fmt.Fprintln(c.out, "  Helix Core:    setting up... (~3 min from launch)")
+	} else if info.ModuleStatus == "provisioning" {
+		fmt.Fprintln(out, "  Helix Core:    setting up... (~3 min from launch)")
 	}
 }
 
-func (c command) printJSON(info statusInfo) {
-	out := StatusOutput{
+func printJSON(out io.Writer, info modstatus.Info) {
+	o := StatusOutput{
 		Provisioned:  true,
-		Status:       info.moduleStatus,
-		InstanceID:   info.instanceID,
-		SGID:         info.sgID,
-		Version:      info.version,
-		InstanceType: info.instanceType,
-		PrivateIP:    info.privateIP,
+		Status:       info.ModuleStatus,
+		InstanceID:   info.InstanceID,
+		SGID:         info.SGID,
+		Version:      info.Version,
+		InstanceType: info.InstanceType,
+		PrivateIP:    info.PrivateIP,
 	}
-	if info.privateIP != "" {
-		out.P4PORT = fmt.Sprintf("tcp:%s:1666", info.privateIP)
+	if info.PrivateIP != "" {
+		o.P4PORT = fmt.Sprintf("tcp:%s:%d", info.PrivateIP, p4Port)
 	}
-	if info.p4ProbeAttempted {
-		if info.p4Reachable {
-			out.HelixCore = "responding"
+	if info.ProbeAttempted {
+		if info.Reachable {
+			o.HelixCore = "responding"
 		} else {
-			out.HelixCore = "unreachable"
+			o.HelixCore = "unreachable"
 		}
-	} else if info.moduleStatus == "provisioning" {
-		out.HelixCore = "setting up"
+	} else if info.ModuleStatus == "provisioning" {
+		o.HelixCore = "setting up"
 	}
-	data, _ := json.MarshalIndent(out, "", "  ")
-	fmt.Fprintln(c.out, string(data))
+	data, _ := json.MarshalIndent(o, "", "  ")
+	fmt.Fprintln(out, string(data))
 }
 
-func (c command) defaultReadState() (*fabricastate.State, error) {
+func readState(rt globals.Runtime) (*fabricastate.State, error) {
 	account, region := "", ""
-	if c.runtime.Config != nil {
-		account = c.runtime.Config.Cloud.AWS.AccountID
-		region = c.runtime.Config.Cloud.AWS.Region
+	if rt.Config != nil {
+		account = rt.Config.Cloud.AWS.AccountID
+		region = rt.Config.Cloud.AWS.Region
 	}
 	return fabricastate.ReadStateOrNew(account, region)
-}
-
-func (c command) defaultWriteState(st *fabricastate.State) error {
-	return fabricastate.WriteState(st)
-}
-
-func defaultProbeTCP(address string) bool {
-	conn, err := net.DialTimeout("tcp", address, probeTimeout)
-	if err != nil {
-		return false
-	}
-	conn.Close()
-	return true
 }
