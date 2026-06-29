@@ -8,6 +8,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/ci"
 	"github.com/jpvelasco/fabrica/cmd/configcmd"
+	"github.com/jpvelasco/fabrica/cmd/deploy"
 	"github.com/jpvelasco/fabrica/cmd/destroy"
 	"github.com/jpvelasco/fabrica/cmd/doctor"
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -66,6 +67,7 @@ func New(out io.Writer) *cobra.Command {
 	cmd.AddCommand(horde.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(workstation.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(ci.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(deploy.New(runtimeSource, optionsSource, out))
 
 	return cmd
 }

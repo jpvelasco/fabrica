@@ -49,6 +49,48 @@ func (c *resourceClients) Create(ctx context.Context, r *fabricac.Resource) erro
 	return nil
 }
 
+// createAsync fires CreateResource and returns once the resource Identifier is
+// known, WITHOUT waiting for the resource to stabilize. Used for GameLift fleets,
+// whose activation (20–40 min) the blocking Create() waiter cannot surface.
+func (c *resourceClients) createAsync(ctx context.Context, r *fabricac.Resource) error {
+	if err := c.ensureClient(ctx); err != nil {
+		return err
+	}
+	r.DesiredState = injectFabricaTags(r.DesiredState, "fabrica", c.version, nil)
+
+	out, err := c.cc.CreateResource(ctx, &cloudcontrol.CreateResourceInput{
+		TypeName:     aws.String(r.TypeName),
+		DesiredState: aws.String(string(r.DesiredState)),
+	})
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", r.TypeName, err)
+	}
+	if id := aws.ToString(out.ProgressEvent.Identifier); id != "" {
+		r.Identifier = id
+		return nil
+	}
+	token := aws.ToString(out.ProgressEvent.RequestToken)
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		st, err := c.cc.GetResourceRequestStatus(ctx, &cloudcontrol.GetResourceRequestStatusInput{
+			RequestToken: aws.String(token),
+		})
+		if err != nil {
+			return fmt.Errorf("polling %s create request: %w", r.TypeName, err)
+		}
+		ev := st.ProgressEvent
+		if ev.OperationStatus == types.OperationStatusFailed {
+			return progressEventError(r.TypeName, ev)
+		}
+		if id := aws.ToString(ev.Identifier); id != "" {
+			r.Identifier = id
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("timed out waiting for %s identifier (60s) — check the AWS console and retry", r.TypeName)
+}
+
 // Get retrieves the current state of a resource and populates r.ActualState.
 func (c *resourceClients) Get(ctx context.Context, r *fabricac.Resource) error {
 	if err := c.ensureClient(ctx); err != nil {

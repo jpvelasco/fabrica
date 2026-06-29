@@ -50,6 +50,11 @@ type Spec struct {
 	Irreversible string
 	// SuccessMessage is printed after a successful teardown (e.g. "Perforce Helix Core destroyed.").
 	SuccessMessage string
+	// ResourceOrder, when non-nil, returns the resources to delete in the order
+	// they should be deleted. When nil, the engine uses the default EC2
+	// Instance -> SecurityGroup order. Modules whose resources are not the
+	// EC2/SG pair (e.g. deploy's GameLift fleet/build/alias/role) set this.
+	ResourceOrder func(*fabricastate.ModuleState) []cloud.Resource
 }
 
 // Command runs a teardown for one module. The varying strings come from Spec;
@@ -86,7 +91,7 @@ func (c Command) Run(ctx context.Context) error {
 		return nil
 	}
 
-	resources := resourcesToDelete(m)
+	resources := resourcesToDelete2(c.Spec, m)
 
 	if c.DryRun {
 		c.printDryRun(m, resources)
@@ -322,6 +327,16 @@ func resourcesToDelete(m *fabricastate.ModuleState) []cloud.Resource {
 		out = append(out, cloud.Resource{TypeName: sg.TypeName, Identifier: sg.Identifier})
 	}
 	return out
+}
+
+// resourcesToDelete2 returns the deletion-ordered resources for a module. If the
+// Spec supplies a ResourceOrder hook it drives the order; otherwise the default
+// EC2 Instance -> SecurityGroup order is used.
+func resourcesToDelete2(spec Spec, m *fabricastate.ModuleState) []cloud.Resource {
+	if spec.ResourceOrder != nil {
+		return spec.ResourceOrder(m)
+	}
+	return resourcesToDelete(m)
 }
 
 func removeResource(m *fabricastate.ModuleState, typeName string) {
