@@ -127,24 +127,70 @@ func (c command) run(ctx context.Context) error {
 
 	fmt.Fprintln(c.out, "Deploy status")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	fmt.Fprintf(c.out, "  Alias: %s\n", alias.Identifier)
+	fmt.Fprintf(c.out, "%s\n", summaryLine(alias.Identifier, active, candidates))
+	fmt.Fprintf(c.out, "  Alias: %s\n", orDash(alias.Identifier))
 	fmt.Fprintln(c.out)
+
+	fmt.Fprintln(c.out, "Active fleet (alias points here):")
 	if active != nil {
-		fmt.Fprintln(c.out, "Active fleet (alias points here):")
-		fmt.Fprintf(c.out, "  %s  role=%s  build=%s  status=%s\n", active.FleetID, active.Role, active.BuildVersion, active.LiveStatus)
+		fmt.Fprintf(c.out, "  %s %s  build=%s  status=%s\n",
+			fleetSymbol(active.LiveStatus), active.FleetID, orDash(active.BuildVersion), active.LiveStatus)
 	} else {
-		fmt.Fprintln(c.out, "No active fleet yet. Run 'fabrica deploy promote <build-version>'.")
+		fmt.Fprintln(c.out, "  (none) — run 'fabrica deploy promote <build-version>' to deploy a build")
 	}
 	fmt.Fprintln(c.out)
+
+	fmt.Fprintln(c.out, "Rollback candidates (retained fleets):")
 	if len(candidates) > 0 {
-		fmt.Fprintln(c.out, "Rollback candidates (retained — 'fabrica deploy rollback' flips to the newest):")
 		for _, f := range candidates {
-			fmt.Fprintf(c.out, "  %s  role=%s  build=%s  status=%s   <- rollback candidate\n", f.FleetID, f.Role, f.BuildVersion, f.LiveStatus)
+			fmt.Fprintf(c.out, "  %s %s  build=%s  status=%s   <- rollback target\n",
+				fleetSymbol(f.LiveStatus), f.FleetID, orDash(f.BuildVersion), f.LiveStatus)
 		}
+		fmt.Fprintln(c.out)
+		fmt.Fprintln(c.out, "  Roll back to the newest with: fabrica deploy rollback")
 	} else {
-		fmt.Fprintln(c.out, "No rollback candidates (only one fleet promoted so far).")
+		fmt.Fprintln(c.out, "  (none) — only one fleet promoted so far")
 	}
 	return nil
+}
+
+// summaryLine is the one-line headline at the top of the status output,
+// mirroring the CI module's summary style.
+func summaryLine(alias string, active *fleetJSON, candidates []fleetJSON) string {
+	if alias == "" {
+		return "deploy not fully set up — run 'fabrica deploy setup'"
+	}
+	if active == nil {
+		return "alias ready • no fleet deployed yet"
+	}
+	s := fmt.Sprintf("alias ready • active fleet %s (%s)", active.FleetID, active.LiveStatus)
+	if len(candidates) > 0 {
+		s += fmt.Sprintf(" • %d rollback candidate(s)", len(candidates))
+	}
+	return s
+}
+
+// fleetSymbol maps a live GameLift fleet status to a fixed-width indicator,
+// matching the [OK]/[....]/[FAIL] convention used by 'fabrica ci status'.
+func fleetSymbol(status string) string {
+	switch status {
+	case "ACTIVE":
+		return "[OK]  "
+	case "NEW", "DOWNLOADING", "VALIDATING", "BUILDING", "ACTIVATING":
+		return "[....]"
+	case "ERROR", "DELETING", "TERMINATED":
+		return "[FAIL]"
+	default:
+		return "[????]"
+	}
+}
+
+// orDash renders an empty string as "(none)" for readable output.
+func orDash(s string) string {
+	if s == "" {
+		return "(none)"
+	}
+	return s
 }
 
 // liveStatus queries GameLift for the fleet's current status, degrading to

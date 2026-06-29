@@ -61,6 +61,45 @@ func TestStatusShowsActiveAndRollbackCandidate(t *testing.T) {
 	}
 }
 
+func TestStatusSummaryAndSymbols(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCmd(&out, deployState())
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	s := out.String()
+	// Summary headline names the active fleet and the rollback count.
+	if !strings.Contains(s, "active fleet fleet-new") {
+		t.Errorf("expected summary line naming active fleet:\n%s", s)
+	}
+	if !strings.Contains(s, "rollback candidate(s)") {
+		t.Errorf("expected summary to mention rollback candidate count:\n%s", s)
+	}
+	// ACTIVE fleets render the [OK] indicator; rollback targets are marked.
+	if !strings.Contains(s, "[OK]") {
+		t.Errorf("expected [OK] status symbol for ACTIVE fleet:\n%s", s)
+	}
+	if !strings.Contains(s, "rollback target") {
+		t.Errorf("expected rollback target marker:\n%s", s)
+	}
+}
+
+func TestStatusSymbolMapping(t *testing.T) {
+	cases := map[string]string{
+		"ACTIVE":     "[OK]  ",
+		"BUILDING":   "[....]",
+		"ACTIVATING": "[....]",
+		"ERROR":      "[FAIL]",
+		"TERMINATED": "[FAIL]",
+		"WAT":        "[????]",
+	}
+	for status, want := range cases {
+		if got := fleetSymbol(status); got != want {
+			t.Errorf("fleetSymbol(%q) = %q, want %q", status, got, want)
+		}
+	}
+}
+
 func TestStatusJSON(t *testing.T) {
 	var out bytes.Buffer
 	c := newTestCmd(&out, deployState())

@@ -26,7 +26,7 @@ See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium vision, and what's next.
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Complete |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Complete |
 | `ci` | `setup`, `trigger`, `status`, `logs` | Complete |
-| `deploy` | `setup`, `promote`, `status`, `destroy` | Planned |
+| `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | Complete |
 | `cost` | `report`, `forecast`, `alerts` | Planned |
 
 ## Requirements
@@ -77,6 +77,15 @@ fabrica horde submit --buildgraph path/to/BuildGraph.xml --target "Compile Unrea
 
 # A cloud workstation
 fabrica workstation create
+
+# CI: a CodeBuild project that orchestrates Horde BuildGraph jobs
+fabrica ci setup
+fabrica ci trigger BuildGraph.xml --wait
+
+# Deploy: roll a built server out to a GameLift fleet (blue/green), then check it
+fabrica deploy setup
+fabrica deploy promote v1.0.0
+fabrica deploy status
 
 # Re-run any time for an aggregate view (add --probe from a VPN to test reachability)
 fabrica status
@@ -225,6 +234,49 @@ fabrica ci trigger BuildGraph.xml --wait
 fabrica ci trigger BuildGraph.xml
 fabrica ci status --build <build-id>
 fabrica ci logs <build-id>
+```
+
+### Deploy
+
+> **Orchestration over GameLift:** `fabrica deploy` rolls CI/Horde-produced server builds out to GameLift managed-EC2 fleets using alias-flip blue/green. Fabrica owns the build-to-deploy path; live runtime fleet operations (scaling, matchmaking, sessions) are left to Classis. GameLift Build/Fleet/Alias resources are created via Cloud Control; the 20–40 min fleet activation is tracked through an SDK auxiliary interface so you see live phase progress and real failure events.
+
+#### `fabrica deploy setup`
+
+Provisions the deploy infrastructure: an IAM role GameLift assumes to read builds from S3, and a GameLift alias used for blue/green promotion. Idempotent — existing resources are detected and left in place. Shows a plan + monthly cost estimate, then prompts before creating (`--yes` to skip, `--dry-run` to preview). Requires `deploy.buildBucket` in `fabrica.yaml`.
+
+#### `fabrica deploy promote <build-version>`
+
+Registers a packaged server build from S3 as a GameLift build, creates a new fleet for it, waits until the fleet is `ACTIVE` (printing phase transitions), then flips the alias to the new fleet. The previously-active fleet is retained for rollback. By default the build is read from `s3://<deploy.buildBucket>/builds/<version>/server.zip` (override with `--s3-bucket`/`--s3-key`). Use `--no-wait` to start fleet creation without blocking (skips the alias flip). On fleet `ERROR` or timeout the alias is left untouched and the failure events are shown.
+
+#### `fabrica deploy rollback`
+
+Flips the alias back to the most-recent retained ("superseded") fleet — an instant blue/green rollback with no re-provisioning. Verifies the target fleet is still `ACTIVE` first, shows current → target, and prompts before flipping (`--yes` to skip).
+
+#### `fabrica deploy status`
+
+Read-only overview: the alias, the active fleet, and any retained rollback candidates, each with live GameLift fleet status (`[OK]`/`[....]`/`[FAIL]` indicators) and a one-line summary. `--json` for machine-readable output.
+
+#### `fabrica deploy destroy`
+
+Tears down deploy resources. By default deletes the fleets and builds but **preserves** the alias and IAM role (game backends reference the alias, which is meant to outlive individual deployments). Pass `--all` to remove the alias and role too. Typed-phrase confirmation; `--dry-run` to preview.
+
+**Example pipeline:**
+
+```bash
+# One-time: provision the deploy infrastructure (IAM role + alias)
+fabrica deploy setup
+
+# Roll a build out to a new fleet (blue/green: waits for ACTIVE, flips alias)
+fabrica deploy promote v1.2.3
+
+# Check what's live and what you could roll back to
+fabrica deploy status
+
+# A bad build? Flip back to the previous fleet instantly
+fabrica deploy rollback
+
+# Tear down fleets/builds (keeps the alias + role for the next promote)
+fabrica deploy destroy
 ```
 
 ### Other

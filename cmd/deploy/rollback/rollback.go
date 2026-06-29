@@ -41,7 +41,13 @@ retained ("superseded") fleet. The target fleet must still be ACTIVE.
 
 Use this when a freshly-promoted build misbehaves: the previous fleet is kept
 running by 'deploy promote' precisely so rollback is instant.`,
-		Example: `  fabrica deploy rollback
+		Example: `  # Inspect what you'd roll back to first:
+  fabrica deploy status
+
+  # Flip the alias back to the previous fleet (prompts for confirmation):
+  fabrica deploy rollback
+
+  # Non-interactive (CI / automation):
   fabrica deploy rollback --yes`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()

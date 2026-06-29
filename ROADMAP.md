@@ -4,7 +4,7 @@ This is the single source of truth for where Fabrica is and where it's going.
 The `README.md` describes how to use what exists today; this document tracks
 status and sequencing. When they disagree, this file wins.
 
-Last updated: 2026-06-23.
+Last updated: 2026-06-28.
 
 ## Vision
 

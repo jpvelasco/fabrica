@@ -51,9 +51,17 @@ promotion. Idempotent; existing resources are detected and left in place.
 Requires deploy.buildBucket in fabrica.yaml (where CI/Horde upload builds).
 
 With --dry-run, shows the planned resources and estimated monthly cost.`,
-		Example: `  fabrica deploy setup --dry-run
+		Example: `  # Preview the resources + monthly cost (no changes):
+  fabrica deploy setup --dry-run
+
+  # Provision, confirming interactively:
   fabrica deploy setup
-  fabrica deploy setup --yes`,
+
+  # Provision non-interactively (CI / automation):
+  fabrica deploy setup --yes
+
+  # Prereq: set deploy.buildBucket in fabrica.yaml to the S3 bucket where
+  # CI/Horde uploads server builds. Next: fabrica deploy promote <build-version>.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
 			if err != nil {

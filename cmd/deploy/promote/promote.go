@@ -67,9 +67,21 @@ rollback' to it.
 Requires 'fabrica deploy setup'. The build must already be uploaded to S3 (by
 CI/Horde). By default the S3 location is deploy.buildBucket + "builds/<version>/
 server.zip"; override with --s3-bucket / --s3-key.`,
-		Example: `  fabrica deploy promote v1.2.3
+		Example: `  # Preview the plan + monthly cost without creating anything:
+  fabrica deploy promote v1.2.3 --dry-run
+
+  # Roll out a build (waits for the fleet to go ACTIVE, then flips the alias):
+  fabrica deploy promote v1.2.3
+
+  # Point at a specific build artifact in S3:
   fabrica deploy promote v1.2.3 --s3-key builds/v1.2.3/LinuxServer.zip
-  fabrica deploy promote v1.2.3 --no-wait`,
+
+  # Start fleet creation and return immediately (no alias flip — track with
+  # 'fabrica deploy status', then re-run without --no-wait once ACTIVE):
+  fabrica deploy promote v1.2.3 --no-wait
+
+  # Prereqs: 'fabrica deploy setup' has run and the build zip is uploaded to
+  # s3://<deploy.buildBucket>/builds/v1.2.3/server.zip (by CI/Horde).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
@@ -176,7 +188,7 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 		return fmt.Errorf("registering GameLift build from s3://%s/%s: %w — verify the build exists and the deploy role can read it", plan.S3Bucket, plan.S3Key, err)
 	}
 	fmt.Fprintf(c.out, "Registered build: %s (version %s)\n", buildRes.Identifier, plan.BuildVersion)
-	c.recordResource(st, m, fabricastate.ModuleResource{
+	c.recordResource(m, fabricastate.ModuleResource{
 		TypeName:   deploy.TypeGameLiftBuild,
 		Identifier: buildRes.Identifier,
 		Properties: map[string]string{"buildVersion": plan.BuildVersion},
@@ -193,7 +205,7 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 		return fmt.Errorf("creating fleet: %w", err)
 	}
 	fmt.Fprintf(c.out, "Creating fleet: %s\n", fleetRes.Identifier)
-	c.recordResource(st, m, fabricastate.ModuleResource{
+	c.recordResource(m, fabricastate.ModuleResource{
 		TypeName:   deploy.TypeGameLiftFleet,
 		Identifier: fleetRes.Identifier,
 		Properties: map[string]string{"buildVersion": plan.BuildVersion, "role": "provisioning"},
@@ -224,7 +236,7 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 	fmt.Fprintf(c.out, "Alias %s now points to fleet %s.\n", plan.AliasID, fleetRes.Identifier)
 
 	// 5. Record rollback target: demote previous active fleet, promote new one.
-	c.swapActiveFleet(st, m, fleetRes.Identifier)
+	c.swapActiveFleet(m, fleetRes.Identifier)
 	st.UpsertModule(moduleName, plan.BuildVersion, "ready", m.Resources)
 	if err := c.writeState(st); err != nil {
 		return fmt.Errorf("writing state: %w", err)
@@ -282,7 +294,7 @@ func (c command) printFleetEvents(ctx context.Context, fleetID string) {
 
 // recordResource adds or replaces a resource of the same type+identifier in the
 // module's resource list.
-func (c command) recordResource(st *fabricastate.State, m *fabricastate.ModuleState, r fabricastate.ModuleResource) {
+func (c command) recordResource(m *fabricastate.ModuleState, r fabricastate.ModuleResource) {
 	for i := range m.Resources {
 		if m.Resources[i].TypeName == r.TypeName && m.Resources[i].Identifier == r.Identifier {
 			m.Resources[i] = r
@@ -294,7 +306,7 @@ func (c command) recordResource(st *fabricastate.State, m *fabricastate.ModuleSt
 
 // swapActiveFleet marks newFleetID active and demotes any other active fleet to
 // superseded (the rollback candidate).
-func (c command) swapActiveFleet(st *fabricastate.State, m *fabricastate.ModuleState, newFleetID string) {
+func (c command) swapActiveFleet(m *fabricastate.ModuleState, newFleetID string) {
 	for i := range m.Resources {
 		r := &m.Resources[i]
 		if r.TypeName != deploy.TypeGameLiftFleet {
