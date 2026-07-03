@@ -35,6 +35,17 @@ func TestListText(t *testing.T) {
 	}
 }
 
+func TestListEmpty(t *testing.T) {
+	var out bytes.Buffer
+	c := listCommand{cfg: config.Defaults(), out: &out}
+	if err := c.run(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "No budget thresholds configured") {
+		t.Fatalf("expected empty-budgets message:\n%s", out.String())
+	}
+}
+
 func TestSetUpsertsAndSaves(t *testing.T) {
 	var out bytes.Buffer
 	cfg := config.Defaults()
