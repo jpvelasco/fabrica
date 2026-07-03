@@ -6,6 +6,7 @@ package cost
 import (
 	"io"
 
+	"github.com/jpvelasco/fabrica/cmd/cost/forecast"
 	"github.com/jpvelasco/fabrica/cmd/cost/report"
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/spf13/cobra"
@@ -26,5 +27,6 @@ Available operations:
   alerts    Manage and check local budget thresholds`,
 	}
 	cmd.AddCommand(report.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(forecast.New(runtimeSource, optionsSource, out))
 	return cmd
 }
