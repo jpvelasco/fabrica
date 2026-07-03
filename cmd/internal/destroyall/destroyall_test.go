@@ -43,7 +43,7 @@ func (e *errBackend) DeleteStateLockTable(_ context.Context, t string) (cloud.St
 	return cloud.StateBackendDeleteResult{Identifier: t, Deleted: true}, nil
 }
 
-func baseEngine(out *bytes.Buffer, be *fakeBackend, mods []Module) Engine {
+func baseEngine(out *bytes.Buffer, be cloud.StateBackendDestroyer, mods []Module) Engine {
 	return Engine{
 		Account:   "123456789012",
 		Region:    "us-east-1",
@@ -222,4 +222,144 @@ func TestRunJSONOutput(t *testing.T) {
 	if len(res.Modules) != 1 || res.Modules[0].Module != "deploy" || !res.BackendDeleted {
 		t.Fatalf("unexpected result: %+v", res)
 	}
+}
+
+// TestRunDryRunJSONOutput verifies --dry-run with JSON output format.
+func TestRunDryRunJSONOutput(t *testing.T) {
+	var out bytes.Buffer
+	be := &fakeBackend{}
+	e := baseEngine(&out, be, []Module{
+		{Name: "deploy", Teardown: okTeardown("fleet-1")},
+		{Name: "perforce", Teardown: okTeardown("i-1")},
+	})
+	e.DryRun = true
+	e.JSONOut = true
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var res Result
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out.String())
+	}
+	if !res.DryRun {
+		t.Error("DryRun must be true")
+	}
+	if len(res.Modules) != 2 {
+		t.Errorf("expected 2 modules in dry-run output, got %d", len(res.Modules))
+	}
+	if be.bucketDeleted || be.tableDeleted {
+		t.Fatal("dry-run must not delete backend")
+	}
+}
+
+// TestRunModuleFailureJSONOutput verifies JSON output when a module fails.
+func TestRunModuleFailureJSONOutput(t *testing.T) {
+	var out bytes.Buffer
+	be := &fakeBackend{}
+	e := baseEngine(&out, be, []Module{
+		{Name: "deploy", Teardown: failTeardown("fleet stuck")},
+		{Name: "perforce", Teardown: okTeardown("i-1")},
+	})
+	e.JSONOut = true
+	err := e.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected an error when a module fails")
+	}
+	var res Result
+	if out.Len() > 0 {
+		if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+			t.Fatalf("invalid JSON: %v\n%s", err, out.String())
+		}
+		if res.Modules[0].Error == "" {
+			t.Error("deploy module result should contain error")
+		}
+	}
+}
+
+// TestBackendDeleteMissingBucket verifies printBackendResult with Missing=true.
+func TestBackendDeleteMissingBucket(t *testing.T) {
+	var out bytes.Buffer
+	be := &missingBackend{}
+	e := baseEngine(&out, be, []Module{{Name: "perforce", Teardown: okTeardown("i-1")}})
+	e.JSONOut = false
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(out.String(), "not found") {
+		t.Fatalf("expected 'not found' message for missing backend:\n%s", out.String())
+	}
+}
+
+// TestBackendDeleteUnchanged verifies printBackendResult with Deleted=false, Missing=false.
+func TestBackendDeleteUnchanged(t *testing.T) {
+	var out bytes.Buffer
+	be := &unchangedBackend{}
+	e := baseEngine(&out, be, []Module{{Name: "perforce", Teardown: okTeardown("i-1")}})
+	e.JSONOut = false
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(out.String(), "unchanged") {
+		t.Fatalf("expected 'unchanged' message for unchanged backend:\n%s", out.String())
+	}
+}
+
+// missingBackend returns Missing=true when asked to delete.
+type missingBackend struct{ tableDeleted bool }
+
+func (missingBackend) DeleteStateBucket(_ context.Context, b string) (cloud.StateBackendDeleteResult, error) {
+	return cloud.StateBackendDeleteResult{Identifier: b, Missing: true}, nil
+}
+func (m *missingBackend) DeleteStateLockTable(_ context.Context, t string) (cloud.StateBackendDeleteResult, error) {
+	m.tableDeleted = true
+	return cloud.StateBackendDeleteResult{Identifier: t, Deleted: true}, nil
+}
+
+// unchangedBackend returns Deleted=false, Missing=false.
+type unchangedBackend struct{}
+
+func (unchangedBackend) DeleteStateBucket(_ context.Context, b string) (cloud.StateBackendDeleteResult, error) {
+	return cloud.StateBackendDeleteResult{Identifier: b, Deleted: false, Missing: false}, nil
+}
+func (unchangedBackend) DeleteStateLockTable(_ context.Context, t string) (cloud.StateBackendDeleteResult, error) {
+	return cloud.StateBackendDeleteResult{Identifier: t, Deleted: false, Missing: false}, nil
+}
+
+// TestRunNoBackendNames verifies engine works when Bucket and Table are empty.
+func TestRunNoBackendNames(t *testing.T) {
+	var out bytes.Buffer
+	be := &fakeBackend{}
+	e := baseEngine(&out, be, []Module{{Name: "perforce", Teardown: okTeardown("i-1")}})
+	e.Bucket = ""
+	e.Table = ""
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatalf("Run with no backend: %v", err)
+	}
+	if be.bucketDeleted || be.tableDeleted {
+		t.Fatal("should not delete backend when names are empty")
+	}
+}
+
+// TestRunTableDeleteError verifies backend error on table deletion.
+func TestRunTableDeleteError(t *testing.T) {
+	var out bytes.Buffer
+	be := &tableErrorBackend{}
+	e := baseEngine(&out, be, []Module{{Name: "perforce", Teardown: okTeardown("i-1")}})
+	err := e.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected an error when table deletion fails")
+	}
+	if !strings.Contains(err.Error(), "table") {
+		t.Fatalf("error should mention table failure, got: %v", err)
+	}
+}
+
+// tableErrorBackend fails on table deletion only.
+type tableErrorBackend struct{}
+
+func (tableErrorBackend) DeleteStateBucket(_ context.Context, b string) (cloud.StateBackendDeleteResult, error) {
+	return cloud.StateBackendDeleteResult{Identifier: b, Deleted: true}, nil
+}
+func (tableErrorBackend) DeleteStateLockTable(_ context.Context, t string) (cloud.StateBackendDeleteResult, error) {
+	return cloud.StateBackendDeleteResult{Identifier: t}, errors.New("table locked")
 }
