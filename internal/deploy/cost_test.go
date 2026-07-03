@@ -3,6 +3,7 @@ package deploy
 import (
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
 )
 
@@ -33,5 +34,30 @@ func TestBuildAndAliasFree(t *testing.T) {
 		if m.Amount != 0 {
 			t.Errorf("%s should be free, got %.2f", tn, m.Amount)
 		}
+	}
+}
+
+func TestCostResourcesDefaults(t *testing.T) {
+	got := CostResources(config.DeployConfig{})
+	if len(got) != 1 {
+		t.Fatalf("want 1 resource (fleet only), got %d: %+v", len(got), got)
+	}
+	if got[0].TypeName != TypeGameLiftFleet {
+		t.Errorf("TypeName: got %s, want %s", got[0].TypeName, TypeGameLiftFleet)
+	}
+	expectedName := fleetCostName(defaultInstanceType, defaultDesiredInstances)
+	if got[0].Name != expectedName {
+		t.Errorf("Name: got %s, want %s", got[0].Name, expectedName)
+	}
+}
+
+func TestCostResourcesOverrides(t *testing.T) {
+	got := CostResources(config.DeployConfig{InstanceType: "c5.xlarge", DesiredInstances: 3})
+	if len(got) != 1 {
+		t.Fatalf("want 1 resource, got %d", len(got))
+	}
+	expectedName := fleetCostName("c5.xlarge", 3)
+	if got[0].Name != expectedName {
+		t.Errorf("overrides not applied: got %s, want %s", got[0].Name, expectedName)
 	}
 }

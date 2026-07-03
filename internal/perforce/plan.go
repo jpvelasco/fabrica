@@ -64,20 +64,17 @@ func NewCreatePlan(ctx context.Context, cfg config.PerforceConfig, account, regi
 	}
 
 	return &CreatePlan{
-		Account:      account,
-		Region:       region,
-		InstanceType: instanceType,
-		HelixVersion: version,
-		VolumeSize:   volumeSize,
-		VPCID:        vpcID,
-		SubnetID:     subnetID,
-		DefaultVPC:   defaultVPC,
-		SGName:       "fabrica-perforce-sg",
-		InstanceName: "fabrica-perforce",
-		CostResources: []cost.Resource{
-			{TypeName: "AWS::EC2::Instance", Name: instanceType},
-			{TypeName: "AWS::EC2::Volume", Name: fmt.Sprintf("gp3-%dGiB", volumeSize)},
-		},
+		Account:       account,
+		Region:        region,
+		InstanceType:  instanceType,
+		HelixVersion:  version,
+		VolumeSize:    volumeSize,
+		VPCID:         vpcID,
+		SubnetID:      subnetID,
+		DefaultVPC:    defaultVPC,
+		SGName:        "fabrica-perforce-sg",
+		InstanceName:  "fabrica-perforce",
+		CostResources: CostResources(cfg),
 	}, nil
 }
 

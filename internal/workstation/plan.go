@@ -60,28 +60,13 @@ func NewCreatePlan(ctx context.Context, cfg config.WorkstationConfig, account, r
 		return nil, fmt.Errorf("workstation.amiId is required. Provide a NICE DCV-enabled AMI ID.\nSee: https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-installing.html")
 	}
 
-	instanceType := cfg.InstanceType
-	volumeSize := cfg.VolumeSize
-
 	switch tmpl {
-	case TemplateArtist:
-		instanceType = ArtistInstanceType
-		volumeSize = ArtistVolumeSize
-	case TemplateProgrammer:
-		instanceType = ProgrammerInstanceType
-		volumeSize = ProgrammerVolumeSize
-	case "":
-		// no template — fall through to individual defaults below
+	case "", TemplateArtist, TemplateProgrammer:
+		// valid
 	default:
 		return nil, fmt.Errorf("unknown template %q: must be %q or %q", tmpl, TemplateArtist, TemplateProgrammer)
 	}
-
-	if instanceType == "" {
-		instanceType = DefaultInstanceType
-	}
-	if volumeSize <= 0 {
-		volumeSize = DefaultVolumeSize
-	}
+	instanceType, volumeSize := resolveSizing(cfg, tmpl)
 	dcvPort := DefaultDCVPort
 	idleTimeout := cfg.IdleTimeoutMinutes
 	if idleTimeout <= 0 {
@@ -120,9 +105,6 @@ func NewCreatePlan(ctx context.Context, cfg config.WorkstationConfig, account, r
 		PerforceServerAddr: perforceAddr,
 		SGName:             "fabrica-workstation-sg",
 		InstanceName:       "fabrica-workstation",
-		CostResources: []cost.Resource{
-			{TypeName: typeEC2Instance, Name: instanceType},
-			{TypeName: typeEC2Volume, Name: fmt.Sprintf("gp3-%dGiB", volumeSize)},
-		},
+		CostResources:      CostResources(cfg),
 	}, nil
 }

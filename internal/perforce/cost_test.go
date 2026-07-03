@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
 )
 
@@ -145,5 +146,25 @@ func TestGPUInstancePrices(t *testing.T) {
 		if !almostEqual(got.Amount, want) {
 			t.Errorf("%s: amount = %.4f, want %.4f", tc.typ, got.Amount, want)
 		}
+	}
+}
+
+func TestCostResourcesDefaults(t *testing.T) {
+	got := CostResources(config.PerforceConfig{}) // empty -> defaults
+	if len(got) != 2 {
+		t.Fatalf("want 2 resources, got %d: %+v", len(got), got)
+	}
+	if got[0].TypeName != TypeAWSEC2Instance || got[0].Name != "m5.xlarge" {
+		t.Errorf("instance: got %+v", got[0])
+	}
+	if got[1].TypeName != TypeAWSEC2Volume || got[1].Name != "gp3-500GiB" {
+		t.Errorf("volume: got %+v", got[1])
+	}
+}
+
+func TestCostResourcesOverrides(t *testing.T) {
+	got := CostResources(config.PerforceConfig{InstanceType: "m5.2xlarge", VolumeSize: 1000})
+	if got[0].Name != "m5.2xlarge" || got[1].Name != "gp3-1000GiB" {
+		t.Fatalf("overrides not applied: %+v", got)
 	}
 }

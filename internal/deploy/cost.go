@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
 )
 
@@ -57,6 +58,23 @@ type freeEstimator struct{ note string }
 
 func (f freeEstimator) Estimate(cost.Resource) (cost.Monthly, error) {
 	return cost.Monthly{Amount: 0, Confidence: cost.High, Note: f.note}, nil
+}
+
+// CostResources returns the standing monthly cost inputs for the deploy module:
+// the active fleet. The IAM role and alias are ~free and excluded. The engine
+// includes this only when a fleet resource actually exists in state.
+func CostResources(cfg config.DeployConfig) []cost.Resource {
+	instanceType := cfg.InstanceType
+	if instanceType == "" {
+		instanceType = defaultInstanceType
+	}
+	desired := cfg.DesiredInstances
+	if desired <= 0 {
+		desired = defaultDesiredInstances
+	}
+	return []cost.Resource{
+		{TypeName: TypeGameLiftFleet, Name: fleetCostName(instanceType, desired)},
+	}
 }
 
 func init() {

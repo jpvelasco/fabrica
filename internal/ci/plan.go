@@ -65,17 +65,14 @@ func NewCreatePlan(cfg config.CIConfig, account, region, hordeURL string) *Creat
 	}
 
 	return &CreatePlan{
-		Account:      account,
-		Region:       region,
-		ProjectName:  projectName,
-		RoleName:     defaultRoleName,
-		ComputeType:  computeType,
-		Image:        image,
-		BuildTimeout: buildTimeout,
-		HordeURL:     hordeURL,
-		CostResources: []cost.Resource{
-			{TypeName: TypeAWSIAMRole, Name: defaultRoleName},
-			{TypeName: TypeAWSCodeBuildProject, Name: projectName + " (" + computeType + ")"},
-		},
+		Account:       account,
+		Region:        region,
+		ProjectName:   projectName,
+		RoleName:      defaultRoleName,
+		ComputeType:   computeType,
+		Image:         image,
+		BuildTimeout:  buildTimeout,
+		HordeURL:      hordeURL,
+		CostResources: CostResources(cfg),
 	}
 }
