@@ -69,6 +69,11 @@ type Command struct {
 	JSONOut   bool
 	Out       io.Writer
 
+	// SkipConfirm, when true, bypasses the interactive confirmation and the
+	// standalone plan/confirmation output — used when an orchestrator (destroy
+	// --all) has already confirmed the aggregate operation.
+	SkipConfirm bool
+
 	Confirm        func(string, string) bool
 	ReadState      func() (*fabricastate.State, error)
 	WriteState     func(*fabricastate.State) error
@@ -98,24 +103,25 @@ func (c Command) Run(ctx context.Context) error {
 		return nil
 	}
 
-	account := c.resolveAccount(st)
-
-	if !c.JSONOut {
-		c.printPlan(m, resources)
-	}
-
-	if !c.AssumeYes {
-		fmt.Fprintln(c.Out)
-		phrase := c.confirmPhrase(account)
-		c.printConfirmInstructions(phrase)
-		if !c.Confirm("Enter confirmation phrase", phrase) {
-			fmt.Fprintln(c.Out, "Cancelled. No AWS calls were made.")
-			return nil
+	if !c.SkipConfirm {
+		if !c.JSONOut {
+			c.printPlan(m, resources)
 		}
-		fmt.Fprintln(c.Out, "Confirmation accepted.")
-	} else if !c.JSONOut {
-		fmt.Fprintln(c.Out)
-		fmt.Fprintln(c.Out, "Proceeding without interactive confirmation (--yes flag set).")
+
+		if !c.AssumeYes {
+			account := c.resolveAccount(st)
+			fmt.Fprintln(c.Out)
+			phrase := c.confirmPhrase(account)
+			c.printConfirmInstructions(phrase)
+			if !c.Confirm("Enter confirmation phrase", phrase) {
+				fmt.Fprintln(c.Out, "Cancelled. No AWS calls were made.")
+				return nil
+			}
+			fmt.Fprintln(c.Out, "Confirmation accepted.")
+		} else if !c.JSONOut {
+			fmt.Fprintln(c.Out)
+			fmt.Fprintln(c.Out, "Proceeding without interactive confirmation (--yes flag set).")
+		}
 	}
 
 	return c.apply(ctx, st, m, resources)

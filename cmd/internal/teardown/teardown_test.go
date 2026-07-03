@@ -755,3 +755,38 @@ func TestResourceOrderNilDefault(t *testing.T) {
 		t.Fatalf("default EC2->SG order broken: %+v", got)
 	}
 }
+
+func TestRunSkipConfirmBypassesConfirmation(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("perforce", "2024.1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-1"},
+	})
+
+	var deleted []string
+	var written bool
+	c := Command{
+		Spec:        Spec{ModuleName: "perforce", Verb: "destroy", Title: "Perforce", SuccessMessage: "done"},
+		Runtime:     globals.Runtime{},
+		SkipConfirm: true,
+		Out:         &bytes.Buffer{},
+		Confirm: func(string, string) bool {
+			t.Fatal("Confirm must not be called when SkipConfirm is true")
+			return false
+		},
+		ReadState:  func() (*fabricastate.State, error) { return st, nil },
+		WriteState: func(*fabricastate.State) error { written = true; return nil },
+		DeleteResource: func(_ context.Context, r *cloud.Resource) error {
+			deleted = append(deleted, r.Identifier)
+			return nil
+		},
+	}
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(deleted) != 1 || deleted[0] != "sg-1" {
+		t.Fatalf("expected sg-1 deleted, got %v", deleted)
+	}
+	if !written {
+		t.Fatal("expected state to be written")
+	}
+}
