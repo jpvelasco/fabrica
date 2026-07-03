@@ -1128,6 +1128,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/costsource"
@@ -1190,8 +1191,9 @@ func (c command) run() error {
 }
 
 func (c command) renderText(b costsource.Breakdown) {
+	divider := strings.Repeat("-", lineWidth)
 	fmt.Fprintln(c.out, "Cost estimate (monthly) — based on current fabrica.yaml")
-	fmt.Fprintln(c.out, dashes())
+	fmt.Fprintln(c.out, divider)
 	if len(b.Modules) == 0 {
 		fmt.Fprintln(c.out, "  No provisioned modules found in state.")
 	}
@@ -1209,18 +1211,10 @@ func (c command) renderText(b costsource.Breakdown) {
 		}
 		fmt.Fprintf(c.out, "    %-22s $%-9.2f\n", "subtotal", m.Subtotal)
 	}
-	fmt.Fprintln(c.out, dashes())
+	fmt.Fprintln(c.out, divider)
 	fmt.Fprintf(c.out, "  %-22s $%-9.2f\n", "Total:", b.Total)
 	fmt.Fprintf(c.out, "Confidence: %s\n", b.Confidence)
 	fmt.Fprintln(c.out, caveat)
-}
-
-func dashes() string {
-	s := make([]byte, lineWidth)
-	for i := range s {
-		s[i] = '-'
-	}
-	return string(s)
 }
 
 // jsonModule is the JSON shape for one module in the report.
