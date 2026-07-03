@@ -211,7 +211,7 @@ Reference: `cmd/perforce/` + `internal/perforce/` are the canonical templates fo
 
 **Coverage target:** New/changed code must meet the Codecov `patch` gate (≥90%; enforced in CI via `codecov.yml`). **No new function ships at 0% coverage** — strive for 100%. Tests use mocked SDK interfaces — no real AWS calls. "Tests pass" ≠ "code is covered": before claiming a task done, run `go tool cover -func` on the changed functions, or check the Codecov `patch` verdict via the API (`gh api repos/OWNER/REPO/commits/SHA/check-runs`), not the cosmetic `gh pr checks` line.
 
-**Seam coverage rule (SDD):** Every new exported function must be executed by a test. If a task introduces a *seam* (a `func` field the cmd layer wires to a real impl and tests replace with a fake), a test must still exercise the real, non-seam path somewhere — a stubbed seam hides its own wiring from coverage. This is exactly how `NewTeardown`/`RunOrchestrated` shipped at 0% in the destroy-all work: the delegation test stubbed the `runAll` seam, so the real constructors never ran under test.
+**Seam coverage rule (SDD):** Every new exported function must be executed by a test. If a task introduces a *seam* (a `func` field the cmd layer wires to a real impl and tests replace with a fake), a test must still exercise the real, non-seam path somewhere — a stubbed seam hides its own wiring from coverage. This is exactly how `NewTeardown`/`RunOrchestrated` shipped at 0% in the destroy-all work: the orchestrator test stubbed the `runAll` seam, so the real module constructors were never exercised under test.
 
 ## Planned Command Structure
 
