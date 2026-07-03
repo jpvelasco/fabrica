@@ -58,7 +58,7 @@ type Config struct {
 	Workstation WorkstationConfig `mapstructure:"workstation" yaml:"workstation"`
 	CI          CIConfig          `mapstructure:"ci"          yaml:"ci"`
 	Deploy      DeployConfig      `mapstructure:"deploy"      yaml:"deploy"`
-	Cost        any               `mapstructure:"cost"        yaml:"cost"`
+	Cost        CostConfig        `mapstructure:"cost"        yaml:"cost"`
 }
 
 // PerforceConfig holds the perforce: section of fabrica.yaml.
@@ -119,6 +119,20 @@ type WorkstationConfig struct {
 	AllowedCIDR        string `mapstructure:"allowedCidr"        yaml:"allowedCidr"`
 }
 
+// CostConfig holds the cost: section of fabrica.yaml.
+type CostConfig struct {
+	Budgets []BudgetThreshold `mapstructure:"budgets" yaml:"budgets"`
+}
+
+// BudgetThreshold is a single local budget guardrail. Scope is "total" or a
+// module name; Monthly is the USD/month ceiling; WarnPct is the warn threshold
+// as a percent of Monthly (0 → engine default of 80).
+type BudgetThreshold struct {
+	Scope   string  `mapstructure:"scope"   yaml:"scope"`
+	Monthly float64 `mapstructure:"monthly" yaml:"monthly"`
+	WarnPct int     `mapstructure:"warnPct" yaml:"warnPct,omitempty"`
+}
+
 type Cloud struct {
 	Provider string `mapstructure:"provider" yaml:"provider"`
 	AWS      AWS    `mapstructure:"aws" yaml:"aws"`
@@ -145,7 +159,7 @@ type fileConfig struct {
 	Workstation WorkstationConfig `yaml:"workstation"`
 	CI          CIConfig          `yaml:"ci"`
 	Deploy      DeployConfig      `yaml:"deploy"`
-	Cost        any               `yaml:"cost"`
+	Cost        CostConfig        `yaml:"cost"`
 }
 
 func (c *Config) fileConfig() fileConfig {
@@ -157,15 +171,8 @@ func (c *Config) fileConfig() fileConfig {
 		Workstation: c.Workstation,
 		CI:          c.CI,
 		Deploy:      c.Deploy,
-		Cost:        emptySection(c.Cost),
+		Cost:        c.Cost,
 	}
-}
-
-func emptySection(v any) any {
-	if v == nil {
-		return map[string]any{}
-	}
-	return v
 }
 
 // Defaults returns a pre-populated Config with sensible defaults.
