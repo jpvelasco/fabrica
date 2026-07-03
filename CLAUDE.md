@@ -10,7 +10,7 @@ A Go CLI + infrastructure-as-code framework that provisions and manages game stu
 
 [`ROADMAP.md`](ROADMAP.md) is the single source of truth for phases, module status, and the Praetorium vision. Update it when module status changes.
 
-Phase 0 (CLI skeleton + AWS foundation) is complete; Phase 1 Milestones 1–4 are done. Implemented modules: `perforce` (create/status/destroy), `horde` (create/status/submit/destroy/ami), `workstation` (create/list/stop/start/terminate), `ci` (setup/trigger/status/logs — CodeBuild orchestration over Horde), `deploy` (setup/promote/rollback/status/destroy — GameLift blue/green orchestration), and `cost` (report/forecast/alerts — offline config-derived reporting + local budget alerts). All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` for resource types Cloud Control supports (verify first; see the CI notes for the CodeBuild exception).
+Phase 0 (CLI skeleton + AWS foundation) is complete; Phase 1 Milestones 1–5 core (teardown) are done. Implemented modules: `perforce` (create/status/destroy), `horde` (create/status/submit/destroy/ami), `workstation` (create/list/stop/start/terminate), `ci` (setup/trigger/status/logs/destroy — CodeBuild orchestration over Horde), `deploy` (setup/promote/rollback/status/destroy — GameLift blue/green orchestration), and `cost` (report/forecast/alerts — offline config-derived reporting + local budget alerts). Full-stack teardown via `destroy --all` orchestrates ordered module teardown (deploy→ci→workstation→horde→perforce) and deletes the state backend only if every module succeeds. All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` for resource types Cloud Control supports (verify first; see the CI notes for the CodeBuild exception).
 
 `fabrica setup` is fully functional: `internal/state/bootstrap.go` type-asserts the provider to `cloud.StateBackendBootstrapper` and creates the S3 state bucket (versioning + encryption + public-access-block) and the DynamoDB lock table, idempotently. `cmd/setup/setup.go` shows the plan + cost estimate, then prompts for y/N confirmation before any AWS write (`--yes` skips; `--dry-run` shows the plan and cost without creating anything). `fabrica status` is the aggregate read-only overview: state-backend health + per-module status, resource counts, and actionable next steps, with `--probe` for opt-in TCP readiness checks (off by default because modules use private IPs); it never mutates state.
 
@@ -72,10 +72,10 @@ go list -deps ./internal/cloud/...
 |---------|---------|
 | `cmd/root` | Wires global flags (`--config`, `--verbose`, `--json`, `--dry-run`, `--yes`, `--profile`), initializes `globals.Store`, registers subcommands |
 | `cmd/globals` | `Runtime` (Config + Provider + ConfigPath), `Options`, `Store.Init()`, dependency injection types |
-| `cmd/{destroy,doctor,setup,status,configcmd,version}` | Subcommands; each `New()` accepts `RuntimeSource` + `OptionsSource` closures — no direct globals access |
+| `cmd/{destroy,doctor,setup,status,configcmd,version}` | Subcommands; each `New()` accepts `RuntimeSource` + `OptionsSource` closures — no direct globals access; `destroy` without `--all` prints usage hint |
 | `cmd/status` | Aggregate read-only overview: state-backend health + per-module status, resource counts, and next steps; `--probe` opt-in TCP readiness checks; `--json`; never writes state |
 | `internal/config` | `Config` struct, Viper loading from `fabrica.yaml` (scoped here only), YAML serialization, defaults |
-| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `EC2InstanceManager`, `StateBackendChecker` (doctor/status: bucket/table exists checks), `StateBackendBootstrapper` (setup: create bucket/table), `StateBackendDestroyer` (destroy --all: delete bucket/table), `CodeBuildRunner` (ci: create/delete CodeBuild project + start/query builds — AWS::CodeBuild::Project has no Cloud Control CREATE) |
+| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `EC2InstanceManager`, `StateBackendChecker` (doctor/status: bucket/table exists checks), `StateBackendBootstrapper` (setup: create bucket/table), `StateBackendDestroyer` (destroy --all: delete bucket/table), `CodeBuildRunner` (ci: create/delete CodeBuild project + start/query builds — AWS::CodeBuild::Project has no Cloud Control CREATE), `GameLiftManager` (deploy: fleet activation polling, fleet events) |
 | `internal/cloud/aws` | AWS implementation registered via `init()` in `internal/cloud/registry.go`; wraps `cloudcontrol`, `s3`, `dynamodb`, `iam`, `ec2` SDK clients; `awsProvider` satisfies both `Provider` and `EC2InstanceManager` |
 | `internal/state` | `State`/`ModuleState`/`ModuleResource` types, `Backend` interface, S3+DynamoDB bootstrap, DynamoDB locking |
 | `internal/cost` | Cost estimator interface + Phase 0 estimators; registered by resource `TypeName` |
@@ -104,11 +104,12 @@ go list -deps ./internal/cloud/...
 | `internal/workstation` | Pure plan layer: `CreatePlan` (accepts `tmpl` + `perforceAddr` args), `SGDesiredState`, `InstanceDesiredState`, cloud-init generator (`Generate`/`GenerateRaw`), `VPCResolver` interface. GPU instance prices (g4dn/g5/g6) live in `internal/perforce/cost.go` alongside the shared EC2 estimators. |
 | `internal/credentials` | Shared helpers: `GeneratePassword`, `WriteCredentials` — write per-module credential YAML files to `.fabrica/` (mode 0600) |
 | `internal/stateutil` | Shared helpers: `ResourceByType` — query module state without repeating the lookup loop |
-| `cmd/ci` | Parent command; wires setup/trigger/status/logs subcommands |
+| `cmd/ci` | Parent command; wires setup/trigger/status/logs/destroy subcommands |
 | `cmd/ci/setup` | Provision IAM role (Cloud Control) + CodeBuild project (`CodeBuildRunner.EnsureProject`); dry-run, cost, y/N confirm, idempotent |
 | `cmd/ci/trigger` | Parse BuildGraph (reuses `internal/horde/buildgraph`), resolve Horde private IP from state, `StartBuild` with `BUILDGRAPH`/`TARGET`/`HORDE_URL` env; `--wait` polls `BuildStatus` |
 | `cmd/ci/status` | Reads CI module state (project + role); `--build <id>` shows live `BuildStatus`; `--json` |
 | `cmd/ci/logs` | Fetches CloudWatch logs for a build via `CodeBuildRunner.BuildLog` |
+| `cmd/ci/destroy` | Tear down CI infrastructure: delete CodeBuild project (SDK `DeleteProject`) then IAM role (Cloud Control); has `RunOrchestrated` entry point for `destroy --all` |
 | `internal/ci` | Pure plan layer: `CreatePlan`, `RoleDesiredState` (Cloud Control IAM), `ProjectSpec` (CodeBuild SDK), buildspec generator (`Buildspec`/`BuildspecRaw`), cost estimators (CodeBuild + IAM) |
 | `cmd/deploy` | Parent command; wires setup/promote/rollback/status/destroy subcommands |
 | `cmd/deploy/setup` | Provision IAM role (Cloud Control) + GameLift alias; idempotent; cost estimate + y/N confirm |
@@ -121,6 +122,7 @@ go list -deps ./internal/cloud/...
 | `cmd/cost/report` | Estimated monthly cost broken down by module; reads local state + current `fabrica.yaml`; `--json` emits structured breakdown |
 | `cmd/cost/forecast` | Projects the current estimate over a time horizon (`--days`, default 30); `--json` emits forecast entries (daily + summary) |
 | `cmd/cost/alerts` | Manage and check local budget thresholds: `list` shows configured budgets, `set <scope> <monthly> [--warn-pct N]` upserts a threshold into `fabrica.yaml` (honors `--dry-run`), `check` evaluates current cost against thresholds and reports OK/WARN/OVER status (informational; exit 0) |
+| `cmd/internal/destroyall` | Orchestration engine for `destroy --all`: ordered per-module teardown (deploy→ci→workstation→horde→perforce) then state backend; backend deleted only if every module succeeds; single aggregate confirmation phrase `destroy all <account>`; continues on module failure (preserves backend for retry); text + JSON output |
 | `cmd/internal/costsource` | Shared `Aggregate` engine; sole owner of module enumeration for cost (reads local state, applies stopped-instance drop, deploy fleet gate, unknown-module filtering); `MapBudgets` bridges `config.BudgetThreshold`→`cost.BudgetThreshold`; wired by report/forecast/alerts |
 | `internal/cost` | `Project`/`Forecast` for time-horizon projection (`Forecast.Render`); `EvaluateBudgets`/`BudgetStatus`/`BudgetState` for threshold evaluation (`RenderBudgets`). Stays free of `internal/config` — the config↔cost mapping lives in `costsource` |
 
@@ -141,7 +143,8 @@ go list -deps ./internal/cloud/...
 
 Cross-module command logic lives under `cmd/internal/` (importable only within `cmd/`). Extract here only when modules share *substance*, not merely *shape* — over-abstracting look-alike-but-different commands hurts readability more than the duplication costs.
 
-- **`cmd/internal/teardown`** — full engine for the three teardown commands (`perforce destroy`, `horde destroy`, `workstation terminate`). They were byte-identical except presentational strings, so a `teardown.Command` + `teardown.Spec` (the varying strings) consolidates everything. Each command's `New()` is a thin `Spec` + wiring.
+- **`cmd/internal/teardown`** — full engine for the three teardown commands (`perforce destroy`, `horde destroy`, `workstation terminate`). They were byte-identical except presentational strings, so a `teardown.Command` + `teardown.Spec` (the varying strings) consolidates everything. Each command's `New()` is a thin `Spec` + wiring. The `SkipConfirm` seam allows the orchestrator (`destroy --all`) to bypass interactive confirmation and plan output when modules are torn down as part of the aggregate operation.
+- **`cmd/internal/destroyall`** — orchestration engine for `destroy --all`. Runs an ordered set of per-module teardown closures (deploy→ci→workstation→horde→perforce), then deletes the state backend — but only if every module succeeded. On module failure, continues remaining modules and preserves the backend for retry, printing each failed module with its error. Single aggregate confirmation phrase. Supports dry-run and JSON output.
 - **`cmd/internal/modstatus`** — orchestration engine for `perforce status` / `horde status`. The flow (read state → query EC2 → TCP-probe → transition → poll) is shared, but **rendering differs** (P4PORT vs hordeUrl), so each command implements a `modstatus.Renderer` over the engine's `Info` while the engine owns the flow.
 - **`cmd/internal/provision`** — small helpers for the three `create` commands (`ReadState`, `ConfirmPhrase`, `PrintConfirmInstructions`). Create was deliberately **not** given a full engine: the `applyCreate` steps look parallel but each calls module-specific code (credentials, desired-state builders, plan types), so a generic engine would add indirection without removing real duplication. Only the genuinely-identical boilerplate was extracted; `applyCreate` and `print*` stay local to each command. See issue #37 for the rationale.
 
@@ -212,12 +215,12 @@ fabrica status                              # health of all modules
 fabrica perforce create|status|destroy      # ✓ implemented; backup|restore planned
 fabrica horde create|status|submit|destroy  # ✓ implemented
 fabrica horde ami build                     # ✓ implemented; generates Image Builder recipe + optional Packer HCL
-fabrica ci setup|trigger|status|logs        # ✓ implemented; CodeBuild orchestration over Horde
+fabrica ci setup|trigger|status|logs|destroy        # ✓ implemented; CodeBuild orchestration over Horde
 fabrica deploy setup|promote|rollback|status|destroy  # ✓ implemented; GameLift blue/green deployment
 fabrica workstation create|list|stop|start|terminate  # ✓ implemented
 fabrica cost report|forecast|alerts         # ✓ implemented; offline cost visibility + local budget alerts
 fabrica doctor                              # prerequisite validation
-fabrica destroy --all                       # clean teardown
+fabrica destroy --all                       # ✓ implemented; full-stack teardown
 fabrica export --format cloudformation      # escape hatch
 ```
 
@@ -249,7 +252,8 @@ fabrica export --format cloudformation      # escape hatch
 - **`ci trigger` semantics** — V1 starts the CodeBuild project directly. The design intends `trigger` to start a CodePipeline execution once CodePipeline orchestration is added (deferred); the command surface stays stable.
 - **Idempotency** — `EnsureProject` checks `BatchGetProjects` before creating, so re-running `ci setup` is safe. `DeleteProject` is idempotent on the AWS side.
 - **Tags** — Cloud Control desired-state and the CodeBuild SDK both take tags as a capitalized `Tags`/`[]Tag` shape; `injectFabricaTags` (applied to every Cloud Control create) merges into the `Tags` array, never a lowercase `tags` key (which Cloud Control schemas reject).
-- **Out of scope (V1)** — CodePipeline + source wiring, `ci destroy`/teardown in `destroy --all`, active Perforce sync inside builds (buildspec has a documented placeholder).
+- **`ci destroy`** — deletes the CodeBuild project (via `cloud.CodeBuildRunner.DeleteProject` SDK interface) then the IAM role (via Cloud Control). This is the CI-specific parallel to module teardown; it has a `RunOrchestrated` entry point that `destroy --all` uses with confirmation already handled by the orchestrator.
+- **Out of scope (V1)** — CodePipeline + source wiring, active Perforce sync inside builds (buildspec has a documented placeholder).
 
 ## Deploy-Specific Notes
 
@@ -260,6 +264,15 @@ fabrica export --format cloudformation      # escape hatch
 - **Destroy default vs. `--all` semantics** — `destroy` (default) deletes fleets + builds but leaves the alias and IAM role in place so the alias your game backend references survives teardown and you can re-promote later. `--all` also removes the alias + role — use only if tearing down the entire deploy infrastructure. The `cmd/internal/teardown` engine handles resource deletion order via the `ResourceOrder` hook.
 - **`deploy.buildBucket` required** — The S3 bucket where CI/Horde uploads packaged builds must be set in `fabrica.yaml`. `promote` uses the convention `s3://<buildBucket>/builds/<build-version>/server.zip` by default; override with `--s3-bucket`/`--s3-key`.
 - **S3 build convention** — CI/Horde outputs are expected at `s3://<buildBucket>/builds/<build-version>/server.zip`. This path is hardcoded in the build registration; Fabrica does not upload builds, only registers and deploys what's already there.
+
+## Destroy-Specific Notes
+
+- **Teardown order** — `destroy --all` tears down modules in this order: deploy → ci → workstation → horde → perforce. This reverse-dependency order (deployments stop first, then build infrastructure, then development tools) ensures a clean shutdown with no dangling references.
+- **Backend-only-on-full-success gate** — The state backend (S3 bucket + DynamoDB table) is deleted only if every module's teardown succeeds. If any module fails, the backend is preserved so remaining state stays tracked for a manual recovery or retry. This is the fail-safe mechanism: orphaned resources remain visible in the backend rather than getting lost.
+- **Single aggregate confirmation phrase** — Rather than confirming each module separately, `destroy --all` asks once: `type "destroy all <account-id>" to continue`. This prevents confirmation fatigue and makes the intent unambiguous.
+- **Deploy torn down with `all=true`** — When `destroy --all` tears down the deploy module via `deploydestroy.NewTeardown(rt, out)` (which internally builds its spec with `all=true`), it deletes everything: fleets, builds, alias, and IAM role. This differs from plain `fabrica deploy destroy`, which deletes fleets + builds but retains the alias and role for re-promotion.
+- **CI's SDK-delete special case** — Unlike perforce/horde/workstation (which use the `teardown.Command` engine), CI's CodeBuild project is deleted via the `cloud.CodeBuildRunner.DeleteProject` SDK interface (not Cloud Control), then the IAM role goes through Cloud Control. This SDK + Cloud Control split is mirrored in the creation path. CI uses `cidestroy.RunOrchestrated` for integration.
+- **Continue-on-failure + backend preserved** — If perforce deletion fails but horde succeeds, the engine continues to delete workstation, ci, and deploy's remaining resources (if horde was the only failure). Each failed module is printed with its error message; the orchestrator returns an error at the end only if any module failed. The backend is never deleted on any failure, allowing a retry.
 
 ## Cost-Specific Notes
 

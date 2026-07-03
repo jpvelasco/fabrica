@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/destroy"
@@ -86,7 +87,7 @@ func TestDestroyCobraDryRunNoAWSCalls(t *testing.T) {
 		t.Fatalf("dry run made AWS calls: bucketDeleteCalls=%d tableDeleteCalls=%d",
 			provider.bucketDeleteCalls, provider.tableDeleteCalls)
 	}
-	assertCobraContains(t, got, "No resources will be deleted. No AWS delete calls will be made.")
+	assertCobraContains(t, got, "Nothing has been deleted. Run without --dry-run to proceed.")
 }
 
 // TestDestroyCobraDryRunWithNilProvider verifies that --all --dry-run with
@@ -106,14 +107,11 @@ func TestDestroyCobraDryRunOutput(t *testing.T) {
 		t.Fatalf("dry run failed: %v", err)
 	}
 	checks := []string{
-		"Destroy dry run",
-		"AWS account ID: 123456789012",
-		"AWS region:     us-east-1",
-		"S3 state bucket:      fabrica-state-test",
-		"DynamoDB lock table:  fabrica-locks-test",
-		"Deletion order if run for real:",
-		"1. S3 state bucket",
-		"2. DynamoDB lock table",
+		"Destroy --all dry run",
+		"Account: 123456789012",
+		"Region:  us-east-1",
+		"S3 bucket:      fabrica-state-test",
+		"DynamoDB table: fabrica-locks-test",
 	}
 	for _, want := range checks {
 		assertCobraContains(t, got, want)
@@ -134,7 +132,7 @@ func TestDestroyCobraYesFlagPerformsDeletion(t *testing.T) {
 	if !provider.deletedTable {
 		t.Fatal("DynamoDB table was not deleted")
 	}
-	assertCobraContains(t, got, "Destroy complete.")
+	assertCobraContains(t, got, "Destroy --all complete. All modules and the state backend were removed.")
 }
 
 // TestDestroyCobraNilProvider verifies that --all --yes with a nil provider
@@ -159,6 +157,133 @@ func TestDestroyCobraIdentityFailurePropagates(t *testing.T) {
 		t.Fatalf("error %q does not mention resolving identity", err.Error())
 	}
 }
+
+// TestDestroyCobraAllWithModules verifies destroy --all with modules provisioned.
+// This drives the teardownClosure for perforce and ciTeardownClosure for CI.
+func TestDestroyCobraAllWithModules(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	// Seed state with perforce and ci modules.
+	stateWithModules := `{"account":"123456789012","region":"us-east-1","modules":[
+		{"name":"perforce","version":"2024.2","status":"ready","resources":[
+			{"typeName":"AWS::EC2::SecurityGroup","identifier":"sg-pf"},
+			{"typeName":"AWS::EC2::Instance","identifier":"i-pf"}
+		]},
+		{"name":"ci","version":"fabrica-ci","status":"ready","resources":[
+			{"typeName":"AWS::CodeBuild::Project","identifier":"fabrica-ci"},
+			{"typeName":"AWS::IAM::Role","identifier":"fabrica-ci-role"}
+		]}
+	]}`
+
+	writeTestStateFile(t, dir, stateWithModules)
+
+	provider := &cobraFakeProviderWithCI{}
+	got, err := runDestroy(t, newCobraTestRuntime(provider), "--all", "--yes")
+	if err != nil {
+		t.Fatalf("destroy --all with modules: %v", err)
+	}
+
+	// Both module teardowns should have been called
+	if provider.moduleDeleteCalls == 0 {
+		t.Error("expected module teardown calls")
+	}
+
+	// Backend deletion should have occurred
+	if !provider.deletedBucket || !provider.deletedTable {
+		t.Fatal("backend should be deleted when all modules succeed")
+	}
+
+	assertCobraContains(t, got, "complete")
+}
+
+// TestDestroyCobraReadStateError verifies error when state read fails.
+func TestDestroyCobraReadStateError(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	cfg := config.Defaults()
+	cfg.State.Bucket = "fabrica-state-test"
+	cfg.State.Table = "fabrica-locks-test"
+
+	rt := globals.Runtime{
+		Config:   cfg,
+		Provider: &stateErrorProvider{},
+	}
+
+	src := func() (globals.Runtime, error) { return rt, nil }
+
+	_, err := runDestroy(t, src, "--all", "--yes")
+	if err == nil {
+		t.Fatal("expected error when state read fails")
+	}
+}
+
+// writeTestStateFile writes state to .fabrica/state.json.
+func writeTestStateFile(t *testing.T, dir, content string) {
+	t.Helper()
+	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/.fabrica/state.json", []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// cobraFakeProviderWithCI extends cobraFakeProvider to handle module teardowns.
+type cobraFakeProviderWithCI struct {
+	cobraFakeProvider
+	moduleDeleteCalls int
+}
+
+func (f *cobraFakeProviderWithCI) Resources() cloud.ResourceClient {
+	return &cobraFakeRCWithDelete{provider: f}
+}
+
+// Implement cloud.CodeBuildRunner for CI module teardown.
+func (f *cobraFakeProviderWithCI) EnsureProject(ctx context.Context, spec cloud.CodeBuildProjectSpec) (bool, error) {
+	return true, nil
+}
+
+func (f *cobraFakeProviderWithCI) DeleteProject(ctx context.Context, name string) error {
+	f.moduleDeleteCalls++
+	return nil
+}
+
+func (f *cobraFakeProviderWithCI) StartBuild(ctx context.Context, project string, env map[string]string) (string, error) {
+	return "build-1", nil
+}
+
+func (f *cobraFakeProviderWithCI) BuildStatus(ctx context.Context, buildID string) (cloud.BuildInfo, error) {
+	return cloud.BuildInfo{}, nil
+}
+
+func (f *cobraFakeProviderWithCI) BuildLog(ctx context.Context, buildID string) (string, error) {
+	return "", nil
+}
+
+type cobraFakeRCWithDelete struct {
+	provider *cobraFakeProviderWithCI
+}
+
+func (r *cobraFakeRCWithDelete) Create(ctx context.Context, res *cloud.Resource) error { return nil }
+func (r *cobraFakeRCWithDelete) Get(ctx context.Context, res *cloud.Resource) error    { return nil }
+func (r *cobraFakeRCWithDelete) Update(ctx context.Context, res *cloud.Resource) error { return nil }
+func (r *cobraFakeRCWithDelete) Delete(ctx context.Context, res *cloud.Resource) error {
+	r.provider.moduleDeleteCalls++
+	return nil
+}
+func (r *cobraFakeRCWithDelete) List(ctx context.Context, typeName string) ([]cloud.Resource, error) {
+	return nil, nil
+}
+
+// stateErrorProvider simulates a provider that exists but fails on Identity.
+type stateErrorProvider struct{}
+
+func (stateErrorProvider) Name() string { return "err" }
+func (stateErrorProvider) Identity(ctx context.Context) (string, string, string, error) {
+	return "", "", "", errors.New("identity failed")
+}
+func (stateErrorProvider) Resources() cloud.ResourceClient { return nil }
 
 // cobraFakeProvider is a minimal fake satisfying cloud.Provider and
 // cloud.StateBackendDestroyer for Cobra-layer tests.

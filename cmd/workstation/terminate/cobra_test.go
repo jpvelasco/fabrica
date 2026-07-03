@@ -143,6 +143,41 @@ func TestTerminateCobraRuntimeError(t *testing.T) {
 	}
 }
 
+// TestNewTeardownWiring verifies NewTeardown returns a Command with correct wiring.
+func TestNewTeardownWiring(t *testing.T) {
+	var out bytes.Buffer
+	rt := globals.Runtime{Config: config.Defaults(), Provider: &cobraFakeProvider{}}
+	tc := terminate.NewTeardown(rt, &out)
+	if !tc.SkipConfirm || !tc.AssumeYes {
+		t.Fatalf("SkipConfirm/AssumeYes must be true; got SkipConfirm=%v, AssumeYes=%v", tc.SkipConfirm, tc.AssumeYes)
+	}
+	if tc.ReadState == nil || tc.WriteState == nil || tc.DeleteResource == nil || tc.GetResource == nil {
+		t.Fatal("provider seams must be wired when provider is non-nil")
+	}
+	if tc.Runtime.Provider == nil {
+		t.Fatal("Runtime.Provider must be set")
+	}
+	if tc.Spec.ModuleName != "workstation" {
+		t.Errorf("module name = %q, want workstation", tc.Spec.ModuleName)
+	}
+}
+
+// TestNewTeardownNilProvider verifies NewTeardown handles nil provider gracefully.
+func TestNewTeardownNilProvider(t *testing.T) {
+	var out bytes.Buffer
+	rt := globals.Runtime{Config: config.Defaults(), Provider: nil}
+	tc := terminate.NewTeardown(rt, &out)
+	if !tc.SkipConfirm || !tc.AssumeYes {
+		t.Fatal("SkipConfirm/AssumeYes must be true even with nil provider")
+	}
+	if tc.ReadState == nil || tc.WriteState == nil {
+		t.Fatal("ReadState and WriteState must always be wired")
+	}
+	if tc.DeleteResource != nil || tc.GetResource != nil {
+		t.Fatal("DeleteResource/GetResource must be nil when provider is nil")
+	}
+}
+
 // ---- helpers ----
 
 func provisionedStateJSON() string {
