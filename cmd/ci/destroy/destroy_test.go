@@ -169,7 +169,10 @@ func TestRunProjectDeleteErrorPropagates(t *testing.T) {
 		deleteProject: func(context.Context, string) error {
 			return errContext("codebuild boom")
 		},
-		deleteResource: func(context.Context, *cloud.Resource) error { t.Fatal("role delete must not run after project error"); return nil },
+		deleteResource: func(context.Context, *cloud.Resource) error {
+			t.Fatal("role delete must not run after project error")
+			return nil
+		},
 	}
 	err := c.run(context.Background())
 	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("codebuild boom")) {
