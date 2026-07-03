@@ -120,9 +120,9 @@ go list -deps ./internal/cloud/...
 | `cmd/cost` | Parent command; wires report/forecast/alerts subcommands. No live provider — all operations are offline (config-derived + state-derived, no AWS calls) |
 | `cmd/cost/report` | Estimated monthly cost broken down by module; reads local state + current `fabrica.yaml`; `--json` emits structured breakdown |
 | `cmd/cost/forecast` | Projects the current estimate over a time horizon (`--days`, default 30); `--json` emits forecast entries (daily + summary) |
-| `cmd/cost/alerts` | Manage and check local budget thresholds: `list` shows configured budgets, `set <scope> [--monthly N] [--warn-pct N]` updates `fabrica.yaml`, `check` evaluates current cost against thresholds and reports OK/WARN/OVER status |
-| `cmd/internal/costsource` | Shared `Aggregate` engine; sole owner of module enumeration for cost (reads local state, applies stopped-instance drop, deploy fleet gate, unknown-module filtering); wired by report/forecast/alerts |
-| `internal/cost` | `Project`/`Forecast` functions for time-series projection; `EvaluateBudgets`/`BudgetStatus` for threshold evaluation; render helpers (`RenderMonthly`, `RenderForecast`, `RenderBudgetStatus`) |
+| `cmd/cost/alerts` | Manage and check local budget thresholds: `list` shows configured budgets, `set <scope> <monthly> [--warn-pct N]` upserts a threshold into `fabrica.yaml` (honors `--dry-run`), `check` evaluates current cost against thresholds and reports OK/WARN/OVER status (informational; exit 0) |
+| `cmd/internal/costsource` | Shared `Aggregate` engine; sole owner of module enumeration for cost (reads local state, applies stopped-instance drop, deploy fleet gate, unknown-module filtering); `MapBudgets` bridges `config.BudgetThreshold`→`cost.BudgetThreshold`; wired by report/forecast/alerts |
+| `internal/cost` | `Project`/`Forecast` for time-horizon projection (`Forecast.Render`); `EvaluateBudgets`/`BudgetStatus`/`BudgetState` for threshold evaluation (`RenderBudgets`). Stays free of `internal/config` — the config↔cost mapping lives in `costsource` |
 
 ### Module Pattern
 
@@ -263,7 +263,7 @@ fabrica export --format cloudformation      # escape hatch
 
 ## Cost-Specific Notes
 
-- **Config-derive model** — `cost report` and `cost forecast` reflect the *current* `fabrica.yaml` estimates, scoped to modules present in local state (no S3 roundtrip). Fully offline — the `costsource.Aggregate` engine reads state + config and returns a `[]CostResource`, which the cost package projects and evaluates. No AWS calls; no cost-data API.
+- **Config-derive model** — `cost report` and `cost forecast` reflect the *current* `fabrica.yaml` estimates, scoped to modules present in local state (no S3 roundtrip). Fully offline — the `costsource.Aggregate` engine reads state + config and returns a `Breakdown` (per-module `Report`s + subtotals + `PerScope` map), which the cost package projects and evaluates. No AWS calls; no cost-data API.
 - **Stopped instances drop the compute line** — When `workstation stop` sets status to `"stopped"`, the `costsource` engine filters that instance out of the cost model (state still tracks it). EBS volumes remain billed. `workstation start` returns the instance to the cost model.
 - **Deploy fleet cost counted only when a fleet exists** — If no `AWS::GameLift::Fleet` resource exists in the deploy module state, the deploy cost is zero. Once a fleet is promoted (created and ACTIVE), it enters the cost model until `destroy` removes it.
 - **Local thresholds only** — `cost alerts set/list/check` work entirely on the local `fabrica.yaml` — no AWS Budgets resources, no SNS topics, no CloudWatch events. `alerts check` is informational (exit 0 always); the caller can decide what to do with OK/WARN/OVER status.
