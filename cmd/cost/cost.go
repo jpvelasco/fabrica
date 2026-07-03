@@ -6,6 +6,7 @@ package cost
 import (
 	"io"
 
+	"github.com/jpvelasco/fabrica/cmd/cost/alerts"
 	"github.com/jpvelasco/fabrica/cmd/cost/forecast"
 	"github.com/jpvelasco/fabrica/cmd/cost/report"
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -28,5 +29,6 @@ Available operations:
 	}
 	cmd.AddCommand(report.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(forecast.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(alerts.New(runtimeSource, optionsSource, out))
 	return cmd
 }
