@@ -91,6 +91,114 @@ func TestRunProjectMissingIsNotError(t *testing.T) {
 	}
 }
 
+func TestRunInteractiveConfirmAccepted(t *testing.T) {
+	st := seededCIState()
+	var gotPhrase string
+	var deletedProject string
+	c := command{
+		runtime:    globals.Runtime{},
+		out:        &bytes.Buffer{},
+		readState:  func() (*fabricastate.State, error) { return st, nil },
+		writeState: func(*fabricastate.State) error { return nil },
+		confirm: func(_ string, phrase string) bool {
+			gotPhrase = phrase
+			return true
+		},
+		deleteProject:  func(_ context.Context, name string) error { deletedProject = name; return nil },
+		deleteResource: func(context.Context, *cloud.Resource) error { return nil },
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if gotPhrase != "destroy ci 123456789012" {
+		t.Fatalf("confirm phrase = %q, want %q", gotPhrase, "destroy ci 123456789012")
+	}
+	if deletedProject != "fabrica-ci" {
+		t.Fatalf("accepted confirm should delete project, got %q", deletedProject)
+	}
+}
+
+func TestRunInteractiveConfirmRejected(t *testing.T) {
+	st := seededCIState()
+	var out bytes.Buffer
+	c := command{
+		runtime:        globals.Runtime{},
+		out:            &out,
+		readState:      func() (*fabricastate.State, error) { return st, nil },
+		writeState:     func(*fabricastate.State) error { return nil },
+		confirm:        func(string, string) bool { return false },
+		deleteProject:  func(context.Context, string) error { t.Fatal("reject must not delete"); return nil },
+		deleteResource: func(context.Context, *cloud.Resource) error { t.Fatal("reject must not delete"); return nil },
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("Cancelled")) {
+		t.Fatalf("expected cancellation message, got:\n%s", out.String())
+	}
+}
+
+func TestRunDryRunListsResources(t *testing.T) {
+	st := seededCIState()
+	var out bytes.Buffer
+	c := command{
+		runtime:        globals.Runtime{},
+		dryRun:         true,
+		out:            &out,
+		readState:      func() (*fabricastate.State, error) { return st, nil },
+		writeState:     func(*fabricastate.State) error { return nil },
+		deleteProject:  func(context.Context, string) error { t.Fatal("dry-run must not delete"); return nil },
+		deleteResource: func(context.Context, *cloud.Resource) error { t.Fatal("dry-run must not delete"); return nil },
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("dry run")) || !bytes.Contains(out.Bytes(), []byte("fabrica-ci")) {
+		t.Fatalf("dry-run should list resources, got:\n%s", out.String())
+	}
+}
+
+func TestRunProjectDeleteErrorPropagates(t *testing.T) {
+	st := seededCIState()
+	c := command{
+		runtime:     globals.Runtime{},
+		out:         &bytes.Buffer{},
+		skipConfirm: true,
+		readState:   func() (*fabricastate.State, error) { return st, nil },
+		writeState:  func(*fabricastate.State) error { return nil },
+		deleteProject: func(context.Context, string) error {
+			return errContext("codebuild boom")
+		},
+		deleteResource: func(context.Context, *cloud.Resource) error { t.Fatal("role delete must not run after project error"); return nil },
+	}
+	err := c.run(context.Background())
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("codebuild boom")) {
+		t.Fatalf("expected project delete error to propagate, got: %v", err)
+	}
+}
+
+func TestRunRoleDeleteErrorPropagates(t *testing.T) {
+	st := seededCIState()
+	c := command{
+		runtime:        globals.Runtime{},
+		out:            &bytes.Buffer{},
+		skipConfirm:    true,
+		readState:      func() (*fabricastate.State, error) { return st, nil },
+		writeState:     func(*fabricastate.State) error { return nil },
+		deleteProject:  func(context.Context, string) error { return nil },
+		deleteResource: func(context.Context, *cloud.Resource) error { return errContext("iam boom") },
+	}
+	err := c.run(context.Background())
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("iam boom")) {
+		t.Fatalf("expected role delete error to propagate, got: %v", err)
+	}
+}
+
+// errContext is a tiny error helper so these tests need no extra imports.
+type errContext string
+
+func (e errContext) Error() string { return string(e) }
+
 // TestRunOrchestratedNotProvisioned verifies RunOrchestrated handles empty state gracefully.
 func TestRunOrchestratedNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
