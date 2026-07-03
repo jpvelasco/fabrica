@@ -693,6 +693,14 @@ func TestRunModuleFailureSkipsBackend(t *testing.T) {
 	if !strings.Contains(out.String(), "perforce") {
 		t.Fatalf("expected perforce still torn down after deploy failure:\n%s", out.String())
 	}
+	// the failed module is named explicitly in the summary, with its error
+	if !strings.Contains(out.String(), "deploy") || !strings.Contains(out.String(), "fleet stuck") {
+		t.Fatalf("failure summary must name the failed module and its error:\n%s", out.String())
+	}
+	// the returned error also lists the failed module
+	if !strings.Contains(err.Error(), "deploy") {
+		t.Fatalf("returned error must name the failed module, got: %v", err)
+	}
 }
 
 func TestRunExecutesInGivenOrder(t *testing.T) {
@@ -909,16 +917,22 @@ func (e Engine) runDryRun() error {
 	fmt.Fprintln(e.Out, "Destroy --all dry run")
 	fmt.Fprintln(e.Out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(e.Out, "  Account: %s\n  Region:  %s\n\n", e.Account, e.Region)
-	fmt.Fprintln(e.Out, "Modules to tear down (in order):")
+	fmt.Fprintf(e.Out, "The following %d module(s) WOULD BE DELETED (in order):\n", len(e.Modules))
+	if len(e.Modules) == 0 {
+		fmt.Fprintln(e.Out, "  (none provisioned)")
+	}
 	for i, m := range e.Modules {
-		fmt.Fprintf(e.Out, "  %d. %s\n", i+1, m.Name)
+		fmt.Fprintf(e.Out, "  %d. %s (all its resources)\n", i+1, m.Name)
 	}
 	if e.Bucket != "" || e.Table != "" {
-		fmt.Fprintln(e.Out, "Then the state backend:")
-		fmt.Fprintf(e.Out, "  S3 bucket:     %s\n", e.Bucket)
+		fmt.Fprintln(e.Out, "\nThen the state backend WOULD BE DELETED:")
+		fmt.Fprintf(e.Out, "  S3 bucket:      %s\n", e.Bucket)
 		fmt.Fprintf(e.Out, "  DynamoDB table: %s\n", e.Table)
+		fmt.Fprintln(e.Out, "  (backend is deleted only if every module above succeeds)")
+	} else {
+		fmt.Fprintln(e.Out, "\nNo state backend to delete.")
 	}
-	fmt.Fprintln(e.Out, "\nRun without --dry-run to proceed.")
+	fmt.Fprintln(e.Out, "\nNothing has been deleted. Run without --dry-run to proceed.")
 	return nil
 }
 
@@ -987,18 +1001,23 @@ func (e Engine) execute(ctx context.Context) error {
 }
 
 func (e Engine) finishWithFailure(res Result) error {
-	if e.JSONOut {
-		e.printJSON(res)
-	} else {
-		fmt.Fprintln(e.Out, "\nDestroy --all did not complete: one or more modules failed.")
-		fmt.Fprintln(e.Out, "The state backend was PRESERVED so orphaned resources stay tracked.")
-		fmt.Fprintln(e.Out, "Fix the errors above and retry the affected module(s), e.g. 'fabrica <module> destroy', then re-run 'fabrica destroy --all'.")
-	}
 	failed := make([]string, 0)
 	for _, m := range res.Modules {
 		if m.Error != "" {
 			failed = append(failed, m.Module)
 		}
+	}
+	if e.JSONOut {
+		e.printJSON(res)
+	} else {
+		fmt.Fprintln(e.Out, "\nDestroy --all did not complete: the following module(s) failed:")
+		for _, m := range res.Modules {
+			if m.Error != "" {
+				fmt.Fprintf(e.Out, "  - %s: %s\n", m.Module, m.Error)
+			}
+		}
+		fmt.Fprintln(e.Out, "The state backend was PRESERVED so orphaned resources stay tracked.")
+		fmt.Fprintf(e.Out, "Retry the failed module(s) — e.g. 'fabrica %s destroy' — then re-run 'fabrica destroy --all'.\n", failed[0])
 	}
 	return fmt.Errorf("destroy --all incomplete: %d module(s) failed: %s", len(failed), strings.Join(failed, ", "))
 }
