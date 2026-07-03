@@ -72,22 +72,19 @@ func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region 
 	}
 
 	return &CreatePlan{
-		Account:      account,
-		Region:       region,
-		AmiID:        cfg.AmiID,
-		InstanceType: instanceType,
-		VolumeSize:   volumeSize,
-		Port:         port,
-		GRPCPort:     grpcPort,
-		AllowedCIDR:  allowedCIDR,
-		VPCID:        vpcID,
-		SubnetID:     subnetID,
-		DefaultVPC:   defaultVPC,
-		SGName:       "fabrica-horde-sg",
-		InstanceName: "fabrica-horde",
-		CostResources: []cost.Resource{
-			{TypeName: TypeAWSEC2Instance, Name: instanceType},
-			{TypeName: TypeAWSEC2Volume, Name: fmt.Sprintf("gp3-%dGiB", volumeSize)},
-		},
+		Account:       account,
+		Region:        region,
+		AmiID:         cfg.AmiID,
+		InstanceType:  instanceType,
+		VolumeSize:    volumeSize,
+		Port:          port,
+		GRPCPort:      grpcPort,
+		AllowedCIDR:   allowedCIDR,
+		VPCID:         vpcID,
+		SubnetID:      subnetID,
+		DefaultVPC:    defaultVPC,
+		SGName:        "fabrica-horde-sg",
+		InstanceName:  "fabrica-horde",
+		CostResources: CostResources(cfg),
 	}, nil
 }

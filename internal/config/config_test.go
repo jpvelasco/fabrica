@@ -261,3 +261,34 @@ deploy:
 		t.Errorf("ActivationTimeoutMinutes = %d", cfg.Deploy.ActivationTimeoutMinutes)
 	}
 }
+
+func TestCostConfigRoundTrip(t *testing.T) {
+	c := Defaults()
+	c.Cost.Budgets = []BudgetThreshold{
+		{Scope: "total", Monthly: 400, WarnPct: 80},
+		{Scope: "perforce", Monthly: 150},
+	}
+	data, err := c.YAML()
+	if err != nil {
+		t.Fatalf("YAML: %v", err)
+	}
+	if !strings.Contains(string(data), "budgets:") {
+		t.Fatalf("expected budgets in YAML, got:\n%s", data)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fabrica.yaml")
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(loaded.Cost.Budgets) != 2 {
+		t.Fatalf("want 2 budgets, got %d", len(loaded.Cost.Budgets))
+	}
+	if loaded.Cost.Budgets[0].Scope != "total" || loaded.Cost.Budgets[0].Monthly != 400 {
+		t.Fatalf("unexpected first budget: %+v", loaded.Cost.Budgets[0])
+	}
+}

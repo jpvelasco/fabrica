@@ -3,6 +3,7 @@ package perforce
 import (
 	"fmt"
 
+	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
 )
 
@@ -78,6 +79,24 @@ func (ec2VolumeEstimator) Estimate(r cost.Resource) (cost.Monthly, error) {
 		Amount:     float64(gib) * gp3PricePerGiB,
 		Confidence: cost.High,
 	}, nil
+}
+
+// CostResources returns the cost inputs for a Perforce module at the given
+// config, applying the same defaults as NewCreatePlan. Pure — no AWS, no
+// validation side effects. Single source of truth for the module cost shape.
+func CostResources(cfg config.PerforceConfig) []cost.Resource {
+	instanceType := cfg.InstanceType
+	if instanceType == "" {
+		instanceType = "m5.xlarge"
+	}
+	volumeSize := cfg.VolumeSize
+	if volumeSize <= 0 {
+		volumeSize = 500
+	}
+	return []cost.Resource{
+		{TypeName: TypeAWSEC2Instance, Name: instanceType},
+		{TypeName: TypeAWSEC2Volume, Name: fmt.Sprintf("gp3-%dGiB", volumeSize)},
+	}
 }
 
 func init() {
