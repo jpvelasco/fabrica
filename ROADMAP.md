@@ -92,8 +92,9 @@ ordered milestones.
 
 **Milestone 4 — Cost management**
 
-- ⬜ `fabrica cost report`/`forecast`/`alerts`
-- ⬜ Multi-module reporting and budget guardrails
+- ✅ `fabrica cost report`/`forecast`/`alerts`
+- ✅ Multi-module reporting and budget guardrails
+- ⬜ Backfill ModuleResource.Properties with cost Name at create time (read cost inputs from state, not config).
 
 **Milestone 5 — Polish & release readiness**
 
@@ -128,7 +129,7 @@ ordered milestones.
 | `status` (aggregate) | `status` (`--probe`, `--json`) | ✅ Complete — read-only health overview across all modules |
 | `ci` | `setup`, `trigger`, `status`, `logs` | ✅ Complete — CodeBuild orchestration over Horde |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | ✅ Complete — GameLift blue/green deploy orchestration |
-| `cost` | `report`, `forecast`, `alerts` | ⬜ Planned (Phase 1, Milestone 4) |
+| `cost` | `report`, `forecast`, `alerts` | ✅ Complete — offline config-derived report/forecast + local budget alerts |
 | `destroy --all` | clean teardown | ⚠️ Skeleton wired |
 | `export` | `--format cloudformation\|terraform` | ⬜ Planned (Phase 2+) |
 

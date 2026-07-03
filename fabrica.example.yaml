@@ -40,4 +40,13 @@ deploy:
   desiredInstances: 1       # instances per fleet (cost estimate only in V1)
   activationTimeoutMinutes: 45   # how long 'promote' waits for a fleet to become ACTIVE
 
-cost: {}
+# Cost reporting and local budget guardrails.
+# Purely informational — no AWS Budgets resources are created.
+# Scope is "total" (aggregate across all modules) or a specific module name.
+# cost:
+#   budgets:
+#     - scope: total
+#       monthly: 400
+#       warnPct: 80
+#     - scope: perforce
+#       monthly: 150

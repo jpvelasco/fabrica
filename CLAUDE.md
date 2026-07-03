@@ -10,7 +10,7 @@ A Go CLI + infrastructure-as-code framework that provisions and manages game stu
 
 [`ROADMAP.md`](ROADMAP.md) is the single source of truth for phases, module status, and the Praetorium vision. Update it when module status changes.
 
-Phase 0 (CLI skeleton + AWS foundation) is complete; Phase 1 Milestones 1–3 are done. Implemented modules: `perforce` (create/status/destroy), `horde` (create/status/submit/destroy/ami), `workstation` (create/list/stop/start/terminate), `ci` (setup/trigger/status/logs — CodeBuild orchestration over Horde), and `deploy` (setup/promote/rollback/status/destroy — GameLift blue/green orchestration). All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` for resource types Cloud Control supports (verify first; see the CI notes for the CodeBuild exception).
+Phase 0 (CLI skeleton + AWS foundation) is complete; Phase 1 Milestones 1–4 are done. Implemented modules: `perforce` (create/status/destroy), `horde` (create/status/submit/destroy/ami), `workstation` (create/list/stop/start/terminate), `ci` (setup/trigger/status/logs — CodeBuild orchestration over Horde), `deploy` (setup/promote/rollback/status/destroy — GameLift blue/green orchestration), and `cost` (report/forecast/alerts — offline config-derived reporting + local budget alerts). All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` for resource types Cloud Control supports (verify first; see the CI notes for the CodeBuild exception).
 
 `fabrica setup` is fully functional: `internal/state/bootstrap.go` type-asserts the provider to `cloud.StateBackendBootstrapper` and creates the S3 state bucket (versioning + encryption + public-access-block) and the DynamoDB lock table, idempotently. `cmd/setup/setup.go` shows the plan + cost estimate, then prompts for y/N confirmation before any AWS write (`--yes` skips; `--dry-run` shows the plan and cost without creating anything). `fabrica status` is the aggregate read-only overview: state-backend health + per-module status, resource counts, and actionable next steps, with `--probe` for opt-in TCP readiness checks (off by default because modules use private IPs); it never mutates state.
 
@@ -117,6 +117,12 @@ go list -deps ./internal/cloud/...
 | `cmd/deploy/status` | Show alias target + active fleet + rollback candidates with live fleet status; `--json` |
 | `cmd/deploy/destroy` | Delete fleets + builds (default); `--all` also removes alias + role; reuses `cmd/internal/teardown` |
 | `internal/deploy` | Pure plan layer: `CreatePlan`, `RoleDesiredState` + `BuildDesiredState` + `FleetDesiredState` + `AliasDesiredState` (Cloud Control), cost estimators (IAM + GameLift); `ResourceOrder` hook for teardown sequencing |
+| `cmd/cost` | Parent command; wires report/forecast/alerts subcommands. No live provider — all operations are offline (config-derived + state-derived, no AWS calls) |
+| `cmd/cost/report` | Estimated monthly cost broken down by module; reads local state + current `fabrica.yaml`; `--json` emits structured breakdown |
+| `cmd/cost/forecast` | Projects the current estimate over a time horizon (`--days`, default 30); `--json` emits forecast entries (daily + summary) |
+| `cmd/cost/alerts` | Manage and check local budget thresholds: `list` shows configured budgets, `set <scope> [--monthly N] [--warn-pct N]` updates `fabrica.yaml`, `check` evaluates current cost against thresholds and reports OK/WARN/OVER status |
+| `cmd/internal/costsource` | Shared `Aggregate` engine; sole owner of module enumeration for cost (reads local state, applies stopped-instance drop, deploy fleet gate, unknown-module filtering); wired by report/forecast/alerts |
+| `internal/cost` | `Project`/`Forecast` functions for time-series projection; `EvaluateBudgets`/`BudgetStatus` for threshold evaluation; render helpers (`RenderMonthly`, `RenderForecast`, `RenderBudgetStatus`) |
 
 ### Module Pattern
 
@@ -209,7 +215,7 @@ fabrica horde ami build                     # ✓ implemented; generates Image B
 fabrica ci setup|trigger|status|logs        # ✓ implemented; CodeBuild orchestration over Horde
 fabrica deploy setup|promote|rollback|status|destroy  # ✓ implemented; GameLift blue/green deployment
 fabrica workstation create|list|stop|start|terminate  # ✓ implemented
-fabrica cost [report|forecast|alerts]
+fabrica cost report|forecast|alerts         # ✓ implemented; offline cost visibility + local budget alerts
 fabrica doctor                              # prerequisite validation
 fabrica destroy --all                       # clean teardown
 fabrica export --format cloudformation      # escape hatch
@@ -254,3 +260,11 @@ fabrica export --format cloudformation      # escape hatch
 - **Destroy default vs. `--all` semantics** — `destroy` (default) deletes fleets + builds but leaves the alias and IAM role in place so the alias your game backend references survives teardown and you can re-promote later. `--all` also removes the alias + role — use only if tearing down the entire deploy infrastructure. The `cmd/internal/teardown` engine handles resource deletion order via the `ResourceOrder` hook.
 - **`deploy.buildBucket` required** — The S3 bucket where CI/Horde uploads packaged builds must be set in `fabrica.yaml`. `promote` uses the convention `s3://<buildBucket>/builds/<build-version>/server.zip` by default; override with `--s3-bucket`/`--s3-key`.
 - **S3 build convention** — CI/Horde outputs are expected at `s3://<buildBucket>/builds/<build-version>/server.zip`. This path is hardcoded in the build registration; Fabrica does not upload builds, only registers and deploys what's already there.
+
+## Cost-Specific Notes
+
+- **Config-derive model** — `cost report` and `cost forecast` reflect the *current* `fabrica.yaml` estimates, scoped to modules present in local state (no S3 roundtrip). Fully offline — the `costsource.Aggregate` engine reads state + config and returns a `[]CostResource`, which the cost package projects and evaluates. No AWS calls; no cost-data API.
+- **Stopped instances drop the compute line** — When `workstation stop` sets status to `"stopped"`, the `costsource` engine filters that instance out of the cost model (state still tracks it). EBS volumes remain billed. `workstation start` returns the instance to the cost model.
+- **Deploy fleet cost counted only when a fleet exists** — If no `AWS::GameLift::Fleet` resource exists in the deploy module state, the deploy cost is zero. Once a fleet is promoted (created and ACTIVE), it enters the cost model until `destroy` removes it.
+- **Local thresholds only** — `cost alerts set/list/check` work entirely on the local `fabrica.yaml` — no AWS Budgets resources, no SNS topics, no CloudWatch events. `alerts check` is informational (exit 0 always); the caller can decide what to do with OK/WARN/OVER status.
+- **Follow-up: Properties backfill deferred** — `ModuleResource.Properties` could store cost-config metadata at create time (e.g., instance type, EBS size), allowing cost reports to read state without the config file. This is a V2 convenience feature; V1 requires both state + config to coexist.
