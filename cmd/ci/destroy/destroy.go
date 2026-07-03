@@ -200,3 +200,26 @@ func removeModule(st *fabricastate.State, name string) {
 	}
 	st.Modules = filtered
 }
+
+// RunOrchestrated runs the CI teardown with confirmation skipped, for use by
+// `fabrica destroy --all`. The aggregate confirmation is handled by the orchestrator.
+func RunOrchestrated(ctx context.Context, rt globals.Runtime, out io.Writer) error {
+	c := command{
+		runtime:     rt,
+		skipConfirm: true,
+		assumeYes:   true,
+		out:         out,
+		readState:   func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+		writeState:  fabricastate.WriteState,
+		confirm:     prompt.ConfirmExact,
+	}
+	if rt.Provider != nil {
+		if rc := rt.Provider.Resources(); rc != nil {
+			c.deleteResource = rc.Delete
+		}
+		if r, ok := rt.Provider.(cloud.CodeBuildRunner); ok {
+			c.deleteProject = r.DeleteProject
+		}
+	}
+	return c.run(ctx)
+}

@@ -72,6 +72,29 @@ func newForTest(all bool) teardown.Command {
 	return teardown.Command{Spec: spec(all)}
 }
 
+// NewTeardown builds the deploy teardown.Command for orchestrated use by
+// `fabrica destroy --all`, with all=true so the alias and IAM role are removed
+// (a full-stack wipe leaves nothing behind).
+func NewTeardown(rt globals.Runtime, out io.Writer) teardown.Command {
+	tc := teardown.Command{
+		Spec:        spec(true),
+		Runtime:     rt,
+		SkipConfirm: true,
+		AssumeYes:   true,
+		Out:         out,
+		Confirm:     prompt.ConfirmExact,
+		ReadState:   func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+		WriteState:  fabricastate.WriteState,
+	}
+	if rt.Provider != nil {
+		if rc := rt.Provider.Resources(); rc != nil {
+			tc.DeleteResource = rc.Delete
+			tc.GetResource = rc.Get
+		}
+	}
+	return tc
+}
+
 // New returns the "deploy destroy" subcommand.
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
 	var all bool

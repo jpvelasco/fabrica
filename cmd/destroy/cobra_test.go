@@ -86,7 +86,7 @@ func TestDestroyCobraDryRunNoAWSCalls(t *testing.T) {
 		t.Fatalf("dry run made AWS calls: bucketDeleteCalls=%d tableDeleteCalls=%d",
 			provider.bucketDeleteCalls, provider.tableDeleteCalls)
 	}
-	assertCobraContains(t, got, "No resources will be deleted. No AWS delete calls will be made.")
+	assertCobraContains(t, got, "Nothing has been deleted. Run without --dry-run to proceed.")
 }
 
 // TestDestroyCobraDryRunWithNilProvider verifies that --all --dry-run with
@@ -106,14 +106,11 @@ func TestDestroyCobraDryRunOutput(t *testing.T) {
 		t.Fatalf("dry run failed: %v", err)
 	}
 	checks := []string{
-		"Destroy dry run",
-		"AWS account ID: 123456789012",
-		"AWS region:     us-east-1",
-		"S3 state bucket:      fabrica-state-test",
-		"DynamoDB lock table:  fabrica-locks-test",
-		"Deletion order if run for real:",
-		"1. S3 state bucket",
-		"2. DynamoDB lock table",
+		"Destroy --all dry run",
+		"Account: 123456789012",
+		"Region:  us-east-1",
+		"S3 bucket:      fabrica-state-test",
+		"DynamoDB table: fabrica-locks-test",
 	}
 	for _, want := range checks {
 		assertCobraContains(t, got, want)
@@ -134,7 +131,7 @@ func TestDestroyCobraYesFlagPerformsDeletion(t *testing.T) {
 	if !provider.deletedTable {
 		t.Fatal("DynamoDB table was not deleted")
 	}
-	assertCobraContains(t, got, "Destroy complete.")
+	assertCobraContains(t, got, "Destroy --all complete. All modules and the state backend were removed.")
 }
 
 // TestDestroyCobraNilProvider verifies that --all --yes with a nil provider
