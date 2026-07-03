@@ -32,6 +32,17 @@ func (f *fakeBackend) DeleteStateLockTable(_ context.Context, t string) (cloud.S
 	return cloud.StateBackendDeleteResult{Identifier: t, Deleted: true}, nil
 }
 
+// errBackend fails on bucket deletion, modelling e.g. a non-empty S3 bucket.
+type errBackend struct{ tableDeleted bool }
+
+func (errBackend) DeleteStateBucket(_ context.Context, b string) (cloud.StateBackendDeleteResult, error) {
+	return cloud.StateBackendDeleteResult{Identifier: b}, errors.New("bucket not empty")
+}
+func (e *errBackend) DeleteStateLockTable(_ context.Context, t string) (cloud.StateBackendDeleteResult, error) {
+	e.tableDeleted = true
+	return cloud.StateBackendDeleteResult{Identifier: t, Deleted: true}, nil
+}
+
 func baseEngine(out *bytes.Buffer, be *fakeBackend, mods []Module) Engine {
 	return Engine{
 		Account:   "123456789012",
@@ -58,6 +69,24 @@ func TestRunAllSucceedDeletesBackend(t *testing.T) {
 	}
 	if !be.bucketDeleted || !be.tableDeleted {
 		t.Fatal("backend should be deleted when all modules succeed")
+	}
+}
+
+func TestRunBackendDeleteError(t *testing.T) {
+	var out bytes.Buffer
+	be := &errBackend{}
+	e := baseEngine(&out, nil, []Module{{Name: "perforce", Teardown: okTeardown("i-1")}})
+	e.Backend = be
+	err := e.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected an error when backend deletion fails")
+	}
+	if !strings.Contains(err.Error(), "bucket") {
+		t.Fatalf("error should mention the bucket failure, got: %v", err)
+	}
+	// bucket delete failed before the table was attempted
+	if be.tableDeleted {
+		t.Fatal("lock table must not be deleted after bucket deletion fails")
 	}
 }
 
