@@ -5,6 +5,7 @@ package ci
 import (
 	"io"
 
+	"github.com/jpvelasco/fabrica/cmd/ci/destroy"
 	"github.com/jpvelasco/fabrica/cmd/ci/logs"
 	"github.com/jpvelasco/fabrica/cmd/ci/setup"
 	"github.com/jpvelasco/fabrica/cmd/ci/status"
@@ -31,5 +32,6 @@ Available operations:
 	cmd.AddCommand(trigger.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(status.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(logs.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(destroy.New(runtimeSource, optionsSource, out))
 	return cmd
 }
