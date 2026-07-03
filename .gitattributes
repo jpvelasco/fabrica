@@ -7,3 +7,4 @@
 *.json text eol=lf
 *.mod text eol=lf
 *.sum text eol=lf
+.githooks/* text eol=lf

@@ -12,7 +12,8 @@ coverage:
         threshold: 1%      # tolerate <=1% drift before failing
     patch:
       default:
-        target: 80%        # new/changed lines must be >=80% covered
+        target: 90%        # new/changed lines must be >=90% covered (no new
+                           # function ships untested; strive for 100%)
 
 # Virtual coverage groupings by path — no upload changes required. Lets the
 # dashboard and PR comment break coverage down by architectural layer.
