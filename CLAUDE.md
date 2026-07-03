@@ -41,7 +41,9 @@ CI runs lint + build + test cross-platform (ubuntu/windows/macos) on push/PR to 
 
 ## Git Hooks
 
-Hooks live in `.githooks/` (tracked). Activate once per clone:
+Hooks live in `.githooks/` (tracked). **REQUIRED once per clone** — without this
+the hooks are inactive (Git defaults to `.git/hooks`) and unformatted/untested
+code can slip through locally:
 
 ```bash
 git config core.hooksPath .githooks
@@ -49,6 +51,10 @@ git config core.hooksPath .githooks
 
 - **pre-commit**: runs `gofmt -l` and `go vet` on staged Go files
 - **commit-msg**: enforces Conventional Commits (`feat|fix|refactor|test|docs|chore|perf|ci|build`)
+- **pre-push**: fails if any changed Go file has a function at 0.0% coverage (early catch; bypass with `--no-verify` in emergencies)
+
+The hooks are a convenience. **CI is the real gate**: the Codecov `patch` status
+(target 90%, in `codecov.yml`) runs on every PR and cannot be bypassed locally.
 
 ## Architecture
 
@@ -203,7 +209,9 @@ Reference: `cmd/perforce/` + `internal/perforce/` are the canonical templates fo
 
 **No logging library:** `fmt.Printf`/`Println` only.
 
-**Coverage target:** 60%+ for `internal/*`; tests use mocked SDK interfaces — no real AWS calls.
+**Coverage target:** New/changed code must meet the Codecov `patch` gate (≥90%; enforced in CI via `codecov.yml`). **No new function ships at 0% coverage** — strive for 100%. Tests use mocked SDK interfaces — no real AWS calls. "Tests pass" ≠ "code is covered": before claiming a task done, run `go tool cover -func` on the changed functions, or check the Codecov `patch` verdict via the API (`gh api repos/OWNER/REPO/commits/SHA/check-runs`), not the cosmetic `gh pr checks` line.
+
+**Seam coverage rule (SDD):** Every new exported function must be executed by a test. If a task introduces a *seam* (a `func` field the cmd layer wires to a real impl and tests replace with a fake), a test must still exercise the real, non-seam path somewhere — a stubbed seam hides its own wiring from coverage. This is exactly how `NewTeardown`/`RunOrchestrated` shipped at 0% in the destroy-all work: the orchestrator test stubbed the `runAll` seam, so the real module constructors were never exercised under test.
 
 ## Planned Command Structure
 
