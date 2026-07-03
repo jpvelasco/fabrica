@@ -98,7 +98,8 @@ ordered milestones.
 
 **Milestone 5 — Polish & release readiness**
 
-- ⬜ End-to-end testing + teardown
+- ✅ End-to-end full-stack teardown (`destroy --all`)
+- ⬜ End-to-end testing (broader E2E suite)
 - ⬜ Comprehensive documentation and examples
 - ⬜ Final architecture + consistency review
 - ⬜ v0.1 / v1.0 release preparation
@@ -127,10 +128,10 @@ ordered milestones.
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | ✅ Complete |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | ✅ Complete |
 | `status` (aggregate) | `status` (`--probe`, `--json`) | ✅ Complete — read-only health overview across all modules |
-| `ci` | `setup`, `trigger`, `status`, `logs` | ✅ Complete — CodeBuild orchestration over Horde |
+| `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | ✅ Complete — CodeBuild orchestration over Horde; `destroy` removes CodeBuild project + IAM role |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | ✅ Complete — GameLift blue/green deploy orchestration |
 | `cost` | `report`, `forecast`, `alerts` | ✅ Complete — offline config-derived report/forecast + local budget alerts |
-| `destroy --all` | clean teardown | ⚠️ Skeleton wired |
+| `destroy --all` | clean teardown | ✅ Complete — tears down all modules (deploy→ci→workstation→horde→perforce) then the state backend; backend deleted only on full success |
 | `export` | `--format cloudformation\|terraform` | ⬜ Planned (Phase 2+) |
 
 ## Architecture decisions (locked)
