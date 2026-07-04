@@ -15,7 +15,9 @@
 - Package `test/e2e` is black-box: `package e2e`. It imports `cmd/root`, `internal/cloud`, `internal/config`, `internal/state`. It must NOT import `internal/cloud/aws` directly (root blank-imports it, registering `"aws"`; the fake registers `"fake"` — different names, no duplicate-registration panic).
 - Tests do NOT call `t.Parallel()` — they share the package-level `currentFake` holder. The suite is fast; serial is fine.
 - Fake identifiers are predictable: `fake-<type-slug>-<n>`, per-type counter from 1, reset per test via `newFakeStore()`. `<type-slug>` derives from TypeName (e.g. `AWS::EC2::Instance` → `ec2-instance`).
-- Each test starts with `setupE2E(t)` = `t.Chdir(t.TempDir())` + `writeConfig(t)` + `resetFake(t)`.
+- **Every flow test MUST call `setupE2E(t)` as its first statement** — `t.Chdir(t.TempDir())` + `writeConfig(t)` + `resetFake(t)`. This is the sole isolation mechanism (fresh temp dir, fresh config, fresh fake store); a test that skips it will leak state from whatever ran before. No exceptions.
+- `--json` output for `status` and `cost report` is verified PURE JSON: both take an early `if jsonOut { renderJSON; return }` branch before any human `Fprintln` (`cmd/status/status.go:144`, `cmd/cost/report/report.go` `renderJSON`). So `assertJSON` = `strings.TrimSpace` + `json.Unmarshal` is sufficient — no JSON-span extraction needed. (If a future command mixes human text into `--json`, that is a bug in that command, not the harness.)
+- Optional helper `assertResourceCount(t, st, module, n)` may be added in Task 2 if a flow reads cleaner with it; the planned flows use `assertResourceType` and don't require it. Add only if it removes real duplication.
 - Naming: `snake_case.go` files; acronyms uppercase (`ID`, `URL`, `AWS`); single-letter receivers where idiomatic; `fmt.Print*` only.
 - The fake is TEST code (only compiled under `_test.go`), so it is exempt from the ≥90% patch-coverage gate — but any non-test helper added elsewhere is not. Keep everything in `_test.go` files.
 - Compile-time interface assertions guard the fake: `var _ cloud.GameLiftManager = (*fakeProvider)(nil)` etc. for every interface it claims.
