@@ -106,6 +106,10 @@ ordered milestones.
 
 **Also tracked under Phase 1:** Perforce `backup`/`restore`.
 
+**Deferred from the Milestone 5 consistency audit** (docs/cleanup fixes shipped; these remain):
+- Test-coverage gaps: 7 command packages lack `cobra_test.go` (ci setup/status/trigger, deploy setup/promote/rollback/status); 2 lack a white-box `_test.go` (horde destroy, workstation terminate); the AWS provider type-assertion seams (`Identity`/`EC2Manager`/`StopInstance`/`StartInstance`/`CreateFleetAsync`) sit at 0% coverage.
+- Cosmetic conventions: output-writer inconsistency (`cmd/version` uses `cmd.OutOrStdout()`; other commands use the `c.out` seam); a few multi-letter anonymous receivers (`(renderer)`).
+
 ### Phase 2+ — Expansion 🔭 Future
 
 - Lore support (production server management)
