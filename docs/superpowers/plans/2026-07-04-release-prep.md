@@ -104,7 +104,7 @@ release:
 ```
 
 Notes:
-- Two ldflags entries beyond `-s -w`: both `Version` and `Commit` (Fabrica's version pkg has both; verify the exact var paths against `internal/version/*.go`).
+- Two ldflags entries beyond `-s -w`: both `Version` and `Commit`. Confirmed against `internal/version/*.go`: it declares `var Version = "dev"` and `var Commit = "unknown"` in `package version` under module path `github.com/jpvelasco/fabrica`, so the fully-qualified ldflags targets are exactly `github.com/jpvelasco/fabrica/internal/version.Version` and `...internal/version.Commit`. After Step 3's snapshot build, `dist/<...>/fabrica version` should print a non-`dev` version + the short commit — that proves the ldflags path resolved (a wrong path fails silently, leaving `dev`/`unknown`).
 - `name_template` produces `fabrica_<version>_<os>_<arch>`; the archive extension (`tar.gz`/`zip`) is appended by GoReleaser from `formats`. This yields e.g. `fabrica_0.1.0_linux_amd64.tar.gz`, `fabrica_0.1.0_windows_amd64.zip` — must equal Task 2's `getArchiveName()`.
 
 - [ ] **Step 2: Install goreleaser + validate the config**
@@ -160,6 +160,7 @@ git commit -m "build: add GoReleaser config (cross-platform binaries + checksums
 
 ```json
 {
+  "_comment_name": "PROVISIONAL name — final npm name (fabrica-cli vs @jpvelasco/fabrica) is a release-day decision; see docs/superpowers/specs/2026-07-04-release-prep-design.md",
   "name": "fabrica-cli",
   "version": "0.0.0",
   "description": "Studio infrastructure-as-code CLI for AWS — Perforce, Unreal Horde, CI/CD, GameLift deploy, cloud workstations",
@@ -860,6 +861,20 @@ Append a new `goreleaser` job (build-only, never publishes) after the existing `
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94  # v7
         with:
           args: build --snapshot --clean
+      - name: Smoke-test the built linux binary
+        # Exec the freshly built native binary to prove it runs + the version
+        # ldflags resolved (not the `dev`/`unknown` fallbacks). The runner is
+        # linux/amd64, so glob that build output.
+        run: |
+          BIN=$(find dist -type f -name fabrica -path '*linux_amd64*' | head -1)
+          test -n "$BIN" || { echo "no linux/amd64 fabrica binary in dist/"; exit 1; }
+          chmod +x "$BIN"
+          OUT=$("$BIN" version)
+          echo "$OUT"
+          # snapshot builds inject a version like "0.1.0-SNAPSHOT-<sha>"; the
+          # binary must NOT show the un-injected "dev" fallback.
+          echo "$OUT" | grep -q "Fabrica dev" && { echo "version ldflags did not resolve (still 'dev')"; exit 1; }
+          echo "smoke test OK"
       - name: npm shim tests
         working-directory: npm
         run: node --test
