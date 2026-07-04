@@ -156,6 +156,10 @@ Parses a BuildGraph XML file and POSTs the job to the Horde REST API via the coo
 
 Requires VPN or same-VPC access; no public IP is assigned in V1.
 
+#### `fabrica horde destroy`
+
+Permanently deletes the Horde coordinator and its AWS resources in reverse-creation order (EC2 instance, then security group). State is updated after each deletion, so a partial failure leaves a recoverable record and re-running skips resources already gone. Typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview.
+
 #### `fabrica horde ami build`
 
 Generates the files needed to build a Horde AMI. Produces an EC2 Image Builder component (`component.yaml`) and recipe (`image-builder-recipe.json`) by default, an optional Packer HCL template (`--include-packer`), and a `build-guide.md` with end-to-end instructions. No AWS calls are made — all output is written to a local directory.
