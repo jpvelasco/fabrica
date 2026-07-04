@@ -16,7 +16,9 @@ Game studios aren't web apps. You need Perforce for terabyte asset histories, Ho
 
 ## Current Status
 
-**Phase 0 complete. Perforce, Horde, and Workstation modules are implemented.**
+**Phase 0 complete; Phase 1 core complete.** All provisioning modules (Perforce,
+Horde, Workstation), CI, Deploy, and Cost ship today, along with full-stack
+`destroy --all` teardown and a CLI end-to-end test suite.
 See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium vision, and what's next.
 
 | Module | Commands | Status |
@@ -25,9 +27,10 @@ See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium vision, and what's next.
 | `perforce` | `create`, `status`, `destroy` | Complete |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Complete |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Complete |
-| `ci` | `setup`, `trigger`, `status`, `logs` | Complete |
+| `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | Complete |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | Complete |
-| `cost` | `report`, `forecast`, `alerts` | Planned |
+| `cost` | `report`, `forecast`, `alerts` | Complete |
+| `destroy --all` | full-stack teardown | Complete |
 
 ## Requirements
 
@@ -153,6 +156,10 @@ Parses a BuildGraph XML file and POSTs the job to the Horde REST API via the coo
 
 Requires VPN or same-VPC access; no public IP is assigned in V1.
 
+#### `fabrica horde destroy`
+
+Permanently deletes the Horde coordinator and its AWS resources in reverse-creation order (EC2 instance, then security group). State is updated after each deletion, so a partial failure leaves a recoverable record and re-running skips resources already gone. Typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview.
+
 #### `fabrica horde ami build`
 
 Generates the files needed to build a Horde AMI. Produces an EC2 Image Builder component (`component.yaml`) and recipe (`image-builder-recipe.json`) by default, an optional Packer HCL template (`--include-packer`), and a `build-guide.md` with end-to-end instructions. No AWS calls are made — all output is written to a local directory.
@@ -221,6 +228,10 @@ Shows the CI infrastructure (CodeBuild project + IAM role) from local state, wit
 
 Fetches the CloudWatch log output for a specific build.
 
+#### `fabrica ci destroy`
+
+Tears down the CI infrastructure: deletes the CodeBuild project (via the AWS SDK), then the IAM service role (via Cloud Control). A missing project is not an error. Typed-phrase confirmation before any deletion; `--yes` to skip, `--dry-run` to preview.
+
 **Example pipeline:**
 
 ```bash
@@ -279,7 +290,31 @@ fabrica deploy rollback
 fabrica deploy destroy
 ```
 
+### Cost
+
+> **Offline cost visibility:** `fabrica cost` derives estimated monthly cost from your current `fabrica.yaml`, scoped to the modules present in local state. Fully offline — no AWS Cost Explorer calls, no billing API. Estimates reflect config, so run `<module> status` to reconcile if config changed since provisioning.
+
+#### `fabrica cost report`
+
+Shows the estimated monthly cost broken down by provisioned module and resource, with a grand total and confidence level. Reads local state (which modules exist) + `fabrica.yaml` (their cost inputs). `--json` for machine-readable output.
+
+#### `fabrica cost forecast`
+
+Projects the current monthly estimate over a time horizon: daily burn rate, total over the horizon, and annualized cost. `--days <n>` sets the horizon (default 30). `--json` for machine-readable output.
+
+#### `fabrica cost alerts`
+
+Manages local budget thresholds (written to `fabrica.yaml` — no AWS Budgets resources are created) and checks the current estimate against them:
+
+- `fabrica cost alerts list` — show configured thresholds.
+- `fabrica cost alerts set <scope> <monthly> [--warn-pct N]` — upsert a threshold (`scope` is `total` or a module name; `--warn-pct` defaults to 80). Honors `--dry-run`.
+- `fabrica cost alerts check` — evaluate the current estimate against thresholds and report OK/WARN/OVER. Informational (exit code stays 0). `--json` for machine-readable output.
+
 ### Other
+
+#### `fabrica destroy --all`
+
+Full-stack teardown: destroys every provisioned module in reverse dependency order (deploy → ci → workstation → horde → perforce), then the state backend — but only if every module succeeded (a module failure preserves the backend so orphaned resources stay tracked for retry). One aggregate typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview the full plan. Plain `fabrica destroy` (no `--all`) just prints usage.
 
 #### `fabrica version`
 
