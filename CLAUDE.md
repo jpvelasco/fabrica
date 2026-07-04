@@ -179,6 +179,10 @@ Every command package uses a two-file test approach (established in `cmd/perforc
 
 Seam pattern: the `command` struct holds `func` fields for all I/O operations. `New()` wires real implementations; tests inject fakes. `fakeProvider` / `fakeHordeClient` patterns live in `*_test.go` files alongside the tests that use them. When a command uses both `Provider` and `EC2InstanceManager` (e.g. workstation stop/start), cobra tests use a single `cobraFakeProvider` that implements both interfaces to avoid the type assertion in tests.
 
+### End-to-end (E2E) test harness
+
+`test/e2e/` is a black-box (`package e2e`) CLI end-to-end suite that drives the real `cmd/root` command tree against an in-memory fake `cloud.Provider` (registered as `"fake"`). No real AWS, no build tag — it runs in the default `go test ./...` and CI. The fake's store lives in a per-test holder (`currentFake`), reset by `setupE2E(t)`; tests are serial (no `t.Parallel()`). To add a flow: write a new `test/e2e/<flow>_test.go`, call `setupE2E(t)`, drive commands with `runCLI`, and assert the triad — exit code + output assertions (`assertContains`/`assertJSON`) + state assertions (read `.fabrica/state.json` and call `assertModule*` checkers). Real-AWS coverage remains the separate manual `//go:build integration` suite.
+
 ## How to Add a New Module
 
 1. **`internal/<module>/`** — pure plan layer, no AWS SDK imports: `CreatePlan` struct, Cloud Control desired-state JSON builders, cloud-init generator, cost estimators.

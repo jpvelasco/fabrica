@@ -99,7 +99,7 @@ ordered milestones.
 **Milestone 5 — Polish & release readiness**
 
 - ✅ End-to-end full-stack teardown (`destroy --all`)
-- ⬜ End-to-end testing (broader E2E suite)
+- ✅ End-to-end testing (CLI E2E harness — in-process, fake provider, runs in CI)
 - ⬜ Comprehensive documentation and examples
 - ⬜ Final architecture + consistency review
 - ⬜ v0.1 / v1.0 release preparation

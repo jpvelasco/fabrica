@@ -13,12 +13,12 @@ var Cmd = &cobra.Command{
 	Short:        "Show version information",
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Printf("Fabrica %s\n", fabricav.Version)
+		fmt.Fprintln(cmd.OutOrStdout(), "Fabrica", fabricav.Version)
 		if fabricav.Commit != "" {
-			fmt.Printf("Commit: %s\n", fabricav.Commit)
+			fmt.Fprintf(cmd.OutOrStdout(), "Commit: %s\n", fabricav.Commit)
 		}
-		fmt.Printf("Go:     %s\n", runtime.Version())
-		fmt.Printf("OS/Arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+		fmt.Fprintf(cmd.OutOrStdout(), "Go:     %s\n", runtime.Version())
+		fmt.Fprintf(cmd.OutOrStdout(), "OS/Arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 		return nil
 	},
 }
