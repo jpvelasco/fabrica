@@ -59,15 +59,45 @@ Files:
 
 ### The fake provider
 
-An in-memory provider registered in the e2e package's `init()`:
+**State lifetime — the subtle part.** `cloud.Get` calls the registered
+constructor *fresh on every* `Init`, and each `runCLI` builds a fresh root →
+fresh `Init` → fresh constructor call. If the constructor returned a brand-new
+empty fake each time, state would reset *between the steps of a single flow*
+(step 2's `status` wouldn't see step 1's `create`) — wrong. The in-memory store
+must therefore live in a **per-test holder** that the constructor closes over, so
+it persists across the many `runCLI` calls *within one test* but is fresh
+*between tests*.
+
+Concretely, a package-level pointer set by each test's setup:
 
 ```go
+// currentFake holds the fake store for the running test. reset() installs a
+// fresh one; the registered constructor returns a provider backed by it, so all
+// runCLI calls in a test share one store. Tests are not run in parallel (they
+// share this global), which is fine — the suite is fast.
+var currentFake *fakeStore
+
+func resetFake(t *testing.T) *fakeStore {
+    currentFake = newFakeStore()
+    return currentFake
+}
+
 func init() {
     cloud.Register("fake", func(cfg *config.Config) (cloud.Provider, error) {
-        return newFakeProvider(cfg), nil
+        if currentFake == nil {
+            currentFake = newFakeStore() // safety: never nil
+        }
+        return &fakeProvider{store: currentFake, account: cfg.Cloud.AWS.AccountID}, nil
     })
 }
 ```
+
+The harness's per-test setup (`t.Chdir` + `writeConfig`) also calls
+`resetFake(t)`, so every test starts with an empty store. Tests do **not** call
+`t.Parallel()` (they share `currentFake`); the suite is fast enough that serial
+execution is a non-issue. `newFakeStore()` returns a zeroed in-memory store with
+its identifier counter reset to 0 — so identifiers are **predictable per test**
+(see below).
 
 It implements `Provider` plus every auxiliary interface the command tree type-
 asserts, so all modules work against it:
@@ -81,11 +111,15 @@ asserts, so all modules work against it:
 - `cloud.CodeBuildRunner` — record `EnsureProject`/`DeleteProject`/build calls
 - `cloud.GameLiftManager` — fleet status/events stubs sufficient for deploy flow
 
-Behavior is deterministic and instant: `Create` assigns a deterministic
-identifier (e.g. `fake-<type-slug>-<n>` from a counter) and stores the desired
-state; `Get` returns stored actual state; `Delete` removes it; `List` enumerates
-by type. No timing, no network, no randomness. `Identity` returns a fixed account
-(matching the config) + region.
+Behavior is deterministic and instant: `Create` assigns a **predictable**
+identifier — `fake-<type-slug>-<n>` where `<type-slug>` derives from the
+resource TypeName (e.g. `AWS::EC2::Instance` → `ec2-instance`) and `<n>` is a
+per-type counter starting at 1. Because the store (and its counters) reset per
+test via `newFakeStore()`, identifiers are stable across runs, so tests can
+assert exact IDs (e.g. `fake-ec2-instance-1`) rather than matching patterns.
+`Get` returns stored actual state; `Delete` removes it; `List` enumerates by
+type. No timing, no network, no randomness. `Identity` returns the config's
+account (or a fixed default) + region.
 
 Verify against the real interfaces before finalizing: the fake must satisfy the
 exact method sets in `internal/cloud/*.go`. A compile-time assertion
@@ -100,12 +134,19 @@ exact method sets in `internal/cloud/*.go`. A compile-time assertion
 func runCLI(t *testing.T, args ...string) (string, error)
 ```
 
-Plus helpers: `writeConfig(t, dir)` (emits `fabrica.yaml` with `provider: fake`),
-`readState(t)` (unmarshals `.fabrica/state.json` into `state.State`), and
-assertion sugar (`assertContains`, `assertModuleAbsent`, etc.).
+Plus a small set of helpers to keep flow bodies clean and declarative:
+- `setupE2E(t)` — one call that does `t.Chdir(t.TempDir())`, `writeConfig`, and
+  `resetFake(t)`; returns the `*fakeStore` for failure-injection sub-cases.
+- `writeConfig(t)` — emits `fabrica.yaml` with `cloud.provider: fake` + account/region.
+- `readState(t)` — unmarshals `.fabrica/state.json` into `state.State` (fails the
+  test if absent when a module was expected).
+- Assertion sugar (all take `*testing.T`, `t.Helper()`):
+  `assertContains(out, substr)`, `assertJSON(out, &target)`,
+  `assertModuleExists(st, name)`, `assertModuleAbsent(st, name)`,
+  `assertModuleStatus(st, name, want)`, `assertResourceType(st, module, typeName)`.
 
-Each test starts with `t.Chdir(t.TempDir())` + `writeConfig` for isolation — no
-shared state between tests, no touching the real repo `.fabrica`.
+Each test starts with `setupE2E(t)` for isolation — no shared state between tests,
+no touching the real repo `.fabrica`.
 
 ## Flows (one test each)
 
