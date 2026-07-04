@@ -20,7 +20,7 @@ func TestWorkstationStopStart(t *testing.T) {
 	// Cost while running: an instance line is present. Capture the running total.
 	runningCost, err := runCLI(t, "cost", "report")
 	if err != nil {
-		t.Fatalf("cost (running): %v\n%s", err, out)
+		t.Fatalf("cost (running): %v\n%s", err, runningCost)
 	}
 	assertContains(t, runningCost, "workstation")
 
@@ -37,7 +37,7 @@ func TestWorkstationStopStart(t *testing.T) {
 	// stopped annotation is present in the report.
 	stoppedCost, err := runCLI(t, "cost", "report")
 	if err != nil {
-		t.Fatalf("cost (stopped): %v\n%s", err, out)
+		t.Fatalf("cost (stopped): %v\n%s", err, stoppedCost)
 	}
 	if !strings.Contains(stoppedCost, "stopped") {
 		t.Fatalf("stopped cost report should note the stopped instance:\n%s", stoppedCost)
