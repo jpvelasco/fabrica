@@ -101,10 +101,14 @@ ordered milestones.
 - ✅ End-to-end full-stack teardown (`destroy --all`)
 - ✅ End-to-end testing (CLI E2E harness — in-process, fake provider, runs in CI)
 - ✅ README refresh (full command coverage) + doc-drift CI guard
-- ⬜ Final architecture + consistency review
+- ✅ Final architecture + consistency review (clean layering; doc/cleanup fixes applied; test-coverage gaps tracked as a follow-up)
 - ⬜ v0.1 / v1.0 release preparation
 
 **Also tracked under Phase 1:** Perforce `backup`/`restore`.
+
+**Deferred from the Milestone 5 consistency audit** (docs/cleanup fixes shipped; these remain):
+- Test-coverage gaps: 7 command packages lack `cobra_test.go` (ci setup/status/trigger, deploy setup/promote/rollback/status); 2 lack a white-box `_test.go` (horde destroy, workstation terminate); the AWS provider type-assertion seams (`Identity`/`EC2Manager`/`StopInstance`/`StartInstance`/`CreateFleetAsync`) sit at 0% coverage.
+- Cosmetic conventions: output-writer inconsistency (`cmd/version` uses `cmd.OutOrStdout()`; other commands use the `c.out` seam); a few multi-letter anonymous receivers (`(renderer)`).
 
 ### Phase 2+ — Expansion 🔭 Future
 
