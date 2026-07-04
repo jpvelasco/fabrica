@@ -1,0 +1,47 @@
+{
+  "_comment_name": "PROVISIONAL name — final npm name (fabrica-cli vs @jpvelasco/fabrica) is a release-day decision; see docs/superpowers/specs/2026-07-04-release-prep-design.md",
+  "name": "fabrica-cli",
+  "version": "0.0.0",
+  "description": "Studio infrastructure-as-code CLI for AWS — Perforce, Unreal Horde, CI/CD, GameLift deploy, cloud workstations",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jpvelasco/fabrica"
+  },
+  "bin": {
+    "fabrica": "run.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js",
+    "test": "node --test"
+  },
+  "os": [
+    "linux",
+    "darwin",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "keywords": [
+    "aws",
+    "infrastructure-as-code",
+    "gamedev",
+    "perforce",
+    "unreal-horde",
+    "gamelift",
+    "cloud-workstation",
+    "ci-cd",
+    "iac",
+    "cli",
+    "devops",
+    "cloud-control"
+  ],
+  "files": [
+    "install.js",
+    "run.js",
+    "bin/"
+  ],
+  "binaryChecksums": {}
+}
