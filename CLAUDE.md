@@ -207,7 +207,7 @@ Reference: `cmd/perforce/` + `internal/perforce/` are the canonical templates fo
 
 **Config structs:** always add `mapstructure:` tags. Live in `internal/config/config.go`.
 
-**Error handling:** `fmt.Errorf("context: %w", err)`. Messages state what went wrong AND what to do. No sentinel errors.
+**Error handling:** `fmt.Errorf("context: %w", err)`. Messages state what went wrong AND what to do. Prefer wrapped context errors; do not add ad-hoc sentinels in `cmd/*` or module layers. The narrow exception is `internal/cloud`, which defines package-level sentinels (`ErrResourceNotFound`, `ErrStateBucketNotEmpty`) that callers branch on via `errors.Is` (teardown idempotency, non-empty-bucket detection).
 
 **Cost estimation:** every new resource type needs a cost estimator registered by `TypeName` via `cost.Global.Register`. Do not re-register `AWS::EC2::Instance` or `AWS::EC2::Volume` — already registered in `internal/perforce/cost.go`.
 

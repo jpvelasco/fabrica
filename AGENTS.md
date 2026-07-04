@@ -4,7 +4,7 @@
 
 Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, zero external dependencies. Sister tool to [Ludus](https://github.com/jpvelasco/ludus) — Ludus orchestrates game builds, Fabrica gives them somewhere to run.
 
-**Current state:** Phase 0 (CLI skeleton + AWS foundation) complete. Three modules fully implemented: `perforce` (Helix Core provisioning), `horde` (build farm provisioning + job submission), and `workstation` (NICE DCV cloud workstation provisioning).
+**Current state:** Phase 0 complete; Phase 1 core complete. Modules implemented: `perforce`, `horde`, `workstation`, `ci`, `deploy`, and `cost`, plus full-stack `destroy --all` and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) and [CLAUDE.md](CLAUDE.md) for the authoritative, current module status — this file is a high-level orientation, not a status mirror.
 
 ## Current Modules
 
@@ -20,7 +20,7 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 
 ## Current Known Limitations
 
-- **`fabrica setup` is not yet functional.** The S3 bucket and DynamoDB lock table must be created manually before using any other Fabrica commands. Running `fabrica setup` without `--dry-run` prints a warning and exits — it does not create any AWS resources. See [docs/setup-manual.md](docs/setup-manual.md) once that document exists, or create the resources manually.
+- **State backend is created by `fabrica setup`.** `fabrica setup` provisions the S3 state bucket (versioning + encryption + public-access-block) and the DynamoDB lock table, idempotently — it shows a plan + cost estimate and prompts before any write (`--yes` skips, `--dry-run` previews). Run it once before other commands.
 - **Horde requires a user-provided AMI.** `fabrica horde create` is AMI-first: your AMI must already contain MongoDB 7, Redis 6.2, and the Horde server binary. Fabrica does not build or publish this AMI. See [docs/horde-ami.md](docs/horde-ami.md) for requirements.
 
 ## Architecture Overview
@@ -90,7 +90,7 @@ Reference: `cmd/perforce/` and `internal/perforce/` are the canonical templates.
 
 **Tests:**
 - No real AWS calls — mock SDK interfaces
-- Coverage target: 60%+ for `internal/*`
+- Coverage: new/changed code must meet the Codecov `patch` gate (≥90%, enforced in CI via `codecov.yml`); no new function ships at 0%
 - Use `GenerateRaw` variants for testing base64-encoded outputs (e.g., cloud-init)
 - `cobra_test.go` must build a minimal root command to replicate the persistent-flag hierarchy (`--dry-run`, `--yes`, `--json` live on root)
 

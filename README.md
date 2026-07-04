@@ -138,7 +138,7 @@ Terminates the EC2 instance and deletes the security group in reverse order. Ide
 
 #### `fabrica horde create`
 
-Provisions an Unreal Horde build coordinator on an `m7i.xlarge` instance using your pre-baked AMI. Security group allows ports 5000 (HTTP), 5002 (gRPC), and inbound traffic from `10.0.0.0/8`. Generates MongoDB credentials to `.fabrica/horde-credentials.yaml` (mode 0600).
+Provisions an Unreal Horde build coordinator on an `m7i.2xlarge` instance using your pre-baked AMI. Security group allows ports 5000 (HTTP), 5002 (gRPC), and inbound traffic from `10.0.0.0/8`. Generates MongoDB credentials to `.fabrica/horde-credentials.yaml` (mode 0600).
 
 #### `fabrica horde status`
 
@@ -334,7 +334,7 @@ perforce:
   volume_size_gb: 500
 
 horde:
-  instance_type: m7i.xlarge
+  instance_type: m7i.2xlarge
   ami_id: ami-xxxxxxxxxxxxxxxxx   # must contain MongoDB 7, Redis 6.2, Horde binary
 ```
 
