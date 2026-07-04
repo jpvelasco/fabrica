@@ -40,5 +40,4 @@ comment:
 
 # Paths excluded from coverage math.
 ignore:
-  - "tests/Fabrica.Tests"  # orphaned .NET project, not part of the Go build
   - "**/*_test.go"
