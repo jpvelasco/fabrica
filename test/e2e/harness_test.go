@@ -47,6 +47,9 @@ func writeConfig(t *testing.T) {
   aws:
     region: us-east-1
     accountId: "123456789012"
+state:
+  bucket: fabrica-state-123456789012
+  table: fabrica-state-lock
 perforce:
   vpcId: vpc-fake
   subnetId: subnet-fake
