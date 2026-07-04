@@ -77,9 +77,9 @@ func newFakeStore() *fakeStore {
 // typeSlug turns "AWS::EC2::Instance" into "ec2-instance".
 func typeSlug(typeName string) string {
 	parts := strings.Split(typeName, "::")
-	tail := parts[len(parts)-2:] // drop the "AWS" prefix when present
-	if len(parts) < 2 {
-		tail = parts
+	tail := parts // fewer than 2 segments: use the whole thing
+	if len(parts) >= 2 {
+		tail = parts[len(parts)-2:] // drop the "AWS" prefix when present
 	}
 	return strings.ToLower(strings.Join(tail, "-"))
 }
