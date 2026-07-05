@@ -141,6 +141,26 @@ func TestAggregateDeployFleetPrefersState(t *testing.T) {
 	}
 }
 
+func TestPropertyLookupsReturnNilWhenAbsent(t *testing.T) {
+	empty := &state.ModuleState{}
+	if instanceProperties(empty) != nil {
+		t.Error("instanceProperties should be nil when no instance is tracked")
+	}
+	if fleetProperties(empty) != nil {
+		t.Error("fleetProperties should be nil when no fleet is tracked")
+	}
+	// deployCostResources with a fleet that has no Properties falls back to config.
+	cfg := config.Defaults()
+	m := &state.ModuleState{Resources: []state.ModuleResource{
+		{TypeName: deploy.TypeGameLiftFleet, Identifier: "fleet-1"},
+	}}
+	got := deployCostResources(m, cfg.Deploy)
+	want := deploy.CostResources(cfg.Deploy)
+	if len(got) != len(want) || got[0].Name != want[0].Name {
+		t.Errorf("fallback = %+v, want %+v", got, want)
+	}
+}
+
 func TestAggregateUnknownModule(t *testing.T) {
 	cfg := config.Defaults()
 	st := state.NewState("acct", "us-east-1")
