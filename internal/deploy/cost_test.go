@@ -8,7 +8,7 @@ import (
 )
 
 func TestFleetEstimator(t *testing.T) {
-	m, err := cost.Global.Estimate(TypeGameLiftFleet, cost.Resource{TypeName: TypeGameLiftFleet, Name: fleetCostName("c5.large", 2)})
+	m, err := cost.Global.Estimate(TypeGameLiftFleet, cost.Resource{TypeName: TypeGameLiftFleet, Name: FleetCostName("c5.large", 2)})
 	if err != nil {
 		t.Fatalf("estimate: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestCostResourcesDefaults(t *testing.T) {
 	if got[0].TypeName != TypeGameLiftFleet {
 		t.Errorf("TypeName: got %s, want %s", got[0].TypeName, TypeGameLiftFleet)
 	}
-	expectedName := fleetCostName(defaultInstanceType, defaultDesiredInstances)
+	expectedName := FleetCostName(defaultInstanceType, defaultDesiredInstances)
 	if got[0].Name != expectedName {
 		t.Errorf("Name: got %s, want %s", got[0].Name, expectedName)
 	}
@@ -56,7 +56,7 @@ func TestCostResourcesOverrides(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("want 1 resource, got %d", len(got))
 	}
-	expectedName := fleetCostName("c5.xlarge", 3)
+	expectedName := FleetCostName("c5.xlarge", 3)
 	if got[0].Name != expectedName {
 		t.Errorf("overrides not applied: got %s, want %s", got[0].Name, expectedName)
 	}

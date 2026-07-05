@@ -155,15 +155,15 @@ func NewPromotePlan(cfg config.DeployConfig, account, region, buildVersion, role
 		DesiredInstances:         desired,
 		ActivationTimeoutMinutes: timeout,
 		CostResources: []cost.Resource{
-			{TypeName: TypeGameLiftFleet, Name: fleetCostName(instanceType, desired)},
+			{TypeName: TypeGameLiftFleet, Name: FleetCostName(instanceType, desired)},
 			{TypeName: TypeGameLiftBuild, Name: buildVersion},
 		},
 	}
 }
 
-// fleetCostName encodes the instance type and desired count for the cost
+// FleetCostName encodes the instance type and desired count for the cost
 // estimator to parse (mirrors the "gp3-<n>GiB" convention in perforce/cost.go).
-func fleetCostName(instanceType string, desired int) string {
+func FleetCostName(instanceType string, desired int) string {
 	return fmt.Sprintf("%sx%d", instanceType, desired)
 }
 

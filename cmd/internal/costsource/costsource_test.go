@@ -5,6 +5,8 @@ import (
 
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/deploy"
+	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -80,6 +82,62 @@ func TestAggregateDeployFleetOnlyWhenPresent(t *testing.T) {
 	b = Aggregate(cfg, st, cost.Global)
 	if b.Modules[0].Subtotal <= 0 {
 		t.Fatalf("deploy with fleet should have positive subtotal, got %v", b.Modules[0].Subtotal)
+	}
+}
+
+func TestEC2CostResourcesPrefersState(t *testing.T) {
+	// State records a bigger instance than the config default; the estimate
+	// must reflect the deployed shape, not the config.
+	cfg := config.Defaults()
+	small := ec2CostResources(&state.ModuleState{}, perforce.CostResources(cfg.Perforce))
+	big := ec2CostResources(
+		&state.ModuleState{Resources: []state.ModuleResource{{
+			TypeName:   "AWS::EC2::Instance",
+			Identifier: "i-1",
+			Properties: map[string]string{"instanceType": "m5.8xlarge", "volumeSize": "1000"},
+		}}},
+		perforce.CostResources(cfg.Perforce),
+	)
+	if big[0].Name != "m5.8xlarge" {
+		t.Errorf("instance name from state = %q, want m5.8xlarge", big[0].Name)
+	}
+	if big[1].Name != "gp3-1000GiB" {
+		t.Errorf("volume name from state = %q, want gp3-1000GiB", big[1].Name)
+	}
+	if small[0].Name == big[0].Name {
+		t.Errorf("expected state to override config default (%q)", small[0].Name)
+	}
+}
+
+func TestEC2CostResourcesFallsBackWhenPropertiesMissing(t *testing.T) {
+	// Old state (no Properties) must fall back to the config-derived shape.
+	cfg := config.Defaults()
+	cfgRes := perforce.CostResources(cfg.Perforce)
+	got := ec2CostResources(
+		&state.ModuleState{Resources: []state.ModuleResource{
+			{TypeName: "AWS::EC2::Instance", Identifier: "i-1"},
+		}},
+		cfgRes,
+	)
+	if got[0].Name != cfgRes[0].Name {
+		t.Errorf("fallback instance = %q, want config %q", got[0].Name, cfgRes[0].Name)
+	}
+}
+
+func TestAggregateDeployFleetPrefersState(t *testing.T) {
+	cfg := config.Defaults()
+	st := state.NewState("acct", "us-east-1")
+	st.Modules = []state.ModuleState{
+		mod("deploy", "ready",
+			state.ModuleResource{TypeName: "AWS::GameLift::Fleet", Identifier: "fleet-1",
+				Properties: map[string]string{"instanceType": "c5.large", "desiredInstances": "3"}}),
+	}
+	b := Aggregate(cfg, st, cost.Global)
+	// 3 instances must cost more than the config default (1 instance).
+	cfgOnly := deploy.CostResources(cfg.Deploy)
+	base := cost.Global.EstimateAll(cfgOnly).Total
+	if b.Modules[0].Subtotal <= base {
+		t.Errorf("state fleet (3 desired) subtotal %v should exceed config-default %v", b.Modules[0].Subtotal, base)
 	}
 }
 

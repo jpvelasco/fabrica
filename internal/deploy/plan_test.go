@@ -64,7 +64,7 @@ func TestNewPromotePlanExplicitS3(t *testing.T) {
 }
 
 func TestFleetCostName(t *testing.T) {
-	if got := fleetCostName("c5.large", 2); got != "c5.largex2" {
-		t.Errorf("fleetCostName = %q", got)
+	if got := FleetCostName("c5.large", 2); got != "c5.largex2" {
+		t.Errorf("FleetCostName = %q", got)
 	}
 }

@@ -157,6 +157,15 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	if len(m.Resources) != 2 {
 		t.Fatalf("final state has %d resources, want 2", len(m.Resources))
 	}
+	// The instance record carries cost-relevant Properties so cost report can
+	// read the deployed shape from state, not just config.
+	inst, ok := final.GetModuleResource("perforce", "AWS::EC2::Instance")
+	if !ok {
+		t.Fatal("instance resource missing from final state")
+	}
+	if inst.Properties["instanceType"] == "" || inst.Properties["volumeSize"] == "" {
+		t.Errorf("instance Properties missing cost metadata: %+v", inst.Properties)
+	}
 }
 
 // TestCreateInstanceFailurePreservesPartialState verifies SG is in state even on instance error.
