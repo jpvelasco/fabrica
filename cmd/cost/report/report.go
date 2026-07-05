@@ -83,15 +83,15 @@ func (c command) renderText(b costsource.Breakdown) {
 				fmt.Fprintf(c.out, "    %-22s %10s  %s\n", r.Resource.Name, "-", "(no estimate)")
 				continue
 			}
-			fmt.Fprintf(c.out, "    %-22s $%-9.2f %s\n", r.Resource.Name, r.Monthly.Amount, r.Monthly.Confidence)
+			fmt.Fprintf(c.out, "    %-22s $%9.2f  %s\n", r.Resource.Name, r.Monthly.Amount, r.Monthly.Confidence)
 		}
 		if m.Note != "" {
 			fmt.Fprintf(c.out, "    (%s)\n", m.Note)
 		}
-		fmt.Fprintf(c.out, "    %-22s $%-9.2f\n", "subtotal", m.Subtotal)
+		fmt.Fprintf(c.out, "    %-22s $%9.2f\n", "subtotal", m.Subtotal)
 	}
 	fmt.Fprintln(c.out, divider)
-	fmt.Fprintf(c.out, "  %-22s $%-9.2f\n", "Total:", b.Total)
+	fmt.Fprintf(c.out, "  %-22s $%9.2f\n", "Total:", b.Total)
 	fmt.Fprintf(c.out, "Confidence: %s\n", b.Confidence)
 	fmt.Fprintln(c.out, caveat)
 }

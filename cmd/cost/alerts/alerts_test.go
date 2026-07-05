@@ -62,6 +62,9 @@ func TestSetUpsertsAndSaves(t *testing.T) {
 	if saved == nil || len(saved.Cost.Budgets) != 1 {
 		t.Fatalf("expected one saved budget, got %+v", saved)
 	}
+	if !strings.Contains(out.String(), "Next steps:") || !strings.Contains(out.String(), "fabrica cost alerts check") {
+		t.Errorf("expected next-steps guidance:\n%s", out.String())
+	}
 	if saved.Cost.Budgets[0].Scope != "perforce" || saved.Cost.Budgets[0].Monthly != 150 {
 		t.Fatalf("unexpected budget: %+v", saved.Cost.Budgets[0])
 	}

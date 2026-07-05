@@ -135,6 +135,9 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("writing state: %w", err)
 	}
 	fmt.Fprintf(c.out, "Rolled back — alias %s now points to fleet %s.\n", alias.Identifier, target)
+	fmt.Fprintln(c.out)
+	fmt.Fprintln(c.out, "Next steps:")
+	fmt.Fprintln(c.out, "  fabrica deploy status      Confirm the alias target and fleet health")
 	return nil
 }
 

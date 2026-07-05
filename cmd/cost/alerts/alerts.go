@@ -153,6 +153,9 @@ func (c setCommand) run(scope string, monthly float64, warnPct int) error {
 		return fmt.Errorf("saving config: %w", err)
 	}
 	fmt.Fprintf(c.out, "Set budget: %s = $%.2f\n", scope, monthly)
+	fmt.Fprintln(c.out)
+	fmt.Fprintln(c.out, "Next steps:")
+	fmt.Fprintln(c.out, "  fabrica cost alerts check  Evaluate current estimate against your budgets")
 	return nil
 }
 
