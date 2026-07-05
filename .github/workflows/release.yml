@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # GoReleaser creates the GitHub Release + uploads assets
+  id-token: write   # npm trusted publishing (OIDC) at release day
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94  # v7
+        with:
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Embed binary checksums into npm package
+        run: node scripts/embed-checksums.js dist/checksums.txt npm/package.json
+
+      - name: Publish npm package
+        working-directory: npm
+        # npm auth at release day: OIDC trusted publisher (preferred; id-token
+        # is granted above) OR a NODE_AUTH_TOKEN/NPM_TOKEN secret. If using a
+        # token, add `env: NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}` here. Do
+        # NOT add a secret now — this workflow is dormant until a v* tag.
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm version "$VERSION" --no-git-tag-version
+          npm publish --access public
