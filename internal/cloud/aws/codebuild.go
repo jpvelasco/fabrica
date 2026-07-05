@@ -57,8 +57,20 @@ func (p *awsProvider) EnsureProject(ctx context.Context, spec fabricac.CodeBuild
 			Type:  codebuildtypes.EnvironmentVariableTypePlaintext,
 		})
 	}
-	tags := make([]codebuildtypes.Tag, 0, len(spec.Tags))
-	for k, v := range spec.Tags {
+	// Ensure FabricaVersion is tagged, mirroring the Cloud Control path
+	// (injectFabricaTags) which stamps it on every resource. The plan layer is
+	// SDK-agnostic and can't reach the provider's version, so inject it here at
+	// the SDK boundary. Preserve any FabricaVersion the spec already carries.
+	specTags := spec.Tags
+	if _, ok := specTags["FabricaVersion"]; !ok {
+		specTags = make(map[string]string, len(spec.Tags)+1)
+		for k, v := range spec.Tags {
+			specTags[k] = v
+		}
+		specTags["FabricaVersion"] = p.clients.version
+	}
+	tags := make([]codebuildtypes.Tag, 0, len(specTags))
+	for k, v := range specTags {
 		tags = append(tags, codebuildtypes.Tag{Key: aws.String(k), Value: aws.String(v)})
 	}
 
