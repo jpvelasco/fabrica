@@ -94,7 +94,7 @@ ordered milestones.
 
 - ✅ `fabrica cost report`/`forecast`/`alerts`
 - ✅ Multi-module reporting and budget guardrails
-- ⬜ Backfill ModuleResource.Properties with cost Name at create time (read cost inputs from state, not config).
+- ✅ Backfill ModuleResource.Properties with cost inputs at create time — perforce/horde/workstation record instanceType+volumeSize, deploy records instanceType+desiredInstances; `costsource` reads state-first with config fallback (#71)
 
 **Milestone 5 — Polish & release readiness**
 
@@ -107,7 +107,7 @@ ordered milestones.
 **Also tracked under Phase 1:** Perforce `backup`/`restore`.
 
 **Deferred from the Milestone 5 consistency audit** (docs/cleanup fixes shipped; these remain):
-- Test-coverage gaps: 7 command packages lack `cobra_test.go` (ci setup/status/trigger, deploy setup/promote/rollback/status); 2 lack a white-box `_test.go` (horde destroy, workstation terminate); the AWS provider type-assertion seams (`Identity`/`EC2Manager`/`StopInstance`/`StartInstance`/`CreateFleetAsync`) sit at 0% coverage.
+- Test-coverage gaps: cobra tests added for cost report/alerts + deploy promote/rollback (#71); still lacking `cobra_test.go`: ci setup/status/trigger, deploy setup/status. 2 packages lack a white-box `_test.go` (horde destroy, workstation terminate); the AWS provider type-assertion seams (`Identity`/`EC2Manager`/`StopInstance`/`StartInstance`/`CreateFleetAsync`) sit at 0% coverage.
 - Cosmetic conventions: output-writer inconsistency (`cmd/version` uses `cmd.OutOrStdout()`; other commands use the `c.out` seam); a few multi-letter anonymous receivers (`(renderer)`).
 
 ### Phase 2+ — Expansion 🔭 Future
