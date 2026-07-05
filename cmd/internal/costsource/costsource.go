@@ -131,15 +131,27 @@ func instanceProperties(m *state.ModuleState) map[string]string {
 	return nil
 }
 
-// fleetProperties returns the Properties of the module's GameLift fleet record,
-// or nil if none is tracked.
+// fleetProperties returns the Properties of the module's *active* GameLift fleet
+// — the live alias target whose cost the report should reflect. After multiple
+// promotes, m.Resources holds several fleets (the first is typically a
+// superseded one), so selecting by role="active" is required; otherwise the
+// estimate would price a retired fleet. Falls back to the first fleet when no
+// role is marked (e.g. a fleet that reached state but not yet ACTIVE), and to
+// nil when no fleet is tracked.
 func fleetProperties(m *state.ModuleState) map[string]string {
+	var first map[string]string
 	for _, r := range m.Resources {
-		if r.TypeName == deploy.TypeGameLiftFleet {
+		if r.TypeName != deploy.TypeGameLiftFleet {
+			continue
+		}
+		if r.Properties["role"] == "active" {
 			return r.Properties
 		}
+		if first == nil {
+			first = r.Properties
+		}
 	}
-	return nil
+	return first
 }
 
 // applyStopped drops the EC2 instance (compute) line when the module is stopped;

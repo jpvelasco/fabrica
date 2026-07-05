@@ -141,6 +141,26 @@ func TestAggregateDeployFleetPrefersState(t *testing.T) {
 	}
 }
 
+func TestAggregateDeployPricesActiveFleetNotSuperseded(t *testing.T) {
+	// After a second promote, the superseded fleet comes first in resource
+	// order and the active fleet later. Cost must reflect the ACTIVE fleet (the
+	// live alias target), not the first/superseded one.
+	cfg := config.Defaults()
+	st := state.NewState("acct", "us-east-1")
+	st.Modules = []state.ModuleState{
+		mod("deploy", "ready",
+			state.ModuleResource{TypeName: "AWS::GameLift::Fleet", Identifier: "fleet-old",
+				Properties: map[string]string{"role": "superseded", "instanceType": "c5.large", "desiredInstances": "1"}},
+			state.ModuleResource{TypeName: "AWS::GameLift::Fleet", Identifier: "fleet-new",
+				Properties: map[string]string{"role": "active", "instanceType": "c5.large", "desiredInstances": "5"}}),
+	}
+	got := deployCostResources(&st.Modules[0], cfg.Deploy)
+	want := deploy.FleetCostName("c5.large", 5)
+	if got[0].Name != want {
+		t.Errorf("priced fleet = %q, want the active fleet %q (not the superseded c5.largex1)", got[0].Name, want)
+	}
+}
+
 func TestPropertyLookupsReturnNilWhenAbsent(t *testing.T) {
 	empty := &state.ModuleState{}
 	if instanceProperties(empty) != nil {
