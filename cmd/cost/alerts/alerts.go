@@ -34,6 +34,15 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Long: `Manage local budget thresholds and check the current estimate against them.
 Thresholds are local guardrails written to fabrica.yaml — no AWS Budgets
 resources are created. cost alerts check is informational (exit code stays 0).`,
+		Example: `  # Set a $500/month total budget (warn at 80%):
+  fabrica cost alerts set total 500
+
+  # Set a per-module budget with a custom warn threshold:
+  fabrica cost alerts set perforce 150 --warn-pct 90
+
+  # List configured thresholds, then check the current estimate against them:
+  fabrica cost alerts list
+  fabrica cost alerts check`,
 	}
 	cmd.AddCommand(newList(runtimeSource, optionsSource, out))
 	cmd.AddCommand(newSet(runtimeSource, optionsSource, out))

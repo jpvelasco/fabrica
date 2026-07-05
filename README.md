@@ -16,9 +16,11 @@ Game studios aren't web apps. You need Perforce for terabyte asset histories, Ho
 
 ## Current Status
 
-**Phase 0 complete; Phase 1 core complete.** All provisioning modules (Perforce,
-Horde, Workstation), CI, Deploy, and Cost ship today, along with full-stack
-`destroy --all` teardown and a CLI end-to-end test suite.
+**Phase 0 & Phase 1 complete.** All provisioning modules (Perforce, Horde,
+Workstation), CI, Deploy, and Cost ship today, along with full-stack
+`destroy --all` teardown, offline cost visibility, and a CLI end-to-end test
+suite. Release machinery (GoReleaser + npm shim) is wired but dormant — no
+release is cut until a `v*` tag is pushed.
 See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium vision, and what's next.
 
 | Module | Commands | Status |
@@ -330,11 +332,11 @@ fabrica deploy destroy
 
 ### Cost
 
-> **Offline cost visibility:** `fabrica cost` derives estimated monthly cost from your current `fabrica.yaml`, scoped to the modules present in local state. Fully offline — no AWS Cost Explorer calls, no billing API. Estimates reflect config, so run `<module> status` to reconcile if config changed since provisioning.
+> **Offline cost visibility:** `fabrica cost` estimates monthly cost for the modules present in local state, preferring the deployed shape recorded in state (instance type, volume/fleet size) and falling back to your current `fabrica.yaml` for anything not recorded. Fully offline — no AWS Cost Explorer calls, no billing API. Run `<module> status` to reconcile if state and reality have drifted.
 
 #### `fabrica cost report`
 
-Shows the estimated monthly cost broken down by provisioned module and resource, with a grand total and confidence level. Reads local state (which modules exist) + `fabrica.yaml` (their cost inputs). `--json` for machine-readable output.
+Shows the estimated monthly cost broken down by provisioned module and resource, with a grand total and confidence level. Reads the deployed shape from local state where recorded, falling back to `fabrica.yaml` for cost inputs not yet in state. `--json` for machine-readable output.
 
 #### `fabrica cost forecast`
 

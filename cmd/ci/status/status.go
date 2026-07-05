@@ -19,7 +19,7 @@ import (
 
 const (
 	moduleName  = "ci"
-	lineWidth   = 58
+	lineWidth   = 64
 	projectType = "AWS::CodeBuild::Project"
 	roleType    = "AWS::IAM::Role"
 )
@@ -152,7 +152,8 @@ func (c command) printText(o StatusOutput) {
 	}
 
 	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Trigger a build with: fabrica ci trigger <buildgraph.xml>")
+	fmt.Fprintln(c.out, "Next steps:")
+	fmt.Fprintln(c.out, "  fabrica ci trigger <buildgraph.xml>   Run a BuildGraph job on Horde")
 }
 
 // ciSummaryLine is the one-line overview: whether the infra is ready and the
