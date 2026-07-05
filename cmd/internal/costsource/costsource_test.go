@@ -161,6 +161,26 @@ func TestPropertyLookupsReturnNilWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestMapBudgets(t *testing.T) {
+	in := []config.BudgetThreshold{
+		{Scope: "total", Monthly: 500, WarnPct: 80},
+		{Scope: "perforce", Monthly: 150, WarnPct: 0},
+	}
+	got := MapBudgets(in)
+	if len(got) != 2 {
+		t.Fatalf("want 2 budgets, got %d", len(got))
+	}
+	if got[0].Scope != "total" || got[0].Monthly != 500 || got[0].WarnPct != 80 {
+		t.Errorf("budget[0] = %+v", got[0])
+	}
+	if got[1].Scope != "perforce" || got[1].Monthly != 150 {
+		t.Errorf("budget[1] = %+v", got[1])
+	}
+	if len(MapBudgets(nil)) != 0 {
+		t.Error("MapBudgets(nil) should be empty")
+	}
+}
+
 func TestAggregateUnknownModule(t *testing.T) {
 	cfg := config.Defaults()
 	st := state.NewState("acct", "us-east-1")
