@@ -28,7 +28,7 @@ var gameLiftInstancePrices = map[string]float64{
 	"r5.xlarge":  0.252,
 }
 
-// fleetEstimator parses a "<instanceType>x<count>" name (see fleetCostName) and
+// fleetEstimator parses a "<instanceType>x<count>" name (see FleetCostName) and
 // multiplies the hourly rate by the instance count and hours/month.
 type fleetEstimator struct{}
 
@@ -73,7 +73,7 @@ func CostResources(cfg config.DeployConfig) []cost.Resource {
 		desired = defaultDesiredInstances
 	}
 	return []cost.Resource{
-		{TypeName: TypeGameLiftFleet, Name: fleetCostName(instanceType, desired)},
+		{TypeName: TypeGameLiftFleet, Name: FleetCostName(instanceType, desired)},
 	}
 }
 

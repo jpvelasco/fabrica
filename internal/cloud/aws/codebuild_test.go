@@ -74,7 +74,8 @@ func (f *fakeCWLogsClient) GetLogEvents(_ context.Context, _ *cloudwatchlogs.Get
 
 func newCodeBuildTestProvider(cb *fakeCodeBuildClient, logs *fakeCWLogsClient) *awsProvider {
 	return &awsProvider{
-		awsCfg: awsConfig{region: "us-east-1", profile: "unit-test"},
+		awsCfg:  awsConfig{region: "us-east-1", profile: "unit-test"},
+		clients: resourceClients{version: "v9.9.9"},
 		loadConfig: func(ctx context.Context, region, profile string) (awssdk.Config, error) {
 			return awssdk.Config{Region: region}, nil
 		},
@@ -108,6 +109,17 @@ func TestEnsureProjectCreatesWhenAbsent(t *testing.T) {
 	}
 	if string(cb.createInput.Environment.ComputeType) != "BUILD_GENERAL1_SMALL" {
 		t.Errorf("ComputeType = %q", cb.createInput.Environment.ComputeType)
+	}
+	// FabricaVersion is injected at the SDK boundary (mirrors Cloud Control).
+	tagMap := map[string]string{}
+	for _, tg := range cb.createInput.Tags {
+		tagMap[awssdk.ToString(tg.Key)] = awssdk.ToString(tg.Value)
+	}
+	if tagMap["FabricaVersion"] != "v9.9.9" {
+		t.Errorf("FabricaVersion tag = %q, want v9.9.9 (tags: %v)", tagMap["FabricaVersion"], tagMap)
+	}
+	if tagMap["ManagedBy"] != "fabrica" {
+		t.Errorf("ManagedBy tag = %q, want fabrica", tagMap["ManagedBy"])
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -208,7 +209,12 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 	c.recordResource(m, fabricastate.ModuleResource{
 		TypeName:   deploy.TypeGameLiftFleet,
 		Identifier: fleetRes.Identifier,
-		Properties: map[string]string{"buildVersion": plan.BuildVersion, "role": "provisioning"},
+		Properties: map[string]string{
+			"buildVersion":     plan.BuildVersion,
+			"role":             "provisioning",
+			"instanceType":     plan.InstanceType,
+			"desiredInstances": strconv.Itoa(plan.DesiredInstances),
+		},
 	})
 	st.UpsertModule(moduleName, plan.BuildVersion, "provisioning", m.Resources)
 	_ = c.writeState(st)

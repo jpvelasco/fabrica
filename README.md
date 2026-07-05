@@ -111,6 +111,27 @@ fabrica deploy status
 fabrica status
 ```
 
+### End-to-end: from source to a deployed build
+
+The CI and deploy modules form one pipeline. `ci trigger` runs a BuildGraph job
+on Horde and its packaged server lands in S3 at the convention path
+`s3://<deploy.buildBucket>/builds/<version>/server.zip`; `deploy promote <version>`
+then registers that build and rolls it out to a fresh GameLift fleet (blue/green),
+flipping the alias only once the fleet is `ACTIVE`:
+
+```bash
+fabrica setup --yes                       # 1. state backend (once)
+fabrica horde create && fabrica ci setup  # 2. build farm + CI orchestration
+fabrica ci trigger BuildGraph.xml --wait  # 3. build → server.zip in S3
+fabrica deploy setup                      # 4. GameLift alias + role (once)
+fabrica deploy promote v1.0.0             # 5. new fleet from that build, alias flip
+fabrica deploy status                     # 6. confirm the alias target + fleet health
+fabrica deploy rollback                   # instant alias flip back if v1.0.0 misbehaves
+```
+
+Set `deploy.buildBucket` in `fabrica.yaml` so promote knows where CI's output
+lives. Tear the whole studio down with `fabrica destroy --all` when you're done.
+
 ## Commands
 
 ### Foundation

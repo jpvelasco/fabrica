@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -228,7 +229,10 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	// Record both resources in final state
 	st.UpsertModule(moduleName, plan.HelixVersion, "provisioning", []fabricastate.ModuleResource{
 		{TypeName: "AWS::EC2::SecurityGroup", Identifier: sg.Identifier},
-		{TypeName: "AWS::EC2::Instance", Identifier: instance.Identifier},
+		{TypeName: "AWS::EC2::Instance", Identifier: instance.Identifier, Properties: map[string]string{
+			"instanceType": plan.InstanceType,
+			"volumeSize":   strconv.Itoa(plan.VolumeSize),
+		}},
 	})
 	if err := c.writeState(st); err != nil {
 		return fmt.Errorf("writing state after instance creation: %w", err)

@@ -339,3 +339,57 @@ func assertContains(t *testing.T, s, substr string) {
 	}
 	t.Fatalf("%q does not contain %q", s, substr)
 }
+
+// stateWithPerforce returns state with a provisioned Perforce module (SG +
+// instance), for --mount-perforce address resolution tests.
+func stateWithPerforce() *fabricastate.State {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("perforce", "2024.2", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-p4"},
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-p4server"},
+	})
+	return st
+}
+
+func TestResolvePerforceAddrSuccess(t *testing.T) {
+	st := stateWithPerforce()
+	c := command{}
+	c.readState = func() (*fabricastate.State, error) { return st, nil }
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		r.ActualState = []byte(`{"PrivateIpAddress":"10.0.4.12"}`)
+		return nil
+	}
+	addr, err := c.resolvePerforceAddr(context.Background())
+	if err != nil {
+		t.Fatalf("resolvePerforceAddr: %v", err)
+	}
+	if addr != "10.0.4.12:1666" {
+		t.Errorf("addr = %q, want 10.0.4.12:1666", addr)
+	}
+}
+
+func TestResolvePerforceAddrNoModule(t *testing.T) {
+	c := command{}
+	c.readState = func() (*fabricastate.State, error) {
+		return fabricastate.NewState("123456789012", "us-east-1"), nil
+	}
+	_, err := c.resolvePerforceAddr(context.Background())
+	if err == nil {
+		t.Fatal("expected error when Perforce module is absent")
+	}
+	assertContains(t, err.Error(), "fabrica perforce create")
+}
+
+func TestResolvePerforceAddrNoIP(t *testing.T) {
+	st := stateWithPerforce()
+	c := command{}
+	c.readState = func() (*fabricastate.State, error) { return st, nil }
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		r.ActualState = []byte(`{"PrivateIpAddress":""}`)
+		return nil
+	}
+	_, err := c.resolvePerforceAddr(context.Background())
+	if err == nil {
+		t.Fatal("expected error when private IP is empty")
+	}
+}

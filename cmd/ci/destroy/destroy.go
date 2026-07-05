@@ -174,6 +174,9 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 		fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
 	}
 	fmt.Fprintln(c.out, "CI infrastructure destroyed.")
+	fmt.Fprintln(c.out)
+	fmt.Fprintln(c.out, "Next steps:")
+	fmt.Fprintln(c.out, "  fabrica ci setup           Re-provision CI when you need it again")
 	return nil
 }
 

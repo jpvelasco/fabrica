@@ -52,6 +52,9 @@ func TestRollbackHappyPath(t *testing.T) {
 	if !strings.Contains(out.String(), "fleet-old") {
 		t.Errorf("expected target fleet shown:\n%s", out.String())
 	}
+	if !strings.Contains(out.String(), "Next steps:") || !strings.Contains(out.String(), "fabrica deploy status") {
+		t.Errorf("expected next-steps guidance:\n%s", out.String())
+	}
 	// Roles swapped: fleet-old now active, fleet-new superseded.
 	m := st.GetModule("deploy")
 	for _, r := range m.Resources {
