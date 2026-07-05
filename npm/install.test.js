@@ -37,6 +37,13 @@ test("getArchiveName: unsupported platform/arch throws", () => {
   assert.throws(() => getArchiveName("1.0.0", "linux", "mips"), /Unsupported platform/);
 });
 
+test("getArchiveName: windows/arm64 is rejected (GoReleaser publishes no such archive)", () => {
+  assert.throws(
+    () => getArchiveName("1.0.0", "win32", "arm64"),
+    /windows\/arm64.*go install/s
+  );
+});
+
 const VERSION_RE = /^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$/;
 
 test("version regex: accepts valid semver", () => {

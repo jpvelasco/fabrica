@@ -61,6 +61,15 @@ function getArchiveName(version, platform, arch) {
   if (!os || !cpu) {
     throw new Error(`Unsupported platform: ${platform}/${arch}`);
   }
+  // GoReleaser ignores windows/arm64, so no such archive is ever published.
+  // npm's os/cpu fields would otherwise allow install here; reject it up front
+  // with a 404-free, actionable error rather than a failed download.
+  if (os === "windows" && cpu === "arm64") {
+    throw new Error(
+      "Unsupported platform: windows/arm64 (no prebuilt binary). " +
+        "Install from source instead: go install github.com/jpvelasco/fabrica@latest"
+    );
+  }
   const ext = platform === "win32" ? "zip" : "tar.gz";
   return `fabrica_${version}_${os}_${cpu}.${ext}`;
 }
