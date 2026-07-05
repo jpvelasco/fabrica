@@ -102,7 +102,7 @@ ordered milestones.
 - ✅ End-to-end testing (CLI E2E harness — in-process, fake provider, runs in CI)
 - ✅ README refresh (full command coverage) + doc-drift CI guard
 - ✅ Final architecture + consistency review (clean layering; doc/cleanup fixes applied; test-coverage gaps tracked as a follow-up)
-- ⬜ v0.1 / v1.0 release preparation
+- ✅ Release machinery — GoReleaser + npm shim (ludus-cli pattern), dormant until a `v*` tag; no release cut yet
 
 **Also tracked under Phase 1:** Perforce `backup`/`restore`.
 

@@ -52,6 +52,21 @@ git config core.hooksPath .githooks
 The hooks are a convenience. **CI is the real gate**: the Codecov `patch` status
 (target 90%, in `codecov.yml`) runs on every PR and cannot be bypassed locally.
 
+## Releasing
+
+Distribution follows the Ludus pattern: GoReleaser builds cross-platform
+binaries + a GitHub Release; the `npm/` shim downloads the matching binary at
+install time. The pipeline is **dormant** — `.github/workflows/release.yml`
+fires only on a `v*` tag push. CI validates the config on every PR via a
+`goreleaser build --snapshot` job (build-only, never publishes).
+
+**Cutting a release (deliberate, not automated):**
+1. Decide/confirm the npm package name in `npm/package.json`.
+2. Set up the npm org + trusted publisher (OIDC) — one-time, see the npm-init flow.
+3. Move `CHANGELOG.md` `[Unreleased]` → `[X.Y.Z]` with the date.
+4. `git tag vX.Y.Z && git push origin vX.Y.Z` — this triggers `release.yml`
+   (GoReleaser → embed checksums → npm publish). Nothing publishes without a tag.
+
 ## Architecture
 
 ### Dependency Flow

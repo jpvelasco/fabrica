@@ -38,6 +38,23 @@ See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium vision, and what's next.
 - AWS credentials with permissions to create EC2 instances, security groups, S3 buckets, and DynamoDB tables
 - IAM permission for `sts:GetCallerIdentity`
 
+## Install
+
+Fabrica ships as a single Go binary. Two ways to get it:
+
+```bash
+# Via npm (downloads the matching prebuilt binary for your platform):
+npm install -g fabrica-cli
+# …or run without installing:
+npx fabrica-cli --help
+
+# Or via the Go toolchain:
+go install github.com/jpvelasco/fabrica@latest
+```
+
+Prebuilt binaries for linux/macOS/windows (amd64) and linux/macOS (arm64) are
+attached to each [GitHub Release](https://github.com/jpvelasco/fabrica/releases).
+
 ## Building
 
 ```bash

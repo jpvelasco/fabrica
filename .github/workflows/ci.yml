@@ -105,3 +105,37 @@ jobs:
         with:
           use_oidc: true
           files: ./junit.xml
+
+  goreleaser:
+    name: Release build (snapshot)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+        with:
+          node-version: "24"
+      # Build-only: verifies .goreleaser.yaml compiles all platforms. NEVER
+      # publishes (no `release`, no tag). Catches config breakage on PRs.
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94  # v7
+        with:
+          args: build --snapshot --clean
+      - name: Smoke-test the built linux binary
+        # Exec the freshly built native binary to prove it runs + the version
+        # ldflags resolved (not the `dev`/`unknown` fallbacks). The runner is
+        # linux/amd64, so glob that build output.
+        run: |
+          BIN=$(find dist -type f -name fabrica -path '*linux_amd64*' | head -1)
+          test -n "$BIN" || { echo "no linux/amd64 fabrica binary in dist/"; exit 1; }
+          chmod +x "$BIN"
+          OUT=$("$BIN" version)
+          echo "$OUT"
+          # snapshot builds inject a version like "0.1.0-SNAPSHOT-<sha>"; the
+          # binary must NOT show the un-injected "dev" fallback.
+          echo "$OUT" | grep -q "Fabrica dev" && { echo "version ldflags did not resolve (still 'dev')"; exit 1; }
+          echo "smoke test OK"
+      - name: npm shim tests
+        working-directory: npm
+        run: node --test
