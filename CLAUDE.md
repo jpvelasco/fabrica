@@ -73,6 +73,10 @@ blank-log "failure" means billing, not a bug, so don't burn attempts "fixing"
 the workflow. With no branch protection on a private repo, such a check is
 merely advisory (`UNSTABLE`, not `BLOCKED`) and a normal merge still works.
 
+**This is a temporary constraint.** It disappears the moment Fabrica goes public
+for its open-source release — public repos get free unlimited Actions, so the
+flip-to-run dance is only needed while the repo is private pre-release.
+
 ## Releasing
 
 Distribution follows the Ludus pattern: GoReleaser builds cross-platform

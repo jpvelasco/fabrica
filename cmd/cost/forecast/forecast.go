@@ -19,7 +19,7 @@ import (
 
 const defaultDays = 30
 
-const caveat = "Note: estimates reflect current fabrica.yaml; run `<module> status` to reconcile."
+const caveat = "Note: estimates use deployed state where recorded, else current fabrica.yaml; run `<module> status` to reconcile."
 
 type command struct {
 	cfg       *config.Config
@@ -38,7 +38,15 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Short: "Project the current monthly estimate over a time horizon",
 		Long: `Project the current estimated monthly cost over a time horizon: daily burn
 rate, total cost over the horizon, and annualized cost. Offline — uses the same
-config-derived estimate as cost report.`,
+state-and-config estimate as cost report.`,
+		Example: `  # 30-day projection (default):
+  fabrica cost forecast
+
+  # 90-day projection:
+  fabrica cost forecast --days 90
+
+  # Machine-readable output:
+  fabrica cost forecast --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
 			if err != nil {

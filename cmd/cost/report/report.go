@@ -1,6 +1,7 @@
 // Package report implements "fabrica cost report": an offline monthly cost
-// estimate broken down by provisioned module, derived from the current
-// fabrica.yaml scoped to the modules present in local state.
+// estimate broken down by provisioned module. It prefers the deployed shape
+// recorded in local state (instance type, volume size, fleet size) and falls
+// back to the current fabrica.yaml for modules that predate that backfill.
 package report
 
 import (
@@ -20,7 +21,7 @@ import (
 
 const lineWidth = 64
 
-const caveat = "Note: estimates reflect current fabrica.yaml; run `<module> status` to reconcile."
+const caveat = "Note: estimates use deployed state where recorded, else current fabrica.yaml; run `<module> status` to reconcile."
 
 type command struct {
 	cfg       *config.Config
@@ -36,8 +37,14 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Use:   "report",
 		Short: "Show the estimated monthly cost broken down by module",
 		Long: `Show the estimated monthly infrastructure cost, broken down by provisioned
-module and resource. Fully offline: reads local state for which modules exist
-and the current fabrica.yaml for their cost inputs. No AWS calls.`,
+module and resource. Fully offline, no AWS calls: reads local state for which
+modules exist and their deployed shape (instance type, volume/fleet size),
+falling back to the current fabrica.yaml for cost inputs not recorded in state.`,
+		Example: `  # Estimated monthly cost by module:
+  fabrica cost report
+
+  # Machine-readable breakdown for scripts:
+  fabrica cost report --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
 			if err != nil {
@@ -71,7 +78,7 @@ func (c command) run() error {
 
 func (c command) renderText(b costsource.Breakdown) {
 	divider := strings.Repeat("-", lineWidth)
-	fmt.Fprintln(c.out, "Cost estimate (monthly) — based on current fabrica.yaml")
+	fmt.Fprintln(c.out, "Cost estimate (monthly) — from deployed state, fabrica.yaml where unrecorded")
 	fmt.Fprintln(c.out, divider)
 	if len(b.Modules) == 0 {
 		fmt.Fprintln(c.out, "  No provisioned modules found in state.")

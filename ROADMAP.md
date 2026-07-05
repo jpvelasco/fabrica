@@ -62,11 +62,13 @@ schema, `doctor`, `version`, `config show`, cost-estimator registry, CI, lint.
 Established the architecture every later module drops into without refactor.
 See [`PHASE_0_PLAN.md`](PHASE_0_PLAN.md) for the detailed record.
 
-### Phase 1 — Production-ready core 🚧 In progress
+### Phase 1 — Production-ready core ✅ Complete
 
-Turn the skeleton into a cohesive, production-grade tool. The three provisioning
-modules and real Cloud Control CRUD are done; the work below is sequenced into
-ordered milestones.
+Turned the skeleton into a cohesive, production-grade tool: six provisioning/
+management modules, real Cloud Control CRUD, full-stack teardown, offline cost
+visibility, a CLI E2E harness, and dormant release machinery. All five
+milestones below are done. Remaining nice-to-haves (Perforce backup/restore,
+residual test-coverage gaps) are tracked at the end and do not block Phase 1.
 
 **Foundation already landed:**
 
@@ -79,7 +81,7 @@ ordered milestones.
 
 - ✅ Real **`fabrica setup`** — S3 (versioning + encryption + public-access-block) + DynamoDB bootstrap via `StateBackendBootstrapper`, idempotent, with cost preview, y/N confirmation (`--yes` skips), and dry-run
 - ✅ Aggregate **`fabrica status`** — single read-only command showing backend health + per-module status, resource counts, and next steps; `--probe` opt-in TCP readiness checks
-- ⬜ Polish first-run experience and error messaging
+- ✅ Polish first-run experience and error messaging — actionable errors, consistent [OK]/[WARN]/[FAIL] indicators + aligned tables + "Next steps" guidance across status/cost/ci/deploy
 
 **Milestone 2 — CI module**
 
@@ -106,8 +108,8 @@ ordered milestones.
 
 **Also tracked under Phase 1:** Perforce `backup`/`restore`.
 
-**Deferred from the Milestone 5 consistency audit** (docs/cleanup fixes shipped; these remain):
-- Test-coverage gaps: cobra tests added for cost report/alerts + deploy promote/rollback (#71); still lacking `cobra_test.go`: ci setup/status/trigger, deploy setup/status. 2 packages lack a white-box `_test.go` (horde destroy, workstation terminate); the AWS provider type-assertion seams (`Identity`/`EC2Manager`/`StopInstance`/`StartInstance`/`CreateFleetAsync`) sit at 0% coverage.
+**Deferred nice-to-haves** (do not block Phase 1; docs/cleanup fixes already shipped):
+- Test-coverage gaps: cobra tests added for cost report/alerts + deploy promote/rollback + ci status + deploy status; still lacking `cobra_test.go`: ci setup/trigger, deploy setup. 2 packages lack a white-box `_test.go` (horde destroy, workstation terminate); the AWS provider type-assertion seams (`Identity`/`EC2Manager`/`StopInstance`/`StartInstance`/`CreateFleetAsync`) sit at 0% coverage.
 - Cosmetic conventions: output-writer inconsistency (`cmd/version` uses `cmd.OutOrStdout()`; other commands use the `c.out` seam); a few multi-letter anonymous receivers (`(renderer)`).
 
 ### Phase 2+ — Expansion 🔭 Future

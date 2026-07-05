@@ -21,7 +21,7 @@ import (
 
 const (
 	moduleName = "deploy"
-	lineWidth  = 58
+	lineWidth  = 64
 )
 
 type command struct {
@@ -56,6 +56,11 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Long: `Show the deploy module's current state: the GameLift alias and the fleet it
 points to, plus any retained fleets you can roll back to. Queries live fleet
 status from GameLift. Read-only — never changes anything.`,
+		Example: `  # Show alias target, active fleet, and rollback candidates:
+  fabrica deploy status
+
+  # Machine-readable output for scripts:
+  fabrica deploy status --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
 			if err != nil {
@@ -146,10 +151,19 @@ func (c command) run(ctx context.Context) error {
 			fmt.Fprintf(c.out, "  %s %s  build=%s  status=%s   <- rollback target\n",
 				fleetSymbol(f.LiveStatus), f.FleetID, orDash(f.BuildVersion), f.LiveStatus)
 		}
-		fmt.Fprintln(c.out)
-		fmt.Fprintln(c.out, "  Roll back to the newest with: fabrica deploy rollback")
 	} else {
 		fmt.Fprintln(c.out, "  (none) — only one fleet promoted so far")
+	}
+
+	fmt.Fprintln(c.out)
+	fmt.Fprintln(c.out, "Next steps:")
+	if active == nil {
+		fmt.Fprintln(c.out, "  fabrica deploy promote <build-version>   Deploy a build to a new fleet")
+	} else {
+		fmt.Fprintln(c.out, "  fabrica deploy promote <build-version>   Roll out a new build (blue/green)")
+	}
+	if len(candidates) > 0 {
+		fmt.Fprintln(c.out, "  fabrica deploy rollback                  Flip the alias to the newest retained fleet")
 	}
 	return nil
 }
