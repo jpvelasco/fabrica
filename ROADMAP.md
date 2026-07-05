@@ -4,7 +4,7 @@ This is the single source of truth for where Fabrica is and where it's going.
 The `README.md` describes how to use what exists today; this document tracks
 status and sequencing. When they disagree, this file wins.
 
-Last updated: 2026-06-28.
+Last updated: 2026-07-05.
 
 ## Vision
 
@@ -63,6 +63,10 @@ Established the architecture every later module drops into without refactor.
 See [`PHASE_0_PLAN.md`](PHASE_0_PLAN.md) for the detailed record.
 
 ### Phase 1 — Production-ready core ✅ Complete
+
+> 🎉 **Phase 1 (Foundation + Core Pipeline) completed** — Perforce, Horde,
+> Workstation, CI, Deploy, Cost, Setup, Status, full teardown, E2E harness, and
+> release machinery are all production-ready.
 
 Turned the skeleton into a cohesive, production-grade tool: six provisioning/
 management modules, real Cloud Control CRUD, full-stack teardown, offline cost
