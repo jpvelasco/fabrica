@@ -12,6 +12,9 @@ provisioning/management modules, full-stack teardown, and cost visibility.
 
 ### Added
 
+- **Lore module (v0.2):** `lore create` / `status` / `destroy` — AMI-first
+  Epic `loreserver` on EC2 (local/EBS store); SG opens TCP+UDP 41337 and TCP
+  41339; status probes `GET /health_check`. Parallel to Perforce (both coexist).
 - **Foundation:** `fabrica setup` (S3 + DynamoDB state backend, idempotent),
   `fabrica status` (aggregate read-only health across modules, `--probe`),
   `fabrica doctor` (prerequisite validation), `fabrica config show`.
