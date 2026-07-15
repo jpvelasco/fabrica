@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // PasswordChars is the alphabet used by GeneratePassword.
@@ -42,6 +43,39 @@ func WriteCredentials(path string, content string) error {
 // FormatPerforce returns the YAML content for a Perforce credential file.
 func FormatPerforce(adminPassword string) string {
 	return fmt.Sprintf("# Perforce admin credentials — keep secret\nadmin_password: %q\n", adminPassword)
+}
+
+// ReadFile reads a credential file from disk.
+func ReadFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading credentials %s: %w", path, err)
+	}
+	return string(data), nil
+}
+
+// ParsePerforceAdminPassword extracts admin_password from a Perforce
+// credentials YAML file written by FormatPerforce.
+func ParsePerforceAdminPassword(content string) (string, error) {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		const key = "admin_password:"
+		if !strings.HasPrefix(line, key) {
+			continue
+		}
+		val := strings.TrimSpace(strings.TrimPrefix(line, key))
+		if len(val) >= 2 && ((val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'')) {
+			val = val[1 : len(val)-1]
+		}
+		if val == "" {
+			return "", fmt.Errorf("admin_password is empty in credentials file")
+		}
+		return val, nil
+	}
+	return "", fmt.Errorf("admin_password not found in credentials file — re-run 'fabrica perforce create' or restore .fabrica/perforce-credentials.yaml")
 }
 
 // FormatHorde returns the YAML content for a Horde credential file.

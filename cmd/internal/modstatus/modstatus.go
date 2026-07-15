@@ -42,6 +42,11 @@ type Info struct {
 	// known); Reachable is its result.
 	ProbeAttempted bool
 	Reachable      bool
+
+	// LastBackupId / LastBackupAt are optional Perforce backup cache fields
+	// from instance resource Properties (empty for other modules).
+	LastBackupId string
+	LastBackupAt string
 }
 
 // Renderer turns an Info into module-specific output. NotProvisioned handles the
@@ -163,6 +168,10 @@ func (c Command) buildInfo(ctx context.Context, m *fabricastate.ModuleState) (In
 		return info, nil
 	}
 	info.InstanceID = instRes.Identifier
+	if instRes.Properties != nil {
+		info.LastBackupId = instRes.Properties["lastBackupId"]
+		info.LastBackupAt = instRes.Properties["lastBackupAt"]
+	}
 
 	if c.GetResource != nil && info.InstanceID != "" {
 		r := &cloud.Resource{TypeName: "AWS::EC2::Instance", Identifier: info.InstanceID}

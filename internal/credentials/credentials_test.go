@@ -78,6 +78,39 @@ func TestFormatPerforce(t *testing.T) {
 	}
 }
 
+func TestParsePerforceAdminPassword(t *testing.T) {
+	content := credentials.FormatPerforce("s3cret")
+	got, err := credentials.ParsePerforceAdminPassword(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "s3cret" {
+		t.Errorf("got %q", got)
+	}
+	if _, err := credentials.ParsePerforceAdminPassword("# only comment\n"); err == nil {
+		t.Fatal("expected missing key error")
+	}
+}
+
+func TestReadFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "creds.yaml")
+	if err := credentials.WriteCredentials(path, credentials.FormatPerforce("pw")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := credentials.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pass, err := credentials.ParsePerforceAdminPassword(got)
+	if err != nil || pass != "pw" {
+		t.Fatalf("pass=%q err=%v", pass, err)
+	}
+	if _, err := credentials.ReadFile(filepath.Join(dir, "missing.yaml")); err == nil {
+		t.Fatal("expected missing file error")
+	}
+}
+
 func TestFormatHorde(t *testing.T) {
 	out := credentials.FormatHorde("mongopass")
 	if !strings.Contains(out, "mongodb_password:") {

@@ -26,6 +26,7 @@ type awsProvider struct {
 	newCodeBuildClient       codeBuildClientFactory
 	newCWLogsClient          cwLogsClientFactory
 	newGameLiftClient        gameLiftClientFactory
+	newSSMClient             ssmClientFactory
 }
 
 type awsConfig struct {

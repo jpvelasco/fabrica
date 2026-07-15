@@ -49,6 +49,11 @@ type storedResource struct {
 	ec2Status  string // for EC2 instances: "running" / "stopped"
 }
 
+type remoteCall struct {
+	instanceID string
+	commands   []string
+}
+
 // fakeStore is the in-memory backing store for a single test.
 type fakeStore struct {
 	mu        sync.Mutex
@@ -62,6 +67,10 @@ type fakeStore struct {
 	// failDeleteType, when non-empty, makes ResourceClient.Delete return an
 	// error for resources of that TypeName (drives the destroy-all failure case).
 	failDeleteType string
+
+	remoteCalls   []remoteCall
+	remoteHandler func(instanceID string, commands []string) (cloud.RemoteResult, error)
+	listStdout    string
 }
 
 func newFakeStore() *fakeStore {
@@ -161,6 +170,38 @@ func (c *fakeRC) List(_ context.Context, typeName string) ([]cloud.Resource, err
 		}
 	}
 	return out, nil
+}
+
+// --- RemoteRunner (SSM) ---
+
+func (p *fakeProvider) RunCommand(_ context.Context, instanceID string, commands []string) (cloud.RemoteResult, error) {
+	p.store.mu.Lock()
+	defer p.store.mu.Unlock()
+	p.store.remoteCalls = append(p.store.remoteCalls, remoteCall{instanceID: instanceID, commands: commands})
+	if p.store.remoteHandler != nil {
+		return p.store.remoteHandler(instanceID, commands)
+	}
+	// Default: success with empty list / backup-ok style stdout based on script content.
+	joined := strings.Join(commands, "\n")
+	switch {
+	case strings.Contains(joined, "BACKUP_OK") || strings.Contains(joined, "p4 admin checkpoint"):
+		return cloud.RemoteResult{ExitCode: 0, Stdout: "BACKUP_OK"}, nil
+	case strings.Contains(joined, "RESTORE_OK") || strings.Contains(joined, "systemctl stop helix-p4d"):
+		return cloud.RemoteResult{ExitCode: 0, Stdout: "RESTORE_OK"}, nil
+	case strings.Contains(joined, "DELETE_OK") || strings.Contains(joined, "rm -rf"):
+		return cloud.RemoteResult{ExitCode: 0, Stdout: "DELETE_OK"}, nil
+	case strings.Contains(joined, "metadata.json") && strings.Contains(joined, "cat "):
+		// read meta
+		return cloud.RemoteResult{ExitCode: 0, Stdout: `{"id":"fake-backup","status":"complete","createdAt":"2026-07-15T00:00:00Z","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`}, nil
+	case strings.Contains(joined, "for d in"):
+		// list script
+		if p.store.listStdout != "" {
+			return cloud.RemoteResult{ExitCode: 0, Stdout: p.store.listStdout}, nil
+		}
+		return cloud.RemoteResult{ExitCode: 0, Stdout: ""}, nil
+	default:
+		return cloud.RemoteResult{ExitCode: 0, Stdout: ""}, nil
+	}
 }
 
 // --- EC2InstanceManager ---
@@ -286,5 +327,6 @@ var (
 	_ cloud.StateBackendDestroyer    = (*fakeProvider)(nil)
 	_ cloud.CodeBuildRunner          = (*fakeProvider)(nil)
 	_ cloud.GameLiftManager          = (*fakeProvider)(nil)
+	_ cloud.RemoteRunner             = (*fakeProvider)(nil)
 	_ cloud.ResourceClient           = (*fakeRC)(nil)
 )

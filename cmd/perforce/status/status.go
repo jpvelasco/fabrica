@@ -30,6 +30,8 @@ type StatusOutput struct {
 	PrivateIP    string `json:"privateIp,omitempty"`
 	P4PORT       string `json:"p4port,omitempty"`
 	HelixCore    string `json:"helixCore,omitempty"`
+	LastBackupId string `json:"lastBackupId,omitempty"`
+	LastBackupAt string `json:"lastBackupAt,omitempty"`
 }
 
 // renderer implements modstatus.Renderer for Perforce-specific output.
@@ -143,6 +145,16 @@ func printText(out io.Writer, info modstatus.Info) {
 	} else if info.ModuleStatus == "provisioning" {
 		fmt.Fprintln(out, "  Helix Core:    setting up... (~3 min from launch)")
 	}
+
+	if info.LastBackupAt != "" {
+		label := info.LastBackupAt
+		if info.LastBackupId != "" {
+			label += fmt.Sprintf(" (%s)", info.LastBackupId)
+		}
+		fmt.Fprintf(out, "  Last backup:   %s\n", label)
+	} else {
+		fmt.Fprintln(out, "  Last backup:   never")
+	}
 }
 
 func printJSON(out io.Writer, info modstatus.Info) {
@@ -154,6 +166,8 @@ func printJSON(out io.Writer, info modstatus.Info) {
 		Version:      info.Version,
 		InstanceType: info.InstanceType,
 		PrivateIP:    info.PrivateIP,
+		LastBackupId: info.LastBackupId,
+		LastBackupAt: info.LastBackupAt,
 	}
 	if info.PrivateIP != "" {
 		o.P4PORT = fmt.Sprintf("tcp:%s:%d", info.PrivateIP, p4Port)

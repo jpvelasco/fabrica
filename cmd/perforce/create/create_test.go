@@ -131,31 +131,36 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 
-	if provider.createCalls != 2 {
-		t.Fatalf("expected 2 create calls, got %d", provider.createCalls)
+	if provider.createCalls != 4 {
+		t.Fatalf("expected 4 create calls (SG, role, profile, instance), got %d", provider.createCalls)
 	}
 
-	// First type created must be the security group
-	if provider.createdTypes[0] != "AWS::EC2::SecurityGroup" {
-		t.Errorf("first created resource = %q, want AWS::EC2::SecurityGroup", provider.createdTypes[0])
+	// Create order: SG → IAM role → instance profile → instance
+	wantTypes := []string{
+		"AWS::EC2::SecurityGroup",
+		"AWS::IAM::Role",
+		"AWS::IAM::InstanceProfile",
+		"AWS::EC2::Instance",
 	}
-	if provider.createdTypes[1] != "AWS::EC2::Instance" {
-		t.Errorf("second created resource = %q, want AWS::EC2::Instance", provider.createdTypes[1])
+	for i, want := range wantTypes {
+		if provider.createdTypes[i] != want {
+			t.Errorf("createdTypes[%d] = %q, want %q", i, provider.createdTypes[i], want)
+		}
 	}
 
-	// State must have been written at least twice (after SG, after instance)
-	if len(writtenStates) < 2 {
-		t.Fatalf("expected >=2 state writes, got %d", len(writtenStates))
+	// State must have been written after each resource
+	if len(writtenStates) < 4 {
+		t.Fatalf("expected >=4 state writes, got %d", len(writtenStates))
 	}
 
-	// Final state must have both resources
+	// Final state must have all resources
 	final := writtenStates[len(writtenStates)-1]
 	m := final.GetModule("perforce")
 	if m == nil {
 		t.Fatal("perforce module not in final state")
 	}
-	if len(m.Resources) != 2 {
-		t.Fatalf("final state has %d resources, want 2", len(m.Resources))
+	if len(m.Resources) != 4 {
+		t.Fatalf("final state has %d resources, want 4", len(m.Resources))
 	}
 	// The instance record carries cost-relevant Properties so cost report can
 	// read the deployed shape from state, not just config.
@@ -448,6 +453,10 @@ func (r *fakeResourceClient) Create(_ context.Context, res *cloud.Resource) erro
 		res.Identifier = fmt.Sprintf("sg-fake%04d", r.provider.createCalls)
 	case "AWS::EC2::Instance":
 		res.Identifier = fmt.Sprintf("i-fake%04d", r.provider.createCalls)
+	case "AWS::IAM::Role":
+		res.Identifier = fmt.Sprintf("role-fake%04d", r.provider.createCalls)
+	case "AWS::IAM::InstanceProfile":
+		res.Identifier = "fabrica-perforce-profile"
 	}
 	return nil
 }

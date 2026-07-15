@@ -6,6 +6,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
@@ -19,8 +20,32 @@ var spec = teardown.Spec{
 	NotProvisioned: "Perforce is not provisioned. Nothing to destroy.",
 	PlanHeader:     "Perforce Helix Core — destroy plan",
 	DryRunHeader:   "Perforce Helix Core (destroy dry run)",
-	Irreversible:   "IRREVERSIBLE: This will permanently delete the Perforce server and its data.",
-	SuccessMessage: "Perforce Helix Core destroyed.",
+	Irreversible: "IRREVERSIBLE: This deletes the Perforce instance, security group, and IAM profile/role. " +
+		"The data volume is retained (DeleteOnTermination=false) so local backups survive as an orphan EBS volume. " +
+		"S3 exports are not deleted. Delete backups explicitly if you intend a full purge.",
+	SuccessMessage: "Perforce Helix Core destroyed. Data volume (and any local backups on it) retained; S3 exports untouched.",
+	// Instance → profile → role → SG (reverse of create: SG → role → profile → instance).
+	ResourceOrder: perforceResourceOrder,
+}
+
+func perforceResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
+	order := []string{
+		"AWS::EC2::Instance",
+		"AWS::IAM::InstanceProfile",
+		"AWS::IAM::Role",
+		"AWS::EC2::SecurityGroup",
+	}
+	byType := map[string]fabricastate.ModuleResource{}
+	for _, r := range m.Resources {
+		byType[r.TypeName] = r
+	}
+	out := make([]cloud.Resource, 0, len(order))
+	for _, t := range order {
+		if r, ok := byType[t]; ok && r.Identifier != "" {
+			out = append(out, cloud.Resource{TypeName: r.TypeName, Identifier: r.Identifier})
+		}
+	}
+	return out
 }
 
 // NewTeardown builds this module's teardown.Command for orchestrated use by

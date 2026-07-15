@@ -17,6 +17,17 @@ state:
   kmsKeyId: ""                # KMS key ARN for SSE-KMS encryption (optional; defaults to SSE-S3)
 
 # Module configuration sections
+# perforce:
+#   version: "2024.2"
+#   instanceType: m5.xlarge
+#   volumeSize: 500
+#   # Backup/restore (V1): local EBS primary; optional S3 export.
+#   # Requires an SSM-managed instance profile (attached at create time).
+#   backup:
+#     path: /hxdepots/fabrica-backups
+#     s3Export: false
+#     s3Bucket: ""
+#     s3Prefix: perforce-backups/
 perforce: {}
 horde: {}
 

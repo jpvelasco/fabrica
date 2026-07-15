@@ -2,6 +2,7 @@ package perforce
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -86,7 +87,7 @@ func TestInstanceDesiredState_CoreFields(t *testing.T) {
 		InstanceName: "fabrica-perforce",
 		VolumeSize:   500,
 	}
-	raw, err := InstanceDesiredState(plan, "sg-123", "userdata-b64")
+	raw, err := InstanceDesiredState(plan, "sg-123", "userdata-b64", "fabrica-perforce-profile")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -107,11 +108,15 @@ func TestInstanceDesiredState_CoreFields(t *testing.T) {
 	if len(sgIDs) != 1 || sgIDs[0] != "sg-123" {
 		t.Errorf("SecurityGroupIds = %v, want [sg-123]", sgIDs)
 	}
+	prof := doc["IamInstanceProfile"].(map[string]any)
+	if prof["Name"] != "fabrica-perforce-profile" {
+		t.Errorf("IamInstanceProfile = %v", prof)
+	}
 }
 
 func TestInstanceDesiredState_EBSNotDeletedOnTermination(t *testing.T) {
 	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 750, InstanceName: "fabrica-perforce"}
-	raw, err := InstanceDesiredState(plan, "sg-x", "ud")
+	raw, err := InstanceDesiredState(plan, "sg-x", "ud", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,9 +140,40 @@ func TestInstanceDesiredState_EBSNotDeletedOnTermination(t *testing.T) {
 	}
 }
 
+func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
+	plan := &CreatePlan{RoleName: "fabrica-perforce-role"}
+	raw, err := RoleDesiredState(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	arns := doc["ManagedPolicyArns"].([]any)
+	if len(arns) != 1 || !strings.Contains(arns[0].(string), "AmazonSSMManagedInstanceCore") {
+		t.Errorf("ManagedPolicyArns = %v", arns)
+	}
+}
+
+func TestInstanceProfileDesiredState(t *testing.T) {
+	plan := &CreatePlan{RoleName: "fabrica-perforce-role", InstanceProfileName: "fabrica-perforce-profile"}
+	raw, err := InstanceProfileDesiredState(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc["InstanceProfileName"] != "fabrica-perforce-profile" {
+		t.Errorf("profile name = %v", doc["InstanceProfileName"])
+	}
+}
+
 func TestInstanceDesiredState_IMDSv2Required(t *testing.T) {
 	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce"}
-	raw, err := InstanceDesiredState(plan, "sg-x", "ud")
+	raw, err := InstanceDesiredState(plan, "sg-x", "ud", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -153,7 +189,7 @@ func TestInstanceDesiredState_IMDSv2Required(t *testing.T) {
 
 func TestInstanceDesiredState_ManagedByTag(t *testing.T) {
 	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce"}
-	raw, err := InstanceDesiredState(plan, "sg-x", "ud")
+	raw, err := InstanceDesiredState(plan, "sg-x", "ud", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
