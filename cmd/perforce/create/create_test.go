@@ -173,6 +173,41 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	}
 }
 
+func TestCreateRoleFailureAfterSG(t *testing.T) {
+	var out bytes.Buffer
+	provider := &fakeProvider{roleCreateErr: errors.New("iam denied")}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	var last *fabricastate.State
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.writeState = func(s *fabricastate.State) error {
+		cp := *s
+		last = &cp
+		return nil
+	}
+	err := c.run(context.Background())
+	if err == nil || !contains(err.Error(), "IAM role") {
+		t.Fatalf("err = %v", err)
+	}
+	if last == nil {
+		t.Fatal("expected state write after SG")
+	}
+	if _, ok := last.GetModuleResource("perforce", "AWS::EC2::SecurityGroup"); !ok {
+		t.Fatal("SG should be in state")
+	}
+}
+
+func TestCreateProfileFailureAfterRole(t *testing.T) {
+	provider := &fakeProvider{profileCreateErr: errors.New("profile denied")}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	c := newTestCommand(&bytes.Buffer{}, provider, st)
+	c.assumeYes = true
+	err := c.run(context.Background())
+	if err == nil || !contains(err.Error(), "instance profile") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 // TestCreateInstanceFailurePreservesPartialState verifies SG is in state even on instance error.
 func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
 	var out bytes.Buffer
@@ -416,6 +451,8 @@ func containsStr(s, sub string) bool {
 type fakeProvider struct {
 	identityErr       error
 	sgCreateErr       error
+	roleCreateErr     error
+	profileCreateErr  error
 	instanceCreateErr error
 	createCalls       int
 	createdTypes      []string
@@ -443,6 +480,12 @@ func (r *fakeResourceClient) Create(_ context.Context, res *cloud.Resource) erro
 	r.provider.createdTypes = append(r.provider.createdTypes, res.TypeName)
 	if res.TypeName == "AWS::EC2::SecurityGroup" && r.provider.sgCreateErr != nil {
 		return r.provider.sgCreateErr
+	}
+	if res.TypeName == "AWS::IAM::Role" && r.provider.roleCreateErr != nil {
+		return r.provider.roleCreateErr
+	}
+	if res.TypeName == "AWS::IAM::InstanceProfile" && r.provider.profileCreateErr != nil {
+		return r.provider.profileCreateErr
 	}
 	if res.TypeName == "AWS::EC2::Instance" && r.provider.instanceCreateErr != nil {
 		return r.provider.instanceCreateErr
@@ -473,10 +516,16 @@ func assertContains(t *testing.T, s, substr string) {
 	if len(substr) == 0 {
 		return
 	}
+	if !contains(s, substr) {
+		t.Fatalf("%q\ndoes not contain\n%q", s, substr)
+	}
+}
+
+func contains(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {
-			return
+			return true
 		}
 	}
-	t.Fatalf("%q\ndoes not contain\n%q", s, substr)
+	return false
 }

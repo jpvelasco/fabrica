@@ -76,6 +76,27 @@ func moduleState(status string, withInstance bool) *fabricastate.State {
 	return st
 }
 
+func TestBuildInfo_LastBackupProperties(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("perforce", "2024.2", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-1"},
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-1", Properties: map[string]string{
+			"lastBackupId": "bid",
+			"lastBackupAt": "bat",
+		}},
+	})
+	var out bytes.Buffer
+	rr := &recordingRenderer{}
+	c := newTestCommand(&out, st, rr, runningInstance, func(string) bool { return true })
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	info := rr.last()
+	if info.LastBackupId != "bid" || info.LastBackupAt != "bat" {
+		t.Fatalf("last backup fields: %+v", info)
+	}
+}
+
 func runningInstance(_ context.Context, r *cloud.Resource) error {
 	r.ActualState = mustMarshal(map[string]any{
 		"InstanceType":     "m5.xlarge",

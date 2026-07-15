@@ -55,6 +55,41 @@ func TestRenderText_Unreachable(t *testing.T) {
 	assertContains(t, out.String(), "unreachable from this machine")
 }
 
+func TestRenderText_LastBackup(t *testing.T) {
+	var out bytes.Buffer
+	printText(&out, modstatus.Info{
+		ModuleStatus: "ready",
+		LastBackupId: "20260715-120000",
+		LastBackupAt: "2026-07-15T12:00:00Z",
+	})
+	got := out.String()
+	assertContains(t, got, "Last backup")
+	assertContains(t, got, "20260715-120000")
+	assertContains(t, got, "2026-07-15T12:00:00Z")
+}
+
+func TestRenderText_LastBackupNever(t *testing.T) {
+	var out bytes.Buffer
+	printText(&out, modstatus.Info{ModuleStatus: "ready"})
+	assertContains(t, out.String(), "Last backup:   never")
+}
+
+func TestRenderJSON_LastBackup(t *testing.T) {
+	var out bytes.Buffer
+	printJSON(&out, modstatus.Info{
+		ModuleStatus: "ready",
+		LastBackupId: "id1",
+		LastBackupAt: "t1",
+	})
+	var result StatusOutput
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.LastBackupId != "id1" || result.LastBackupAt != "t1" {
+		t.Fatalf("%+v", result)
+	}
+}
+
 func TestRenderJSON_Fields(t *testing.T) {
 	var out bytes.Buffer
 	printJSON(&out, modstatus.Info{
