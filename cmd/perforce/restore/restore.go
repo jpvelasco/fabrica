@@ -111,7 +111,7 @@ func (c command) run(ctx context.Context) error {
 	}
 
 	if m.Status == "ready" && !c.force {
-		return fmt.Errorf("Perforce is ready (serving clients). Pass --force to restore and disconnect clients")
+		return fmt.Errorf("Perforce is ready and may have connected clients. Re-run with --force to stop Helix Core, restore from the backup, and restart (clients will disconnect). Example: fabrica perforce restore %s --force", c.backupID)
 	}
 
 	cfg := c.runtime.Config.Perforce.Backup

@@ -33,6 +33,9 @@ func TestRestoreRequiresForceWhenReady(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Fatalf("err = %v", err)
 	}
+	if !strings.Contains(err.Error(), "clients will disconnect") {
+		t.Fatalf("expected friendlier message, got: %v", err)
+	}
 }
 
 func TestRestoreDryRun(t *testing.T) {

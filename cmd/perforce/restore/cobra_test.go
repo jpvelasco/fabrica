@@ -93,4 +93,7 @@ func TestCobraRestoreRequiresForce(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected --force error when ready")
 	}
+	if !bytes.Contains([]byte(err.Error()), []byte("--force")) {
+		t.Fatalf("error should mention --force: %v", err)
+	}
 }
