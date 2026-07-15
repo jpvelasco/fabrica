@@ -188,6 +188,93 @@ func TestSSMClientDefaultConstructor(t *testing.T) {
 	}
 }
 
+func TestRunCommand_Timeout(t *testing.T) {
+	prev := ssmWaitTimeout
+	ssmWaitTimeout = 1 * time.Millisecond
+	t.Cleanup(func() { ssmWaitTimeout = prev })
+
+	m := &mockSSM{
+		sendFn: func(_ context.Context, _ *ssm.SendCommandInput) (*ssm.SendCommandOutput, error) {
+			return &ssm.SendCommandOutput{
+				Command: &ssmtypes.Command{CommandId: aws.String("cmd-to")},
+			}, nil
+		},
+		getFn: func(_ context.Context, _ *ssm.GetCommandInvocationInput) (*ssm.GetCommandInvocationOutput, error) {
+			return &ssm.GetCommandInvocationOutput{Status: ssmtypes.CommandInvocationStatusInProgress}, nil
+		},
+	}
+	p := testProviderWithSSM(m)
+	if _, err := p.RunCommand(context.Background(), "i-1", []string{"echo"}); err == nil || !stringsContains(err.Error(), "timed out") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func stringsContains(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(sub) == 0 ||
+		func() bool {
+			for i := 0; i+len(sub) <= len(s); i++ {
+				if s[i:i+len(sub)] == sub {
+					return true
+				}
+			}
+			return false
+		}())
+}
+
+func TestRunCommand_StateBackendConfigError(t *testing.T) {
+	p := &awsProvider{
+		cfg:    &config.Config{},
+		awsCfg: awsConfig{region: "us-east-1"},
+		loadConfig: func(context.Context, string, string) (aws.Config, error) {
+			return aws.Config{}, errors.New("no aws config")
+		},
+	}
+	if _, err := p.RunCommand(context.Background(), "i-1", []string{"echo"}); err == nil {
+		t.Fatal("expected config error")
+	}
+}
+
+func TestRunCommand_ContextAlreadyCancelled(t *testing.T) {
+	m := &mockSSM{
+		sendFn: func(_ context.Context, _ *ssm.SendCommandInput) (*ssm.SendCommandOutput, error) {
+			return &ssm.SendCommandOutput{
+				Command: &ssmtypes.Command{CommandId: aws.String("cmd-c")},
+			}, nil
+		},
+		getFn: func(_ context.Context, _ *ssm.GetCommandInvocationInput) (*ssm.GetCommandInvocationOutput, error) {
+			return &ssm.GetCommandInvocationOutput{Status: ssmtypes.CommandInvocationStatusPending}, nil
+		},
+	}
+	p := testProviderWithSSM(m)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := p.RunCommand(ctx, "i-1", []string{"echo"}); err == nil {
+		t.Fatal("expected cancelled context")
+	}
+}
+
+func TestRunCommand_GetErrorThenContextCancel(t *testing.T) {
+	m := &mockSSM{
+		sendFn: func(_ context.Context, _ *ssm.SendCommandInput) (*ssm.SendCommandOutput, error) {
+			return &ssm.SendCommandOutput{
+				Command: &ssmtypes.Command{CommandId: aws.String("cmd-g")},
+			}, nil
+		},
+		getFn: func(_ context.Context, _ *ssm.GetCommandInvocationInput) (*ssm.GetCommandInvocationOutput, error) {
+			return nil, errors.New("not ready")
+		},
+	}
+	p := testProviderWithSSM(m)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	if _, err := p.RunCommand(ctx, "i-1", []string{"echo"}); err == nil {
+		t.Fatal("expected cancel during get-error poll")
+	}
+}
+
 func TestRunCommand_ContextCancelDuringPoll(t *testing.T) {
 	m := &mockSSM{
 		sendFn: func(_ context.Context, _ *ssm.SendCommandInput) (*ssm.SendCommandOutput, error) {

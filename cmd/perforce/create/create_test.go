@@ -11,6 +11,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/perforce"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -34,6 +35,83 @@ func newTestCommand(out *bytes.Buffer, provider cloud.Provider, st *fabricastate
 		c.createResource = provider.Resources().Create
 	}
 	return c
+}
+
+func TestCreateDryRunDefaultVPCNote(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCommand(&out, &fakeProvider{}, fabricastate.NewState("1", "us-east-1"))
+	c.printDryRun(&perforce.CreatePlan{
+		Account: "1", Region: "us-east-1", InstanceType: "m5.xlarge",
+		HelixVersion: "2024.2", VolumeSize: 500, DefaultVPC: true, VPCID: "vpc-def",
+		SGName: "sg", RoleName: "role", InstanceProfileName: "prof", InstanceName: "inst",
+	})
+	assertContains(t, out.String(), "default")
+	assertContains(t, out.String(), "vpc-def")
+	assertContains(t, out.String(), "Default VPC used")
+}
+
+func TestCreateDryRunExplicitVPCNoDefault(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCommand(&out, &fakeProvider{}, fabricastate.NewState("1", "us-east-1"))
+	c.printDryRun(&perforce.CreatePlan{
+		Account: "1", Region: "us-east-1", InstanceType: "m5.xlarge",
+		HelixVersion: "2024.2", VolumeSize: 500, DefaultVPC: false, VPCID: "vpc-explicit",
+		SGName: "sg", RoleName: "role", InstanceProfileName: "prof", InstanceName: "inst",
+	})
+	assertContains(t, out.String(), "vpc-explicit")
+	if contains(out.String(), "Default VPC used") {
+		t.Fatal("should not print default VPC note")
+	}
+}
+
+func TestCreatePasswordGenError(t *testing.T) {
+	c := newTestCommand(&bytes.Buffer{}, &fakeProvider{}, fabricastate.NewState("123456789012", "us-east-1"))
+	c.assumeYes = true
+	c.genPassword = func(int) (string, error) { return "", errors.New("entropy fail") }
+	if err := c.run(context.Background()); err == nil || !contains(err.Error(), "generating admin password") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCreateWriteCredentialsError(t *testing.T) {
+	c := newTestCommand(&bytes.Buffer{}, &fakeProvider{}, fabricastate.NewState("123456789012", "us-east-1"))
+	c.assumeYes = true
+	c.writeCreds = func(string, string) error { return errors.New("perm denied") }
+	if err := c.run(context.Background()); err == nil || !contains(err.Error(), "writing credentials") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCreateProceedingWithoutConfirmMessage(t *testing.T) {
+	var out bytes.Buffer
+	// already provisioned exits early after assumeYes path isn't hit;
+	// exercise assumeYes message via create on empty state
+	c := newTestCommand(&out, &fakeProvider{}, fabricastate.NewState("123456789012", "us-east-1"))
+	c.assumeYes = true
+	if err := c.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertContains(t, out.String(), "Proceeding without interactive confirmation")
+}
+
+func TestCreateDryRunLatestVersionLabel(t *testing.T) {
+	var out bytes.Buffer
+	provider := &fakeProvider{}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	c := newTestCommand(&out, provider, st)
+	c.dryRun = true
+	c.version = "latest"
+	if err := c.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !contains(got, "latest") {
+		t.Fatalf("out: %s", got)
+	}
+	// "latest" should not get " (pinned)" suffix
+	if contains(got, "latest (pinned)") {
+		t.Fatalf("latest should not be labeled pinned: %s", got)
+	}
 }
 
 // TestCreateDryRunNoAWSCalls verifies --dry-run makes zero provider calls.

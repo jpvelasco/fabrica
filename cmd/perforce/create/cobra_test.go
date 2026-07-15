@@ -57,6 +57,16 @@ func newNilProviderRuntime() globals.RuntimeSource {
 	return func() (globals.Runtime, error) { return rt, nil }
 }
 
+func TestCreateCobraRuntimeError(t *testing.T) {
+	rt := func() (globals.Runtime, error) {
+		return globals.Runtime{}, errors.New("rt boom")
+	}
+	_, err := runCreate(t, rt, "--dry-run")
+	if err == nil {
+		t.Fatal("expected runtime error")
+	}
+}
+
 // TestCreateCobraDryRunNoAWSCalls verifies --dry-run produces output and no creates.
 func TestCreateCobraDryRunNoAWSCalls(t *testing.T) {
 	provider := &cobraFakeProvider{}

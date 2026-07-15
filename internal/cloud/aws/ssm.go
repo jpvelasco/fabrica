@@ -11,10 +11,11 @@ import (
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 )
 
-const (
-	ssmPollInterval = 2 * time.Second
-	ssmWaitTimeout  = 15 * time.Minute
-)
+const ssmPollInterval = 2 * time.Second
+
+// ssmWaitTimeout is the max time RunCommand waits for an invocation.
+// Overridable in tests.
+var ssmWaitTimeout = 15 * time.Minute
 
 var _ fabricac.RemoteRunner = (*awsProvider)(nil)
 

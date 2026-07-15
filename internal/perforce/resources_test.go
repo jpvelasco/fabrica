@@ -173,6 +173,22 @@ func TestRoleDesiredState_S3ExportPolicy(t *testing.T) {
 	}
 }
 
+func TestRoleDesiredState_S3ExportDefaultPrefix(t *testing.T) {
+	plan := &CreatePlan{
+		RoleName:       "fabrica-perforce-role",
+		BackupS3Export: true,
+		BackupS3Bucket: "bkt",
+		BackupS3Prefix: "", // hits DefaultS3Prefix branch
+	}
+	raw, err := RoleDesiredState(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), DefaultS3Prefix) {
+		t.Fatalf("expected default prefix in %s", raw)
+	}
+}
+
 func TestInstanceDesiredState_ARNProfile(t *testing.T) {
 	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce", SubnetID: "subnet-1"}
 	raw, err := InstanceDesiredState(plan, "sg-1", "ud", "arn:aws:iam::123:instance-profile/p")
