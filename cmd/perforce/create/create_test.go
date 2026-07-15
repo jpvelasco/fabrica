@@ -173,6 +173,45 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	}
 }
 
+func TestCreateWriteStateFailsAfterRole(t *testing.T) {
+	provider := &fakeProvider{}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	writes := 0
+	c := newTestCommand(&bytes.Buffer{}, provider, st)
+	c.assumeYes = true
+	c.writeState = func(*fabricastate.State) error {
+		writes++
+		// first write is after SG; fail after role (second write)
+		if writes >= 2 {
+			return errors.New("state write failed")
+		}
+		return nil
+	}
+	err := c.run(context.Background())
+	if err == nil || !contains(err.Error(), "writing state after IAM role") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCreateWriteStateFailsAfterProfile(t *testing.T) {
+	provider := &fakeProvider{}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	writes := 0
+	c := newTestCommand(&bytes.Buffer{}, provider, st)
+	c.assumeYes = true
+	c.writeState = func(*fabricastate.State) error {
+		writes++
+		if writes >= 3 {
+			return errors.New("state write failed")
+		}
+		return nil
+	}
+	err := c.run(context.Background())
+	if err == nil || !contains(err.Error(), "writing state after instance profile") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestCreateRoleFailureAfterSG(t *testing.T) {
 	var out bytes.Buffer
 	provider := &fakeProvider{roleCreateErr: errors.New("iam denied")}

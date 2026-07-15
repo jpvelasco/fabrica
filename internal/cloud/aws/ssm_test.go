@@ -166,3 +166,58 @@ func TestRunCommand_EmptyCommandID(t *testing.T) {
 		t.Fatal("expected empty command id error")
 	}
 }
+
+func TestRunCommand_GetErrorThenSuccess(t *testing.T) {
+	n := 0
+	m := &mockSSM{
+		sendFn: func(_ context.Context, _ *ssm.SendCommandInput) (*ssm.SendCommandOutput, error) {
+			return &ssm.SendCommandOutput{
+				Command: &ssmtypes.Command{CommandId: aws.String("cmd-3")},
+			}, nil
+		},
+		getFn: func(_ context.Context, _ *ssm.GetCommandInvocationInput) (*ssm.GetCommandInvocationOutput, error) {
+			n++
+			if n == 1 {
+				return nil, errors.New("invocation not ready")
+			}
+			return &ssm.GetCommandInvocationOutput{
+				Status:                ssmtypes.CommandInvocationStatusSuccess,
+				ResponseCode:          0,
+				StandardOutputContent: aws.String("done"),
+			}, nil
+		},
+	}
+	p := testProviderWithSSM(m)
+	res, err := p.RunCommand(context.Background(), "i-abc", []string{"echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stdout != "done" {
+		t.Fatalf("stdout=%q", res.Stdout)
+	}
+}
+
+func TestRunCommand_DelayedThenSuccess(t *testing.T) {
+	n := 0
+	m := &mockSSM{
+		sendFn: func(_ context.Context, _ *ssm.SendCommandInput) (*ssm.SendCommandOutput, error) {
+			return &ssm.SendCommandOutput{
+				Command: &ssmtypes.Command{CommandId: aws.String("cmd-4")},
+			}, nil
+		},
+		getFn: func(_ context.Context, _ *ssm.GetCommandInvocationInput) (*ssm.GetCommandInvocationOutput, error) {
+			n++
+			if n == 1 {
+				return &ssm.GetCommandInvocationOutput{Status: ssmtypes.CommandInvocationStatusDelayed}, nil
+			}
+			return &ssm.GetCommandInvocationOutput{
+				Status:       ssmtypes.CommandInvocationStatusSuccess,
+				ResponseCode: 0,
+			}, nil
+		},
+	}
+	p := testProviderWithSSM(m)
+	if _, err := p.RunCommand(context.Background(), "i-abc", []string{"echo"}); err != nil {
+		t.Fatal(err)
+	}
+}
