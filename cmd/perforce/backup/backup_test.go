@@ -25,6 +25,103 @@ func readyState() *fabricastate.State {
 
 func readyStateFn() (*fabricastate.State, error) { return readyState(), nil }
 
+func TestCreateReadStateError(t *testing.T) {
+	c := createCommand{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		out:       &bytes.Buffer{},
+		now:       time.Now,
+		readState: func() (*fabricastate.State, error) { return nil, errors.New("boom") },
+	}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCreateNoInstance(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("perforce", "2024.2", "ready", nil)
+	c := createCommand{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		out:       &bytes.Buffer{},
+		now:       time.Now,
+		readState: func() (*fabricastate.State, error) { return st, nil },
+	}
+	if err := c.run(context.Background()); err == nil || !strings.Contains(err.Error(), "instance") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCreateCredsError(t *testing.T) {
+	c := createCommand{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		assumeYes: true,
+		out:       &bytes.Buffer{},
+		now:       time.Now,
+		readState: readyStateFn,
+		readCreds: func() (string, error) { return "", errors.New("no creds") },
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			return cloud.RemoteResult{}, nil
+		},
+	}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected creds error")
+	}
+}
+
+func TestCreateWriteStateWarning(t *testing.T) {
+	var out bytes.Buffer
+	c := createCommand{
+		runtime:    globals.Runtime{Config: config.Defaults()},
+		assumeYes:  true,
+		out:        &out,
+		now:        time.Now,
+		readState:  readyStateFn,
+		writeState: func(*fabricastate.State) error { return errors.New("disk full") },
+		readCreds:  func() (string, error) { return "pw", nil },
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			return cloud.RemoteResult{ExitCode: 0}, nil
+		},
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Warning") {
+		t.Fatalf("expected write warning: %s", out.String())
+	}
+}
+
+func TestCreateNoS3Flag(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Perforce.Backup.S3Export = true
+	cfg.Perforce.Backup.S3Bucket = "b"
+	var out bytes.Buffer
+	c := createCommand{
+		runtime:    globals.Runtime{Config: cfg},
+		assumeYes:  true,
+		noS3:       true,
+		out:        &out,
+		now:        time.Now,
+		readState:  readyStateFn,
+		writeState: func(*fabricastate.State) error { return nil },
+		readCreds:  func() (string, error) { return "pw", nil },
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			return cloud.RemoteResult{ExitCode: 0}, nil
+		},
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "S3 export:  disabled") {
+		t.Fatalf("out: %s", out.String())
+	}
+}
+
+func TestPerforceBackupCfgNil(t *testing.T) {
+	if perforceBackupCfg(nil).Path != "" {
+		t.Fatal("expected empty config")
+	}
+}
+
 func TestCreateDryRun(t *testing.T) {
 	var out bytes.Buffer
 	var remoteCalls int
@@ -394,6 +491,37 @@ func TestListNotProvisioned(t *testing.T) {
 	}
 }
 
+func TestListNoRemoteAndRemoteError(t *testing.T) {
+	c := listCommand{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		out:       &bytes.Buffer{},
+		readState: readyStateFn,
+	}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected no remote error")
+	}
+	c.runRemote = func(context.Context, string, []string) (cloud.RemoteResult, error) {
+		return cloud.RemoteResult{}, errors.New("ssm down")
+	}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected remote error")
+	}
+}
+
+func TestListBadJSON(t *testing.T) {
+	c := listCommand{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		out:       &bytes.Buffer{},
+		readState: readyStateFn,
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			return cloud.RemoteResult{Stdout: "not-json\n"}, nil
+		},
+	}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected parse error")
+	}
+}
+
 func TestDeleteDryRunAndConfirmReject(t *testing.T) {
 	var out bytes.Buffer
 	c := deleteCommand{
@@ -427,6 +555,50 @@ func TestDeleteDryRunAndConfirmReject(t *testing.T) {
 	}
 	if remote != 0 {
 		t.Fatal("should not remote on reject")
+	}
+}
+
+func TestDeleteNotProvisionedAndNoRemote(t *testing.T) {
+	c := deleteCommand{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		assumeYes: true,
+		backupID:  "x",
+		out:       &bytes.Buffer{},
+		readState: func() (*fabricastate.State, error) { return fabricastate.NewState("1", "r"), nil },
+	}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected not provisioned")
+	}
+	c2 := deleteCommand{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		assumeYes: true,
+		backupID:  "x",
+		out:       &bytes.Buffer{},
+		readState: readyStateFn,
+	}
+	if err := c2.run(context.Background()); err == nil {
+		t.Fatal("expected no remote")
+	}
+}
+
+func TestDeleteRemoteFail(t *testing.T) {
+	calls := 0
+	c := deleteCommand{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		assumeYes: true,
+		backupID:  "id1",
+		out:       &bytes.Buffer{},
+		readState: readyStateFn,
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			calls++
+			if calls == 1 {
+				return cloud.RemoteResult{Stdout: `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/x"}`}, nil
+			}
+			return cloud.RemoteResult{ExitCode: 3, Stderr: "rm fail"}, nil
+		},
+	}
+	if err := c.run(context.Background()); err == nil || !strings.Contains(err.Error(), "exit 3") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

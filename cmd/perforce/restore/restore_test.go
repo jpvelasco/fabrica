@@ -189,6 +189,111 @@ func TestRestoreRemoteFail(t *testing.T) {
 	}
 }
 
+func TestRestoreCredsError(t *testing.T) {
+	st := readyState()
+	st.Modules[0].Status = "stopped"
+	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
+	c := command{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		assumeYes: true,
+		force:     true,
+		backupID:  "id1",
+		out:       &bytes.Buffer{},
+		readState: func() (*fabricastate.State, error) { return st, nil },
+		readCreds: func() (string, error) { return "", errors.New("missing") },
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			return cloud.RemoteResult{Stdout: meta}, nil
+		},
+	}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected creds error")
+	}
+}
+
+func TestRestoreNonZeroExit(t *testing.T) {
+	st := readyState()
+	st.Modules[0].Status = "stopped"
+	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
+	calls := 0
+	c := command{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		assumeYes: true,
+		force:     true,
+		backupID:  "id1",
+		out:       &bytes.Buffer{},
+		readState: func() (*fabricastate.State, error) { return st, nil },
+		readCreds: func() (string, error) { return "pw", nil },
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			calls++
+			if calls == 1 {
+				return cloud.RemoteResult{Stdout: meta}, nil
+			}
+			return cloud.RemoteResult{ExitCode: 5, Stderr: "bad"}, nil
+		},
+	}
+	if err := c.run(context.Background()); err == nil || !strings.Contains(err.Error(), "exit 5") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRestoreMetaReadError(t *testing.T) {
+	st := readyState()
+	st.Modules[0].Status = "stopped"
+	c := command{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		assumeYes: true,
+		force:     true,
+		backupID:  "id1",
+		out:       &bytes.Buffer{},
+		readState: func() (*fabricastate.State, error) { return st, nil },
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			return cloud.RemoteResult{}, errors.New("no file")
+		},
+	}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected meta error")
+	}
+}
+
+func TestRestoreUnreachableProbe(t *testing.T) {
+	st := readyState()
+	st.Modules[0].Status = "stopped"
+	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
+	calls := 0
+	var out bytes.Buffer
+	c := command{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		assumeYes: true,
+		force:     true,
+		backupID:  "id1",
+		out:       &out,
+		readState: func() (*fabricastate.State, error) { return st, nil },
+		writeState: func(s *fabricastate.State) error {
+			st = s
+			return nil
+		},
+		readCreds: func() (string, error) { return "pw", nil },
+		probeTCP:  func(string) bool { return false },
+		getResource: func(_ context.Context, r *cloud.Resource) error {
+			r.ActualState = []byte(`{"PrivateIpAddress":"10.0.0.1"}`)
+			return nil
+		},
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			calls++
+			if calls == 1 {
+				return cloud.RemoteResult{Stdout: meta}, nil
+			}
+			return cloud.RemoteResult{Stdout: "RESTORE_OK"}, nil
+		},
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Warning") {
+		t.Fatalf("expected unreachable warning: %s", out.String())
+	}
+}
+
 func TestRestoreWithProbeAndGetResource(t *testing.T) {
 	st := readyState()
 	st.Modules[0].Status = "stopped"
