@@ -24,6 +24,10 @@ func TestGenerateRawContainsStoreAndPorts(t *testing.T) {
 		"41337",
 		"41339",
 		"fabrica-lore-init.log",
+		"resolve_data_dev",
+		"/dev/nvme",
+		"/dev/sdf",
+		"/dev/xvdf",
 	} {
 		if !strings.Contains(raw, want) {
 			t.Errorf("userdata missing %q", want)

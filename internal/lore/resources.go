@@ -50,13 +50,16 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMess
 		"SubnetId":         plan.SubnetID,
 		"SecurityGroupIds": []string{sgID},
 		"UserData":         userData,
+		// DeleteOnTermination true: destroy/teardown terminates the instance and
+		// the gp3 store dies with it. V1 does not track AWS::EC2::Volume as a
+		// separate state resource (same surface as create→destroy only).
 		"BlockDeviceMappings": []map[string]any{
 			{
 				"DeviceName": "/dev/sdf",
 				"Ebs": map[string]any{
 					"VolumeSize":          plan.VolumeSize,
 					"VolumeType":          "gp3",
-					"DeleteOnTermination": false,
+					"DeleteOnTermination": true,
 				},
 			},
 		},

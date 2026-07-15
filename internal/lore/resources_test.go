@@ -117,7 +117,7 @@ func TestInstanceDesiredStateShape(t *testing.T) {
 	if ebs["VolumeSize"] != float64(500) {
 		t.Errorf("VolumeSize = %v", ebs["VolumeSize"])
 	}
-	if ebs["DeleteOnTermination"] != false {
-		t.Errorf("DeleteOnTermination = %v, want false", ebs["DeleteOnTermination"])
+	if ebs["DeleteOnTermination"] != true {
+		t.Errorf("DeleteOnTermination = %v, want true (destroy deletes store with instance)", ebs["DeleteOnTermination"])
 	}
 }
