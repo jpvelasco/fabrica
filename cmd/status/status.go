@@ -25,6 +25,7 @@ const lineWidth = 64
 var probePorts = map[string]int{
 	"perforce":    1666,
 	"horde":       5000,
+	"lore":        41339,
 	"workstation": 8443,
 }
 

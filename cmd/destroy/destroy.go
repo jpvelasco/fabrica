@@ -12,6 +12,7 @@ import (
 	destroyall "github.com/jpvelasco/fabrica/cmd/internal/destroyall"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
+	loredestroy "github.com/jpvelasco/fabrica/cmd/lore/destroy"
 	pfdestroy "github.com/jpvelasco/fabrica/cmd/perforce/destroy"
 	wsterminate "github.com/jpvelasco/fabrica/cmd/workstation/terminate"
 	"github.com/jpvelasco/fabrica/internal/cloud"
@@ -94,7 +95,7 @@ func runAll(ctx context.Context, rt globals.Runtime, opts globals.Options, out i
 		return fmt.Errorf("reading state: %w", err)
 	}
 
-	// Ordered candidate modules: deploy, ci, workstation, horde, perforce.
+	// Ordered candidate modules: deploy, ci, workstation, horde, lore, perforce.
 	// Include a module only if it is present in state.
 	var mods []destroyall.Module
 	add := func(name string, td destroyall.ModuleTeardown) {
@@ -106,6 +107,7 @@ func runAll(ctx context.Context, rt globals.Runtime, opts globals.Options, out i
 	add("ci", ciTeardownClosure(ctx, rt, out))
 	add("workstation", teardownClosure(ctx, wsterminate.NewTeardown(rt, out)))
 	add("horde", teardownClosure(ctx, hordedestroy.NewTeardown(rt, out)))
+	add("lore", teardownClosure(ctx, loredestroy.NewTeardown(rt, out)))
 	add("perforce", teardownClosure(ctx, pfdestroy.NewTeardown(rt, out)))
 
 	names := fabricastate.ResolveBackendNames(rt.Config, account)

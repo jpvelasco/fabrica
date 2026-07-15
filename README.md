@@ -28,6 +28,7 @@ See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium vision, and what's next.
 | `setup` / `doctor` / `status` | Foundation | Complete |
 | `perforce` | `create`, `status`, `destroy` | Complete |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Complete |
+| `lore` | `create`, `status`, `destroy` | Complete |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Complete |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | Complete |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | Complete |
@@ -96,6 +97,10 @@ Then grow the studio from there:
 # Unreal Horde build coordinator (supply a Horde AMI first — see docs/horde-ami.md)
 fabrica horde create
 fabrica horde submit --buildgraph path/to/BuildGraph.xml --target "Compile UnrealGame Win64"
+
+# Lore VCS server (parallel alternative to Perforce — see docs/lore-ami.md)
+fabrica lore create
+fabrica lore status -w
 
 # A cloud workstation
 fabrica workstation create
@@ -212,6 +217,22 @@ Two install methods are supported:
 ```
 
 Key flags: `--horde-version`, `--base-image`, `--region`, `--output-dir`, `--include-packer`, `--dry-run`.
+
+### Lore
+
+> **AMI requirement:** `fabrica lore create` is AMI-first. Your AMI must already contain the `loreserver` binary (and optional systemd unit). Fabrica only mounts the EBS store, writes local store config, and starts the service. See [docs/lore-ami.md](docs/lore-ami.md). Lore is a **parallel** VCS option alongside Perforce — both modules can coexist.
+
+#### `fabrica lore create`
+
+Provisions an Epic Lore (`loreserver`) server: security group opens TCP 41337 (gRPC), UDP 41337 (QUIC), and TCP 41339 (HTTP health); EC2 instance uses your pre-baked AMI with a gp3 data volume for local store. Connection notes go to `.fabrica/lore-credentials.yaml` (mode 0600). V1 uses local/EBS storage, self-signed TLS, and no JWT.
+
+#### `fabrica lore status`
+
+Reads live state and probes `GET /health_check` on port 41339. Transitions `provisioning` → `ready` when healthy. `--json` emits `loreUrl` and `loreGrpc`. Supports `--wait` / `-w`.
+
+#### `fabrica lore destroy`
+
+Terminates the EC2 instance and deletes the security group in reverse order. Idempotent. Typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview.
 
 ### Workstation
 
@@ -354,7 +375,7 @@ Manages local budget thresholds (written to `fabrica.yaml` — no AWS Budgets re
 
 #### `fabrica destroy --all`
 
-Full-stack teardown: destroys every provisioned module in reverse dependency order (deploy → ci → workstation → horde → perforce), then the state backend — but only if every module succeeded (a module failure preserves the backend so orphaned resources stay tracked for retry). One aggregate typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview the full plan. Plain `fabrica destroy` (no `--all`) just prints usage.
+Full-stack teardown: destroys every provisioned module in reverse dependency order (deploy → ci → workstation → horde → lore → perforce), then the state backend — but only if every module succeeded (a module failure preserves the backend so orphaned resources stay tracked for retry). One aggregate typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview the full plan. Plain `fabrica destroy` (no `--all`) just prints usage.
 
 #### `fabrica version`
 
@@ -376,6 +397,12 @@ perforce:
 horde:
   instance_type: m7i.2xlarge
   ami_id: ami-xxxxxxxxxxxxxxxxx   # must contain MongoDB 7, Redis 6.2, Horde binary
+
+lore:
+  amiId: ami-xxxxxxxxxxxxxxxxx    # must contain loreserver (see docs/lore-ami.md)
+  instanceType: m5.xlarge
+  volumeSize: 500
+  allowedCidr: 10.0.0.0/8
 ```
 
 ## Architecture

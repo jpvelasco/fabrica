@@ -20,6 +20,16 @@ state:
 perforce: {}
 horde: {}
 
+# Lore: Epic loreserver (parallel VCS option alongside Perforce).
+# AMI-first — see docs/lore-ami.md. Local/EBS store in V1.
+# lore:
+#   amiId: ami-xxxxxxxxxxxxxxxxx   # required
+#   instanceType: m5.xlarge
+#   volumeSize: 500
+#   allowedCidr: 10.0.0.0/8
+#   vpcId: ""
+#   subnetId: ""
+
 # CI: a CodeBuild project that orchestrates Horde BuildGraph jobs.
 # All fields are optional — defaults shown.
 ci:

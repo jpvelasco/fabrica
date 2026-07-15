@@ -22,7 +22,7 @@ import (
 
 // knownScopes are the valid budget scopes: "total" plus each module name.
 var knownScopes = map[string]bool{
-	"total": true, "perforce": true, "horde": true,
+	"total": true, "perforce": true, "horde": true, "lore": true,
 	"workstation": true, "ci": true, "deploy": true,
 }
 

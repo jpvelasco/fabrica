@@ -55,6 +55,7 @@ type Config struct {
 	State       State             `mapstructure:"state"       yaml:"state"`
 	Perforce    PerforceConfig    `mapstructure:"perforce"    yaml:"perforce"`
 	Horde       HordeConfig       `mapstructure:"horde"       yaml:"horde"`
+	Lore        LoreConfig        `mapstructure:"lore"        yaml:"lore"`
 	Workstation WorkstationConfig `mapstructure:"workstation" yaml:"workstation"`
 	CI          CIConfig          `mapstructure:"ci"          yaml:"ci"`
 	Deploy      DeployConfig      `mapstructure:"deploy"      yaml:"deploy"`
@@ -79,6 +80,17 @@ type HordeConfig struct {
 	SubnetId     string `mapstructure:"subnetId"     yaml:"subnetId"`
 	Port         int    `mapstructure:"port"         yaml:"port"`
 	GRPCPort     int    `mapstructure:"grpcPort"     yaml:"grpcPort"`
+	AllowedCIDR  string `mapstructure:"allowedCidr"  yaml:"allowedCidr"`
+}
+
+// LoreConfig holds the lore: section of fabrica.yaml.
+// AMI-first: lore.amiId must point at an AMI that already contains loreserver.
+type LoreConfig struct {
+	AmiID        string `mapstructure:"amiId"        yaml:"amiId"`
+	InstanceType string `mapstructure:"instanceType" yaml:"instanceType"`
+	VolumeSize   int    `mapstructure:"volumeSize"   yaml:"volumeSize"`
+	VPCId        string `mapstructure:"vpcId"        yaml:"vpcId"`
+	SubnetId     string `mapstructure:"subnetId"     yaml:"subnetId"`
 	AllowedCIDR  string `mapstructure:"allowedCidr"  yaml:"allowedCidr"`
 }
 
@@ -156,6 +168,7 @@ type fileConfig struct {
 	State       State             `yaml:"state"`
 	Perforce    PerforceConfig    `yaml:"perforce"`
 	Horde       HordeConfig       `yaml:"horde"`
+	Lore        LoreConfig        `yaml:"lore"`
 	Workstation WorkstationConfig `yaml:"workstation"`
 	CI          CIConfig          `yaml:"ci"`
 	Deploy      DeployConfig      `yaml:"deploy"`
@@ -168,6 +181,7 @@ func (c *Config) fileConfig() fileConfig {
 		State:       c.State,
 		Perforce:    c.Perforce,
 		Horde:       c.Horde,
+		Lore:        c.Lore,
 		Workstation: c.Workstation,
 		CI:          c.CI,
 		Deploy:      c.Deploy,
