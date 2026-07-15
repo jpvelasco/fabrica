@@ -136,3 +136,33 @@ func TestCobraBackupNotProvisioned(t *testing.T) {
 		t.Fatal("expected not provisioned error")
 	}
 }
+
+func TestCobraBackupCreateYes(t *testing.T) {
+	writeReadyState(t)
+	p := &fakeProvider{remote: cloud.RemoteResult{ExitCode: 0, Stdout: "BACKUP_OK"}}
+	rt := func() (globals.Runtime, error) {
+		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
+	}
+	got, err := runBackup(t, rt, "--yes", "--name", "ci")
+	if err != nil {
+		t.Fatalf("backup --yes: %v\n%s", err, got)
+	}
+	if !bytes.Contains([]byte(got), []byte("Backup complete")) {
+		t.Fatalf("output: %s", got)
+	}
+}
+
+func TestCobraBackupDeleteYes(t *testing.T) {
+	writeReadyState(t)
+	p := &fakeProvider{remote: cloud.RemoteResult{ExitCode: 0, Stdout: "DELETE_OK"}}
+	rt := func() (globals.Runtime, error) {
+		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
+	}
+	got, err := runBackup(t, rt, "delete", "id1", "--yes")
+	if err != nil {
+		t.Fatalf("delete: %v\n%s", err, got)
+	}
+	if !bytes.Contains([]byte(got), []byte("Deleted backup")) {
+		t.Fatalf("output: %s", got)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
@@ -184,6 +185,28 @@ func TestSSMClientDefaultConstructor(t *testing.T) {
 	c := p.ssmClient(aws.Config{Region: "us-east-1"})
 	if c == nil {
 		t.Fatal("expected non-nil ssm client")
+	}
+}
+
+func TestRunCommand_ContextCancelDuringPoll(t *testing.T) {
+	m := &mockSSM{
+		sendFn: func(_ context.Context, _ *ssm.SendCommandInput) (*ssm.SendCommandOutput, error) {
+			return &ssm.SendCommandOutput{
+				Command: &ssmtypes.Command{CommandId: aws.String("cmd-cancel")},
+			}, nil
+		},
+		getFn: func(_ context.Context, _ *ssm.GetCommandInvocationInput) (*ssm.GetCommandInvocationOutput, error) {
+			return &ssm.GetCommandInvocationOutput{Status: ssmtypes.CommandInvocationStatusInProgress}, nil
+		},
+	}
+	p := testProviderWithSSM(m)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	if _, err := p.RunCommand(ctx, "i-1", []string{"echo"}); err == nil {
+		t.Fatal("expected context cancel error")
 	}
 }
 
