@@ -3,6 +3,7 @@ package restore
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -125,5 +126,103 @@ func TestRestoreNotProvisioned(t *testing.T) {
 	}
 	if err := c.run(context.Background()); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestRestoreIncompleteMeta(t *testing.T) {
+	meta := `{"id":"id1","status":"failed","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
+	c := command{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		assumeYes: true,
+		force:     true,
+		backupID:  "id1",
+		out:       &bytes.Buffer{},
+		readState: readyStateFn,
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			return cloud.RemoteResult{Stdout: meta}, nil
+		},
+	}
+	if err := c.run(context.Background()); err == nil || !strings.Contains(err.Error(), "complete") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRestoreNoRemote(t *testing.T) {
+	st := readyState()
+	st.Modules[0].Status = "stopped"
+	c := command{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		assumeYes: true,
+		force:     true,
+		backupID:  "id1",
+		out:       &bytes.Buffer{},
+		readState: func() (*fabricastate.State, error) { return st, nil },
+	}
+	if err := c.run(context.Background()); err == nil || !strings.Contains(err.Error(), "SSM") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRestoreRemoteFail(t *testing.T) {
+	st := readyState()
+	st.Modules[0].Status = "stopped"
+	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
+	calls := 0
+	c := command{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		assumeYes: true,
+		force:     true,
+		backupID:  "id1",
+		out:       &bytes.Buffer{},
+		readState: func() (*fabricastate.State, error) { return st, nil },
+		readCreds: func() (string, error) { return "pw", nil },
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			calls++
+			if calls == 1 {
+				return cloud.RemoteResult{Stdout: meta}, nil
+			}
+			return cloud.RemoteResult{Stderr: "boom"}, errors.New("fail")
+		},
+	}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestRestoreWithProbeAndGetResource(t *testing.T) {
+	st := readyState()
+	st.Modules[0].Status = "stopped"
+	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
+	calls := 0
+	c := command{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		assumeYes: true,
+		force:     true,
+		backupID:  "id1",
+		out:       &bytes.Buffer{},
+		readState: func() (*fabricastate.State, error) { return st, nil },
+		writeState: func(s *fabricastate.State) error {
+			st = s
+			return nil
+		},
+		readCreds: func() (string, error) { return "pw", nil },
+		probeTCP:  func(string) bool { return true },
+		getResource: func(_ context.Context, r *cloud.Resource) error {
+			r.ActualState = []byte(`{"PrivateIpAddress":"10.0.0.1"}`)
+			return nil
+		},
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			calls++
+			if calls == 1 {
+				return cloud.RemoteResult{Stdout: meta}, nil
+			}
+			return cloud.RemoteResult{Stdout: "RESTORE_OK"}, nil
+		},
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if st.GetModule("perforce").Status != "ready" {
+		t.Fatalf("status = %s", st.GetModule("perforce").Status)
 	}
 }

@@ -156,6 +156,39 @@ func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 	}
 }
 
+func TestRoleDesiredState_S3ExportPolicy(t *testing.T) {
+	plan := &CreatePlan{
+		RoleName:       "fabrica-perforce-role",
+		BackupS3Export: true,
+		BackupS3Bucket: "my-bucket",
+		BackupS3Prefix: "p4/",
+	}
+	raw, err := RoleDesiredState(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, "s3:PutObject") || !strings.Contains(s, "my-bucket") {
+		t.Fatalf("expected S3 policy in role: %s", s)
+	}
+}
+
+func TestInstanceDesiredState_ARNProfile(t *testing.T) {
+	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce", SubnetID: "subnet-1"}
+	raw, err := InstanceDesiredState(plan, "sg-1", "ud", "arn:aws:iam::123:instance-profile/p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	prof := doc["IamInstanceProfile"].(map[string]any)
+	if prof["Arn"] == nil {
+		t.Fatalf("expected Arn profile: %v", prof)
+	}
+}
+
 func TestInstanceProfileDesiredState(t *testing.T) {
 	plan := &CreatePlan{RoleName: "fabrica-perforce-role", InstanceProfileName: "fabrica-perforce-profile"}
 	raw, err := InstanceProfileDesiredState(plan)

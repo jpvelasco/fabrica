@@ -114,3 +114,55 @@ func TestRunCommand_SendError(t *testing.T) {
 		t.Fatal("expected send error")
 	}
 }
+
+func TestRunCommand_PendingThenSuccess(t *testing.T) {
+	m := &mockSSM{
+		sendFn: func(_ context.Context, _ *ssm.SendCommandInput) (*ssm.SendCommandOutput, error) {
+			return &ssm.SendCommandOutput{
+				Command: &ssmtypes.Command{CommandId: aws.String("cmd-2")},
+			}, nil
+		},
+		getFn: func(_ context.Context, _ *ssm.GetCommandInvocationInput) (*ssm.GetCommandInvocationOutput, error) {
+			// first call pending via gets count
+			return &ssm.GetCommandInvocationOutput{
+				Status:                ssmtypes.CommandInvocationStatusSuccess,
+				ResponseCode:          0,
+				StandardOutputContent: aws.String("ok"),
+				StandardErrorContent:  aws.String(""),
+			}, nil
+		},
+	}
+	// Force one pending iteration by alternating status using gets.
+	n := 0
+	m.getFn = func(_ context.Context, _ *ssm.GetCommandInvocationInput) (*ssm.GetCommandInvocationOutput, error) {
+		n++
+		if n == 1 {
+			return &ssm.GetCommandInvocationOutput{Status: ssmtypes.CommandInvocationStatusInProgress}, nil
+		}
+		return &ssm.GetCommandInvocationOutput{
+			Status:                ssmtypes.CommandInvocationStatusSuccess,
+			ResponseCode:          0,
+			StandardOutputContent: aws.String("ok"),
+		}, nil
+	}
+	p := testProviderWithSSM(m)
+	res, err := p.RunCommand(context.Background(), "i-abc", []string{"echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stdout != "ok" {
+		t.Fatalf("stdout = %q", res.Stdout)
+	}
+}
+
+func TestRunCommand_EmptyCommandID(t *testing.T) {
+	m := &mockSSM{
+		sendFn: func(_ context.Context, _ *ssm.SendCommandInput) (*ssm.SendCommandOutput, error) {
+			return &ssm.SendCommandOutput{Command: &ssmtypes.Command{}}, nil
+		},
+	}
+	p := testProviderWithSSM(m)
+	if _, err := p.RunCommand(context.Background(), "i-1", []string{"x"}); err == nil {
+		t.Fatal("expected empty command id error")
+	}
+}

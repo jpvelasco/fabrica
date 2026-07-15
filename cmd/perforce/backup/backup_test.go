@@ -3,6 +3,7 @@ package backup
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -210,5 +211,247 @@ func TestDeleteSuccess(t *testing.T) {
 		if r.TypeName == "AWS::EC2::Instance" && r.Properties["lastBackupId"] != "" {
 			t.Fatal("lastBackupId should be cleared")
 		}
+	}
+}
+
+func TestCreateJSONDryRun(t *testing.T) {
+	var out bytes.Buffer
+	c := createCommand{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		dryRun:    true,
+		jsonOut:   true,
+		out:       &out,
+		now:       func() time.Time { return time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC) },
+		readState: readyStateFn,
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"dryRun": true`) && !strings.Contains(out.String(), `"dryRun":true`) {
+		t.Fatalf("json dry-run: %s", out.String())
+	}
+}
+
+func TestCreateS3Success(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Perforce.Backup.S3Export = true
+	cfg.Perforce.Backup.S3Bucket = "bk"
+	cfg.Perforce.Backup.S3Prefix = "p/"
+	var out bytes.Buffer
+	c := createCommand{
+		runtime:    globals.Runtime{Config: cfg},
+		assumeYes:  true,
+		out:        &out,
+		now:        time.Now,
+		readState:  readyStateFn,
+		writeState: func(*fabricastate.State) error { return nil },
+		readCreds:  func() (string, error) { return "pw", nil },
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			return cloud.RemoteResult{ExitCode: 0}, nil
+		},
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "s3://") && !strings.Contains(out.String(), "Backup complete") {
+		t.Fatalf("out: %s", out.String())
+	}
+}
+
+func TestCreateJSONSuccess(t *testing.T) {
+	var out bytes.Buffer
+	st := readyState()
+	c := createCommand{
+		runtime:    globals.Runtime{Config: config.Defaults()},
+		assumeYes:  true,
+		jsonOut:    true,
+		out:        &out,
+		now:        func() time.Time { return time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC) },
+		readState:  func() (*fabricastate.State, error) { return st, nil },
+		writeState: func(*fabricastate.State) error { return nil },
+		readCreds:  func() (string, error) { return "pw", nil },
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			return cloud.RemoteResult{ExitCode: 0}, nil
+		},
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"backupId"`) {
+		t.Fatalf("json out: %s", out.String())
+	}
+}
+
+func TestCreateS3ExportDryRun(t *testing.T) {
+	var out bytes.Buffer
+	cfg := config.Defaults()
+	cfg.Perforce.Backup.S3Export = true
+	cfg.Perforce.Backup.S3Bucket = "b"
+	c := createCommand{
+		runtime:   globals.Runtime{Config: cfg},
+		dryRun:    true,
+		out:       &out,
+		now:       time.Now,
+		readState: readyStateFn,
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "s3://") {
+		t.Fatalf("expected s3 in dry-run: %s", out.String())
+	}
+}
+
+func TestCreateS3ExportMissingBucket(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Perforce.Backup.S3Export = true
+	c := createCommand{
+		runtime:   globals.Runtime{Config: cfg},
+		out:       &bytes.Buffer{},
+		now:       time.Now,
+		readState: readyStateFn,
+	}
+	if err := c.run(context.Background()); err == nil || !strings.Contains(err.Error(), "s3Bucket") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCreateNoRemoteRunner(t *testing.T) {
+	c := createCommand{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		assumeYes: true,
+		out:       &bytes.Buffer{},
+		now:       time.Now,
+		readState: readyStateFn,
+		// runRemote nil
+	}
+	if err := c.run(context.Background()); err == nil || !strings.Contains(err.Error(), "SSM") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCreateRemoteFailure(t *testing.T) {
+	c := createCommand{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		assumeYes: true,
+		out:       &bytes.Buffer{},
+		now:       time.Now,
+		readState: readyStateFn,
+		readCreds: func() (string, error) { return "pw", nil },
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			return cloud.RemoteResult{Stderr: "no agent"}, errors.New("ssm failed")
+		},
+	}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected remote error")
+	}
+}
+
+func TestCreateNonZeroExit(t *testing.T) {
+	c := createCommand{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		assumeYes: true,
+		out:       &bytes.Buffer{},
+		now:       time.Now,
+		readState: readyStateFn,
+		readCreds: func() (string, error) { return "pw", nil },
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			return cloud.RemoteResult{ExitCode: 2, Stderr: "p4 fail"}, nil
+		},
+	}
+	if err := c.run(context.Background()); err == nil || !strings.Contains(err.Error(), "exit 2") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestListTextWithEntries(t *testing.T) {
+	var out bytes.Buffer
+	line := `{"id":"a","status":"complete","createdAt":"t","sizeBytes":9,"helixVersion":"2024.2","serverRoot":"/hxdepots","description":"d"}`
+	c := listCommand{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		out:       &out,
+		readState: readyStateFn,
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			return cloud.RemoteResult{Stdout: line + "\n"}, nil
+		},
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "a") || !strings.Contains(out.String(), "d") {
+		t.Fatalf("out: %s", out.String())
+	}
+}
+
+func TestListNotProvisioned(t *testing.T) {
+	c := listCommand{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		out:       &bytes.Buffer{},
+		readState: func() (*fabricastate.State, error) { return fabricastate.NewState("1", "r"), nil },
+	}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestDeleteDryRunAndConfirmReject(t *testing.T) {
+	var out bytes.Buffer
+	c := deleteCommand{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		dryRun:    true,
+		backupID:  "x",
+		out:       &out,
+		readState: readyStateFn,
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Would delete") {
+		t.Fatalf("out: %s", out.String())
+	}
+
+	var remote int
+	c2 := deleteCommand{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		backupID:  "x",
+		out:       &bytes.Buffer{},
+		confirm:   func(string) bool { return false },
+		readState: readyStateFn,
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			remote++
+			return cloud.RemoteResult{}, nil
+		},
+	}
+	if err := c2.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if remote != 0 {
+		t.Fatal("should not remote on reject")
+	}
+}
+
+func TestDeleteWithS3URI(t *testing.T) {
+	calls := 0
+	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots","s3Uri":"s3://b/p/id1"}`
+	c := deleteCommand{
+		runtime:    globals.Runtime{Config: config.Defaults()},
+		assumeYes:  true,
+		backupID:   "id1",
+		out:        &bytes.Buffer{},
+		readState:  readyStateFn,
+		writeState: func(*fabricastate.State) error { return nil },
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			calls++
+			if calls == 1 {
+				return cloud.RemoteResult{Stdout: meta}, nil
+			}
+			return cloud.RemoteResult{ExitCode: 0, Stdout: "DELETE_OK"}, nil
+		},
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d", calls)
 	}
 }
