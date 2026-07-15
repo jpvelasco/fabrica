@@ -14,6 +14,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/doctor"
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/horde"
+	"github.com/jpvelasco/fabrica/cmd/lore"
 	"github.com/jpvelasco/fabrica/cmd/perforce"
 	"github.com/jpvelasco/fabrica/cmd/setup"
 	"github.com/jpvelasco/fabrica/cmd/status"
@@ -66,6 +67,7 @@ func New(out io.Writer) *cobra.Command {
 	cmd.AddCommand(configcmd.New(runtimeSource, out))
 	cmd.AddCommand(perforce.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(horde.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(lore.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(workstation.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(ci.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(deploy.New(runtimeSource, optionsSource, out))

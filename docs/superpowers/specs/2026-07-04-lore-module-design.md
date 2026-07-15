@@ -1,7 +1,7 @@
 # Lore Module — Design (Phase 2 pull-forward: production VCS provisioning)
 
-Status: DRAFT for JP review (written overnight; not yet approved)
-Date: 2026-07-04
+Status: **Approved** (2026-07-15) — ready for implementation
+Date: 2026-07-04 (research); approved 2026-07-15
 
 ## What Lore is (researched 2026-07-04)
 
@@ -147,23 +147,15 @@ horde/workstation model. `lore.amiId` is required config, like `horde.amiId`.
 (A `lore ami build` command generating an Image Builder recipe is the natural
 follow-on, mirroring `horde ami build`.)
 
-## Open questions for JP (answer before we plan)
+## Open questions — locked (2026-07-15)
 
-1. **Storage:** local/EBS store for V1 (recommended), or S3-backed from the
-   start?
-2. **Scope of first cut:** just `create/status/destroy` (recommended), or bundle
-   `lore ami build` too?
-3. **Relationship to perforce:** Lore is a Perforce *alternative*. Is Fabrica
-   offering both as parallel VCS options (keep both modules), or is Lore intended
-   to eventually supersede the perforce module? (Affects docs framing, not V1
-   code.)
-4. **Milestone placement:** this was Phase 2+. Does adding Lore now push the v0.1
-   release (Milestone 5-E) after Lore ships, or does v0.1 go out first and Lore
-   land in v0.2? (Recommend: **v0.1 ships the current 6 modules; Lore is v0.2**
-   — don't block the release that's one sub-project away. But your call.)
-5. **Client-side:** this spec is server provisioning only (Fabrica's job). Do we
-   also want a `lore mount`/workspace-config helper (like `workstation
-   --mount-perforce`), or is client setup out of scope?
+1. **Storage:** **local/EBS for V1** (S3-backed store is a documented follow-up).
+2. **Scope of first cut:** **`create` / `status` / `destroy` only** (`lore ami build` is out of V1).
+3. **Relationship to perforce:** **parallel VCS options** — both modules coexist; no forced migration.
+4. **Milestone placement:** **v0.1 ships without Lore; Lore is v0.2.**
+5. **Client-side:** **server provisioning only** — no mount/workspace helpers in V1.
+
+Multi-region / edge topology is **not** in V1.
 
 ## Scope boundary (what this spec is NOT)
 

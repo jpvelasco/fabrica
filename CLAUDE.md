@@ -264,6 +264,7 @@ fabrica setup                               # guided first-run provisioning wiza
 fabrica status                              # health of all modules
 fabrica perforce create|status|destroy      # ✓ implemented; backup|restore planned
 fabrica horde create|status|submit|destroy  # ✓ implemented
+fabrica lore create|status|destroy          # ✓ implemented (v0.2; parallel to Perforce)
 fabrica horde ami build                     # ✓ implemented; generates Image Builder recipe + optional Packer HCL
 fabrica ci setup|trigger|status|logs|destroy        # ✓ implemented; CodeBuild orchestration over Horde
 fabrica deploy setup|promote|rollback|status|destroy  # ✓ implemented; GameLift blue/green deployment

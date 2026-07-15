@@ -57,6 +57,10 @@ horde:
   amiId: ami-fake
   vpcId: vpc-fake
   subnetId: subnet-fake
+lore:
+  amiId: ami-fake
+  vpcId: vpc-fake
+  subnetId: subnet-fake
 workstation:
   amiId: ami-fake
   vpcId: vpc-fake
@@ -136,6 +140,45 @@ func assertResourceType(t *testing.T, st *state.State, module, typeName string) 
 		}
 	}
 	t.Fatalf("module %q has no resource of type %q; has: %v", module, typeName, m.Resources)
+}
+
+// assertEC2ModuleLifecycle runs create → aggregate status → cost report → destroy
+// for an EC2+SG module (perforce, lore, …). provisionedMsg is a substring of
+// the create success line.
+func assertEC2ModuleLifecycle(t *testing.T, module, provisionedMsg string) {
+	t.Helper()
+	setupE2E(t)
+
+	out, err := runCLI(t, module, "create", "--yes")
+	if err != nil {
+		t.Fatalf("%s create: %v\n%s", module, err, out)
+	}
+	assertContains(t, out, provisionedMsg)
+
+	st := readState(t)
+	assertModuleExists(t, st, module)
+	assertResourceType(t, st, module, "AWS::EC2::Instance")
+	assertResourceType(t, st, module, "AWS::EC2::SecurityGroup")
+
+	out, err = runCLI(t, "status")
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	assertContains(t, out, module)
+
+	out, err = runCLI(t, "cost", "report")
+	if err != nil {
+		t.Fatalf("cost report: %v\n%s", err, out)
+	}
+	assertContains(t, out, module)
+	assertContains(t, out, "Total:")
+
+	out, err = runCLI(t, module, "destroy", "--yes")
+	if err != nil {
+		t.Fatalf("%s destroy: %v\n%s", module, err, out)
+	}
+	st = readState(t)
+	assertModuleAbsent(t, st, module)
 }
 
 func moduleNames(st *state.State) []string {
