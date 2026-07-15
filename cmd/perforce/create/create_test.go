@@ -131,31 +131,36 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 
-	if provider.createCalls != 2 {
-		t.Fatalf("expected 2 create calls, got %d", provider.createCalls)
+	if provider.createCalls != 4 {
+		t.Fatalf("expected 4 create calls (SG, role, profile, instance), got %d", provider.createCalls)
 	}
 
-	// First type created must be the security group
-	if provider.createdTypes[0] != "AWS::EC2::SecurityGroup" {
-		t.Errorf("first created resource = %q, want AWS::EC2::SecurityGroup", provider.createdTypes[0])
+	// Create order: SG → IAM role → instance profile → instance
+	wantTypes := []string{
+		"AWS::EC2::SecurityGroup",
+		"AWS::IAM::Role",
+		"AWS::IAM::InstanceProfile",
+		"AWS::EC2::Instance",
 	}
-	if provider.createdTypes[1] != "AWS::EC2::Instance" {
-		t.Errorf("second created resource = %q, want AWS::EC2::Instance", provider.createdTypes[1])
+	for i, want := range wantTypes {
+		if provider.createdTypes[i] != want {
+			t.Errorf("createdTypes[%d] = %q, want %q", i, provider.createdTypes[i], want)
+		}
 	}
 
-	// State must have been written at least twice (after SG, after instance)
-	if len(writtenStates) < 2 {
-		t.Fatalf("expected >=2 state writes, got %d", len(writtenStates))
+	// State must have been written after each resource
+	if len(writtenStates) < 4 {
+		t.Fatalf("expected >=4 state writes, got %d", len(writtenStates))
 	}
 
-	// Final state must have both resources
+	// Final state must have all resources
 	final := writtenStates[len(writtenStates)-1]
 	m := final.GetModule("perforce")
 	if m == nil {
 		t.Fatal("perforce module not in final state")
 	}
-	if len(m.Resources) != 2 {
-		t.Fatalf("final state has %d resources, want 2", len(m.Resources))
+	if len(m.Resources) != 4 {
+		t.Fatalf("final state has %d resources, want 4", len(m.Resources))
 	}
 	// The instance record carries cost-relevant Properties so cost report can
 	// read the deployed shape from state, not just config.
@@ -165,6 +170,99 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	}
 	if inst.Properties["instanceType"] == "" || inst.Properties["volumeSize"] == "" {
 		t.Errorf("instance Properties missing cost metadata: %+v", inst.Properties)
+	}
+}
+
+func TestCreateWriteStateFailsAfterRole(t *testing.T) {
+	provider := &fakeProvider{}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	writes := 0
+	c := newTestCommand(&bytes.Buffer{}, provider, st)
+	c.assumeYes = true
+	c.writeState = func(*fabricastate.State) error {
+		writes++
+		// first write is after SG; fail after role (second write)
+		if writes >= 2 {
+			return errors.New("state write failed")
+		}
+		return nil
+	}
+	err := c.run(context.Background())
+	if err == nil || !contains(err.Error(), "writing state after IAM role") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCreateWriteStateFailsAfterInstance(t *testing.T) {
+	provider := &fakeProvider{}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	writes := 0
+	c := newTestCommand(&bytes.Buffer{}, provider, st)
+	c.assumeYes = true
+	c.writeState = func(*fabricastate.State) error {
+		writes++
+		if writes >= 4 {
+			return errors.New("state write failed")
+		}
+		return nil
+	}
+	err := c.run(context.Background())
+	if err == nil || !contains(err.Error(), "writing state after instance") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCreateWriteStateFailsAfterProfile(t *testing.T) {
+	provider := &fakeProvider{}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	writes := 0
+	c := newTestCommand(&bytes.Buffer{}, provider, st)
+	c.assumeYes = true
+	c.writeState = func(*fabricastate.State) error {
+		writes++
+		if writes >= 3 {
+			return errors.New("state write failed")
+		}
+		return nil
+	}
+	err := c.run(context.Background())
+	if err == nil || !contains(err.Error(), "writing state after instance profile") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCreateRoleFailureAfterSG(t *testing.T) {
+	var out bytes.Buffer
+	provider := &fakeProvider{roleCreateErr: errors.New("iam denied")}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	var last *fabricastate.State
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.writeState = func(s *fabricastate.State) error {
+		cp := *s
+		last = &cp
+		return nil
+	}
+	err := c.run(context.Background())
+	if err == nil || !contains(err.Error(), "IAM role") {
+		t.Fatalf("err = %v", err)
+	}
+	if last == nil {
+		t.Fatal("expected state write after SG")
+	}
+	if _, ok := last.GetModuleResource("perforce", "AWS::EC2::SecurityGroup"); !ok {
+		t.Fatal("SG should be in state")
+	}
+}
+
+func TestCreateProfileFailureAfterRole(t *testing.T) {
+	provider := &fakeProvider{profileCreateErr: errors.New("profile denied")}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	c := newTestCommand(&bytes.Buffer{}, provider, st)
+	c.assumeYes = true
+	err := c.run(context.Background())
+	if err == nil || !contains(err.Error(), "instance profile") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -411,6 +509,8 @@ func containsStr(s, sub string) bool {
 type fakeProvider struct {
 	identityErr       error
 	sgCreateErr       error
+	roleCreateErr     error
+	profileCreateErr  error
 	instanceCreateErr error
 	createCalls       int
 	createdTypes      []string
@@ -439,6 +539,12 @@ func (r *fakeResourceClient) Create(_ context.Context, res *cloud.Resource) erro
 	if res.TypeName == "AWS::EC2::SecurityGroup" && r.provider.sgCreateErr != nil {
 		return r.provider.sgCreateErr
 	}
+	if res.TypeName == "AWS::IAM::Role" && r.provider.roleCreateErr != nil {
+		return r.provider.roleCreateErr
+	}
+	if res.TypeName == "AWS::IAM::InstanceProfile" && r.provider.profileCreateErr != nil {
+		return r.provider.profileCreateErr
+	}
 	if res.TypeName == "AWS::EC2::Instance" && r.provider.instanceCreateErr != nil {
 		return r.provider.instanceCreateErr
 	}
@@ -448,6 +554,10 @@ func (r *fakeResourceClient) Create(_ context.Context, res *cloud.Resource) erro
 		res.Identifier = fmt.Sprintf("sg-fake%04d", r.provider.createCalls)
 	case "AWS::EC2::Instance":
 		res.Identifier = fmt.Sprintf("i-fake%04d", r.provider.createCalls)
+	case "AWS::IAM::Role":
+		res.Identifier = fmt.Sprintf("role-fake%04d", r.provider.createCalls)
+	case "AWS::IAM::InstanceProfile":
+		res.Identifier = "fabrica-perforce-profile"
 	}
 	return nil
 }
@@ -464,10 +574,16 @@ func assertContains(t *testing.T, s, substr string) {
 	if len(substr) == 0 {
 		return
 	}
+	if !contains(s, substr) {
+		t.Fatalf("%q\ndoes not contain\n%q", s, substr)
+	}
+}
+
+func contains(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {
-			return
+			return true
 		}
 	}
-	t.Fatalf("%q\ndoes not contain\n%q", s, substr)
+	return false
 }

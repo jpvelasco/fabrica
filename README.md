@@ -37,7 +37,7 @@ See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium vision, and what's next.
 
 ## Requirements
 
-- Go 1.25.11+
+- Go 1.25.12+
 - AWS credentials with permissions to create EC2 instances, security groups, S3 buckets, and DynamoDB tables
 - IAM permission for `sts:GetCallerIdentity`
 
@@ -175,7 +175,29 @@ Reads live state from AWS and TCP-probes port 1666. Transitions the module state
 
 #### `fabrica perforce destroy`
 
-Terminates the EC2 instance and deletes the security group in reverse order. Idempotent — already-terminated instances are skipped.
+Terminates the EC2 instance, IAM instance profile/role, and security group in reverse order. Idempotent — already-terminated instances are skipped. The data volume is **retained** (`DeleteOnTermination=false`) so local backups survive as an orphan EBS volume; S3 exports are never deleted by destroy.
+
+#### `fabrica perforce backup`
+
+Creates a consistent Helix Core backup on the instance EBS volume (under `/hxdepots/fabrica-backups` by default) via SSM Run Command. Optional S3 export when `perforce.backup.s3Export` is set. Checkpoint briefly quiesces the server — prefer a quiet window. Requires a ready module and an SSM-managed instance profile (attached at `perforce create`).
+
+```
+--name           Optional short name appended to the backup id
+--description    Stored in backup metadata
+--no-s3          Skip S3 export even if configured
+```
+
+#### `fabrica perforce backup list`
+
+Lists backups on the server (reads `metadata.json` over SSM). Supports `--json`.
+
+#### `fabrica perforce backup delete`
+
+Deletes a backup by id from the EBS volume (and S3 when metadata has `s3Uri`).
+
+#### `fabrica perforce restore`
+
+Restores Helix Core from a backup id: stops `helix-p4d`, restores checkpoint/journal artifacts, restarts. Requires `--force` when the server is ready (serving clients). Confirmation phrase: `restore perforce <account-id>`.
 
 ### Horde
 

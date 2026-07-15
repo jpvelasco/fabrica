@@ -192,12 +192,60 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	}
 	fmt.Fprintf(c.out, "  Security group created: %s\n", sg.Identifier)
 
-	// Record SG in state immediately
-	st.UpsertModule(moduleName, plan.HelixVersion, "provisioning", []fabricastate.ModuleResource{
+	resources := []fabricastate.ModuleResource{
 		{TypeName: "AWS::EC2::SecurityGroup", Identifier: sg.Identifier},
-	})
+	}
+	st.UpsertModule(moduleName, plan.HelixVersion, "provisioning", resources)
 	if err := c.writeState(st); err != nil {
 		return fmt.Errorf("writing state after SG creation: %w", err)
+	}
+
+	// IAM role for SSM (backup/restore) + optional S3 export
+	fmt.Fprintf(c.out, "Creating IAM role %s...\n", plan.RoleName)
+	roleDesired, err := perforce.RoleDesiredState(plan)
+	if err != nil {
+		return fmt.Errorf("building IAM role desired state: %w", err)
+	}
+	role := &cloud.Resource{
+		TypeName:     "AWS::IAM::Role",
+		DesiredState: roleDesired,
+	}
+	if err := c.createResource(ctx, role); err != nil {
+		return fmt.Errorf("creating IAM role: %w", err)
+	}
+	fmt.Fprintf(c.out, "  IAM role created: %s\n", role.Identifier)
+	resources = append(resources, fabricastate.ModuleResource{
+		TypeName: "AWS::IAM::Role", Identifier: role.Identifier,
+	})
+	st.UpsertModule(moduleName, plan.HelixVersion, "provisioning", resources)
+	if err := c.writeState(st); err != nil {
+		return fmt.Errorf("writing state after IAM role creation: %w", err)
+	}
+
+	fmt.Fprintf(c.out, "Creating instance profile %s...\n", plan.InstanceProfileName)
+	profileDesired, err := perforce.InstanceProfileDesiredState(plan)
+	if err != nil {
+		return fmt.Errorf("building instance profile desired state: %w", err)
+	}
+	profile := &cloud.Resource{
+		TypeName:     "AWS::IAM::InstanceProfile",
+		DesiredState: profileDesired,
+	}
+	if err := c.createResource(ctx, profile); err != nil {
+		return fmt.Errorf("creating instance profile: %w", err)
+	}
+	fmt.Fprintf(c.out, "  Instance profile created: %s\n", profile.Identifier)
+	// Prefer the plan name for IamInstanceProfile.Name (identifier may be ARN).
+	profileName := plan.InstanceProfileName
+	if profile.Identifier != "" && !strings.HasPrefix(profile.Identifier, "arn:") {
+		profileName = profile.Identifier
+	}
+	resources = append(resources, fabricastate.ModuleResource{
+		TypeName: "AWS::IAM::InstanceProfile", Identifier: profile.Identifier,
+	})
+	st.UpsertModule(moduleName, plan.HelixVersion, "provisioning", resources)
+	if err := c.writeState(st); err != nil {
+		return fmt.Errorf("writing state after instance profile creation: %w", err)
 	}
 
 	// Create EC2 Instance
@@ -212,7 +260,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		return fmt.Errorf("generating user data: %w", err)
 	}
 
-	instanceDesired, err := perforce.InstanceDesiredState(plan, sg.Identifier, userData)
+	instanceDesired, err := perforce.InstanceDesiredState(plan, sg.Identifier, userData, profileName)
 	if err != nil {
 		return fmt.Errorf("building instance desired state: %w", err)
 	}
@@ -221,19 +269,17 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		DesiredState: instanceDesired,
 	}
 	if err := c.createResource(ctx, instance); err != nil {
-		// SG identifier is already in state — record partial state with error context
 		return fmt.Errorf("creating EC2 instance: %w", err)
 	}
 	fmt.Fprintf(c.out, "  Instance created: %s\n", instance.Identifier)
 
-	// Record both resources in final state
-	st.UpsertModule(moduleName, plan.HelixVersion, "provisioning", []fabricastate.ModuleResource{
-		{TypeName: "AWS::EC2::SecurityGroup", Identifier: sg.Identifier},
-		{TypeName: "AWS::EC2::Instance", Identifier: instance.Identifier, Properties: map[string]string{
+	resources = append(resources, fabricastate.ModuleResource{
+		TypeName: "AWS::EC2::Instance", Identifier: instance.Identifier, Properties: map[string]string{
 			"instanceType": plan.InstanceType,
 			"volumeSize":   strconv.Itoa(plan.VolumeSize),
-		}},
+		},
 	})
+	st.UpsertModule(moduleName, plan.HelixVersion, "provisioning", resources)
 	if err := c.writeState(st); err != nil {
 		return fmt.Errorf("writing state after instance creation: %w", err)
 	}
@@ -266,6 +312,8 @@ func (c command) printDryRun(plan *perforce.CreatePlan) {
 
 	fmt.Fprintln(c.out, "Resources to create:")
 	fmt.Fprintf(c.out, "  Security Group:   %s\n", plan.SGName)
+	fmt.Fprintf(c.out, "  IAM Role:         %s\n", plan.RoleName)
+	fmt.Fprintf(c.out, "  Instance Profile: %s\n", plan.InstanceProfileName)
 	fmt.Fprintf(c.out, "  EC2 Instance:     %s\n", plan.InstanceName)
 	fmt.Fprintln(c.out)
 
@@ -284,6 +332,8 @@ func (c command) printApplyPlan(plan *perforce.CreatePlan) {
 	fmt.Fprintln(c.out)
 	fmt.Fprintln(c.out, "Resources to create:")
 	fmt.Fprintf(c.out, "  Security Group:   %s\n", plan.SGName)
+	fmt.Fprintf(c.out, "  IAM Role:         %s\n", plan.RoleName)
+	fmt.Fprintf(c.out, "  Instance Profile: %s\n", plan.InstanceProfileName)
 	fmt.Fprintf(c.out, "  EC2 Instance:     %s\n", plan.InstanceName)
 }
 

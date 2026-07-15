@@ -124,6 +124,43 @@ state:
 	}
 }
 
+func TestLoadPerforceBackupConfig(t *testing.T) {
+	dir := t.TempDir()
+	content := `perforce:
+  version: "2024.2"
+  backup:
+    path: /custom/backups
+    s3Export: true
+    s3Bucket: my-backup-bucket
+    s3Prefix: studio/p4/
+`
+	path := filepath.Join(dir, "fabrica.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Perforce.Version != "2024.2" {
+		t.Errorf("version = %q, want 2024.2", cfg.Perforce.Version)
+	}
+	b := cfg.Perforce.Backup
+	if b.Path != "/custom/backups" {
+		t.Errorf("backup.path = %q, want /custom/backups", b.Path)
+	}
+	if !b.S3Export {
+		t.Error("backup.s3Export = false, want true")
+	}
+	if b.S3Bucket != "my-backup-bucket" {
+		t.Errorf("backup.s3Bucket = %q, want my-backup-bucket", b.S3Bucket)
+	}
+	if b.S3Prefix != "studio/p4/" {
+		t.Errorf("backup.s3Prefix = %q, want studio/p4/", b.S3Prefix)
+	}
+}
+
 func TestLoadPartialFile(t *testing.T) {
 	dir := t.TempDir()
 	content := `cloud:

@@ -10,7 +10,7 @@ A Go CLI + infrastructure-as-code framework that provisions and manages game stu
 
 [`ROADMAP.md`](ROADMAP.md) is the single source of truth for phases, module status, and the Praetorium vision. Update it when module status changes.
 
-**Phase 1 is complete** (all five milestones ✅, as of 2026-07-05): the foundation, the full Perforce→Horde→CI→Deploy pipeline, cost visibility, full-stack teardown, E2E harness, and dormant release machinery are all production-ready. **Lore (v0.2)** ships `fabrica lore create|status|destroy` (AMI-first `loreserver`, parallel to Perforce, local/EBS only; no multi-region in V1). No release is cut until a `v*` tag is pushed. See [`ROADMAP.md`](ROADMAP.md) for deferred nice-to-haves (Perforce backup/restore, residual test-coverage gaps, Lore S3 store / ami build / JWT).
+**Phase 1 is complete** (all five milestones ✅, as of 2026-07-05): the foundation, the full Perforce→Horde→CI→Deploy pipeline, cost visibility, full-stack teardown, E2E harness, and dormant release machinery are all production-ready. **Lore (v0.2)** ships `fabrica lore create|status|destroy` (AMI-first `loreserver`, parallel to Perforce, local/EBS only; no multi-region in V1). No release is cut until a `v*` tag is pushed. See [`ROADMAP.md`](ROADMAP.md) for deferred nice-to-haves (residual test-coverage gaps, Lore S3 store / ami build / JWT, scheduled Perforce backups).
 
 Phase 0 (CLI skeleton + AWS foundation) is complete; Phase 1 Milestones 1–5 core (teardown) are done. Implemented modules: `perforce` (create/status/destroy), `horde` (create/status/submit/destroy/ami), `workstation` (create/list/stop/start/terminate), `ci` (setup/trigger/status/logs/destroy — CodeBuild orchestration over Horde), `deploy` (setup/promote/rollback/status/destroy — GameLift blue/green orchestration), and `cost` (report/forecast/alerts — offline config-derived reporting + local budget alerts). Full-stack teardown via `destroy --all` orchestrates ordered module teardown (deploy→ci→workstation→horde→perforce) and deletes the state backend only if every module succeeds. All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` for resource types Cloud Control supports (verify first; see the CI notes for the CodeBuild exception).
 
@@ -19,7 +19,7 @@ Phase 0 (CLI skeleton + AWS foundation) is complete; Phase 1 Milestones 1–5 co
 ## Build Commands
 
 ```bash
-go build ./...                         # requires Go 1.25.11+; defaults to Version=dev Commit=unknown
+go build ./...                         # requires Go 1.25.12+; defaults to Version=dev Commit=unknown
 go build -ldflags "-X github.com/jpvelasco/fabrica/internal/version.Version=v1.0.0 -X github.com/jpvelasco/fabrica/internal/version.Commit=$(git rev-parse --short HEAD)" .  # release build
 go vet ./...
 go test ./...                          # Windows (no -race)
@@ -119,7 +119,7 @@ go list -deps ./internal/cloud/...
 | `cmd/{destroy,doctor,setup,status,configcmd,version}` | Subcommands; each `New()` accepts `RuntimeSource` + `OptionsSource` closures — no direct globals access; `destroy` without `--all` prints usage hint |
 | `cmd/status` | Aggregate read-only overview: state-backend health + per-module status, resource counts, and next steps; `--probe` opt-in TCP readiness checks; `--json`; never writes state |
 | `internal/config` | `Config` struct, Viper loading from `fabrica.yaml` (scoped here only), YAML serialization, defaults |
-| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `EC2InstanceManager`, `StateBackendChecker` (doctor/status: bucket/table exists checks), `StateBackendBootstrapper` (setup: create bucket/table), `StateBackendDestroyer` (destroy --all: delete bucket/table), `CodeBuildRunner` (ci: create/delete CodeBuild project + start/query builds — AWS::CodeBuild::Project has no Cloud Control CREATE), `GameLiftManager` (deploy: fleet activation polling, fleet events) |
+| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `EC2InstanceManager`, `RemoteRunner` (SSM Run Command for perforce backup/restore), `StateBackendChecker` (doctor/status: bucket/table exists checks), `StateBackendBootstrapper` (setup: create bucket/table), `StateBackendDestroyer` (destroy --all: delete bucket/table), `CodeBuildRunner` (ci: create/delete CodeBuild project + start/query builds — AWS::CodeBuild::Project has no Cloud Control CREATE), `GameLiftManager` (deploy: fleet activation polling, fleet events) |
 | `internal/cloud/aws` | AWS implementation registered via `init()` in `internal/cloud/registry.go`; wraps `cloudcontrol`, `s3`, `dynamodb`, `iam`, `ec2` SDK clients; `awsProvider` satisfies both `Provider` and `EC2InstanceManager` |
 | `internal/state` | `State`/`ModuleState`/`ModuleResource` types, `Backend` interface, S3+DynamoDB bootstrap, DynamoDB locking |
 | `internal/cost` | Cost estimator interface + Phase 0 estimators; registered by resource `TypeName` |
@@ -262,7 +262,7 @@ Per-module status and phase sequencing live in [`ROADMAP.md`](ROADMAP.md) — th
 ```
 fabrica setup                               # guided first-run provisioning wizard
 fabrica status                              # health of all modules
-fabrica perforce create|status|destroy      # ✓ implemented; backup|restore planned
+fabrica perforce create|status|destroy|backup|restore  # ✓ implemented
 fabrica horde create|status|submit|destroy  # ✓ implemented
 fabrica lore create|status|destroy          # ✓ implemented (v0.2; parallel to Perforce)
 fabrica horde ami build                     # ✓ implemented; generates Image Builder recipe + optional Packer HCL

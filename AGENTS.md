@@ -10,7 +10,7 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 
 | Module | Commands | What it does |
 |--------|----------|--------------|
-| `perforce` | `create`, `status`, `destroy` | Provisions a Perforce Helix Core EC2 instance with security group; tracks provisioning state; detects readiness via TCP probe on port 1666 |
+| `perforce` | `create`, `status`, `destroy`, `backup`, `restore` | Provisions a Perforce Helix Core EC2 instance with SG + SSM instance profile; tracks provisioning state; TCP probe on 1666; EBS backup/restore via SSM |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Provisions an Unreal Horde build coordinator (AMI-first, m7i.2xlarge); probes port 5000; parses BuildGraph XML and POSTs jobs to the Horde REST API; generates EC2 Image Builder recipe + optional Packer HCL for building the required AMI |
 | `lore` | `create`, `status`, `destroy` | Provisions an Epic Lore (`loreserver`) EC2 instance (AMI-first, local/EBS store); probes `GET /health_check` on port 41339; parallel to Perforce |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Provisions a NICE DCV cloud workstation on EC2 (AMI-first, g4dn.xlarge default); allows TCP 8443 inbound; writes DCV session credentials to `.fabrica/workstation-credentials.yaml`; supports stop/start via EC2InstanceManager and permanent termination |

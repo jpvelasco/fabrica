@@ -27,8 +27,15 @@ type CreatePlan struct {
 	SubnetID     string
 	DefaultVPC   bool
 
-	SGName       string
-	InstanceName string
+	SGName              string
+	InstanceName        string
+	RoleName            string
+	InstanceProfileName string
+
+	// Backup settings copied from config for IAM S3 policy (optional).
+	BackupS3Export bool
+	BackupS3Bucket string
+	BackupS3Prefix string
 
 	CostResources []cost.Resource
 }
@@ -63,18 +70,24 @@ func NewCreatePlan(ctx context.Context, cfg config.PerforceConfig, account, regi
 		defaultVPC = true
 	}
 
+	s3Prefix := ResolveS3Prefix(cfg.Backup.S3Prefix)
 	return &CreatePlan{
-		Account:       account,
-		Region:        region,
-		InstanceType:  instanceType,
-		HelixVersion:  version,
-		VolumeSize:    volumeSize,
-		VPCID:         vpcID,
-		SubnetID:      subnetID,
-		DefaultVPC:    defaultVPC,
-		SGName:        "fabrica-perforce-sg",
-		InstanceName:  "fabrica-perforce",
-		CostResources: CostResources(cfg),
+		Account:             account,
+		Region:              region,
+		InstanceType:        instanceType,
+		HelixVersion:        version,
+		VolumeSize:          volumeSize,
+		VPCID:               vpcID,
+		SubnetID:            subnetID,
+		DefaultVPC:          defaultVPC,
+		SGName:              "fabrica-perforce-sg",
+		InstanceName:        "fabrica-perforce",
+		RoleName:            "fabrica-perforce-role",
+		InstanceProfileName: "fabrica-perforce-profile",
+		BackupS3Export:      cfg.Backup.S3Export,
+		BackupS3Bucket:      cfg.Backup.S3Bucket,
+		BackupS3Prefix:      s3Prefix,
+		CostResources:       CostResources(cfg),
 	}, nil
 }
 

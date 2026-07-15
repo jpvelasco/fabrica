@@ -5,9 +5,13 @@ Manages a single-server Perforce Helix Core installation on AWS.
 ## Lifecycle
 
 ```
-fabrica perforce create    # Provision security group + EC2 instance
-fabrica perforce status    # Show health and P4PORT
-fabrica perforce destroy   # Permanently delete all resources
+fabrica perforce create              # Provision SG + IAM profile + EC2 instance
+fabrica perforce status              # Show health, P4PORT, last backup
+fabrica perforce backup              # Checkpoint to EBS (optional S3)
+fabrica perforce backup list         # List on-instance backups
+fabrica perforce backup delete <id>   # Delete a backup
+fabrica perforce restore <id>        # Restore from a backup (--force if ready)
+fabrica perforce destroy             # Delete instance/IAM/SG; retain EBS volume
 ```
 
 ## What gets created

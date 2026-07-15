@@ -97,8 +97,8 @@ func TestCreateCobraYesFlagSkipsConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("--yes run failed: %v", err)
 	}
-	if provider.createCalls != 2 {
-		t.Fatalf("--yes: expected 2 create calls, got %d", provider.createCalls)
+	if provider.createCalls != 4 {
+		t.Fatalf("--yes: expected 4 create calls, got %d", provider.createCalls)
 	}
 }
 
@@ -225,6 +225,10 @@ func (r *cobraFakeResourceClient) Create(_ context.Context, res *cloud.Resource)
 		res.Identifier = fmt.Sprintf("sg-cobra%04d", r.provider.createCalls)
 	case "AWS::EC2::Instance":
 		res.Identifier = fmt.Sprintf("i-cobra%04d", r.provider.createCalls)
+	case "AWS::IAM::Role":
+		res.Identifier = fmt.Sprintf("role-cobra%04d", r.provider.createCalls)
+	case "AWS::IAM::InstanceProfile":
+		res.Identifier = "fabrica-perforce-profile"
 	}
 	return nil
 }

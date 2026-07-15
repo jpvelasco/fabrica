@@ -71,8 +71,8 @@ See [`PHASE_0_PLAN.md`](PHASE_0_PLAN.md) for the detailed record.
 Turned the skeleton into a cohesive, production-grade tool: six provisioning/
 management modules, real Cloud Control CRUD, full-stack teardown, offline cost
 visibility, a CLI E2E harness, and dormant release machinery. All five
-milestones below are done. Remaining nice-to-haves (Perforce backup/restore,
-residual test-coverage gaps) are tracked at the end and do not block Phase 1.
+milestones below are done. Remaining nice-to-haves (residual test-coverage
+gaps) are tracked at the end and do not block Phase 1.
 
 **Foundation already landed:**
 
@@ -110,8 +110,6 @@ residual test-coverage gaps) are tracked at the end and do not block Phase 1.
 - ✅ Final architecture + consistency review (clean layering; doc/cleanup fixes applied; test-coverage gaps tracked as a follow-up)
 - ✅ Release machinery — GoReleaser + npm shim (ludus-cli pattern), dormant until a `v*` tag; no release cut yet
 
-**Also tracked under Phase 1:** Perforce `backup`/`restore`.
-
 **Deferred nice-to-haves** (do not block Phase 1; docs/cleanup fixes already shipped):
 - Test-coverage gaps: cobra black-box tests cover cost report/alerts, deploy setup/promote/rollback/status, and ci setup/trigger/status. 2 packages lack a white-box `_test.go` (horde destroy, workstation terminate); the AWS provider type-assertion seams (`Identity`/`EC2Manager`/`StopInstance`/`StartInstance`/`CreateFleetAsync`) sit at 0% coverage.
 - Cosmetic conventions: output-writer inconsistency (`cmd/version` uses `cmd.OutOrStdout()`; other commands use the `c.out` seam); a few multi-letter anonymous receivers (`(renderer)`).
@@ -123,6 +121,7 @@ residual test-coverage gaps) are tracked at the end and do not block Phase 1.
 
 ### Phase 2+ — Expansion 🔭 Future
 
+- Perforce backup follow-ups: scheduled backups, DR rehydrate from S3/orphan volume, attach-role migration for pre-SSM stacks
 - Lore follow-ups: S3-backed store, `lore ami build`, JWT/CA TLS, client helpers
 - Advanced DDC (distributed Zen / ScyllaDB)
 - MCP server wrapping the same business-logic functions
@@ -139,7 +138,7 @@ residual test-coverage gaps) are tracked at the end and do not block Phase 1.
 |--------|----------|--------|
 | Foundation | `doctor`, `config show`, `version` | ✅ Complete |
 | `setup` | `setup` (`--dry-run`, `--yes`) | ✅ Complete — creates S3 bucket + DynamoDB table (idempotent, confirmed) |
-| `perforce` | `create`, `status`, `destroy` | ✅ Complete (`backup`/`restore` planned) |
+| `perforce` | `create`, `status`, `destroy`, `backup`, `backup list`, `backup delete`, `restore` | ✅ Complete — EBS backup/restore via SSM; optional S3 export |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | ✅ Complete |
 | `lore` | `create`, `status`, `destroy` | ✅ Complete (v0.2) — AMI-first loreserver; parallel to Perforce |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | ✅ Complete |
@@ -154,7 +153,7 @@ residual test-coverage gaps) are tracked at the end and do not block Phase 1.
 
 - **IaC:** AWS Cloud Control API — no Terraform, Pulumi, or external binaries
 - **Module path:** `github.com/jpvelasco/fabrica`
-- **Go version:** 1.25.11
+- **Go version:** 1.25.12
 - **Config:** Viper + YAML, scoped inside `internal/config` only; `fmt.Print*` for output, no logging library
 - **State:** S3 bucket (`fabrica-state-<account-id>`) + DynamoDB lock table (`fabrica-state-lock`); local `.fabrica/state.json` cache
 - **Cost:** estimators registered by resource `TypeName`, provider-agnostic

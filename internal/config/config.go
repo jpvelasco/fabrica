@@ -64,11 +64,21 @@ type Config struct {
 
 // PerforceConfig holds the perforce: section of fabrica.yaml.
 type PerforceConfig struct {
-	Version      string `mapstructure:"version"      yaml:"version"`
-	InstanceType string `mapstructure:"instanceType" yaml:"instanceType"`
-	VolumeSize   int    `mapstructure:"volumeSize"   yaml:"volumeSize"`
-	VPCId        string `mapstructure:"vpcId"        yaml:"vpcId"`
-	SubnetId     string `mapstructure:"subnetId"     yaml:"subnetId"`
+	Version      string               `mapstructure:"version"      yaml:"version"`
+	InstanceType string               `mapstructure:"instanceType" yaml:"instanceType"`
+	VolumeSize   int                  `mapstructure:"volumeSize"   yaml:"volumeSize"`
+	VPCId        string               `mapstructure:"vpcId"        yaml:"vpcId"`
+	SubnetId     string               `mapstructure:"subnetId"     yaml:"subnetId"`
+	Backup       PerforceBackupConfig `mapstructure:"backup"       yaml:"backup"`
+}
+
+// PerforceBackupConfig holds the perforce.backup: section of fabrica.yaml.
+// Defaults are applied in the perforce plan layer (path, S3 prefix).
+type PerforceBackupConfig struct {
+	Path     string `mapstructure:"path"     yaml:"path"`
+	S3Export bool   `mapstructure:"s3Export" yaml:"s3Export"`
+	S3Bucket string `mapstructure:"s3Bucket" yaml:"s3Bucket"`
+	S3Prefix string `mapstructure:"s3Prefix" yaml:"s3Prefix"`
 }
 
 // HordeConfig holds the horde: section of fabrica.yaml.

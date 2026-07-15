@@ -12,14 +12,18 @@ provisioning/management modules, full-stack teardown, and cost visibility.
 
 ### Added
 
+- **Perforce backup / restore:** `perforce backup` / `backup list` /
+  `backup delete` / `restore` — EBS-primary checkpoints via SSM, optional S3
+  export, last-backup fields on `perforce status`. Create attaches an SSM
+  instance profile; destroy retains the data volume (and local backups).
 - **Lore module (v0.2):** `lore create` / `status` / `destroy` — AMI-first
   Epic `loreserver` on EC2 (local/EBS store); SG opens TCP+UDP 41337 and TCP
   41339; status probes `GET /health_check`. Parallel to Perforce (both coexist).
 - **Foundation:** `fabrica setup` (S3 + DynamoDB state backend, idempotent),
   `fabrica status` (aggregate read-only health across modules, `--probe`),
   `fabrica doctor` (prerequisite validation), `fabrica config show`.
-- **Perforce module:** `perforce create` / `status` / `destroy` — provisions
-  Perforce Helix Core on EC2.
+- **Perforce module:** `perforce create` / `status` / `destroy` / `backup` /
+  `restore` — provisions Perforce Helix Core on EC2 with day-2 backup/restore.
 - **Horde module:** `horde create` / `status` / `submit` / `destroy` /
   `ami build` — Unreal Horde build coordinator + BuildGraph job submission.
 - **Workstation module:** `workstation create` / `list` / `stop` / `start` /
