@@ -16,6 +16,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/deploy"
 	"github.com/jpvelasco/fabrica/internal/horde"
+	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/workstation"
@@ -78,6 +79,8 @@ func costInputs(cfg *config.Config, m *state.ModuleState) ([]cost.Resource, stri
 		return applyStopped(ec2CostResources(m, perforce.CostResources(cfg.Perforce)), m.Status)
 	case "horde":
 		return applyStopped(ec2CostResources(m, horde.CostResources(cfg.Horde)), m.Status)
+	case "lore":
+		return applyStopped(ec2CostResources(m, lore.CostResources(cfg.Lore)), m.Status)
 	case "workstation":
 		return applyStopped(ec2CostResources(m, workstation.CostResources(cfg.Workstation)), m.Status)
 	case "ci":

@@ -116,9 +116,14 @@ residual test-coverage gaps) are tracked at the end and do not block Phase 1.
 - Test-coverage gaps: cobra tests added for cost report/alerts + deploy promote/rollback + ci status + deploy status; still lacking `cobra_test.go`: ci setup/trigger, deploy setup. 2 packages lack a white-box `_test.go` (horde destroy, workstation terminate); the AWS provider type-assertion seams (`Identity`/`EC2Manager`/`StopInstance`/`StartInstance`/`CreateFleetAsync`) sit at 0% coverage.
 - Cosmetic conventions: output-writer inconsistency (`cmd/version` uses `cmd.OutOrStdout()`; other commands use the `c.out` seam); a few multi-letter anonymous receivers (`(renderer)`).
 
+### Phase 2 / v0.2 — Lore module ✅ Implemented
+
+- ✅ Design approved: single-region AMI-first `loreserver` (EC2 + SG + EBS), `create`/`status`/`destroy`
+- ✅ Implementation: parallel to Perforce; local/EBS store; no multi-region in V1
+
 ### Phase 2+ — Expansion 🔭 Future
 
-- Lore support (production server management)
+- Lore follow-ups: S3-backed store, `lore ami build`, JWT/CA TLS, client helpers
 - Advanced DDC (distributed Zen / ScyllaDB)
 - MCP server wrapping the same business-logic functions
 - Multi-cloud / provider extensibility (GCP/Azure against the existing `cloud.Provider` interface)
@@ -136,12 +141,13 @@ residual test-coverage gaps) are tracked at the end and do not block Phase 1.
 | `setup` | `setup` (`--dry-run`, `--yes`) | ✅ Complete — creates S3 bucket + DynamoDB table (idempotent, confirmed) |
 | `perforce` | `create`, `status`, `destroy` | ✅ Complete (`backup`/`restore` planned) |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | ✅ Complete |
+| `lore` | `create`, `status`, `destroy` | ✅ Complete (v0.2) — AMI-first loreserver; parallel to Perforce |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | ✅ Complete |
 | `status` (aggregate) | `status` (`--probe`, `--json`) | ✅ Complete — read-only health overview across all modules |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | ✅ Complete — CodeBuild orchestration over Horde; `destroy` removes CodeBuild project + IAM role |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | ✅ Complete — GameLift blue/green deploy orchestration |
 | `cost` | `report`, `forecast`, `alerts` | ✅ Complete — offline config-derived report/forecast + local budget alerts |
-| `destroy --all` | clean teardown | ✅ Complete — tears down all modules (deploy→ci→workstation→horde→perforce) then the state backend; backend deleted only on full success |
+| `destroy --all` | clean teardown | ✅ Complete — tears down all modules (deploy→ci→workstation→horde→lore→perforce) then the state backend; backend deleted only on full success |
 | `export` | `--format cloudformation\|terraform` | ⬜ Planned (Phase 2+) |
 
 ## Architecture decisions (locked)

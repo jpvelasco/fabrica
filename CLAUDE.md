@@ -10,7 +10,7 @@ A Go CLI + infrastructure-as-code framework that provisions and manages game stu
 
 [`ROADMAP.md`](ROADMAP.md) is the single source of truth for phases, module status, and the Praetorium vision. Update it when module status changes.
 
-**Phase 1 is complete** (all five milestones ✅, as of 2026-07-05): the foundation, the full Perforce→Horde→CI→Deploy pipeline, cost visibility, full-stack teardown, E2E harness, and dormant release machinery are all production-ready. The next focus area is the **Lore module (v0.2)** — production game-server management — whose design spec is drafted on the `feat/lore-module` branch and awaits open-question answers before implementation. No release is cut until a `v*` tag is pushed. See [`ROADMAP.md`](ROADMAP.md) for the deferred post-Phase-1 nice-to-haves (Perforce backup/restore, residual test-coverage gaps).
+**Phase 1 is complete** (all five milestones ✅, as of 2026-07-05): the foundation, the full Perforce→Horde→CI→Deploy pipeline, cost visibility, full-stack teardown, E2E harness, and dormant release machinery are all production-ready. **Lore (v0.2)** ships `fabrica lore create|status|destroy` (AMI-first `loreserver`, parallel to Perforce, local/EBS only; no multi-region in V1). No release is cut until a `v*` tag is pushed. See [`ROADMAP.md`](ROADMAP.md) for deferred nice-to-haves (Perforce backup/restore, residual test-coverage gaps, Lore S3 store / ami build / JWT).
 
 Phase 0 (CLI skeleton + AWS foundation) is complete; Phase 1 Milestones 1–5 core (teardown) are done. Implemented modules: `perforce` (create/status/destroy), `horde` (create/status/submit/destroy/ami), `workstation` (create/list/stop/start/terminate), `ci` (setup/trigger/status/logs/destroy — CodeBuild orchestration over Horde), `deploy` (setup/promote/rollback/status/destroy — GameLift blue/green orchestration), and `cost` (report/forecast/alerts — offline config-derived reporting + local budget alerts). Full-stack teardown via `destroy --all` orchestrates ordered module teardown (deploy→ci→workstation→horde→perforce) and deletes the state backend only if every module succeeds. All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` for resource types Cloud Control supports (verify first; see the CI notes for the CodeBuild exception).
 
@@ -264,6 +264,7 @@ fabrica setup                               # guided first-run provisioning wiza
 fabrica status                              # health of all modules
 fabrica perforce create|status|destroy      # ✓ implemented; backup|restore planned
 fabrica horde create|status|submit|destroy  # ✓ implemented
+fabrica lore create|status|destroy          # ✓ implemented (v0.2; parallel to Perforce)
 fabrica horde ami build                     # ✓ implemented; generates Image Builder recipe + optional Packer HCL
 fabrica ci setup|trigger|status|logs|destroy        # ✓ implemented; CodeBuild orchestration over Horde
 fabrica deploy setup|promote|rollback|status|destroy  # ✓ implemented; GameLift blue/green deployment

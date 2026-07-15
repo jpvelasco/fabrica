@@ -125,3 +125,25 @@ func TestCheckEvaluates(t *testing.T) {
 		t.Fatalf("expected OVER:\n%s", out.String())
 	}
 }
+
+func TestCheckJSON(t *testing.T) {
+	var out bytes.Buffer
+	cfg := config.Defaults()
+	cfg.Cost.Budgets = []config.BudgetThreshold{{Scope: "perforce", Monthly: 10}}
+	c := checkCommand{
+		cfg:       cfg,
+		costs:     cost.Global,
+		jsonOut:   true,
+		out:       &out,
+		readState: func() (*state.State, error) { return seededState(), nil },
+	}
+	if err := c.run(); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{`"scope"`, `"estimate"`, `"threshold"`, `"state"`, "perforce"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("JSON missing %q:\n%s", want, got)
+		}
+	}
+}

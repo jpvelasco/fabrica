@@ -41,6 +41,15 @@ func TestGeneratePassword_Unique(t *testing.T) {
 	}
 }
 
+func TestFormatLore(t *testing.T) {
+	got := credentials.FormatLore(41337, 41339)
+	for _, want := range []string{"41337", "41339", "health_check", "grpc_port", "http_port"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("FormatLore missing %q in %q", want, got)
+		}
+	}
+}
+
 func TestWriteCredentials_CreatesFileAndDir(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sub", "creds.yaml")
