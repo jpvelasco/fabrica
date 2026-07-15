@@ -20,6 +20,13 @@ func configWithBackend(bucket, table string) *config.Config {
 	return cfg
 }
 
+func TestDefaultProbeTCPUnreachable(t *testing.T) {
+	// Real probe path (not the test seam): closed port must return false.
+	if defaultProbeTCP("127.0.0.1:1") {
+		t.Fatal("expected defaultProbeTCP to report unreachable")
+	}
+}
+
 type fakeBackendChecker struct {
 	bucket    bool
 	table     bool
