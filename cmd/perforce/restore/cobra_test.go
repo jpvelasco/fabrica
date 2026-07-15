@@ -3,6 +3,7 @@ package restore_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -71,6 +72,78 @@ func TestCobraRestoreDryRun(t *testing.T) {
 	}
 	if !bytes.Contains([]byte(got), []byte("dry run")) {
 		t.Fatalf("output: %s", got)
+	}
+}
+
+func TestCobraRestoreMissingCredentials(t *testing.T) {
+	t.Chdir(t.TempDir())
+	state := `{"account":"123456789012","region":"us-east-1","modules":[
+		{"name":"perforce","version":"2024.2","status":"stopped","resources":[
+			{"typeName":"AWS::EC2::Instance","identifier":"i-abc"}
+		]}]}`
+	if err := os.MkdirAll(".fabrica", 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(".fabrica", "state.json"), []byte(state), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// no credentials file
+	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
+	p := &restoreFakeProvider{remote: cloud.RemoteResult{Stdout: meta}}
+	rt := func() (globals.Runtime, error) {
+		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
+	}
+	if _, err := runRestore(t, rt, "id1", "--force", "--yes"); err == nil {
+		t.Fatal("expected credentials error from New wiring")
+	}
+}
+
+func TestCobraRestoreEmptyPasswordInCreds(t *testing.T) {
+	t.Chdir(t.TempDir())
+	state := `{"account":"123456789012","region":"us-east-1","modules":[
+		{"name":"perforce","version":"2024.2","status":"stopped","resources":[
+			{"typeName":"AWS::EC2::Instance","identifier":"i-abc"}
+		]}]}`
+	if err := os.MkdirAll(".fabrica", 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(".fabrica", "state.json"), []byte(state), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// valid file shape, empty password → ParsePerforceAdminPassword fails (covers New closure line)
+	if err := os.WriteFile(filepath.Join(".fabrica", "perforce-credentials.yaml"), []byte("admin_password: \"\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
+	p := &restoreFakeProvider{remote: cloud.RemoteResult{Stdout: meta}}
+	rt := func() (globals.Runtime, error) {
+		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
+	}
+	if _, err := runRestore(t, rt, "id1", "--force", "--yes"); err == nil {
+		t.Fatal("expected empty password parse error")
+	}
+}
+
+type restoreFakeProvider struct {
+	remote cloud.RemoteResult
+}
+
+func (f *restoreFakeProvider) Name() string { return "fake" }
+func (f *restoreFakeProvider) Identity(context.Context) (string, string, string, error) {
+	return "123456789012", "arn", "us-east-1", nil
+}
+func (f *restoreFakeProvider) Resources() cloud.ResourceClient { return fakeRC{} }
+func (f *restoreFakeProvider) RunCommand(context.Context, string, []string) (cloud.RemoteResult, error) {
+	return f.remote, nil
+}
+
+func TestCobraRestoreRuntimeError(t *testing.T) {
+	rt := func() (globals.Runtime, error) {
+		return globals.Runtime{}, errors.New("rt fail")
+	}
+	_, err := runRestore(t, rt, "id1", "--force")
+	if err == nil {
+		t.Fatal("expected runtime error")
 	}
 }
 

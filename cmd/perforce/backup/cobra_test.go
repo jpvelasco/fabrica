@@ -3,6 +3,7 @@ package backup_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -80,6 +81,36 @@ func writeReadyState(t *testing.T) {
 	}
 }
 
+func TestCobraBackupRuntimeError(t *testing.T) {
+	rt := func() (globals.Runtime, error) {
+		return globals.Runtime{}, errors.New("rt fail")
+	}
+	_, err := runBackup(t, rt, "--dry-run")
+	if err == nil {
+		t.Fatal("expected runtime error")
+	}
+}
+
+func TestCobraListRuntimeError(t *testing.T) {
+	rt := func() (globals.Runtime, error) {
+		return globals.Runtime{}, errors.New("rt fail")
+	}
+	_, err := runBackup(t, rt, "list")
+	if err == nil {
+		t.Fatal("expected runtime error")
+	}
+}
+
+func TestCobraDeleteRuntimeError(t *testing.T) {
+	rt := func() (globals.Runtime, error) {
+		return globals.Runtime{}, errors.New("rt fail")
+	}
+	_, err := runBackup(t, rt, "delete", "x")
+	if err == nil {
+		t.Fatal("expected runtime error")
+	}
+}
+
 func TestCobraBackupDryRun(t *testing.T) {
 	writeReadyState(t)
 	p := &fakeProvider{}
@@ -149,6 +180,19 @@ func TestCobraBackupCreateYes(t *testing.T) {
 	}
 	if !bytes.Contains([]byte(got), []byte("Backup complete")) {
 		t.Fatalf("output: %s", got)
+	}
+}
+
+func TestCobraBackupMissingCredentials(t *testing.T) {
+	writeReadyState(t)
+	// remove credentials so New's readCreds closure fails
+	_ = os.Remove(filepath.Join(".fabrica", "perforce-credentials.yaml"))
+	p := &fakeProvider{remote: cloud.RemoteResult{ExitCode: 0}}
+	rt := func() (globals.Runtime, error) {
+		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
+	}
+	if _, err := runBackup(t, rt, "--yes"); err == nil {
+		t.Fatal("expected missing credentials error")
 	}
 }
 

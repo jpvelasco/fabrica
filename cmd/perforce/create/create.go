@@ -40,6 +40,8 @@ type command struct {
 	readState      func() (*fabricastate.State, error)
 	writeState     func(*fabricastate.State) error
 	createResource func(ctx context.Context, r *cloud.Resource) error
+	genPassword    func(int) (string, error)
+	writeCreds     func(string, string) error
 }
 
 // New returns the "perforce create" subcommand. It accepts RuntimeSource and
@@ -163,12 +165,20 @@ func (c command) run(ctx context.Context) error {
 // security group, then creates the EC2 instance. State is persisted after each
 // successful creation so partial failures leave a recoverable record.
 func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *perforce.CreatePlan) error {
-	adminPass, err := credentials.GeneratePassword(passwordLen)
+	genPass := c.genPassword
+	if genPass == nil {
+		genPass = credentials.GeneratePassword
+	}
+	adminPass, err := genPass(passwordLen)
 	if err != nil {
 		return fmt.Errorf("generating admin password: %w", err)
 	}
 
-	if err := credentials.WriteCredentials(credFile, credentials.FormatPerforce(adminPass)); err != nil {
+	writeCreds := c.writeCreds
+	if writeCreds == nil {
+		writeCreds = credentials.WriteCredentials
+	}
+	if err := writeCreds(credFile, credentials.FormatPerforce(adminPass)); err != nil {
 		return fmt.Errorf("writing credentials file: %w", err)
 	}
 	fmt.Fprintf(c.out, "\nAdmin credentials written to %s\n", credFile)
