@@ -4,7 +4,7 @@ This is the single source of truth for where Fabrica is and where it's going.
 The `README.md` describes how to use what exists today; this document tracks
 status and sequencing. When they disagree, this file wins.
 
-Last updated: 2026-07-05.
+Last updated: 2026-07-15.
 
 ## Vision
 
@@ -113,7 +113,7 @@ residual test-coverage gaps) are tracked at the end and do not block Phase 1.
 **Also tracked under Phase 1:** Perforce `backup`/`restore`.
 
 **Deferred nice-to-haves** (do not block Phase 1; docs/cleanup fixes already shipped):
-- Test-coverage gaps: cobra tests added for cost report/alerts + deploy promote/rollback + ci status + deploy status; still lacking `cobra_test.go`: ci setup/trigger, deploy setup. 2 packages lack a white-box `_test.go` (horde destroy, workstation terminate); the AWS provider type-assertion seams (`Identity`/`EC2Manager`/`StopInstance`/`StartInstance`/`CreateFleetAsync`) sit at 0% coverage.
+- Test-coverage gaps: cobra black-box tests cover cost report/alerts, deploy setup/promote/rollback/status, and ci setup/trigger/status. 2 packages lack a white-box `_test.go` (horde destroy, workstation terminate); the AWS provider type-assertion seams (`Identity`/`EC2Manager`/`StopInstance`/`StartInstance`/`CreateFleetAsync`) sit at 0% coverage.
 - Cosmetic conventions: output-writer inconsistency (`cmd/version` uses `cmd.OutOrStdout()`; other commands use the `c.out` seam); a few multi-letter anonymous receivers (`(renderer)`).
 
 ### Phase 2 / v0.2 — Lore module ✅ Implemented

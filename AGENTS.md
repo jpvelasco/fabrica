@@ -4,7 +4,7 @@
 
 Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, zero external dependencies. Sister tool to [Ludus](https://github.com/jpvelasco/ludus) — Ludus orchestrates game builds, Fabrica gives them somewhere to run.
 
-**Current state:** Phase 0 complete; Phase 1 core complete. Modules implemented: `perforce`, `horde`, `workstation`, `ci`, `deploy`, and `cost`, plus full-stack `destroy --all` and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) and [CLAUDE.md](CLAUDE.md) for the authoritative, current module status — this file is a high-level orientation, not a status mirror.
+**Current state:** Phase 0 complete; Phase 1 core complete; Lore (v0.2) complete. Modules implemented: `perforce`, `horde`, `lore`, `workstation`, `ci`, `deploy`, and `cost`, plus full-stack `destroy --all` and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) and [CLAUDE.md](CLAUDE.md) for the authoritative, current module status — this file is a high-level orientation, not a status mirror.
 
 ## Current Modules
 
@@ -12,6 +12,7 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 |--------|----------|--------------|
 | `perforce` | `create`, `status`, `destroy` | Provisions a Perforce Helix Core EC2 instance with security group; tracks provisioning state; detects readiness via TCP probe on port 1666 |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Provisions an Unreal Horde build coordinator (AMI-first, m7i.2xlarge); probes port 5000; parses BuildGraph XML and POSTs jobs to the Horde REST API; generates EC2 Image Builder recipe + optional Packer HCL for building the required AMI |
+| `lore` | `create`, `status`, `destroy` | Provisions an Epic Lore (`loreserver`) EC2 instance (AMI-first, local/EBS store); probes `GET /health_check` on port 41339; parallel to Perforce |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Provisions a NICE DCV cloud workstation on EC2 (AMI-first, g4dn.xlarge default); allows TCP 8443 inbound; writes DCV session credentials to `.fabrica/workstation-credentials.yaml`; supports stop/start via EC2InstanceManager and permanent termination |
 
 **Perforce** provisions a Helix Core version control server on EC2 — security group, instance, and credentials — then tracks whether the server is accepting connections. It's the source-of-truth for a game studio's asset and code history.
@@ -41,7 +42,7 @@ go list -deps ./internal/cloud/...
 
 ### Key Patterns
 
-**SDK-free `internal/*`** — `internal/perforce`, `internal/horde`, and `internal/workstation` are pure plan layers with no AWS SDK imports. They build `CreatePlan` structs and Cloud Control desired-state JSON. The `cmd/<module>` layer calls the plan layer, then executes via `rt.Provider.Resources()`.
+**SDK-free `internal/*`** — `internal/perforce`, `internal/horde`, `internal/lore`, and `internal/workstation` are pure plan layers with no AWS SDK imports. They build `CreatePlan` structs and Cloud Control desired-state JSON. The `cmd/<module>` layer calls the plan layer, then executes via `rt.Provider.Resources()`.
 
 **EC2InstanceManager for stop/start** — Cloud Control API only does CRUD and cannot stop or start EC2 instances. The `cloud.EC2InstanceManager` interface (defined in `internal/cloud/ec2manager.go`) exposes `StopInstance` / `StartInstance`. The AWS provider implements it in `internal/cloud/aws/ec2manager.go` via the EC2 SDK. Commands access it via type assertion: `rt.Provider.(cloud.EC2InstanceManager)`. Follow the `state_backend.go` auxiliary-interface pattern for any future provider-specific capabilities.
 
