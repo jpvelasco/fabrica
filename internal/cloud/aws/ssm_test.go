@@ -167,6 +167,26 @@ func TestRunCommand_EmptyCommandID(t *testing.T) {
 	}
 }
 
+func TestRunCommand_NilCommand(t *testing.T) {
+	m := &mockSSM{
+		sendFn: func(_ context.Context, _ *ssm.SendCommandInput) (*ssm.SendCommandOutput, error) {
+			return &ssm.SendCommandOutput{}, nil
+		},
+	}
+	p := testProviderWithSSM(m)
+	if _, err := p.RunCommand(context.Background(), "i-1", []string{"x"}); err == nil {
+		t.Fatal("expected empty command id error")
+	}
+}
+
+func TestSSMClientDefaultConstructor(t *testing.T) {
+	p := &awsProvider{}
+	c := p.ssmClient(aws.Config{Region: "us-east-1"})
+	if c == nil {
+		t.Fatal("expected non-nil ssm client")
+	}
+}
+
 func TestRunCommand_GetErrorThenSuccess(t *testing.T) {
 	n := 0
 	m := &mockSSM{

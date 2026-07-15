@@ -193,6 +193,25 @@ func TestCreateWriteStateFailsAfterRole(t *testing.T) {
 	}
 }
 
+func TestCreateWriteStateFailsAfterInstance(t *testing.T) {
+	provider := &fakeProvider{}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	writes := 0
+	c := newTestCommand(&bytes.Buffer{}, provider, st)
+	c.assumeYes = true
+	c.writeState = func(*fabricastate.State) error {
+		writes++
+		if writes >= 4 {
+			return errors.New("state write failed")
+		}
+		return nil
+	}
+	err := c.run(context.Background())
+	if err == nil || !contains(err.Error(), "writing state after instance") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestCreateWriteStateFailsAfterProfile(t *testing.T) {
 	provider := &fakeProvider{}
 	st := fabricastate.NewState("123456789012", "us-east-1")
