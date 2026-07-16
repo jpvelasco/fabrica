@@ -73,9 +73,20 @@ gh api repos/OWNER/REPO/rulesets \
       "parameters": {
         "strict_required_status_checks_policy": true,
         "do_not_enforce_on_create": false,
-        "required_status_checks": []
+        "required_status_checks": [
+          { "context": "Lint" },
+          { "context": "Vulnerability scan" },
+          { "context": "Build (ubuntu-latest)" },
+          { "context": "Build (windows-latest)" },
+          { "context": "Test (ubuntu-latest)" },
+          { "context": "Test (windows-latest)" },
+          { "context": "Release build (snapshot)" }
+        ]
       }
     }
+  ],
+  "bypass_actors": [
+    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }
   ]
 }
 EOF
@@ -92,6 +103,9 @@ gh api repos/OWNER/REPO/rulesets \
   "conditions": {
     "ref_name": { "include": ["refs/tags/v*"], "exclude": [] }
   },
+  "bypass_actors": [
+    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }
+  ],
   "rules": [
     { "type": "deletion" },
     { "type": "non_fast_forward" }
@@ -100,10 +114,9 @@ gh api repos/OWNER/REPO/rulesets \
 EOF
 ```
 
-> **Note on required status checks:** the `required_status_checks` array above
-> is intentionally empty — GitHub only recognises job names after they've run
-> once. After the first CI run, update the ruleset via:
-> `PATCH /repos/OWNER/REPO/rulesets/{ruleset_id}`
+> **Status-check names** match job `name:` values in `.github/workflows/ci.yml`.
+> macOS Build/Test are **not** required: PR matrix skips macOS to save Actions
+> minutes; requiring them would block every PR. They still run on push to `main`.
 
 ---
 
@@ -113,25 +126,27 @@ EOF
 - Default branch: `main`
 - Auto-delete head branches: enabled
 
-### Branch protection (`main`)
+### Branch ruleset (`protect-main` → default branch)
+- Method: **Repository rulesets** (not classic branch protection)
 - Require PR before merging: yes
 - Required approvals: 0
 - Dismiss stale reviews on push: yes
 - Require review from code owners: yes
 - Require conversation resolution: yes
-- Require branch up to date: yes
-- Block force pushes: yes
-- Allow deletions: no
-- Enforce on admins: yes
+- Require branch up to date (strict): yes
+- Block force pushes: yes (`non_fast_forward`)
+- Block branch deletion: yes
+- Required checks: Lint, Vulnerability scan, Build (ubuntu/windows), Test (ubuntu/windows), Release build (snapshot)
+- Bypass: repository Admin role (solo-maintainer escape hatch)
 
-### Tag protection (`v*`)
-- Ruleset name: `protect-version-tags`
+### Tag ruleset (`protect-version-tags` → `v*`)
 - Restrict deletions: yes
 - Restrict updates: yes
+- Bypass: repository Admin role
 
 ### Security & Analysis
-- Secret scanning: enabled
-- Push protection: enabled
-- CodeQL (default setup): enabled
+- Secret scanning: enabled (public)
+- Push protection: enabled (public)
 - Dependabot alerts: enabled
 - Dependabot security updates: enabled
+- CodeQL: enable via default setup if desired (UI or API)
