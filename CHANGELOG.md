@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-The first tagged release will cover the Phase 1 core: the foundation plus six
-provisioning/management modules, full-stack teardown, and cost visibility.
+### Added
+
+### Changed
+
+### Fixed
+
+## [0.1.0] - 2026-07-15
+
+First public-facing release of Fabrica: Phase 1 core plus Lore (v0.2), Perforce
+backup/restore, and Distributed DDC V1 (single home-region).
 
 ### Added
 
@@ -43,5 +51,14 @@ provisioning/management modules, full-stack teardown, and cost visibility.
   modules then the state backend, backend removed only on full success.
 - **Distribution:** cross-platform binaries via GoReleaser; npm package
   installs the matching binary.
+- **Open-source project metadata:** MIT `LICENSE`, `CONTRIBUTING.md`,
+  Contributor Covenant `CODE_OF_CONDUCT.md`, and `SECURITY.md`.
+
+### Changed
+
+- README Getting Started reworked around foundation → ddc → horde → deploy;
+  status table includes `ddc` and accurate Perforce command surface; badges
+  no longer use placeholder Codecov tokens.
 
 [Unreleased]: https://github.com/jpvelasco/fabrica/commits/main
+[0.1.0]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.0

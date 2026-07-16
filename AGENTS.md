@@ -4,7 +4,7 @@
 
 Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, zero external dependencies. Sister tool to [Ludus](https://github.com/jpvelasco/ludus) — Ludus orchestrates game builds, Fabrica gives them somewhere to run.
 
-**Current state:** Phase 0 complete; Phase 1 core complete; Lore (v0.2) complete. Modules implemented: `perforce`, `horde`, `lore`, `workstation`, `ci`, `deploy`, and `cost`, plus full-stack `destroy --all` and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) and [CLAUDE.md](CLAUDE.md) for the authoritative, current module status — this file is a high-level orientation, not a status mirror.
+**Current state:** Phase 0 complete; Phase 1 core complete; Lore (v0.2) complete; DDC V1 (single-region) complete. Modules implemented: `perforce`, `horde`, `lore`, `ddc`, `workstation`, `ci`, `deploy`, and `cost`, plus full-stack `destroy --all` and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) and [CLAUDE.md](CLAUDE.md) for the authoritative, current module status — this file is a high-level orientation, not a status mirror.
 
 ## Current Modules
 
@@ -13,6 +13,7 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 | `perforce` | `create`, `status`, `destroy`, `backup`, `restore` | Provisions a Perforce Helix Core EC2 instance with SG + SSM instance profile; tracks provisioning state; TCP probe on 1666; EBS backup/restore via SSM |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Provisions an Unreal Horde build coordinator (AMI-first, m7i.2xlarge); probes port 5000; parses BuildGraph XML and POSTs jobs to the Horde REST API; generates EC2 Image Builder recipe + optional Packer HCL for building the required AMI |
 | `lore` | `create`, `status`, `destroy` | Provisions an Epic Lore (`loreserver`) EC2 instance (AMI-first, local/EBS store); probes `GET /health_check` on port 41339; parallel to Perforce |
+| `ddc` | `setup`, `status`, `destroy` | Provisions Unreal Cloud DDC (Jupiter) on EC2 (AMI-first, single home-region V1); hybrid EBS+S3; default `zen` backend; probes `GET /health/ready` |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Provisions a NICE DCV cloud workstation on EC2 (AMI-first, g4dn.xlarge default); allows TCP 8443 inbound; writes DCV session credentials to `.fabrica/workstation-credentials.yaml`; supports stop/start via EC2InstanceManager and permanent termination |
 
 **Perforce** provisions a Helix Core version control server on EC2 — security group, instance, and credentials — then tracks whether the server is accepting connections. It's the source-of-truth for a game studio's asset and code history.
@@ -23,6 +24,7 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 
 - **State backend is created by `fabrica setup`.** `fabrica setup` provisions the S3 state bucket (versioning + encryption + public-access-block) and the DynamoDB lock table, idempotently — it shows a plan + cost estimate and prompts before any write (`--yes` skips, `--dry-run` previews). Run it once before other commands.
 - **Horde requires a user-provided AMI.** `fabrica horde create` is AMI-first: your AMI must already contain MongoDB 7, Redis 6.2, and the Horde server binary. Fabrica does not build or publish this AMI. See [docs/horde-ami.md](docs/horde-ami.md) for requirements.
+- **DDC is single-region in V1.** `fabrica ddc setup` provisions one home-region Unreal Cloud DDC instance (no multi-region / `region add`). See [docs/ddc-ami.md](docs/ddc-ami.md).
 
 ## Architecture Overview
 
@@ -42,7 +44,7 @@ go list -deps ./internal/cloud/...
 
 ### Key Patterns
 
-**SDK-free `internal/*`** — `internal/perforce`, `internal/horde`, `internal/lore`, and `internal/workstation` are pure plan layers with no AWS SDK imports. They build `CreatePlan` structs and Cloud Control desired-state JSON. The `cmd/<module>` layer calls the plan layer, then executes via `rt.Provider.Resources()`.
+**SDK-free `internal/*`** — `internal/perforce`, `internal/horde`, `internal/lore`, `internal/ddc`, and `internal/workstation` are pure plan layers with no AWS SDK imports. They build `CreatePlan` structs and Cloud Control desired-state JSON. The `cmd/<module>` layer calls the plan layer, then executes via `rt.Provider.Resources()`.
 
 **EC2InstanceManager for stop/start** — Cloud Control API only does CRUD and cannot stop or start EC2 instances. The `cloud.EC2InstanceManager` interface (defined in `internal/cloud/ec2manager.go`) exposes `StopInstance` / `StartInstance`. The AWS provider implements it in `internal/cloud/aws/ec2manager.go` via the EC2 SDK. Commands access it via type assertion: `rt.Provider.(cloud.EC2InstanceManager)`. Follow the `state_backend.go` auxiliary-interface pattern for any future provider-specific capabilities.
 

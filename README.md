@@ -1,34 +1,44 @@
 # Fabrica
 
-[![codecov](https://codecov.io/gh/jpvelasco/fabrica/graph/badge.svg?token=YOUR_GRAPH_TOKEN)](https://codecov.io/gh/jpvelasco/fabrica)
+[![CI](https://github.com/jpvelasco/fabrica/actions/workflows/ci.yml/badge.svg)](https://github.com/jpvelasco/fabrica/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/jpvelasco/fabrica)](https://goreportcard.com/report/github.com/jpvelasco/fabrica)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/github/go-mod/go-version/jpvelasco/fabrica)](go.mod)
 
-Game studio infrastructure as code for AWS.
+**Game studio infrastructure as code for AWS** — provision Perforce (or Lore),
+Unreal Horde, Distributed DDC, CI, GameLift deploy, and cloud workstations from
+a single YAML file and one binary.
 
-Fabrica provisions the foundational systems a game development team needs to operate at scale — Perforce Helix Core repositories, Horde build farms, CI/CD pipelines, and cost visibility — from a single YAML configuration file.
-
-It sits beside [Ludus](https://github.com/jpvelasco/ludus) — Ludus orchestrates the builds, Fabrica gives them somewhere to run.
-
-Single binary. Zero external dependencies. Written in Go.
+Fabrica is the sister tool to [Ludus](https://github.com/jpvelasco/ludus): Ludus
+orchestrates builds; Fabrica gives them somewhere to run. Single Go binary, no
+Terraform/Pulumi, no external CLIs — AWS Cloud Control API under the hood, cost
+estimates before you write, DynamoDB-locked state so two engineers don't clobber
+each other.
 
 ## Why Fabrica
 
-Game studios aren't web apps. You need Perforce for terabyte asset histories, Horde for distributed shader compilation across dozens of machines, and a reliable way to stand all of it up without stitching together Terraform modules, bash scripts, and AWS console clicks. Fabrica handles the full lifecycle — provision, check status, tear down — with cost estimates before anything touches your account and DynamoDB-backed state so two engineers can't clobber each other's runs.
+Game studios aren't web apps. You need Perforce for terabyte asset histories,
+Horde for distributed shader compilation, a DDC that keeps cooks fast, and a
+reliable way to stand all of it up without stitching Terraform modules, bash
+scripts, and console clicks. Fabrica owns the full lifecycle — provision, status,
+tear down — with typed-phrase confirmations and recoverable partial state.
 
 ## Current Status
 
-**Phase 0 & Phase 1 complete.** All provisioning modules (Perforce, Horde,
-Workstation), CI, Deploy, and Cost ship today, along with full-stack
-`destroy --all` teardown, offline cost visibility, and a CLI end-to-end test
-suite. Release machinery (GoReleaser + npm shim) is wired but dormant — no
-release is cut until a `v*` tag is pushed.
+**Phase 0 & Phase 1 complete; Phase 2 started (DDC V1).** Perforce, Horde, Lore,
+Workstation, CI, Deploy, Cost, full-stack `destroy --all`, offline cost
+visibility, and a CLI E2E suite ship today. Distributed DDC (single home-region)
+is available as `fabrica ddc`. Release machinery (GoReleaser + npm shim) is
+wired but dormant until a `v*` tag is pushed.
 See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium vision, and what's next.
 
 | Module | Commands | Status |
 |--------|----------|--------|
-| `setup` / `doctor` / `status` | Foundation | Complete |
-| `perforce` | `create`, `status`, `destroy` | Complete |
+| `setup` / `doctor` / `status` / `config show` | Foundation | Complete |
+| `perforce` | `create`, `status`, `destroy`, `backup`, `restore` | Complete |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Complete |
 | `lore` | `create`, `status`, `destroy` | Complete |
+| `ddc` | `setup`, `status`, `destroy` | Complete (V1 single-region) |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Complete |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | Complete |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | Complete |
@@ -68,80 +78,84 @@ go build -o fabrica .
 
 ## Getting Started
 
-The ideal first five commands, in order:
+Recommended first path: **foundation → DDC → Horde → deploy** (plus VCS when you
+need a depot). Every create/setup command is idempotent, shows a plan + cost
+estimate, and prompts before writing AWS (`--yes` skips; `--dry-run` previews).
+
+### 1. Foundation (once per account)
 
 ```bash
-# 1. Build the binary
 go build -o fabrica .
+cp fabrica.example.yaml fabrica.yaml   # set aws.region (accountId is optional)
 
-# 2. Copy and edit the config — set your AWS region (and optionally accountId)
-cp fabrica.example.yaml fabrica.yaml
+fabrica setup --dry-run                # plan + ~$0.15/mo state backend estimate
+fabrica setup                          # S3 state bucket + DynamoDB lock table
+fabrica doctor                         # credentials, region, bucket, lock table
+fabrica status                         # aggregate health (empty modules is fine)
+```
 
-# 3. Create the state backend (S3 bucket + DynamoDB lock table).
-#    Preview first, then create — setup is idempotent and asks before it writes:
-fabrica setup --dry-run      # shows the plan + monthly cost estimate, no changes
-fabrica setup                # creates the backend (prompts y/N; use --yes in CI)
+### 2. Source of truth (pick one or both)
 
-# 4. Confirm everything is healthy
-fabrica doctor               # checks credentials, region, bucket, lock table
-fabrica status               # one-line health overview across all modules
-
-# 5. Provision your first module
+```bash
+# Perforce Helix Core (terabyte asset history)
 fabrica perforce create
-fabrica perforce status      # watch it become ready (probes port 1666)
+fabrica perforce status                # TCP probe on 1666 → provisioning → ready
+
+# Or Epic Lore (parallel alternative — see docs/lore-ami.md)
+fabrica lore create && fabrica lore status -w
 ```
 
-Then grow the studio from there:
+### 3. Distributed DDC (keep cooks fast)
 
 ```bash
-# Unreal Horde build coordinator (supply a Horde AMI first — see docs/horde-ami.md)
+# AMI-first Unreal Cloud DDC (Jupiter) — see docs/ddc-ami.md
+fabrica ddc setup                      # default backend: zen
+fabrica ddc status --probe             # GET /health/ready
+```
+
+### 4. Horde build farm + CI
+
+```bash
+# Horde coordinator AMI must include MongoDB 7, Redis 6.2, Horde — docs/horde-ami.md
 fabrica horde create
-fabrica horde submit --buildgraph path/to/BuildGraph.xml --target "Compile UnrealGame Win64"
-
-# Lore VCS server (parallel alternative to Perforce — see docs/lore-ami.md)
-fabrica lore create
-fabrica lore status -w
-
-# Distributed DDC (Unreal Cloud DDC — single home-region; see docs/ddc-ami.md)
-fabrica ddc setup
-fabrica ddc status --probe
-
-# A cloud workstation
-fabrica workstation create
-
-# CI: a CodeBuild project that orchestrates Horde BuildGraph jobs
+fabrica horde status
 fabrica ci setup
-fabrica ci trigger BuildGraph.xml --wait
-
-# Deploy: roll a built server out to a GameLift fleet (blue/green), then check it
-fabrica deploy setup
-fabrica deploy promote v1.0.0
-fabrica deploy status
-
-# Re-run any time for an aggregate view (add --probe from a VPN to test reachability)
-fabrica status
+fabrica ci trigger path/to/BuildGraph.xml --wait
+# low-level direct submit also works:
+fabrica horde submit --buildgraph path/to/BuildGraph.xml --target "Compile UnrealGame Win64"
 ```
 
-### End-to-end: from source to a deployed build
+### 5. Deploy to GameLift (blue/green)
 
-The CI and deploy modules form one pipeline. `ci trigger` runs a BuildGraph job
-on Horde and its packaged server lands in S3 at the convention path
-`s3://<deploy.buildBucket>/builds/<version>/server.zip`; `deploy promote <version>`
-then registers that build and rolls it out to a fresh GameLift fleet (blue/green),
-flipping the alias only once the fleet is `ACTIVE`:
+Set `deploy.buildBucket` in `fabrica.yaml`. CI/Horde packages land at
+`s3://<deploy.buildBucket>/builds/<version>/server.zip`.
 
 ```bash
-fabrica setup --yes                       # 1. state backend (once)
-fabrica horde create && fabrica ci setup  # 2. build farm + CI orchestration
-fabrica ci trigger BuildGraph.xml --wait  # 3. build → server.zip in S3
-fabrica deploy setup                      # 4. GameLift alias + role (once)
-fabrica deploy promote v1.0.0             # 5. new fleet from that build, alias flip
-fabrica deploy status                     # 6. confirm the alias target + fleet health
-fabrica deploy rollback                   # instant alias flip back if v1.0.0 misbehaves
+fabrica deploy setup
+fabrica deploy promote v1.0.0          # new fleet → wait ACTIVE → alias flip
+fabrica deploy status
+fabrica deploy rollback                # instant flip to previous fleet if needed
 ```
 
-Set `deploy.buildBucket` in `fabrica.yaml` so promote knows where CI's output
-lives. Tear the whole studio down with `fabrica destroy --all` when you're done.
+### Optional: workstations & cost
+
+```bash
+fabrica workstation create --template programmer
+fabrica cost report
+fabrica status --probe                 # aggregate view (VPN/in-VPC for private IPs)
+fabrica destroy --all                  # full-stack teardown when you're done
+```
+
+### End-to-end pipeline (compressed)
+
+```bash
+fabrica setup --yes
+fabrica ddc setup                      # optional but recommended for UE teams
+fabrica horde create && fabrica ci setup
+fabrica ci trigger BuildGraph.xml --wait
+fabrica deploy setup && fabrica deploy promote v1.0.0
+fabrica deploy status
+```
 
 ## Commands
 
@@ -423,7 +437,7 @@ Manages local budget thresholds (written to `fabrica.yaml` — no AWS Budgets re
 
 #### `fabrica destroy --all`
 
-Full-stack teardown: destroys every provisioned module in reverse dependency order (deploy → ci → workstation → horde → lore → perforce), then the state backend — but only if every module succeeded (a module failure preserves the backend so orphaned resources stay tracked for retry). One aggregate typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview the full plan. Plain `fabrica destroy` (no `--all`) just prints usage.
+Full-stack teardown: destroys every provisioned module in reverse dependency order (deploy → ci → workstation → ddc → horde → lore → perforce), then the state backend — but only if every module succeeded (a module failure preserves the backend so orphaned resources stay tracked for retry). One aggregate typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview the full plan. Plain `fabrica destroy` (no `--all`) just prints usage.
 
 #### `fabrica version`
 
@@ -465,22 +479,18 @@ cmd/* → internal/{config, state, cost, tags, prompt, cloud}
 
 ## Contributing / Development
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow. Quick loop:
+
 ```bash
-# Run tests (Windows)
-go test ./...
-
-# Run tests with race detector (Linux/macOS)
-go test -race -coverprofile=coverage.out -covermode=atomic ./...
-
-# Lint
+go test ./...                          # Windows
+go test -race -coverprofile=coverage.out -covermode=atomic ./...  # Linux/macOS
 golangci-lint run ./...
-
-# Activate git hooks (once per clone)
-git config core.hooksPath .githooks
+git config core.hooksPath .githooks    # once per clone
 ```
 
-Pull requests go to `main`. Each PR should pass CI (lint + build + test on ubuntu/windows/macos) before merging. New commands follow the `cmd/perforce/` and `internal/perforce/` templates — see [AGENTS.md](AGENTS.md) for the full pattern.
+Pull requests go to `main`. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+Report vulnerabilities via [SECURITY.md](SECURITY.md).
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE).
