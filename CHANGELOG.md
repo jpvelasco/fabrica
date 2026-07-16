@@ -12,6 +12,11 @@ provisioning/management modules, full-stack teardown, and cost visibility.
 
 ### Added
 
+- **Distributed DDC (Phase 2 M2 V1):** `ddc setup` / `status` / `destroy` —
+  single home-region Unreal Cloud DDC (Jupiter), hybrid EBS+S3, default `zen`
+  backend with optional 1-node Scylla bootstrap (not HA). Topology types for
+  future multi-region; no `region add` in V1. Included in `destroy --all` and
+  cost report.
 - **Perforce backup / restore:** `perforce backup` / `backup list` /
   `backup delete` / `restore` — EBS-primary checkpoints via SSM, optional S3
   export, last-backup fields on `perforce status`. Create attaches an SSM

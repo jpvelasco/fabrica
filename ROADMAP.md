@@ -119,11 +119,19 @@ gaps) are tracked at the end and do not block Phase 1.
 - ✅ Design approved: single-region AMI-first `loreserver` (EC2 + SG + EBS), `create`/`status`/`destroy`
 - ✅ Implementation: parallel to Perforce; local/EBS store; no multi-region in V1
 
+### Phase 2 / Milestone 2 — Distributed DDC ✅ Implemented (V1 narrow)
+
+- ✅ Design approved: single home-region EC2 (co-located coordinator + edge roles)
+- ✅ Commands: `ddc setup` / `status` / `destroy` only (no `region add`)
+- ✅ Zen (Jupiter) default + optional 1-node Scylla bootstrap; hybrid EBS + S3
+- ✅ `internal/topology` types for future multi-region without V1 multi-region runtime
+- Deferred: `ddc region add`, replication peers, OIDC/HTTPS, `ddc ami build`, Scylla HA
+
 ### Phase 2+ — Expansion 🔭 Future
 
 - Perforce backup follow-ups: scheduled backups, DR rehydrate from S3/orphan volume, attach-role migration for pre-SSM stacks
 - Lore follow-ups: S3-backed store, `lore ami build`, JWT/CA TLS, client helpers
-- Advanced DDC (distributed Zen / ScyllaDB)
+- DDC multi-region (`region add`), OIDC, production Scylla
 - MCP server wrapping the same business-logic functions
 - Multi-cloud / provider extensibility (GCP/Azure against the existing `cloud.Provider` interface)
 - Export capabilities — `fabrica export --format cloudformation|terraform`
@@ -141,12 +149,13 @@ gaps) are tracked at the end and do not block Phase 1.
 | `perforce` | `create`, `status`, `destroy`, `backup`, `backup list`, `backup delete`, `restore` | ✅ Complete — EBS backup/restore via SSM; optional S3 export |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | ✅ Complete |
 | `lore` | `create`, `status`, `destroy` | ✅ Complete (v0.2) — AMI-first loreserver; parallel to Perforce |
+| `ddc` | `setup`, `status`, `destroy` | ✅ Complete (V1) — single home-region Unreal Cloud DDC; no region add |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | ✅ Complete |
 | `status` (aggregate) | `status` (`--probe`, `--json`) | ✅ Complete — read-only health overview across all modules |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | ✅ Complete — CodeBuild orchestration over Horde; `destroy` removes CodeBuild project + IAM role |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | ✅ Complete — GameLift blue/green deploy orchestration |
 | `cost` | `report`, `forecast`, `alerts` | ✅ Complete — offline config-derived report/forecast + local budget alerts |
-| `destroy --all` | clean teardown | ✅ Complete — tears down all modules (deploy→ci→workstation→horde→lore→perforce) then the state backend; backend deleted only on full success |
+| `destroy --all` | clean teardown | ✅ Complete — tears down all modules (deploy→ci→workstation→ddc→horde→lore→perforce) then the state backend; backend deleted only on full success |
 | `export` | `--format cloudformation\|terraform` | ⬜ Planned (Phase 2+) |
 
 ## Architecture decisions (locked)
