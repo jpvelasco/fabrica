@@ -139,3 +139,45 @@ jobs:
       - name: npm shim tests
         working-directory: npm
         run: node --test
+
+  # Optional checks (informational for now — not required by protect-main ruleset).
+  # Pattern mirrors Ludus (Windows lint) and Juggernaut (gosec / fs scan).
+
+  lint-windows:
+    name: Lint (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9
+        with:
+          version: v2.10.1
+
+  gosec:
+    name: gosec
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6
+        with:
+          go-version-file: go.mod
+      - name: Run gosec
+        # G204/G304/G702/G703 match Juggernaut: intentional subprocess/path patterns
+        # and known-noisy rules. Remaining findings use #nosec with rationale.
+        run: go run github.com/securego/gosec/v2/cmd/gosec@v2.27.1 -exclude=G204,G304,G702,G703 ./...
+
+  trivy:
+    name: Trivy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true

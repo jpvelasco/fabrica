@@ -74,7 +74,7 @@ func (p *awsProvider) EnsureProject(ctx context.Context, spec fabricac.CodeBuild
 		tags = append(tags, codebuildtypes.Tag{Key: aws.String(k), Value: aws.String(v)})
 	}
 
-	timeout := int32(spec.BuildTimeout) //nolint:gosec // build timeout is small and operator-controlled
+	timeout := int32(spec.BuildTimeout) // #nosec G115 -- build timeout is small and operator-controlled
 	_, err = client.CreateProject(ctx, &codebuild.CreateProjectInput{
 		Name:             aws.String(spec.Name),
 		ServiceRole:      aws.String(spec.ServiceRoleARN),

@@ -21,7 +21,7 @@ import (
 const (
 	lineWidth   = 58
 	moduleName  = "horde"
-	credFile    = ".fabrica/horde-credentials.yaml" //nolint:gosec // file path, not a credential
+	credFile    = ".fabrica/horde-credentials.yaml" // #nosec G101 -- file path, not a credential
 	passwordLen = 24
 )
 
