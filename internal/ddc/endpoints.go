@@ -30,12 +30,12 @@ func PublicURL(host string, port int) string {
 func FormatEndpointsYAML(e Endpoints) string {
 	var b strings.Builder
 	b.WriteString("# Fabrica DDC endpoints — single home-region V1\n")
-	b.WriteString(fmt.Sprintf("backend: %q\n", e.Backend))
-	b.WriteString(fmt.Sprintf("namespace: %q\n", e.Namespace))
-	b.WriteString(fmt.Sprintf("region: %q\n", e.Region))
-	b.WriteString(fmt.Sprintf("bucket: %q\n", e.Bucket))
-	b.WriteString(fmt.Sprintf("public_url: %q\n", e.PublicURL))
-	b.WriteString(fmt.Sprintf("internal_url: %q\n", e.InternalURL))
+	fmt.Fprintf(&b, "backend: %q\n", e.Backend)
+	fmt.Fprintf(&b, "namespace: %q\n", e.Namespace)
+	fmt.Fprintf(&b, "region: %q\n", e.Region)
+	fmt.Fprintf(&b, "bucket: %q\n", e.Bucket)
+	fmt.Fprintf(&b, "public_url: %q\n", e.PublicURL)
+	fmt.Fprintf(&b, "internal_url: %q\n", e.InternalURL)
 	b.WriteString("# Point UE / Horde cooks at public_url, e.g.:\n")
 	b.WriteString("#   -UE-CloudDataCacheHost=<public_url without scheme if required by project>\n")
 	return b.String()

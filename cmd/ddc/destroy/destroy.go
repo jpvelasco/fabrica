@@ -50,7 +50,10 @@ func resourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 		}
 	}
 	// Coordinator first, then scylla, then any unmarked EC2.
-	out := append(coord, scylla...)
+	n := len(coord) + len(scylla) + len(otherEC2) + len(bucket) + len(profile) + len(role) + len(sg)
+	out := make([]cloud.Resource, 0, n)
+	out = append(out, coord...)
+	out = append(out, scylla...)
 	out = append(out, otherEC2...)
 	out = append(out, bucket...)
 	out = append(out, profile...)
