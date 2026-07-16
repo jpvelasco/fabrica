@@ -1,0 +1,56 @@
+# Binary
+fabrica
+fabrica.exe
+
+# Local config and state
+fabrica.yaml
+.fabrica/
+
+# Claude Code local session files
+.claude/
+
+# Private design specs / implementation plans (never publish)
+# Put future PR designs here: .private/designs/, .private/plans/
+.private/
+
+# Local agent / superpowers session state
+.superpowers/
+.remember/
+
+# Go toolchain
+vendor/
+coverage.out
+coverage.html
+*.test
+*.go.[0-9]*
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+*.log
+
+# Ignore vscode AI rules
+.github\instructions\codacy.instructions.md
+
+# Local coverage / agent scratch (never commit)
+*.out
+/c
+/cov
+/cov_*
+/miss*
+/ddc_cov
+/func_cov.txt
+/full.out
+/p.out
+/mcps/

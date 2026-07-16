@@ -1,0 +1,221 @@
+// Package modstatus is the shared engine behind the module status commands
+// (perforce status, horde status). The orchestration — read state, query the
+// EC2 instance via Cloud Control, TCP-probe for readiness, transition
+// provisioning→ready, and optionally poll — is identical across modules. Only
+// the rendering (which fields, labels, and JSON schema) differs, so each
+// command supplies a Renderer.
+package modstatus
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"time"
+
+	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/cloud"
+	fabricastate "github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/stateutil"
+)
+
+const (
+	probeTimeout = 3 * time.Second
+	waitInterval = 15 * time.Second
+	waitDeadline = 10 * time.Minute
+)
+
+// Info is the module-agnostic status snapshot the engine produces. Renderers
+// turn it into module-specific text/JSON.
+type Info struct {
+	ModuleStatus string
+	Version      string
+	InstanceID   string
+	SGID         string
+
+	InstanceType  string
+	PrivateIP     string
+	InstanceState string
+
+	// ProbeAttempted is true when a TCP probe was made (only when PrivateIP is
+	// known); Reachable is its result.
+	ProbeAttempted bool
+	Reachable      bool
+
+	// LastBackupId / LastBackupAt are optional Perforce backup cache fields
+	// from instance resource Properties (empty for other modules).
+	LastBackupId string
+	LastBackupAt string
+}
+
+// Renderer turns an Info into module-specific output. NotProvisioned handles the
+// no-state case (text and JSON variants). Result renders a populated Info.
+type Renderer interface {
+	NotProvisioned(out io.Writer, jsonOut bool)
+	Result(out io.Writer, info Info, jsonOut bool)
+}
+
+// Spec carries the per-module knobs that vary between status commands.
+type Spec struct {
+	ModuleName string
+	// ProbePort is the TCP port probed for readiness (1666 perforce, 5000 horde).
+	ProbePort int
+	// Timeout label for the poll-timeout message (e.g. "Perforce", "Horde").
+	DisplayName string
+}
+
+// Command runs a module status query. Func fields are seams the cmd layer wires
+// to real implementations and tests replace with fakes.
+type Command struct {
+	Spec     Spec
+	Renderer Renderer
+	Runtime  globals.Runtime
+
+	JSONOut bool
+	Wait    bool
+	Out     io.Writer
+
+	ReadState   func() (*fabricastate.State, error)
+	WriteState  func(*fabricastate.State) error
+	GetResource func(ctx context.Context, r *cloud.Resource) error
+	ProbeTCP    func(address string) bool
+	Sleep       func(d time.Duration)
+	Now         func() time.Time
+}
+
+// Run reads state, builds the status snapshot, transitions provisioning→ready
+// when the probe first succeeds, and renders. With Wait set, it polls instead.
+func (c Command) Run(ctx context.Context) error {
+	st, err := c.ReadState()
+	if err != nil {
+		return fmt.Errorf("reading state: %w", err)
+	}
+
+	m := st.GetModule(c.Spec.ModuleName)
+	if m == nil {
+		c.Renderer.NotProvisioned(c.Out, c.JSONOut)
+		return nil
+	}
+
+	if c.Wait {
+		return c.pollUntilReady(ctx, st, m)
+	}
+
+	info, err := c.buildInfo(ctx, m)
+	if err != nil {
+		return err
+	}
+
+	if info.ProbeAttempted && info.Reachable && m.Status != "ready" {
+		c.markReady(st, m, &info)
+	}
+
+	c.Renderer.Result(c.Out, info, c.JSONOut)
+	return nil
+}
+
+func (c Command) pollUntilReady(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState) error {
+	deadline := c.Now().Add(waitDeadline)
+	for {
+		info, err := c.buildInfo(ctx, m)
+		if err != nil {
+			return err
+		}
+
+		if info.ProbeAttempted && info.Reachable {
+			c.markReady(st, m, &info)
+			c.Renderer.Result(c.Out, info, c.JSONOut)
+			return nil
+		}
+
+		c.Renderer.Result(c.Out, info, c.JSONOut)
+
+		if c.Now().After(deadline) {
+			fmt.Fprintf(c.Out, "Timed out waiting for %s to become ready (10 minutes).\n", c.Spec.DisplayName)
+			return nil
+		}
+
+		fmt.Fprintf(c.Out, "Waiting %s before next check...\n\n", waitInterval)
+		c.Sleep(waitInterval)
+	}
+}
+
+// markReady transitions the module to "ready" in state and persists it,
+// surfacing a write failure as a warning.
+func (c Command) markReady(st *fabricastate.State, m *fabricastate.ModuleState, info *Info) {
+	m.Status = "ready"
+	info.ModuleStatus = "ready"
+	st.UpsertModule(c.Spec.ModuleName, m.Version, "ready", m.Resources)
+	if err := c.WriteState(st); err != nil {
+		fmt.Fprintf(c.Out, "Warning: could not update local state: %v\n", err)
+	}
+}
+
+// buildInfo queries Cloud Control and probes TCP to produce an Info.
+func (c Command) buildInfo(ctx context.Context, m *fabricastate.ModuleState) (Info, error) {
+	info := Info{
+		ModuleStatus: m.Status,
+		Version:      m.Version,
+	}
+
+	if sgRes, ok := stateutil.ResourceByType(m, "AWS::EC2::SecurityGroup"); ok {
+		info.SGID = sgRes.Identifier
+	}
+
+	instRes, hasInst := stateutil.ResourceByType(m, "AWS::EC2::Instance")
+	if !hasInst {
+		return info, nil
+	}
+	info.InstanceID = instRes.Identifier
+	if instRes.Properties != nil {
+		info.LastBackupId = instRes.Properties["lastBackupId"]
+		info.LastBackupAt = instRes.Properties["lastBackupAt"]
+	}
+
+	if c.GetResource != nil && info.InstanceID != "" {
+		r := &cloud.Resource{TypeName: "AWS::EC2::Instance", Identifier: info.InstanceID}
+		if err := c.GetResource(ctx, r); err != nil {
+			return info, fmt.Errorf("querying instance %s via Cloud Control: %w", info.InstanceID, err)
+		}
+		parseInstanceActualState(r, &info)
+	}
+
+	if info.PrivateIP != "" {
+		info.ProbeAttempted = true
+		info.Reachable = c.ProbeTCP(fmt.Sprintf("%s:%d", info.PrivateIP, c.Spec.ProbePort))
+	}
+
+	return info, nil
+}
+
+// parseInstanceActualState extracts fields from the Cloud Control ActualState
+// JSON. Silently ignores unparseable or nil ActualState (Cloud Control may be stubbed).
+func parseInstanceActualState(r *cloud.Resource, info *Info) {
+	if len(r.ActualState) == 0 {
+		return
+	}
+	var actual struct {
+		InstanceType     string `json:"InstanceType"`
+		PrivateIPAddress string `json:"PrivateIpAddress"`
+		State            struct {
+			Name string `json:"Name"`
+		} `json:"State"`
+	}
+	if err := json.Unmarshal(r.ActualState, &actual); err != nil {
+		return
+	}
+	info.InstanceType = actual.InstanceType
+	info.PrivateIP = actual.PrivateIPAddress
+	info.InstanceState = actual.State.Name
+}
+
+// DefaultProbeTCP dials the address with the standard probe timeout.
+func DefaultProbeTCP(address string) bool {
+	conn, err := net.DialTimeout("tcp", address, probeTimeout)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}

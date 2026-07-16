@@ -1,0 +1,89 @@
+# Fabrica configuration template
+# Copy to fabrica.yaml and edit for your environment.
+# See README.md for module overview and Getting Started.
+
+cloud:
+  provider: aws               # Currently only "aws" is supported
+  aws:
+    region: us-east-1         # AWS region for all resources
+    profile: ""               # Named AWS profile (optional; defaults to SDK credential chain)
+    accountId: ""             # Auto-detected on first `fabrica setup`; leave empty initially
+    tags: {}                  # Extra tags merged with standard Fabrica tags on every resource
+
+state:
+  bucket: ""                  # Auto-named `fabrica-state-<account-id>` on setup; override if desired
+  table: fabrica-state-lock   # DynamoDB table name for distributed locks
+  kmsKeyId: ""                # KMS key ARN for SSE-KMS encryption (optional; defaults to SSE-S3)
+
+# Module configuration sections
+# perforce:
+#   version: "2024.2"
+#   instanceType: m5.xlarge
+#   volumeSize: 500
+#   # Backup/restore (V1): local EBS primary; optional S3 export.
+#   # Requires an SSM-managed instance profile (attached at create time).
+#   backup:
+#     path: /hxdepots/fabrica-backups
+#     s3Export: false
+#     s3Bucket: ""
+#     s3Prefix: perforce-backups/
+perforce: {}
+horde: {}
+
+# Lore: Epic loreserver (parallel VCS option alongside Perforce).
+# AMI-first — see docs/lore-ami.md. Local/EBS store in V1.
+# lore:
+#   amiId: ami-xxxxxxxxxxxxxxxxx   # required
+#   instanceType: m5.xlarge
+#   volumeSize: 500
+#   allowedCidr: 10.0.0.0/8
+#   vpcId: ""
+#   subnetId: ""
+
+# DDC: Unreal Cloud DDC (Jupiter / Zen) — single home-region V1.
+# AMI-first — see docs/ddc-ami.md. Default backend zen; scylla is optional
+# 1-node bootstrap only (not production HA). No region add in V1.
+# ddc:
+#   backend: zen                   # zen | scylla
+#   amiId: ami-xxxxxxxxxxxxxxxxx   # required
+#   scyllaAmiId: ""                # required only when backend=scylla
+#   instanceType: m7i.xlarge
+#   volumeSize: 500
+#   allowedCidr: 10.0.0.0/8        # warn if 0.0.0.0/0
+#   publicPort: 80
+#   internalPort: 8080
+#   bucket: ""                     # default fabrica-ddc-<account>-<region>
+#   namespace: deriveddatacache
+#   vpcId: ""
+#   subnetId: ""
+
+# CI: a CodeBuild project that orchestrates Horde BuildGraph jobs.
+# All fields are optional — defaults shown.
+ci:
+  projectName: ""             # CodeBuild project name (default "fabrica-ci")
+  computeType: ""             # CodeBuild compute type (default "BUILD_GENERAL1_SMALL")
+  image: ""                   # Build image (default "aws/codebuild/amazonlinux2-x86_64-standard:5.0")
+  buildTimeout: 0             # Build timeout in minutes (default 60)
+
+# Deploy module — GameLift fleet deployment of CI/Horde server builds.
+deploy:
+  buildBucket: ""           # S3 bucket where CI/Horde uploads packaged server builds (required)
+  instanceType: c5.large    # GameLift EC2 instance type
+  fleetType: ON_DEMAND      # ON_DEMAND or SPOT
+  launchPath: /local/game/ServerApp   # server executable path inside the build
+  buildOs: AMAZON_LINUX_2   # build operating system
+  fromPort: 7777            # inbound UDP port range start
+  toPort: 7777              # inbound UDP port range end
+  desiredInstances: 1       # instances per fleet (cost estimate only in V1)
+  activationTimeoutMinutes: 45   # how long 'promote' waits for a fleet to become ACTIVE
+
+# Cost reporting and local budget guardrails.
+# Purely informational — no AWS Budgets resources are created.
+# Scope is "total" (aggregate across all modules) or a specific module name.
+# cost:
+#   budgets:
+#     - scope: total
+#       monthly: 400
+#       warnPct: 80
+#     - scope: perforce
+#       monthly: 150

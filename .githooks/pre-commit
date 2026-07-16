@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Collect staged Go files.
+staged_go=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+
+if [ -z "$staged_go" ]; then
+  exit 0
+fi
+
+# --- gofmt check ---
+unformatted=""
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  if [ -n "$(gofmt -l "$f")" ]; then
+    unformatted="$unformatted  $f"$'\n'
+  fi
+done <<< "$staged_go"
+
+if [ -n "$unformatted" ]; then
+  echo "pre-commit: gofmt found unformatted files:"
+  printf '%s' "$unformatted"
+  echo ""
+  echo "Run 'gofmt -w <file>' to fix, then re-stage."
+  exit 1
+fi
+
+# --- go vet ---
+# Derive unique package paths from staged files.
+pkgs=$(while IFS= read -r f; do dirname "$f"; done <<< "$staged_go" | sort -u | sed 's|^|./|' | tr '\n' ' ')
+if [ -n "$pkgs" ]; then
+  # shellcheck disable=SC2086
+  if ! go vet $pkgs 2>&1; then
+    echo ""
+    echo "pre-commit: go vet failed. Fix the errors above before committing."
+    exit 1
+  fi
+fi
+
+exit 0

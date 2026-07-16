@@ -1,0 +1,49 @@
+version: 2
+
+builds:
+  - id: fabrica
+    main: .
+    binary: fabrica
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X github.com/jpvelasco/fabrica/internal/version.Version={{ .Version }}
+      - -X github.com/jpvelasco/fabrica/internal/version.Commit={{ .ShortCommit }}
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: fabrica
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "fabrica_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+
+release:
+  # Dormant safety: this block documents that a GitHub Release is created only
+  # when GoReleaser runs against a real tag (via release.yml on a v* push).
+  # `--snapshot` (used for verification) never publishes or creates a release.
+  prerelease: auto

@@ -1,0 +1,129 @@
+packer {
+  required_plugins {
+    amazon = {
+      version = ">= 1.3.0"
+      source  = "github.com/hashicorp/amazon"
+    }
+  }
+}
+
+variable "aws_region" {
+  type        = string
+  default     = "{{ .Region }}"
+  description = "AWS region to build the AMI in."
+}
+
+variable "horde_version" {
+  type        = string
+  default     = "{{ .Version }}"
+  description = "Horde server version recorded in AMI tags."
+}
+
+variable "instance_type" {
+  type        = string
+  default     = "m7i.xlarge"
+  description = "Builder EC2 instance type. Match the runtime instance family to avoid arch mismatches."
+}
+{{ if eq .Install "native" }}
+variable "horde_source_dir" {
+  type        = string
+  description = "Local path to a directory containing pre-published Horde binaries. Run `dotnet publish HordeServer/HordeServer.csproj -c Release -o <dir>` from your UE source first."
+}
+{{ end }}
+locals {
+  ami_name = "{{ .Name }}-${formatdate("YYYYMMDD-hhmmss", timestamp())}"
+}
+
+source "amazon-ebs" "horde" {
+  ami_name      = local.ami_name
+  instance_type = var.instance_type
+  region        = var.aws_region
+  source_ami    = "{{ .BaseImage }}"
+  ssh_username  = "ubuntu"
+
+  ami_block_device_mappings {
+    device_name           = "/dev/sda1"
+    volume_size           = 50
+    volume_type           = "gp3"
+    delete_on_termination = true
+    encrypted             = true
+  }
+
+  tags = {
+    ManagedBy     = "fabrica"
+    HordeVersion  = var.horde_version
+    InstallMethod = "{{ .Install }}"
+    Name          = local.ami_name
+  }
+}
+
+# TODO (docker install): /opt/horde/docker-compose.yml is NOT baked into this AMI.
+# You must provide it before the horde service can start. Options:
+#   a) Add a "file" provisioner below that copies your compose file into place:
+#        provisioner "file" {
+#          source      = "path/to/your/docker-compose.yml"
+#          destination = "/tmp/docker-compose.yml"
+#        }
+#      Then move it in the shell provisioner: "mv /tmp/docker-compose.yml /opt/horde/docker-compose.yml"
+#   b) Write it via a heredoc in the shell provisioner using the real Horde compose file from
+#      Engine/Source/Programs/Horde/HordeServer/docker-compose.yml in your UE source checkout.
+# The horde systemd unit (installed below) runs `docker compose up -d` from /opt/horde/,
+# so the file must exist at that path before the instance boots.
+
+build {
+  sources = ["source.amazon-ebs.horde"]
+{{ if eq .Install "native" }}
+  provisioner "file" {
+    source      = "${var.horde_source_dir}/"
+    destination = "/tmp/horde-bin/"
+  }
+{{ end }}
+  provisioner "shell" {
+    execute_command = "sudo -E bash -c '{{`{{ .Vars }}`}} {{`{{ .Path }}`}}'"
+    inline_shebang  = "/bin/bash -euo pipefail"
+{{- if eq .Install "docker" }}
+    inline = [
+      "curl -fsSL https://get.docker.com | sh",
+      "systemctl enable docker",
+      "usermod -aG docker ubuntu",
+      "mkdir -p /opt/horde /etc/horde",
+      "cat >/etc/systemd/system/horde.service <<'UNIT'\n[Unit]\nDescription=Horde Server (docker compose)\nAfter=network-online.target docker.service\nRequires=docker.service\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nWorkingDirectory=/opt/horde\nExecStart=/usr/bin/docker compose up -d\nExecStop=/usr/bin/docker compose down\nExecReload=/bin/sh -c '/usr/bin/docker compose pull && /usr/bin/docker compose up -d'\n\n[Install]\nWantedBy=multi-user.target\nUNIT",
+      "systemctl daemon-reload",
+      "systemctl enable horde",
+    ]
+{{- else }}
+    inline = [
+      "wget -q https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -O /tmp/ms.deb",
+      "dpkg -i /tmp/ms.deb",
+      "apt-get update -q",
+      "apt-get install -y dotnet-sdk-8.0",
+      "curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | gpg -o /usr/share/keyrings/mongodb-7.0.gpg --dearmor",
+      "echo 'deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-7.0.gpg] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse' >/etc/apt/sources.list.d/mongodb-org-7.0.list",
+      "apt-get update -q",
+      "apt-get install -y mongodb-org redis-server",
+      "systemctl enable mongod redis-server",
+      "mkdir -p /opt/horde /etc/horde",
+      "cp -r /tmp/horde-bin/. /opt/horde/",
+      "cat >/etc/horde/env <<'ENV'\nASPNETCORE_ENVIRONMENT=Production\nHorde__DataDir=/etc/horde\nENV",
+      "cat >/etc/systemd/system/horde.service <<'UNIT'\n[Unit]\nDescription=Horde Server\nAfter=mongod.service redis-server.service\nRequires=mongod.service\n\n[Service]\nExecStart=/usr/bin/dotnet /opt/horde/HordeServer.dll\nWorkingDirectory=/opt/horde\nEnvironmentFile=/etc/horde/env\nRestart=on-failure\n\n[Install]\nWantedBy=multi-user.target\nUNIT",
+      "systemctl daemon-reload",
+      "systemctl enable horde",
+    ]
+{{- end }}
+  }
+
+  provisioner "shell" {
+    execute_command = "sudo -E bash -c '{{`{{ .Vars }}`}} {{`{{ .Path }}`}}'"
+    inline_shebang  = "/bin/bash -euo pipefail"
+    inline = [
+      "systemctl is-enabled horde",
+{{- if eq .Install "docker" }}
+      "systemctl is-enabled docker",
+{{- else }}
+      "systemctl is-enabled mongod",
+      "systemctl is-enabled redis-server",
+{{- end }}
+      "test -d /etc/horde",
+    ]
+  }
+}

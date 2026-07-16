@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9
+        with:
+          version: v2.10.1
+
+  vuln:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6
+        with:
+          go-version-file: go.mod
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          govulncheck ./...
+
+  build:
+    name: Build
+    strategy:
+      # Full 3-OS matrix on push to main; PRs skip macOS (10x minutes on the
+      # free tier) — Linux + Windows already cover the cross-platform risk.
+      matrix:
+        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6
+        with:
+          go-version-file: go.mod
+      - run: go build -v ./...
+      - run: go vet ./...
+
+  test:
+    name: Test
+    strategy:
+      # Full 3-OS matrix on push to main; PRs skip macOS to conserve minutes.
+      matrix:
+        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    # id-token lets the Linux job authenticate the Codecov upload via OIDC,
+    # so no CODECOV_TOKEN secret is stored in the repo.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6
+        with:
+          go-version-file: go.mod
+      - name: Install gotestsum (Linux)
+        if: runner.os == 'Linux'
+        run: go install gotest.tools/gotestsum@v1.13.0
+      - name: Run tests with race detection and coverage (Linux)
+        if: runner.os == 'Linux'
+        # gotestsum runs the suite once, prints readable output, and writes a
+        # JUnit XML for Codecov Test Analytics. Flags after -- go to `go test`.
+        run: |
+          gotestsum --junitfile junit.xml --format pkgname -- \
+            -race -coverprofile=coverage.out -covermode=atomic ./...
+      - name: Run tests with race detection (macOS)
+        if: runner.os == 'macOS'
+        run: go test -race -v ./...
+      - name: Run tests with race detection (Windows)
+        if: runner.os == 'Windows'
+        run: go test -race -v ./...
+      - name: Display coverage summary
+        if: runner.os == 'Linux'
+        run: go tool cover -func=coverage.out
+      - name: Upload coverage to Codecov
+        # Skip on PRs from forks: OIDC tokens aren't issued to forked-repo runs,
+        # and with no CODECOV_TOKEN fallback the tokenless upload would fail a
+        # private-repo PR (fail_ci_if_error is true). Always runs on push to main.
+        if: runner.os == 'Linux' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
+        with:
+          use_oidc: true
+          files: ./coverage.out
+          fail_ci_if_error: true
+      - name: Upload test results to Codecov
+        # Runs even when tests fail (that's the point of Test Analytics: failed-
+        # test reporting + flaky detection). Same OIDC + fork guard as coverage.
+        if: ${{ !cancelled() && runner.os == 'Linux' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3  # v1.2.1
+        with:
+          use_oidc: true
+          files: ./junit.xml
+
+  goreleaser:
+    name: Release build (snapshot)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+        with:
+          node-version: "24"
+      # Build-only: verifies .goreleaser.yaml compiles all platforms. NEVER
+      # publishes (no `release`, no tag). Catches config breakage on PRs.
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94  # v7
+        with:
+          args: build --snapshot --clean
+      - name: Smoke-test the built linux binary
+        # Exec the freshly built native binary to prove it runs + the version
+        # ldflags resolved (not the `dev`/`unknown` fallbacks). The runner is
+        # linux/amd64, so glob that build output.
+        run: |
+          BIN=$(find dist -type f -name fabrica -path '*linux_amd64*' | head -1)
+          test -n "$BIN" || { echo "no linux/amd64 fabrica binary in dist/"; exit 1; }
+          chmod +x "$BIN"
+          OUT=$("$BIN" version)
+          echo "$OUT"
+          # snapshot builds inject a version like "0.1.0-SNAPSHOT-<sha>"; the
+          # binary must NOT show the un-injected "dev" fallback.
+          echo "$OUT" | grep -q "Fabrica dev" && { echo "version ldflags did not resolve (still 'dev')"; exit 1; }
+          echo "smoke test OK"
+      - name: npm shim tests
+        working-directory: npm
+        run: node --test

@@ -1,0 +1,43 @@
+# Codecov configuration. See https://docs.codecov.com/docs/codecov-yaml
+#
+# Coverage is uploaded from the Linux test job in .github/workflows/ci.yml via
+# OIDC (no stored CODECOV_TOKEN). Both gates below block PRs:
+#   - project: overall coverage may not drop more than the threshold
+#   - patch:   new/changed lines in a PR must meet the target
+coverage:
+  status:
+    project:
+      default:
+        target: auto      # compare against the base commit's coverage
+        threshold: 1%      # tolerate <=1% drift before failing
+    patch:
+      default:
+        target: 90%        # new/changed lines must be >=90% covered (no new
+                           # function ships untested; strive for 100%)
+
+# Virtual coverage groupings by path — no upload changes required. Lets the
+# dashboard and PR comment break coverage down by architectural layer.
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: auto
+        threshold: 1%
+  individual_components:
+    - component_id: cmd
+      name: cmd (CLI layer)
+      paths:
+        - cmd/**
+    - component_id: internal
+      name: internal (core)
+      paths:
+        - internal/**
+
+comment:
+  layout: "reach, diff, flags, components, files"
+  behavior: default
+  require_changes: false
+
+# Paths excluded from coverage math.
+ignore:
+  - "**/*_test.go"
