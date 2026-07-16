@@ -21,7 +21,7 @@ import (
 const (
 	lineWidth  = 58
 	moduleName = "lore"
-	credFile   = ".fabrica/lore-credentials.yaml" //nolint:gosec // file path, not a credential
+	credFile   = ".fabrica/lore-credentials.yaml" // #nosec G101 -- file path, not a credential
 )
 
 type command struct {

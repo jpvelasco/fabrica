@@ -35,7 +35,8 @@ func (c *Config) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	// fabrica.yaml is non-secret project config (not credentials).
+	if err := os.WriteFile(path, data, 0644); err != nil { // #nosec G306 -- project config file, not secrets
 		return fmt.Errorf("writing config %s: %w", path, err)
 	}
 	return nil

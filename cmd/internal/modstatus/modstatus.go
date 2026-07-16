@@ -216,6 +216,6 @@ func DefaultProbeTCP(address string) bool {
 	if err != nil {
 		return false
 	}
-	conn.Close()
+	_ = conn.Close() // best-effort; probe result already decided
 	return true
 }

@@ -137,6 +137,7 @@ EOF
 - Block force pushes: yes (`non_fast_forward`)
 - Block branch deletion: yes
 - Required checks: Lint, Vulnerability scan, Build (ubuntu/windows), Test (ubuntu/windows), Release build (snapshot)
+- **Not required (yet)** but present in CI: Lint (Windows), gosec, Trivy, CodeQL (`codeql.yml`)
 - Bypass: repository Admin role (solo-maintainer escape hatch)
 
 ### Tag ruleset (`protect-version-tags` → `v*`)
