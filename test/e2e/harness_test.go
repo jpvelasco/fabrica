@@ -61,6 +61,10 @@ lore:
   amiId: ami-fake
   vpcId: vpc-fake
   subnetId: subnet-fake
+ddc:
+  amiId: ami-fake
+  vpcId: vpc-fake
+  subnetId: subnet-fake
 workstation:
   amiId: ami-fake
   vpcId: vpc-fake

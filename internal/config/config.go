@@ -59,6 +59,7 @@ type Config struct {
 	Workstation WorkstationConfig `mapstructure:"workstation" yaml:"workstation"`
 	CI          CIConfig          `mapstructure:"ci"          yaml:"ci"`
 	Deploy      DeployConfig      `mapstructure:"deploy"      yaml:"deploy"`
+	DDC         DDCConfig         `mapstructure:"ddc"         yaml:"ddc"`
 	Cost        CostConfig        `mapstructure:"cost"        yaml:"cost"`
 }
 
@@ -130,6 +131,26 @@ type DeployConfig struct {
 	ActivationTimeoutMinutes int    `mapstructure:"activationTimeoutMinutes" yaml:"activationTimeoutMinutes"`
 }
 
+// DDCConfig holds the ddc: section of fabrica.yaml.
+// AMI-first Unreal Cloud DDC (Jupiter / Zen). Single home-region in V1.
+type DDCConfig struct {
+	Backend            string `mapstructure:"backend"            yaml:"backend"` // zen|scylla; default zen
+	AmiID              string `mapstructure:"amiId"              yaml:"amiId"`
+	ScyllaAmiID        string `mapstructure:"scyllaAmiId"        yaml:"scyllaAmiId"`
+	InstanceType       string `mapstructure:"instanceType"       yaml:"instanceType"`
+	VolumeSize         int    `mapstructure:"volumeSize"         yaml:"volumeSize"`
+	ScyllaInstanceType string `mapstructure:"scyllaInstanceType" yaml:"scyllaInstanceType"`
+	ScyllaVolumeSize   int    `mapstructure:"scyllaVolumeSize"   yaml:"scyllaVolumeSize"`
+	VPCId              string `mapstructure:"vpcId"              yaml:"vpcId"`
+	SubnetId           string `mapstructure:"subnetId"           yaml:"subnetId"`
+	AllowedCIDR        string `mapstructure:"allowedCidr"        yaml:"allowedCidr"`
+	InternalCIDR       string `mapstructure:"internalCidr"       yaml:"internalCidr"`
+	PublicPort         int    `mapstructure:"publicPort"         yaml:"publicPort"`
+	InternalPort       int    `mapstructure:"internalPort"       yaml:"internalPort"`
+	Bucket             string `mapstructure:"bucket"             yaml:"bucket"`
+	Namespace          string `mapstructure:"namespace"          yaml:"namespace"`
+}
+
 // WorkstationConfig holds the workstation: section of fabrica.yaml.
 type WorkstationConfig struct {
 	AmiID              string `mapstructure:"amiId"              yaml:"amiId"`
@@ -182,6 +203,7 @@ type fileConfig struct {
 	Workstation WorkstationConfig `yaml:"workstation"`
 	CI          CIConfig          `yaml:"ci"`
 	Deploy      DeployConfig      `yaml:"deploy"`
+	DDC         DDCConfig         `yaml:"ddc"`
 	Cost        CostConfig        `yaml:"cost"`
 }
 
@@ -195,6 +217,7 @@ func (c *Config) fileConfig() fileConfig {
 		Workstation: c.Workstation,
 		CI:          c.CI,
 		Deploy:      c.Deploy,
+		DDC:         c.DDC,
 		Cost:        c.Cost,
 	}
 }

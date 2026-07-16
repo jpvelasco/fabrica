@@ -6,6 +6,7 @@ import (
 	"io"
 
 	cidestroy "github.com/jpvelasco/fabrica/cmd/ci/destroy"
+	ddcdestroy "github.com/jpvelasco/fabrica/cmd/ddc/destroy"
 	deploydestroy "github.com/jpvelasco/fabrica/cmd/deploy/destroy"
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	hordedestroy "github.com/jpvelasco/fabrica/cmd/horde/destroy"
@@ -95,7 +96,7 @@ func runAll(ctx context.Context, rt globals.Runtime, opts globals.Options, out i
 		return fmt.Errorf("reading state: %w", err)
 	}
 
-	// Ordered candidate modules: deploy, ci, workstation, horde, lore, perforce.
+	// Ordered: deploy → ci → workstation → ddc → horde → lore → perforce.
 	// Include a module only if it is present in state.
 	var mods []destroyall.Module
 	add := func(name string, td destroyall.ModuleTeardown) {
@@ -106,6 +107,7 @@ func runAll(ctx context.Context, rt globals.Runtime, opts globals.Options, out i
 	add("deploy", teardownClosure(ctx, deploydestroy.NewTeardown(rt, out)))
 	add("ci", ciTeardownClosure(ctx, rt, out))
 	add("workstation", teardownClosure(ctx, wsterminate.NewTeardown(rt, out)))
+	add("ddc", teardownClosure(ctx, ddcdestroy.NewTeardown(rt, out)))
 	add("horde", teardownClosure(ctx, hordedestroy.NewTeardown(rt, out)))
 	add("lore", teardownClosure(ctx, loredestroy.NewTeardown(rt, out)))
 	add("perforce", teardownClosure(ctx, pfdestroy.NewTeardown(rt, out)))

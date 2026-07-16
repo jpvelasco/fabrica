@@ -14,6 +14,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/ci"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/ddc"
 	"github.com/jpvelasco/fabrica/internal/deploy"
 	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/lore"
@@ -90,6 +91,10 @@ func costInputs(cfg *config.Config, m *state.ModuleState) ([]cost.Resource, stri
 			return nil, "setup only (no active fleet) — standing cost ~$0"
 		}
 		return deployCostResources(m, cfg.Deploy), ""
+	case "ddc":
+		// Prefer full CostResources (S3 + EC2 + EBS [+ Scylla]); do not collapse
+		// via ec2CostResources which would drop the blob bucket line.
+		return applyStopped(ddc.CostResources(cfg.DDC), m.Status)
 	default:
 		return nil, "no estimator wired for this module"
 	}

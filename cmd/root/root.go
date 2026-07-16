@@ -9,6 +9,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/ci"
 	"github.com/jpvelasco/fabrica/cmd/configcmd"
 	"github.com/jpvelasco/fabrica/cmd/cost"
+	"github.com/jpvelasco/fabrica/cmd/ddc"
 	"github.com/jpvelasco/fabrica/cmd/deploy"
 	"github.com/jpvelasco/fabrica/cmd/destroy"
 	"github.com/jpvelasco/fabrica/cmd/doctor"
@@ -71,6 +72,7 @@ func New(out io.Writer) *cobra.Command {
 	cmd.AddCommand(workstation.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(ci.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(deploy.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(ddc.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(cost.New(runtimeSource, optionsSource, out))
 
 	return cmd

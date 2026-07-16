@@ -41,6 +41,23 @@ horde: {}
 #   vpcId: ""
 #   subnetId: ""
 
+# DDC: Unreal Cloud DDC (Jupiter / Zen) — single home-region V1.
+# AMI-first — see docs/ddc-ami.md. Default backend zen; scylla is optional
+# 1-node bootstrap only (not production HA). No region add in V1.
+# ddc:
+#   backend: zen                   # zen | scylla
+#   amiId: ami-xxxxxxxxxxxxxxxxx   # required
+#   scyllaAmiId: ""                # required only when backend=scylla
+#   instanceType: m7i.xlarge
+#   volumeSize: 500
+#   allowedCidr: 10.0.0.0/8        # warn if 0.0.0.0/0
+#   publicPort: 80
+#   internalPort: 8080
+#   bucket: ""                     # default fabrica-ddc-<account>-<region>
+#   namespace: deriveddatacache
+#   vpcId: ""
+#   subnetId: ""
+
 # CI: a CodeBuild project that orchestrates Horde BuildGraph jobs.
 # All fields are optional — defaults shown.
 ci:

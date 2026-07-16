@@ -102,6 +102,10 @@ fabrica horde submit --buildgraph path/to/BuildGraph.xml --target "Compile Unrea
 fabrica lore create
 fabrica lore status -w
 
+# Distributed DDC (Unreal Cloud DDC — single home-region; see docs/ddc-ami.md)
+fabrica ddc setup
+fabrica ddc status --probe
+
 # A cloud workstation
 fabrica workstation create
 
@@ -255,6 +259,28 @@ Reads live state and probes `GET /health_check` on port 41339. Transitions `prov
 #### `fabrica lore destroy`
 
 Terminates the EC2 instance and deletes the security group in reverse order. Idempotent. Typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview.
+
+### DDC
+
+> **AMI requirement:** `fabrica ddc setup` is AMI-first. Your AMI must already contain Unreal Cloud DDC (Jupiter). Fabrica mounts the hot EBS volume, writes hybrid-storage config, and starts the service. See [docs/ddc-ami.md](docs/ddc-ami.md).
+>
+> **V1 scope:** single home-region EC2 only (co-located coordinator + edge roles). **No `region add` (or any multi-region command) in V1** — deferred to a later milestone. Default backend is `zen`. Scylla is an optional single-node bootstrap path only (not production HA).
+
+#### `fabrica ddc setup`
+
+Provisions IAM role + instance profile, S3 blob bucket, security group, optional Scylla bootstrap EC2, and the DDC EC2 instance. Writes `.fabrica/ddc-endpoints.yaml`. Cost estimate and dry-run supported. Idempotent if already provisioned.
+
+```
+--backend    zen (default) or scylla (1-node bootstrap only — not HA)
+```
+
+#### `fabrica ddc status`
+
+Reads live state and probes `GET /health/ready` on the public API port. Transitions `provisioning` → `ready` when healthy. Supports `--wait` / `-w` and `--json`.
+
+#### `fabrica ddc destroy`
+
+Deletes DDC resources in reverse order (instances → bucket → IAM → SG). Non-empty S3 buckets are not force-deleted. Typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview.
 
 ### Workstation
 
