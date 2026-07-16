@@ -1,7 +1,7 @@
 # Fabrica
 
 [![CI](https://github.com/jpvelasco/fabrica/actions/workflows/ci.yml/badge.svg)](https://github.com/jpvelasco/fabrica/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/jpvelasco/fabrica)](https://goreportcard.com/report/github.com/jpvelasco/fabrica)
+[![golangci-lint](https://img.shields.io/badge/golangci--lint-enabled-brightgreen)](https://golangci-lint.run/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/github/go-mod/go-version/jpvelasco/fabrica)](go.mod)
 
