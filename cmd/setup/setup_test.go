@@ -242,6 +242,117 @@ func TestDryRunShowsRunWithoutDryRunHint(t *testing.T) {
 	}
 }
 
+func TestSaveBackendConfigPopulatesEmptyFields(t *testing.T) {
+	var buf strings.Builder
+	cfg := config.Defaults()
+	// Clear the fields that should be populated
+	cfg.Cloud.AWS.AccountID = ""
+	cfg.State.Bucket = ""
+	cfg.State.Table = ""
+
+	cmd := command{
+		runtime: globals.Runtime{
+			Config:     cfg,
+			ConfigPath: "nonexistent-dir/fabrica.yaml", // won't actually save
+		},
+		out: &buf,
+	}
+
+	plan := fabricastate.NewSetupPlan(cfg, "111222333444", "us-west-2")
+
+	cmd.saveBackendConfig(plan)
+
+	if cfg.Cloud.AWS.AccountID != "111222333444" {
+		t.Errorf("AccountID = %q, want 111222333444", cfg.Cloud.AWS.AccountID)
+	}
+	if cfg.State.Bucket != "fabrica-state-111222333444" {
+		t.Errorf("Bucket = %q, want fabrica-state-111222333444", cfg.State.Bucket)
+	}
+	if cfg.State.Table != "fabrica-state-lock" {
+		t.Errorf("Table = %q, want fabrica-state-lock", cfg.State.Table)
+	}
+	// Save will fail because path doesn't exist — should print warning
+	if !strings.Contains(buf.String(), "Warning: could not save config") {
+		t.Errorf("expected warning about failed save, got:\n%s", buf.String())
+	}
+}
+
+func TestPrintIdentityHelp(t *testing.T) {
+	var buf strings.Builder
+	cmd := command{out: &buf}
+	cmd.printIdentityHelp()
+	out := buf.String()
+	if !strings.Contains(out, "Could not authenticate with AWS") {
+		t.Error("expected auth failure message")
+	}
+	if !strings.Contains(out, "aws sso login") {
+		t.Error("expected SSO login hint")
+	}
+	if !strings.Contains(out, "fabrica doctor") {
+		t.Error("expected doctor hint")
+	}
+}
+
+func TestSaveBackendConfigSkipsWhenAllSet(t *testing.T) {
+	var buf strings.Builder
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = "already-set"
+	cfg.State.Bucket = "my-bucket"
+	cfg.State.Table = "my-table"
+
+	cmd := command{
+		runtime: globals.Runtime{
+			Config: cfg,
+		},
+		out: &buf,
+	}
+
+	plan := fabricastate.NewSetupPlan(cfg, "different-account", "us-east-1")
+	cmd.saveBackendConfig(plan)
+
+	// Fields should be unchanged
+	if cfg.Cloud.AWS.AccountID != "already-set" {
+		t.Errorf("AccountID changed to %q, want already-set", cfg.Cloud.AWS.AccountID)
+	}
+	if cfg.State.Bucket != "my-bucket" {
+		t.Errorf("Bucket changed to %q, want my-bucket", cfg.State.Bucket)
+	}
+	if buf.Len() > 0 {
+		t.Errorf("expected no output when nothing to save, got:\n%s", buf.String())
+	}
+}
+
+func TestSaveBackendConfigPartialFill(t *testing.T) {
+	var buf strings.Builder
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = "existing"
+	cfg.State.Bucket = ""
+	cfg.State.Table = "custom-table"
+
+	cmd := command{
+		runtime: globals.Runtime{
+			Config:     cfg,
+			ConfigPath: "nonexistent-dir/fabrica.yaml",
+		},
+		out: &buf,
+	}
+
+	plan := fabricastate.NewSetupPlan(cfg, "new-account", "eu-west-1")
+	cmd.saveBackendConfig(plan)
+
+	// AccountID unchanged, Table unchanged
+	if cfg.Cloud.AWS.AccountID != "existing" {
+		t.Errorf("AccountID changed to %q, want existing", cfg.Cloud.AWS.AccountID)
+	}
+	if cfg.State.Table != "custom-table" {
+		t.Errorf("Table changed to %q, want custom-table", cfg.State.Table)
+	}
+	// Bucket should be filled from plan (which uses the plan's account)
+	if cfg.State.Bucket != "fabrica-state-new-account" {
+		t.Errorf("Bucket = %q, want fabrica-state-new-account", cfg.State.Bucket)
+	}
+}
+
 type fakeSetupProvider struct{}
 
 func (f *fakeSetupProvider) Name() string { return "fake" }

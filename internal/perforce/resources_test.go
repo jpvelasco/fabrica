@@ -43,6 +43,23 @@ func TestSGDesiredState_Port1666(t *testing.T) {
 	}
 }
 
+func TestSGDesiredState_AllowedCIDR(t *testing.T) {
+	plan := &CreatePlan{SGName: "fabrica-perforce-sg", VPCID: "vpc-test", AllowedCIDR: "172.16.0.0/12"}
+	raw, err := SGDesiredState(plan)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	ingress := doc["SecurityGroupIngress"].([]any)
+	rule := ingress[0].(map[string]any)
+	if rule["CidrIp"] != "172.16.0.0/12" {
+		t.Errorf("CidrIp = %v, want 172.16.0.0/12", rule["CidrIp"])
+	}
+}
+
 func TestSGDesiredState_VPCAndName(t *testing.T) {
 	plan := &CreatePlan{SGName: "fabrica-perforce-sg", VPCID: "vpc-abc123"}
 	raw, err := SGDesiredState(plan)

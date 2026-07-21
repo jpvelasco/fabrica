@@ -312,6 +312,10 @@ func (c command) printDryRun(plan *perforce.CreatePlan) {
 	fmt.Fprintf(c.out, "  Instance type:    %s\n", plan.InstanceType)
 	fmt.Fprintf(c.out, "  Helix Core:       %s\n", versionLabel)
 	fmt.Fprintf(c.out, "  Data volume:      %d GiB gp3\n", plan.VolumeSize)
+	fmt.Fprintf(c.out, "  Allowed CIDR:     %s\n", plan.AllowedCIDR)
+	if plan.AllowedCIDR == "0.0.0.0/0" {
+		fmt.Fprintln(c.out, "  Warning:          P4 port (1666) open to the entire internet. Set perforce.allowedCidr in fabrica.yaml.")
+	}
 	if plan.DefaultVPC {
 		fmt.Fprintf(c.out, "  VPC:              default (%s)\n", plan.VPCID)
 		fmt.Fprintln(c.out, "  Note:             Default VPC used. Configure a dedicated VPC for production.")

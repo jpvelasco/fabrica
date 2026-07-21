@@ -26,6 +26,7 @@ type CreatePlan struct {
 	VPCID        string
 	SubnetID     string
 	DefaultVPC   bool
+	AllowedCIDR  string
 
 	SGName              string
 	InstanceName        string
@@ -56,6 +57,10 @@ func NewCreatePlan(ctx context.Context, cfg config.PerforceConfig, account, regi
 	if volumeSize <= 0 {
 		volumeSize = 500
 	}
+	allowedCIDR := cfg.AllowedCIDR
+	if allowedCIDR == "" {
+		allowedCIDR = "10.0.0.0/8"
+	}
 
 	vpcID := cfg.VPCId
 	subnetID := cfg.SubnetId
@@ -77,6 +82,7 @@ func NewCreatePlan(ctx context.Context, cfg config.PerforceConfig, account, regi
 		InstanceType:        instanceType,
 		HelixVersion:        version,
 		VolumeSize:          volumeSize,
+		AllowedCIDR:         allowedCIDR,
 		VPCID:               vpcID,
 		SubnetID:            subnetID,
 		DefaultVPC:          defaultVPC,

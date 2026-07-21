@@ -29,6 +29,33 @@ func TestNewCreatePlan_Defaults(t *testing.T) {
 	if plan.HelixVersion != DefaultHelixVersion {
 		t.Errorf("HelixVersion = %q, want %q", plan.HelixVersion, DefaultHelixVersion)
 	}
+	if plan.AllowedCIDR != "10.0.0.0/8" {
+		t.Errorf("AllowedCIDR = %q, want 10.0.0.0/8", plan.AllowedCIDR)
+	}
+}
+
+func TestNewCreatePlan_AllowedCIDR(t *testing.T) {
+	cases := []struct {
+		name string
+		cidr string
+		want string
+	}{
+		{"default empty", "", "10.0.0.0/8"},
+		{"explicit vpc", "172.16.0.0/12", "172.16.0.0/12"},
+		{"open internet", "0.0.0.0/0", "0.0.0.0/0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.PerforceConfig{AllowedCIDR: tc.cidr}
+			plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if plan.AllowedCIDR != tc.want {
+				t.Errorf("AllowedCIDR = %q, want %q", plan.AllowedCIDR, tc.want)
+			}
+		})
+	}
 }
 
 func TestNewCreatePlan_CustomInstanceType(t *testing.T) {

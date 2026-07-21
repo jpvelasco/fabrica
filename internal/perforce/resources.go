@@ -16,7 +16,7 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 				"IpProtocol":  "tcp",
 				"FromPort":    1666,
 				"ToPort":      1666,
-				"CidrIp":      "0.0.0.0/0",
+				"CidrIp":      plan.AllowedCIDR,
 				"Description": "Perforce p4d",
 			},
 		},
