@@ -69,7 +69,7 @@ Established the architecture every later module drops into without refactor.
 
 Turned the skeleton into a cohesive, production-grade tool: six provisioning/
 management modules, real Cloud Control CRUD, full-stack teardown, offline cost
-visibility, a CLI E2E harness, and dormant release machinery. All five
+visibility, a CLI E2E harness, and release machinery (GoReleaser + npm). All five
 milestones below are done. Remaining nice-to-haves (residual test-coverage
 gaps) are tracked at the end and do not block Phase 1.
 
@@ -107,7 +107,7 @@ gaps) are tracked at the end and do not block Phase 1.
 - ✅ End-to-end testing (CLI E2E harness — in-process, fake provider, runs in CI)
 - ✅ README refresh (full command coverage) + doc-drift CI guard
 - ✅ Final architecture + consistency review (clean layering; doc/cleanup fixes applied; test-coverage gaps tracked as a follow-up)
-- ✅ Release machinery — GoReleaser + npm shim (ludus-cli pattern), dormant until a `v*` tag; no release cut yet
+- ✅ Release machinery — GoReleaser + npm shim (ludus-cli pattern); first public cut is **v0.1.0**
 
 **Deferred nice-to-haves** (do not block Phase 1; docs/cleanup fixes already shipped):
 - Test-coverage gaps: cobra black-box tests cover cost report/alerts, deploy setup/promote/rollback/status, and ci setup/trigger/status. 2 packages lack a white-box `_test.go` (horde destroy, workstation terminate); the AWS provider type-assertion seams (`Identity`/`EC2Manager`/`StopInstance`/`StartInstance`/`CreateFleetAsync`) sit at 0% coverage.
