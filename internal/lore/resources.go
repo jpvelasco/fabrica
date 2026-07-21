@@ -7,9 +7,9 @@ import "encoding/json"
 // (HTTP health) to AllowedCIDR.
 func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 	doc := map[string]any{
-		"GroupName":   plan.SGName,
-		"Description": "Fabrica-managed security group for Lore loreserver",
-		"VpcId":       plan.VPCID,
+		"GroupName":        plan.SGName,
+		"GroupDescription": "Fabrica-managed security group for Lore loreserver",
+		"VpcId":            plan.VPCID,
 		"SecurityGroupIngress": []map[string]any{
 			{
 				"IpProtocol":  "tcp",

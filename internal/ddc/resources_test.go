@@ -97,9 +97,8 @@ func TestInstanceDesiredState(t *testing.T) {
 	if doc["ImageId"] != "ami-ddc" {
 		t.Fatalf("ImageId = %v", doc["ImageId"])
 	}
-	prof := doc["IamInstanceProfile"].(map[string]any)
-	if prof["Name"] != "fabrica-ddc-profile" {
-		t.Fatalf("profile = %v", prof)
+	if doc["IamInstanceProfile"] != "fabrica-ddc-profile" {
+		t.Fatalf("IamInstanceProfile = %v, want fabrica-ddc-profile", doc["IamInstanceProfile"])
 	}
 }
 

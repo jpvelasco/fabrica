@@ -4,12 +4,24 @@ import (
 	"encoding/json"
 )
 
+// tagUnsupportedTypes lists Cloud Control resource types that do not accept a
+// "Tags" property in their desired-state schema. The Cloud Control provider for
+// these types rejects the key as extraneous, even though CloudFormation or the
+// SDK may support tagging via separate APIs.
+var tagUnsupportedTypes = map[string]struct{}{
+	"AWS::IAM::InstanceProfile": {},
+}
+
 // injectFabricaTags merges standard Fabrica tags into the desired state of a
 // resource. Cloud Control resource schemas (IAM, CodeBuild, EC2, DynamoDB, ...)
 // represent tags as a capitalized "Tags" array of {Key, Value} objects, and
 // reject any extraneous lowercase "tags" key — so we merge into "Tags" in that
 // shape. Existing tags are preserved; standard/extra tags override by key.
-func injectFabricaTags(state json.RawMessage, module, version string, extra map[string]string) json.RawMessage {
+// Returns the state unchanged for resource types that don't support tags.
+func injectFabricaTags(typeName string, state json.RawMessage, module, version string, extra map[string]string) json.RawMessage {
+	if _, unsupported := tagUnsupportedTypes[typeName]; unsupported {
+		return state
+	}
 	if len(state) == 0 {
 		state = json.RawMessage(`{}`)
 	}
