@@ -17,10 +17,13 @@ linters:
   settings:
     gosec:
       excludes:
-        - G104 # unhandled errors — intentional for best-effort cleanup
-        - G301 # directory permissions 0755 — standard for state dirs
-        - G304 # file inclusion via variable — intentional for config file reads
-        - G306 # WriteFile 0644 — config files need to be world-readable
+        - G104  # unhandled errors — intentional for best-effort cleanup
+        - G204  # command execution audit (AST pattern) — noisy for CLI subprocess calls
+        - G301  # directory permissions 0755 — standard for state dirs
+        - G304  # file inclusion via variable — intentional for config file reads
+        - G306  # WriteFile 0644 — config files need to be world-readable
+        - G702  # command injection taint analysis — noisy for CLI tool subprocess invocations
+        - G703  # path traversal taint analysis — noisy for config/state file path resolution
 
   exclusions:
     presets:

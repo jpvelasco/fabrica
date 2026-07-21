@@ -164,8 +164,12 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Run gosec
-        # G204/G304/G702/G703 match Juggernaut: intentional subprocess/path patterns
-        # and known-noisy rules. Remaining findings use #nosec with rationale.
+        # Exclusions (mirrors .golangci.yml rationale):
+        #   G204 — command execution audit (AST pattern) — noisy for CLI subprocess calls
+        #   G304 — file inclusion via variable — intentional for config file reads
+        #   G702 — command injection taint analysis — noisy for CLI tool subprocess invocations
+        #   G703 — path traversal taint analysis — noisy for config/state file path resolution
+        # Remaining findings use #nosec with per-line rationale.
         run: go run github.com/securego/gosec/v2/cmd/gosec@v2.27.1 -exclude=G204,G304,G702,G703 ./...
 
   trivy:
