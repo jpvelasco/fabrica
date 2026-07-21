@@ -13,11 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-## [0.1.0] - 2026-07-15
+## [0.1.0] - 2026-07-21
 
-First public-facing release of Fabrica: Phase 1 core plus Lore (v0.2), Perforce
-backup/restore, and Distributed DDC V1 (single home-region). Tag when ready —
-release machinery is dormant until a `v*` push.
+First public release of Fabrica: Phase 1 core plus Lore (v0.2), Perforce
+backup/restore, and Distributed DDC V1 (single home-region).
 
 ### Added
 

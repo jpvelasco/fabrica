@@ -1,6 +1,7 @@
 # Fabrica
 
 [![CI](https://github.com/jpvelasco/fabrica/actions/workflows/ci.yml/badge.svg)](https://github.com/jpvelasco/fabrica/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/fabrica-cli)](https://www.npmjs.com/package/fabrica-cli)
 [![golangci-lint](https://img.shields.io/badge/golangci--lint-enabled-brightgreen)](https://golangci-lint.run/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/github/go-mod/go-version/jpvelasco/fabrica)](go.mod)
@@ -25,11 +26,11 @@ status, tear down — with typed-phrase confirmations and recoverable partial st
 
 ## Current Status
 
-**Phase 0, Phase 1, Lore (v0.2), and DDC V1 are complete.** Perforce, Horde,
-Lore, Distributed DDC (single home-region), Workstation, CI, Deploy, Cost,
-full-stack `destroy --all`, offline cost visibility, and a CLI E2E suite ship
-today. Release machinery (GoReleaser + npm shim) is wired but dormant until a
-`v*` tag is pushed. See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium
+**v0.1.0 is the first public release.** Phase 0, Phase 1, Lore (v0.2), and DDC
+V1 are complete: Perforce, Horde, Lore, Distributed DDC (single home-region),
+Workstation, CI, Deploy, Cost, full-stack `destroy --all`, offline cost
+visibility, and a CLI E2E suite. Install via `npm install -g fabrica-cli` or
+GitHub Releases. See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium
 vision, and what's next.
 
 | Module | Commands | Status |

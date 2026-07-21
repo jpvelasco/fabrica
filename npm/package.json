@@ -1,9 +1,12 @@
 {
-  "_comment_name": "PROVISIONAL name — final npm name (fabrica-cli vs @jpvelasco/fabrica) is a release-day decision.",
   "name": "fabrica-cli",
   "version": "0.0.0",
-  "description": "Studio infrastructure-as-code CLI for AWS — Perforce, Unreal Horde, CI/CD, GameLift deploy, cloud workstations",
+  "description": "Game studio infrastructure CLI for AWS — Perforce, Unreal Horde, DDC, GameLift, cloud workstations",
   "license": "MIT",
+  "homepage": "https://github.com/jpvelasco/fabrica#readme",
+  "bugs": {
+    "url": "https://github.com/jpvelasco/fabrica/issues"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/jpvelasco/fabrica"
@@ -24,19 +27,25 @@
     "x64",
     "arm64"
   ],
+  "engines": {
+    "node": ">=18"
+  },
   "keywords": [
+    "unreal-engine",
+    "ue5",
     "aws",
-    "infrastructure-as-code",
     "gamedev",
     "perforce",
-    "unreal-horde",
+    "horde",
+    "buildgraph",
+    "ddc",
     "gamelift",
-    "cloud-workstation",
-    "ci-cd",
+    "infrastructure-as-code",
     "iac",
     "cli",
     "devops",
-    "cloud-control"
+    "cloud-workstation",
+    "game-studio"
   ],
   "files": [
     "install.js",
