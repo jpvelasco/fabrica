@@ -28,6 +28,7 @@ func tagsAsMap(t *testing.T, raw json.RawMessage) map[string]string {
 func TestInjectFabricaTags(t *testing.T) {
 	tests := []struct {
 		name     string
+		typeName string
 		state    string
 		module   string
 		version  string
@@ -36,6 +37,7 @@ func TestInjectFabricaTags(t *testing.T) {
 	}{
 		{
 			name:     "empty state gets tags added",
+			typeName: "AWS::EC2::SecurityGroup",
 			state:    `{}`,
 			module:   "horde",
 			version:  "0.1.0",
@@ -43,6 +45,7 @@ func TestInjectFabricaTags(t *testing.T) {
 		},
 		{
 			name:     "empty raw message",
+			typeName: "AWS::S3::Bucket",
 			state:    "",
 			module:   "perforce",
 			version:  "0.1.0",
@@ -50,6 +53,7 @@ func TestInjectFabricaTags(t *testing.T) {
 		},
 		{
 			name:     "existing Tags array is preserved and new tags added",
+			typeName: "AWS::S3::Bucket",
 			state:    `{"Tags": [{"Key": "existing", "Value": "val"}], "Name": "my-bucket"}`,
 			module:   "setup",
 			version:  "0.2.0",
@@ -57,6 +61,7 @@ func TestInjectFabricaTags(t *testing.T) {
 		},
 		{
 			name:     "extra tags are merged",
+			typeName: "AWS::EC2::SecurityGroup",
 			state:    `{}`,
 			module:   "horde",
 			version:  "0.1.0",
@@ -65,6 +70,7 @@ func TestInjectFabricaTags(t *testing.T) {
 		},
 		{
 			name:     "standard tag overrides existing same-key tag",
+			typeName: "AWS::EC2::SecurityGroup",
 			state:    `{"Tags": [{"Key": "ManagedBy", "Value": "someone-else"}]}`,
 			module:   "horde",
 			version:  "0.1.0",
@@ -72,8 +78,17 @@ func TestInjectFabricaTags(t *testing.T) {
 		},
 		{
 			name:     "non-json input returned unchanged",
+			typeName: "AWS::EC2::SecurityGroup",
 			state:    `not json`,
 			module:   "horde",
+			version:  "0.1.0",
+			wantTags: nil,
+		},
+		{
+			name:     "InstanceProfile denylist skips tags",
+			typeName: "AWS::IAM::InstanceProfile",
+			state:    `{"InstanceProfileName": "test-profile", "Roles": ["test-role"]}`,
+			module:   "perforce",
 			version:  "0.1.0",
 			wantTags: nil,
 		},
@@ -81,11 +96,11 @@ func TestInjectFabricaTags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := injectFabricaTags(json.RawMessage(tt.state), tt.module, tt.version, tt.extra)
+			result := injectFabricaTags(tt.typeName, json.RawMessage(tt.state), tt.module, tt.version, tt.extra)
 
 			if tt.wantTags == nil {
 				if string(result) != tt.state {
-					t.Errorf("expected unchanged, got %s", result)
+					t.Errorf("expected unchanged %q, got %s", tt.state, result)
 				}
 				return
 			}
@@ -117,7 +132,7 @@ func TestInjectFabricaTags(t *testing.T) {
 func TestInjectFabricaTagsModuleShape(t *testing.T) {
 	state := `{"GroupName":"fabrica-horde-sg","Tags":[{"Key":"ManagedBy","Value":"fabrica"},{"Key":"Name","Value":"fabrica-horde-sg"}]}`
 
-	result := injectFabricaTags(json.RawMessage(state), "horde", "1.0.0", nil)
+	result := injectFabricaTags("AWS::EC2::SecurityGroup", json.RawMessage(state), "horde", "1.0.0", nil)
 
 	var m map[string]any
 	if err := json.Unmarshal(result, &m); err != nil {

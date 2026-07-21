@@ -6,9 +6,9 @@ import "encoding/json"
 // security group. Allows TCP 8443 (NICE DCV HTTPS) inbound.
 func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 	doc := map[string]any{
-		"GroupName":   plan.SGName,
-		"Description": "Fabrica-managed security group for cloud workstation (NICE DCV)",
-		"VpcId":       plan.VPCID,
+		"GroupName":        plan.SGName,
+		"GroupDescription": "Fabrica-managed security group for cloud workstation (NICE DCV)",
+		"VpcId":            plan.VPCID,
 		"SecurityGroupIngress": []map[string]any{
 			{
 				"IpProtocol":  "tcp",

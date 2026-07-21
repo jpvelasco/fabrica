@@ -3,7 +3,6 @@ package ddc
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 )
 
 // SGDesiredState returns Cloud Control desired-state for the DDC security group.
@@ -36,7 +35,7 @@ func SGDesiredState(plan *SetupPlan) (json.RawMessage, error) {
 	}
 	doc := map[string]any{
 		"GroupName":            plan.SGName,
-		"Description":          "Fabrica-managed security group for Unreal Cloud DDC",
+		"GroupDescription":     "Fabrica-managed security group for Unreal Cloud DDC",
 		"VpcId":                plan.VPCID,
 		"SecurityGroupIngress": ingress,
 		"Tags": []map[string]string{
@@ -163,11 +162,9 @@ func ec2DesiredState(amiID, instanceType, subnetID, sgID, userData, profileName 
 		},
 	}
 	if profileName != "" {
-		if strings.HasPrefix(profileName, "arn:") {
-			doc["IamInstanceProfile"] = map[string]any{"Arn": profileName}
-		} else {
-			doc["IamInstanceProfile"] = map[string]any{"Name": profileName}
-		}
+		// Cloud Control's EC2 instance schema expects IamInstanceProfile as a
+		// plain string (the instance profile name), not an object with Name/Arn.
+		doc["IamInstanceProfile"] = profileName
 	}
 	return json.Marshal(doc)
 }

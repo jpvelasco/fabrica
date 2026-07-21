@@ -108,9 +108,8 @@ func TestInstanceDesiredState_CoreFields(t *testing.T) {
 	if len(sgIDs) != 1 || sgIDs[0] != "sg-123" {
 		t.Errorf("SecurityGroupIds = %v, want [sg-123]", sgIDs)
 	}
-	prof := doc["IamInstanceProfile"].(map[string]any)
-	if prof["Name"] != "fabrica-perforce-profile" {
-		t.Errorf("IamInstanceProfile = %v", prof)
+	if doc["IamInstanceProfile"] != "fabrica-perforce-profile" {
+		t.Errorf("IamInstanceProfile = %v, want fabrica-perforce-profile", doc["IamInstanceProfile"])
 	}
 }
 
@@ -199,9 +198,8 @@ func TestInstanceDesiredState_ARNProfile(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	prof := doc["IamInstanceProfile"].(map[string]any)
-	if prof["Arn"] == nil {
-		t.Fatalf("expected Arn profile: %v", prof)
+	if doc["IamInstanceProfile"] != "arn:aws:iam::123:instance-profile/p" {
+		t.Fatalf("expected arn profile: %v", doc["IamInstanceProfile"])
 	}
 }
 

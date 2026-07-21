@@ -6,9 +6,9 @@ import "encoding/json"
 // security group. Opens ports 5000 (HTTP) and 5002 (gRPC) to AllowedCIDR.
 func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 	doc := map[string]any{
-		"GroupName":   plan.SGName,
-		"Description": "Fabrica-managed security group for Horde coordinator",
-		"VpcId":       plan.VPCID,
+		"GroupName":        plan.SGName,
+		"GroupDescription": "Fabrica-managed security group for Horde coordinator",
+		"VpcId":            plan.VPCID,
 		"SecurityGroupIngress": []map[string]any{
 			{
 				"IpProtocol":  "tcp",

@@ -23,7 +23,7 @@ func (c *resourceClients) Create(ctx context.Context, r *fabricac.Resource) erro
 		return err
 	}
 
-	r.DesiredState = injectFabricaTags(r.DesiredState, "fabrica", c.version, nil)
+	r.DesiredState = injectFabricaTags(r.TypeName, r.DesiredState, "fabrica", c.version, nil)
 
 	out, err := c.cc.CreateResource(ctx, &cloudcontrol.CreateResourceInput{
 		TypeName:     aws.String(r.TypeName),
@@ -56,7 +56,7 @@ func (c *resourceClients) createAsync(ctx context.Context, r *fabricac.Resource)
 	if err := c.ensureClient(ctx); err != nil {
 		return err
 	}
-	r.DesiredState = injectFabricaTags(r.DesiredState, "fabrica", c.version, nil)
+	r.DesiredState = injectFabricaTags(r.TypeName, r.DesiredState, "fabrica", c.version, nil)
 
 	out, err := c.cc.CreateResource(ctx, &cloudcontrol.CreateResourceInput{
 		TypeName:     aws.String(r.TypeName),

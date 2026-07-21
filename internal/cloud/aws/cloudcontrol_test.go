@@ -425,6 +425,10 @@ type fakeCCClient struct {
 	// listPages simulates pagination: each inner slice is one page of results.
 	listPages [][]types.ResourceDescription
 	listErr   error
+
+	// statusOuts simulates GetResourceRequestStatus responses for polling paths.
+	statusOuts []*cloudcontrol.GetResourceRequestStatusOutput
+	statusErr  error
 }
 
 func (f *fakeCCClient) CreateResource(_ context.Context, _ *cloudcontrol.CreateResourceInput, _ ...func(*cloudcontrol.Options)) (*cloudcontrol.CreateResourceOutput, error) {
@@ -477,6 +481,14 @@ func (f *fakeCCClient) ListResources(_ context.Context, _ *cloudcontrol.ListReso
 }
 
 func (f *fakeCCClient) GetResourceRequestStatus(_ context.Context, _ *cloudcontrol.GetResourceRequestStatusInput, _ ...func(*cloudcontrol.Options)) (*cloudcontrol.GetResourceRequestStatusOutput, error) {
+	if f.statusErr != nil {
+		return nil, f.statusErr
+	}
+	if len(f.statusOuts) > 0 {
+		out := f.statusOuts[0]
+		f.statusOuts = f.statusOuts[1:]
+		return out, nil
+	}
 	return &cloudcontrol.GetResourceRequestStatusOutput{}, nil
 }
 
@@ -508,3 +520,120 @@ func (e *ccAPIErrorImpl) ErrorCode() string { return e.code }
 func (e *ccAPIErrorImpl) Error() string     { return e.code }
 
 func ccAPIError(code string) error { return &ccAPIErrorImpl{code: code} }
+
+// --- createAsync ---
+
+func TestCreateAsync_ImmediateIdentifier(t *testing.T) {
+	client := &fakeCCClient{
+		createOut: &cloudcontrol.CreateResourceOutput{
+			ProgressEvent: &types.ProgressEvent{
+				Identifier: awssdk.String("fleet-123"),
+			},
+		},
+	}
+	rc := newCCTestClients(client, nil)
+
+	r := &fabricac.Resource{
+		TypeName:     "AWS::GameLift::Fleet",
+		DesiredState: json.RawMessage(`{"Name":"test-fleet"}`),
+	}
+	if err := rc.createAsync(context.Background(), r); err != nil {
+		t.Fatalf("createAsync: %v", err)
+	}
+	if r.Identifier != "fleet-123" {
+		t.Errorf("Identifier = %q, want fleet-123", r.Identifier)
+	}
+}
+
+func TestCreateAsync_PollThenIdentifier(t *testing.T) {
+	client := &fakeCCClient{
+		createOut: &cloudcontrol.CreateResourceOutput{
+			ProgressEvent: &types.ProgressEvent{
+				RequestToken: awssdk.String("tok-async"),
+			},
+		},
+		statusOuts: []*cloudcontrol.GetResourceRequestStatusOutput{
+			{ProgressEvent: &types.ProgressEvent{OperationStatus: types.OperationStatusInProgress}},
+			{ProgressEvent: &types.ProgressEvent{OperationStatus: types.OperationStatusInProgress, Identifier: awssdk.String("fleet-456")}},
+		},
+	}
+	rc := newCCTestClients(client, nil)
+
+	r := &fabricac.Resource{
+		TypeName:     "AWS::GameLift::Fleet",
+		DesiredState: json.RawMessage(`{"Name":"test-fleet"}`),
+	}
+	if err := rc.createAsync(context.Background(), r); err != nil {
+		t.Fatalf("createAsync: %v", err)
+	}
+	if r.Identifier != "fleet-456" {
+		t.Errorf("Identifier = %q, want fleet-456", r.Identifier)
+	}
+}
+
+func TestCreateAsync_SDKError(t *testing.T) {
+	client := &fakeCCClient{createErr: fmt.Errorf("access denied")}
+	rc := newCCTestClients(client, nil)
+
+	r := &fabricac.Resource{TypeName: "AWS::GameLift::Fleet", DesiredState: json.RawMessage(`{}`)}
+	err := rc.createAsync(context.Background(), r)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertStringContains(t, err.Error(), "creating AWS::GameLift::Fleet")
+}
+
+func TestCreateAsync_PollFailedStatus(t *testing.T) {
+	client := &fakeCCClient{
+		createOut: &cloudcontrol.CreateResourceOutput{
+			ProgressEvent: &types.ProgressEvent{
+				RequestToken: awssdk.String("tok-async-fail"),
+			},
+		},
+		statusOuts: []*cloudcontrol.GetResourceRequestStatusOutput{
+			{ProgressEvent: &types.ProgressEvent{
+				OperationStatus: types.OperationStatusFailed,
+				ErrorCode:       types.HandlerErrorCodeGeneralServiceException,
+				StatusMessage:   awssdk.String("bad thing"),
+			}},
+		},
+	}
+	rc := newCCTestClients(client, nil)
+
+	r := &fabricac.Resource{
+		TypeName:     "AWS::GameLift::Fleet",
+		DesiredState: json.RawMessage(`{"Name":"test-fleet"}`),
+	}
+	err := rc.createAsync(context.Background(), r)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertStringContains(t, err.Error(), "bad thing")
+}
+
+func TestCreateAsync_TagsInjected(t *testing.T) {
+	client := &fakeCCClient{
+		createOut: &cloudcontrol.CreateResourceOutput{
+			ProgressEvent: &types.ProgressEvent{
+				Identifier: awssdk.String("fleet-789"),
+			},
+		},
+	}
+	rc := newCCTestClients(client, nil)
+
+	r := &fabricac.Resource{
+		TypeName:     "AWS::GameLift::Fleet",
+		DesiredState: json.RawMessage(`{}`),
+	}
+	if err := rc.createAsync(context.Background(), r); err != nil {
+		t.Fatalf("createAsync: %v", err)
+	}
+	// Tags should have been injected into DesiredState.
+	var doc map[string]any
+	if err := json.Unmarshal(r.DesiredState, &doc); err != nil {
+		t.Fatalf("DesiredState not JSON: %s", r.DesiredState)
+	}
+	if _, hasTags := doc["Tags"]; !hasTags {
+		t.Error("DesiredState missing Tags after createAsync")
+	}
+}

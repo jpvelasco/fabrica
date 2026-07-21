@@ -2,16 +2,15 @@ package perforce
 
 import (
 	"encoding/json"
-	"strings"
 )
 
 // SGDesiredState returns the Cloud Control desired-state JSON for the Perforce
 // security group. Allows TCP 1666 inbound; no inbound SSH by default.
 func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 	doc := map[string]any{
-		"GroupName":   plan.SGName,
-		"Description": "Fabrica-managed security group for Perforce Helix Core",
-		"VpcId":       plan.VPCID,
+		"GroupName":        plan.SGName,
+		"GroupDescription": "Fabrica-managed security group for Perforce Helix Core",
+		"VpcId":            plan.VPCID,
 		"SecurityGroupIngress": []map[string]any{
 			{
 				"IpProtocol":  "tcp",
@@ -57,12 +56,9 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName 
 		},
 	}
 	if instanceProfileName != "" {
-		// Cloud Control accepts Name or Arn on IamInstanceProfile.
-		if strings.HasPrefix(instanceProfileName, "arn:") {
-			doc["IamInstanceProfile"] = map[string]any{"Arn": instanceProfileName}
-		} else {
-			doc["IamInstanceProfile"] = map[string]any{"Name": instanceProfileName}
-		}
+		// Cloud Control's EC2 instance schema expects IamInstanceProfile as a
+		// plain string (the instance profile name), not an object with Name/Arn.
+		doc["IamInstanceProfile"] = instanceProfileName
 	}
 	// ImageId is intentionally omitted here; the caller resolves the latest
 	// Ubuntu 22.04 (jammy) AMI for the region and injects it if needed.
