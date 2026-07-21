@@ -198,7 +198,7 @@ func (c command) runApply(ctx context.Context, plan fabricastate.SetupPlan) erro
 	}
 
 	c.printBootstrapResults(results)
-	c.saveAccountID(plan.Account)
+	c.saveBackendConfig(plan)
 	c.printCompletion(plan, results)
 	return nil
 }
@@ -232,14 +232,26 @@ func (c command) printBootstrapResults(results []fabricastate.BootstrapResult) {
 	fmt.Fprintln(c.out)
 }
 
-func (c command) saveAccountID(account string) {
-	if c.runtime.Config.Cloud.AWS.AccountID != "" {
+func (c command) saveBackendConfig(plan fabricastate.SetupPlan) {
+	dirty := false
+	if c.runtime.Config.Cloud.AWS.AccountID == "" {
+		c.runtime.Config.Cloud.AWS.AccountID = plan.Account
+		dirty = true
+	}
+	if c.runtime.Config.State.Bucket == "" {
+		c.runtime.Config.State.Bucket = plan.Backend.Bucket
+		dirty = true
+	}
+	if c.runtime.Config.State.Table == "" {
+		c.runtime.Config.State.Table = plan.Backend.Table
+		dirty = true
+	}
+	if !dirty {
 		return
 	}
-	c.runtime.Config.Cloud.AWS.AccountID = account
 	if err := c.runtime.Config.Save(c.runtime.ConfigPath); err != nil {
 		fmt.Fprintf(c.out, "Warning: could not save config to %s: %v\n", c.runtime.ConfigFile(), err)
-		fmt.Fprintln(c.out, "Please update your config with account ID: "+account)
+		fmt.Fprintln(c.out, "Please update your config with account ID: "+plan.Account)
 	}
 }
 

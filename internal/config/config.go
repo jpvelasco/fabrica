@@ -71,6 +71,7 @@ type PerforceConfig struct {
 	VolumeSize   int                  `mapstructure:"volumeSize"   yaml:"volumeSize"`
 	VPCId        string               `mapstructure:"vpcId"        yaml:"vpcId"`
 	SubnetId     string               `mapstructure:"subnetId"     yaml:"subnetId"`
+	AllowedCIDR  string               `mapstructure:"allowedCidr"  yaml:"allowedCidr"`
 	Backup       PerforceBackupConfig `mapstructure:"backup"       yaml:"backup"`
 }
 
