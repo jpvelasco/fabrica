@@ -277,6 +277,22 @@ func TestSaveBackendConfigPopulatesEmptyFields(t *testing.T) {
 	}
 }
 
+func TestPrintIdentityHelp(t *testing.T) {
+	var buf strings.Builder
+	cmd := command{out: &buf}
+	cmd.printIdentityHelp()
+	out := buf.String()
+	if !strings.Contains(out, "Could not authenticate with AWS") {
+		t.Error("expected auth failure message")
+	}
+	if !strings.Contains(out, "aws sso login") {
+		t.Error("expected SSO login hint")
+	}
+	if !strings.Contains(out, "fabrica doctor") {
+		t.Error("expected doctor hint")
+	}
+}
+
 func TestSaveBackendConfigSkipsWhenAllSet(t *testing.T) {
 	var buf strings.Builder
 	cfg := config.Defaults()
