@@ -20,8 +20,14 @@ jobs:
       fail-fast: false
       matrix:
         # actions + go cover workflows and the CLI; javascript-typescript
-        # covers the npm/ release shim.
-        language: [actions, go, javascript-typescript]
+        # covers the npm/ release shim. Go uses autobuild so CodeQL can
+        # analyze compiled code rather than relying on source-only extraction.
+        include:
+          - language: actions
+          - language: go
+            build-mode: autobuild
+          - language: javascript-typescript
+            build-mode: none
 
     steps:
       - name: Checkout repository
@@ -32,6 +38,10 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Autobuild
+        if: matrix.build-mode == 'autobuild'
+        uses: github/codeql-action/autobuild@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
