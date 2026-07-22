@@ -80,33 +80,53 @@ func (c *resourceClients) createAsync(ctx context.Context, r *fabricac.Resource)
 		r.Identifier = id
 		return nil
 	}
-	token := aws.ToString(out.ProgressEvent.RequestToken)
+	return c.pollForIdentifier(ctx, r, aws.ToString(out.ProgressEvent.RequestToken))
+}
+
+// pollForIdentifier polls GetResourceRequestStatus until an identifier appears
+// or the operation fails. Returns after 60 seconds if no identifier is found.
+func (c *resourceClients) pollForIdentifier(ctx context.Context, r *fabricac.Resource, token string) error {
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
-		st, err := c.cc.GetResourceRequestStatus(ctx, &cloudcontrol.GetResourceRequestStatusInput{
-			RequestToken: aws.String(token),
-		})
+		id, done, err := c.pollOnce(ctx, token, r.TypeName)
 		if err != nil {
-			return fmt.Errorf("polling %s create request: %w", r.TypeName, err)
+			return err
 		}
-		ev := st.ProgressEvent
-		if ev.OperationStatus == types.OperationStatusFailed {
-			if ev.ErrorCode == types.HandlerErrorCodeAlreadyExists {
-				id := aws.ToString(ev.Identifier)
-				if id != "" {
-					r.Identifier = id
-					return nil
-				}
+		if done {
+			if id != "" {
+				r.Identifier = id
+				return nil
 			}
-			return progressEventError(r.TypeName, ev)
+			return fmt.Errorf("resource %s already exists but no identifier returned — check the AWS console", r.TypeName)
 		}
-		if id := aws.ToString(ev.Identifier); id != "" {
+		if id != "" {
 			r.Identifier = id
 			return nil
 		}
 		time.Sleep(2 * time.Second)
 	}
 	return fmt.Errorf("timed out waiting for %s identifier (60s) — check the AWS console and retry", r.TypeName)
+}
+
+// pollOnce makes a single GetResourceRequestStatus call and classifies the result.
+// Returns (identifier, done, error). Done is true when the operation has reached
+// a terminal state. A non-empty identifier with done=true means success (including
+// AlreadyExists recovery). An empty identifier with done=true means failure.
+func (c *resourceClients) pollOnce(ctx context.Context, token, typeName string) (string, bool, error) {
+	st, err := c.cc.GetResourceRequestStatus(ctx, &cloudcontrol.GetResourceRequestStatusInput{
+		RequestToken: aws.String(token),
+	})
+	if err != nil {
+		return "", false, fmt.Errorf("polling %s create request: %w", typeName, err)
+	}
+	ev := st.ProgressEvent
+	if ev.OperationStatus == types.OperationStatusFailed {
+		if ev.ErrorCode == types.HandlerErrorCodeAlreadyExists {
+			return aws.ToString(ev.Identifier), true, nil
+		}
+		return "", true, progressEventError(typeName, ev)
+	}
+	return aws.ToString(ev.Identifier), false, nil
 }
 
 // Get retrieves the current state of a resource and populates r.ActualState.

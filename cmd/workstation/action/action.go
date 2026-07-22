@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
 )
@@ -18,6 +19,10 @@ import (
 const (
 	lineWidth  = 58
 	moduleName = "workstation"
+
+	// StartVerb and StopVerb are the action verbs for start/stop.
+	StartVerb = "start"
+	StopVerb  = "stop"
 )
 
 // ActionOutput is the JSON-serialisable result of a start/stop run.
@@ -83,37 +88,18 @@ func (c *Command) SetWriteState(fn func(*fabricastate.State) error) {
 }
 
 func (c *Command) Run(ctx context.Context) error {
-	st, err := c.readState()
+	st, instanceID, err := c.validatePreAction()
 	if err != nil {
-		return fmt.Errorf("reading state: %w", err)
+		return err
 	}
-
-	m := st.GetModule(moduleName)
-	if m == nil {
-		if c.jsonOut {
-			c.printJSON(ActionOutput{Status: "not_provisioned", DryRun: c.dryRun})
-			return nil
-		}
-		fmt.Fprintln(c.out, "Workstation is not provisioned. Nothing to "+c.spec.ActionVerb+".")
+	if st == nil {
+		// Not provisioned — validatePreAction already printed the message.
 		return nil
 	}
-
-	instRes, ok := stateutil.ResourceByType(m, "AWS::EC2::Instance")
-	if !ok || instRes.Identifier == "" {
-		return fmt.Errorf("workstation has no instance in state; run 'fabrica workstation list' to inspect")
-	}
-	instanceID := instRes.Identifier
+	m := st.GetModule(moduleName)
 
 	if c.spec.IsAlreadyActive(m.Status) {
-		if c.jsonOut {
-			c.printJSON(ActionOutput{InstanceID: instanceID, Status: c.spec.AlreadyActiveStatus, DryRun: c.dryRun})
-			return nil
-		}
-		if strings.Contains(c.spec.AlreadyActiveText, "%s") {
-			fmt.Fprintf(c.out, "Instance %s "+c.spec.AlreadyActiveText+"\n", instanceID, m.Status)
-		} else {
-			fmt.Fprintf(c.out, "Instance %s "+c.spec.AlreadyActiveText+".\n", instanceID)
-		}
+		c.printAlreadyActive(instanceID)
 		return nil
 	}
 
@@ -126,20 +112,75 @@ func (c *Command) Run(ctx context.Context) error {
 		c.printPlan(m, instanceID)
 	}
 
-	if !c.assumeYes {
-		fmt.Fprintln(c.out)
-		phrase := c.confirmPhrase(instanceID)
-		c.printConfirmInstructions(phrase)
-		if !c.confirm("Enter confirmation phrase", phrase) {
-			fmt.Fprintln(c.out, "Cancelled. No AWS calls were made.")
-			return nil
-		}
-		fmt.Fprintln(c.out, "Confirmation accepted.")
-	} else if !c.jsonOut {
-		fmt.Fprintln(c.out, "Proceeding without interactive confirmation (--yes flag set).")
+	if !c.confirmAction(instanceID) {
+		return nil
 	}
 
 	return c.apply(ctx, st, m, instanceID)
+}
+
+// validatePreAction reads state and validates the module is provisioned with an instance.
+// Returns (state, instanceID, error). A "not provisioned" or "no instance" condition
+// is printed and returns nil error (informational).
+func (c *Command) validatePreAction() (*fabricastate.State, string, error) {
+	st, err := c.readState()
+	if err != nil {
+		return nil, "", fmt.Errorf("reading state: %w", err)
+	}
+
+	m := st.GetModule(moduleName)
+	if m == nil {
+		c.printNotProvisioned()
+		return nil, "", nil
+	}
+
+	instRes, ok := stateutil.ResourceByType(m, "AWS::EC2::Instance")
+	if !ok || instRes.Identifier == "" {
+		return nil, "", fmt.Errorf("workstation has no instance in state; run 'fabrica workstation list' to inspect")
+	}
+	return st, instRes.Identifier, nil
+}
+
+// printNotProvisioned handles the "not provisioned" output path (text + JSON).
+func (c *Command) printNotProvisioned() {
+	if c.jsonOut {
+		c.printJSON(ActionOutput{Status: "not_provisioned", DryRun: c.dryRun})
+		return
+	}
+	fmt.Fprintln(c.out, "Workstation is not provisioned. Nothing to "+c.spec.ActionVerb+".")
+}
+
+// printAlreadyActive prints the already-active message and returns.
+func (c *Command) printAlreadyActive(instanceID string) {
+	if c.jsonOut {
+		c.printJSON(ActionOutput{InstanceID: instanceID, Status: c.spec.AlreadyActiveStatus, DryRun: c.dryRun})
+		return
+	}
+	if strings.Contains(c.spec.AlreadyActiveText, "%s") {
+		fmt.Fprintf(c.out, "Instance %s "+c.spec.AlreadyActiveText+"\n", instanceID)
+	} else {
+		fmt.Fprintf(c.out, "Instance %s "+c.spec.AlreadyActiveText+".\n", instanceID)
+	}
+}
+
+// confirmAction handles the interactive confirmation step. Returns true when
+// the user confirmed (or --yes is set), false when the user cancelled.
+func (c *Command) confirmAction(instanceID string) bool {
+	if c.assumeYes {
+		if !c.jsonOut {
+			fmt.Fprintln(c.out, "Proceeding without interactive confirmation (--yes flag set).")
+		}
+		return true
+	}
+	fmt.Fprintln(c.out)
+	phrase := c.confirmPhrase(instanceID)
+	c.printConfirmInstructions(phrase)
+	if !c.confirm("Enter confirmation phrase", phrase) {
+		fmt.Fprintln(c.out, "Cancelled. No AWS calls were made.")
+		return false
+	}
+	fmt.Fprintln(c.out, "Confirmation accepted.")
+	return true
 }
 
 func (c *Command) apply(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, instanceID string) error {
@@ -224,6 +265,45 @@ func (c *Command) DefaultReadState() (*fabricastate.State, error) {
 // DefaultWriteState returns the default writeState implementation.
 func (c *Command) DefaultWriteState(st *fabricastate.State) error {
 	return fabricastate.WriteState(st)
+}
+
+// DefaultReadStateForRuntime returns the default readState implementation for a Runtime.
+func DefaultReadStateForRuntime(rt globals.Runtime) (*fabricastate.State, error) {
+	account, region := "", ""
+	if rt.Config != nil {
+		account = rt.Config.Cloud.AWS.AccountID
+		region = rt.Config.Cloud.AWS.Region
+	}
+	return fabricastate.ReadStateOrNew(account, region)
+}
+
+// DefaultWriteState returns the default writeState implementation.
+func DefaultWriteState(st *fabricastate.State) error {
+	return fabricastate.WriteState(st)
+}
+
+// StartSpec is the Spec for the start command.
+// DefaultExecuteAction builds the default executeAction function from a Runtime.
+// It type-asserts the provider to EC2InstanceManager and returns the appropriate
+// StartInstance or StopInstance method based on the verb.
+func DefaultExecuteAction(rt globals.Runtime, verb string) func(context.Context, string) error {
+	return func(ctx context.Context, instanceID string) error {
+		if rt.Provider == nil {
+			return fmt.Errorf("no provider configured; run 'fabrica setup' first")
+		}
+		mgr, ok := rt.Provider.(fabricac.EC2InstanceManager)
+		if !ok {
+			return fmt.Errorf("provider does not support EC2 instance management; run 'fabrica setup' first")
+		}
+		switch verb {
+		case StartVerb:
+			return mgr.StartInstance(ctx, instanceID)
+		case StopVerb:
+			return mgr.StopInstance(ctx, instanceID)
+		default:
+			return fmt.Errorf("unknown action verb: %s", verb)
+		}
+	}
 }
 
 // StartSpec is the Spec for the start command.

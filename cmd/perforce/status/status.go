@@ -111,6 +111,12 @@ func printText(out io.Writer, info modstatus.Info) {
 	fmt.Fprintln(out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(out, "  Status:        %s\n", info.ModuleStatus)
 
+	printInstanceFields(out, info)
+	printHelixCoreStatus(out, info)
+	printBackupStatus(out, info)
+}
+
+func printInstanceFields(out io.Writer, info modstatus.Info) {
 	if info.InstanceID != "" {
 		label := info.InstanceID
 		if info.InstanceState != "" {
@@ -118,43 +124,46 @@ func printText(out io.Writer, info modstatus.Info) {
 		}
 		fmt.Fprintf(out, "  Instance ID:   %s\n", label)
 	}
-
 	if info.InstanceType != "" {
 		fmt.Fprintf(out, "  Instance type: %s\n", info.InstanceType)
 	}
-
 	if info.PrivateIP != "" {
 		fmt.Fprintf(out, "  Private IP:    %s\n", info.PrivateIP)
 		fmt.Fprintf(out, "  P4PORT:        tcp:%s:%d\n", info.PrivateIP, p4Port)
 	}
-
 	if info.SGID != "" {
 		fmt.Fprintf(out, "  Security Group: %s\n", info.SGID)
 	}
-
 	if info.Version != "" {
 		fmt.Fprintf(out, "  Version:       %s\n", info.Version)
 	}
+}
 
+func printHelixCoreStatus(out io.Writer, info modstatus.Info) {
 	if info.ProbeAttempted {
 		if info.Reachable {
 			fmt.Fprintf(out, "  Helix Core:    %s (responding)\n", info.Version)
-		} else {
-			fmt.Fprintln(out, "  Helix Core:    unreachable from this machine (check VPN/network)")
+			return
 		}
-	} else if info.ModuleStatus == "provisioning" {
-		fmt.Fprintln(out, "  Helix Core:    setting up... (~3 min from launch)")
+		fmt.Fprintln(out, "  Helix Core:    unreachable from this machine (check VPN/network)")
+		return
 	}
+	if info.ModuleStatus == "provisioning" {
+		fmt.Fprintln(out, "  Helix Core:    setting up... (~3 min from launch)")
+		return
+	}
+}
 
+func printBackupStatus(out io.Writer, info modstatus.Info) {
 	if info.LastBackupAt != "" {
 		label := info.LastBackupAt
 		if info.LastBackupId != "" {
 			label += fmt.Sprintf(" (%s)", info.LastBackupId)
 		}
 		fmt.Fprintf(out, "  Last backup:   %s\n", label)
-	} else {
-		fmt.Fprintln(out, "  Last backup:   never")
+		return
 	}
+	fmt.Fprintln(out, "  Last backup:   never")
 }
 
 func printJSON(out io.Writer, info modstatus.Info) {
