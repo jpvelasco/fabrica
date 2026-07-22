@@ -87,30 +87,40 @@ jobs:
       - name: Display coverage summary
         if: runner.os == 'Linux'
         run: go tool cover -func=coverage.out
+      # Codecov standard (fabrica → roll out to sister repos):
+      #   - codecov-action@v7 only (no separate test-results-action)
+      #   - OIDC (no CODECOV_TOKEN secret) + use_pypi (reliable CLI install)
+      #   - Linux coverage upload is authoritative; PR visibility is the Codecov
+      #     GitHub App (codecov/patch status + codecov[bot] comment), not a
+      #     standalone Actions job. Do NOT add codecov/patch to ruleset required
+      #     checks — App lag must not deadlock merges (soft gate via PR template).
       - name: Upload coverage to Codecov
-        # Skip on PRs from forks: OIDC tokens aren't issued to forked-repo runs,
-        # and with no CODECOV_TOKEN fallback the tokenless upload would fail a
-        # private-repo PR (fail_ci_if_error is true). Always runs on push to main.
-        # use_pypi: true — install CLI from PyPI instead of cli.codecov.io so we
-        # skip native-binary GPG verification (fails with "No public key" when
-        # key import is empty; codecov/codecov-action#1876). Keeps fail_ci_if_error.
+        # Skip fork PRs: OIDC tokens aren't issued to forked-repo runs.
         if: runner.os == 'Linux' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
         with:
           use_oidc: true
           use_pypi: true
+          disable_search: true
           files: ./coverage.out
+          # slug pins the Codecov project when org has multiple repos
+          slug: jpvelasco/fabrica
           fail_ci_if_error: true
       - name: Upload test results to Codecov
-        # Runs even when tests fail (that's the point of Test Analytics: failed-
-        # test reporting + flaky detection). Same OIDC + fork guard as coverage.
-        # Note: test-results-action@v1.2.1 has no use_pypi input; it ships an
-        # embedded pgp_keys.asc (unlike codecov-action's keyserver import).
+        # Test Analytics (failed-test / flaky reporting). Same Action as coverage
+        # with report_type: test_results — replaces deprecated test-results-action.
+        # !cancelled() so results still upload when tests fail.
         if: ${{ !cancelled() && runner.os == 'Linux' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3  # v1.2.1
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
         with:
           use_oidc: true
+          use_pypi: true
+          disable_search: true
+          report_type: test_results
           files: ./junit.xml
+          slug: jpvelasco/fabrica
+          # Analytics must not fail the Test job if Codecov is briefly down.
+          fail_ci_if_error: false
 
   goreleaser:
     name: Release build (snapshot)

@@ -1,9 +1,13 @@
 # Codecov configuration. See https://docs.codecov.com/docs/codecov-yaml
 #
-# Coverage is uploaded from the Linux test job in .github/workflows/ci.yml via
-# OIDC (no stored CODECOV_TOKEN). Both gates below block PRs:
-#   - project: overall coverage may not drop more than the threshold
-#   - patch:   new/changed lines in a PR must meet the target
+# Upload: Linux Test job in .github/workflows/ci.yml (OIDC, no CODECOV_TOKEN).
+# PR visibility: Codecov GitHub App posts `codecov/patch` (and often a PR
+# comment) after processing the upload. That status is intentional soft gate —
+# NOT a ruleset required check (see .github/GITHUB_SETTINGS.md).
+#
+# Gates:
+#   - project: overall coverage may not drop more than the threshold vs base
+#   - patch:   new/changed lines in a PR must meet the target (90%)
 coverage:
   status:
     project:
@@ -14,6 +18,10 @@ coverage:
       default:
         target: 90%        # new/changed lines must be >=90% covered (no new
                            # function ships untested; strive for 100%)
+
+# Inline annotations on the PR Files tab (when the GitHub App is installed).
+github_checks:
+  annotations: true
 
 # Virtual coverage groupings by path — no upload changes required. Lets the
 # dashboard and PR comment break coverage down by architectural layer.
@@ -36,7 +44,7 @@ component_management:
 comment:
   layout: "reach, diff, flags, components, files"
   behavior: default
-  require_changes: false
+  require_changes: false   # still comment when coverage is unaffected (docs PRs)
 
 # Paths excluded from coverage math.
 ignore:
