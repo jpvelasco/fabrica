@@ -153,6 +153,7 @@ func TestCreateCobraAlreadyProvisioned(t *testing.T) {
 			{"typeName":"AWS::EC2::SecurityGroup","identifier":"sg-existing"},
 			{"typeName":"AWS::EC2::Instance","identifier":"i-existing"}
 		]}]}`
+	// #nosec G301 -- directory needs execute for traversal
 	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
 		t.Fatal(err)
 	}

@@ -221,6 +221,7 @@ func TestDestroyCobraReadStateError(t *testing.T) {
 // writeTestStateFile writes state to .fabrica/state.json.
 func writeTestStateFile(t *testing.T, dir, content string) {
 	t.Helper()
+	// #nosec G301 -- directory needs execute for traversal
 	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
 		t.Fatal(err)
 	}

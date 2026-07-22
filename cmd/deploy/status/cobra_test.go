@@ -65,6 +65,7 @@ func deployStateWithFleets(activeFleet, supersededFleet string) string {
 
 func writeStateFile(t *testing.T, dir, content string) {
 	t.Helper()
+	// #nosec G301 -- directory needs execute for traversal
 	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
 		t.Fatal(err)
 	}

@@ -52,7 +52,7 @@ func writeTempBuildGraph(t *testing.T) string {
 	xml := `<?xml version="1.0"?><BuildGraph xmlns="http://www.epicgames.com/BuildGraph">
 		<Agent Name="BuildAgent" Type="Win64"><Node Name="Compile"/></Agent>
 	</BuildGraph>`
-	if err := os.WriteFile(path, []byte(xml), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(xml), 0600); err != nil {
 		t.Fatal(err)
 	}
 	return path

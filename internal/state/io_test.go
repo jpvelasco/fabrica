@@ -28,6 +28,7 @@ func TestReadStateOrNew_FileMissing_ReturnsNew(t *testing.T) {
 func TestReadStateOrNew_CorruptedJSON_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	// #nosec G301 -- directory needs execute for traversal
 	if err := os.MkdirAll(".fabrica", 0700); err != nil {
 		t.Fatalf("setup mkdir: %v", err)
 	}
