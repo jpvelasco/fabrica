@@ -3,6 +3,8 @@ package ddc
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/jpvelasco/fabrica/internal/ec2state"
 )
 
 // SGDesiredState returns Cloud Control desired-state for the DDC security group.
@@ -127,44 +129,35 @@ func InstanceProfileDesiredState(plan *SetupPlan) (json.RawMessage, error) {
 
 // InstanceDesiredState returns Cloud Control desired-state for the DDC (Jupiter) EC2 instance.
 func InstanceDesiredState(plan *SetupPlan, sgID, userData, instanceProfileName string) (json.RawMessage, error) {
-	return ec2DesiredState(plan.AmiID, plan.InstanceType, plan.SubnetID, sgID, userData, instanceProfileName, plan.VolumeSize, plan.InstanceName)
+	return ec2DesiredState(
+		plan.AmiID, plan.InstanceType, plan.SubnetID, sgID, userData, instanceProfileName,
+		plan.VolumeSize, plan.InstanceName,
+	)
 }
 
 // ScyllaInstanceDesiredState returns desired-state for the optional 1-node Scylla EC2.
 func ScyllaInstanceDesiredState(plan *SetupPlan, sgID, userData, instanceProfileName string) (json.RawMessage, error) {
-	return ec2DesiredState(plan.ScyllaAmiID, plan.ScyllaInstanceType, plan.SubnetID, sgID, userData, instanceProfileName, plan.ScyllaVolumeSize, plan.ScyllaInstanceName)
+	return ec2DesiredState(
+		plan.ScyllaAmiID, plan.ScyllaInstanceType, plan.SubnetID, sgID, userData, instanceProfileName,
+		plan.ScyllaVolumeSize, plan.ScyllaInstanceName,
+	)
 }
 
 func ec2DesiredState(amiID, instanceType, subnetID, sgID, userData, profileName string, volumeSize int, name string) (json.RawMessage, error) {
-	doc := map[string]any{
-		"ImageId":          amiID,
-		"InstanceType":     instanceType,
-		"SubnetId":         subnetID,
-		"SecurityGroupIds": []string{sgID},
-		"UserData":         userData,
-		"BlockDeviceMappings": []map[string]any{
-			{
-				"DeviceName": "/dev/sdf",
-				"Ebs": map[string]any{
-					"VolumeSize":          volumeSize,
-					"VolumeType":          "gp3",
-					"DeleteOnTermination": true,
-				},
-			},
-		},
-		"Tags": []map[string]string{
-			{"Key": "ManagedBy", "Value": "fabrica"},
-			{"Key": "Name", "Value": name},
-			{"Key": "FabricaModule", "Value": "ddc"},
-		},
-		"MetadataOptions": map[string]any{
-			"HttpTokens": "required",
-		},
+	opts := []ec2state.InstanceOption{
+		ec2state.WithAMI(amiID),
+		ec2state.WithInstanceType(instanceType),
+		ec2state.WithSubnet(subnetID),
+		ec2state.WithSecurityGroup(sgID),
+		ec2state.WithUserData(userData),
+		ec2state.WithVolumeSize(volumeSize),
+		ec2state.WithInstanceName(name),
+	}
+	dsOpts := []ec2state.DesiredStateOption{
+		ec2state.WithExtraTags("FabricaModule", "ddc"),
 	}
 	if profileName != "" {
-		// Cloud Control's EC2 instance schema expects IamInstanceProfile as a
-		// plain string (the instance profile name), not an object with Name/Arn.
-		doc["IamInstanceProfile"] = profileName
+		dsOpts = append(dsOpts, ec2state.WithIAMProfile(profileName))
 	}
-	return json.Marshal(doc)
+	return ec2state.Build(opts, dsOpts...)
 }

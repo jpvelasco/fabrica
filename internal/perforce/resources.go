@@ -2,6 +2,8 @@ package perforce
 
 import (
 	"encoding/json"
+
+	"github.com/jpvelasco/fabrica/internal/ec2state"
 )
 
 // SGDesiredState returns the Cloud Control desired-state JSON for the Perforce
@@ -34,38 +36,26 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 // When imageID is non-empty, it is injected as ImageId; otherwise the field
 // is omitted (useful for dry-runs where the AMI isn't resolved yet).
 func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName, imageID string) (json.RawMessage, error) {
-	doc := map[string]any{
-		"InstanceType":     plan.InstanceType,
-		"SubnetId":         plan.SubnetID,
-		"SecurityGroupIds": []string{sgID},
-		"UserData":         userData,
-		"BlockDeviceMappings": []map[string]any{
-			{
-				"DeviceName": "/dev/sdf",
-				"Ebs": map[string]any{
-					"VolumeSize":          plan.VolumeSize,
-					"VolumeType":          "gp3",
-					"DeleteOnTermination": false,
-				},
-			},
-		},
-		"Tags": []map[string]string{
-			{"Key": "ManagedBy", "Value": "fabrica"},
-			{"Key": "Name", "Value": plan.InstanceName},
-		},
-		"MetadataOptions": map[string]any{
-			"HttpTokens": "required",
-		},
-	}
-	if instanceProfileName != "" {
-		// Cloud Control's EC2 instance schema expects IamInstanceProfile as a
-		// plain string (the instance profile name), not an object with Name/Arn.
-		doc["IamInstanceProfile"] = instanceProfileName
+	opts := []ec2state.InstanceOption{
+		ec2state.WithInstanceType(plan.InstanceType),
+		ec2state.WithSubnet(plan.SubnetID),
+		ec2state.WithSecurityGroup(sgID),
+		ec2state.WithUserData(userData),
+		ec2state.WithVolumeSize(plan.VolumeSize),
+		ec2state.WithInstanceName(plan.InstanceName),
 	}
 	if imageID != "" {
-		doc["ImageId"] = imageID
+		opts = append(opts, ec2state.WithAMI(imageID))
 	}
-	return json.Marshal(doc)
+
+	dsOpts := []ec2state.DesiredStateOption{
+		ec2state.WithDeleteOnTermination(false),
+	}
+	if instanceProfileName != "" {
+		dsOpts = append(dsOpts, ec2state.WithIAMProfile(instanceProfileName))
+	}
+
+	return ec2state.Build(opts, dsOpts...)
 }
 
 // RoleDesiredState returns Cloud Control desired-state for the Perforce EC2

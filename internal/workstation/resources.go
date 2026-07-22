@@ -1,6 +1,10 @@
 package workstation
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/jpvelasco/fabrica/internal/ec2state"
+)
 
 // SGDesiredState returns the Cloud Control desired-state JSON for the workstation
 // security group. Allows TCP 8443 (NICE DCV HTTPS) inbound.
@@ -27,31 +31,18 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 }
 
 // InstanceDesiredState returns the Cloud Control desired-state JSON for the
-// workstation EC2 instance.
+// workstation EC2 instance. Uses /dev/sda1 as the root EBS device.
 func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMessage, error) {
-	doc := map[string]any{
-		"ImageId":          plan.AmiID,
-		"InstanceType":     plan.InstanceType,
-		"SubnetId":         plan.SubnetID,
-		"SecurityGroupIds": []string{sgID},
-		"UserData":         userData,
-		"BlockDeviceMappings": []map[string]any{
-			{
-				"DeviceName": "/dev/sda1",
-				"Ebs": map[string]any{
-					"VolumeSize":          plan.VolumeSize,
-					"VolumeType":          "gp3",
-					"DeleteOnTermination": true,
-				},
-			},
+	return ec2state.Build(
+		[]ec2state.InstanceOption{
+			ec2state.WithAMI(plan.AmiID),
+			ec2state.WithInstanceType(plan.InstanceType),
+			ec2state.WithSubnet(plan.SubnetID),
+			ec2state.WithSecurityGroup(sgID),
+			ec2state.WithUserData(userData),
+			ec2state.WithVolumeSize(plan.VolumeSize),
+			ec2state.WithInstanceName(plan.InstanceName),
 		},
-		"Tags": []map[string]string{
-			{"Key": "ManagedBy", "Value": "fabrica"},
-			{"Key": "Name", "Value": plan.InstanceName},
-		},
-		"MetadataOptions": map[string]any{
-			"HttpTokens": "required",
-		},
-	}
-	return json.Marshal(doc)
+		ec2state.WithDeviceName("/dev/sda1"),
+	)
 }

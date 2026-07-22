@@ -136,42 +136,9 @@ func (c Command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 		fmt.Fprintln(c.Out)
 	}
 
-	destroyed := make([]string, 0, len(resources))
-
-	for _, res := range resources {
-		r := res // copy for mutation
-
-		if r.TypeName == "AWS::EC2::Instance" {
-			skip, err := c.checkInstanceBeforeDelete(ctx, &r)
-			if err != nil {
-				return err
-			}
-			if skip {
-				// Instance already gone — remove from state and continue.
-				c.removeResourceAndPersist(st, m, r.TypeName)
-				continue
-			}
-		}
-
-		if !c.JSONOut {
-			fmt.Fprintf(c.Out, "Deleting %s %s...\n", r.TypeName, r.Identifier)
-		}
-
-		if err := c.DeleteResource(ctx, &r); err != nil {
-			if errors.Is(err, cloud.ErrResourceNotFound) {
-				if !c.JSONOut {
-					fmt.Fprintf(c.Out, "  Already deleted: %s\n", r.Identifier)
-				}
-			} else {
-				return fmt.Errorf("deleting %s %s: %w", r.TypeName, r.Identifier, err)
-			}
-		} else if !c.JSONOut {
-			fmt.Fprintf(c.Out, "  Deleted: %s\n", r.Identifier)
-		}
-		destroyed = append(destroyed, r.Identifier)
-
-		// Remove this resource from state immediately so partial failure is recoverable.
-		c.removeResourceAndPersist(st, m, r.TypeName)
+	destroyed, err := c.deleteResources(ctx, st, m, resources)
+	if err != nil {
+		return err
 	}
 
 	// All resources gone — remove the module from state entirely.
@@ -191,6 +158,51 @@ func (c Command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 		fmt.Fprintf(c.Out, "  Deleted: %s\n", id)
 	}
 	return nil
+}
+
+// deleteResources iterates over the resources in order, deleting each one and
+// removing it from state afterward so partial failures are recoverable.
+// Returns the list of destroyed identifiers and any error that stopped the loop.
+func (c Command) deleteResources(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, resources []cloud.Resource) ([]string, error) {
+	destroyed := make([]string, 0, len(resources))
+
+	for _, res := range resources {
+		r := res // copy for mutation
+
+		if r.TypeName == "AWS::EC2::Instance" {
+			skip, err := c.checkInstanceBeforeDelete(ctx, &r)
+			if err != nil {
+				return nil, err
+			}
+			if skip {
+				// Instance already gone — remove from state and continue.
+				c.removeResourceAndPersist(st, m, r.TypeName)
+				continue
+			}
+		}
+
+		if !c.JSONOut {
+			fmt.Fprintf(c.Out, "Deleting %s %s...\n", r.TypeName, r.Identifier)
+		}
+
+		if err := c.DeleteResource(ctx, &r); err != nil {
+			if errors.Is(err, cloud.ErrResourceNotFound) {
+				if !c.JSONOut {
+					fmt.Fprintf(c.Out, "  Already deleted: %s\n", r.Identifier)
+				}
+			} else {
+				return nil, fmt.Errorf("deleting %s %s: %w", r.TypeName, r.Identifier, err)
+			}
+		} else if !c.JSONOut {
+			fmt.Fprintf(c.Out, "  Deleted: %s\n", r.Identifier)
+		}
+		destroyed = append(destroyed, r.Identifier)
+
+		// Remove this resource from state immediately so partial failure is recoverable.
+		c.removeResourceAndPersist(st, m, r.TypeName)
+	}
+
+	return destroyed, nil
 }
 
 // removeResourceAndPersist drops a resource from the module and writes state,

@@ -61,65 +61,96 @@ type deleteCommand struct {
 }
 
 func (c deleteCommand) run(ctx context.Context) error {
-	st, err := c.readState()
+	st, instID, backupRoot, err := c.resolveTarget()
 	if err != nil {
-		return fmt.Errorf("reading state: %w", err)
+		return err
 	}
-	m := st.GetModule(moduleName)
-	if m == nil {
-		return fmt.Errorf("Perforce is not provisioned. Run 'fabrica perforce create' first")
-	}
-	inst, ok := stateutil.ResourceByType(m, "AWS::EC2::Instance")
-	if !ok || inst.Identifier == "" {
-		return fmt.Errorf("Perforce instance not found in state")
-	}
-
-	cfg := perforceBackupCfg(c.runtime.Config)
-	backupRoot := perforce.ResolveBackupPath(cfg.Path)
 
 	if c.dryRun {
 		fmt.Fprintf(c.out, "Would delete backup %s under %s (and S3 copy if metadata has s3Uri)\n", c.backupID, backupRoot)
 		return nil
 	}
 
-	if !c.assumeYes {
-		fmt.Fprintf(c.out, "This will permanently delete backup %s (local and S3 if exported).\n", c.backupID)
-		if !c.confirm("Delete backup?") {
-			fmt.Fprintln(c.out, "Cancelled.")
-			return nil
-		}
+	if !c.confirmDelete() {
+		return nil
 	}
 
 	if c.runRemote == nil {
 		return fmt.Errorf("provider does not support remote commands (SSM)")
 	}
 
-	// Read metadata for optional S3 URI.
+	if err := c.executeDelete(ctx, instID, backupRoot); err != nil {
+		return err
+	}
+
+	c.clearLastBackup(st)
+	fmt.Fprintf(c.out, "Deleted backup %s\n", c.backupID)
+	return nil
+}
+
+func (c deleteCommand) resolveTarget() (*fabricastate.State, string, string, error) {
+	st, err := c.readState()
+	if err != nil {
+		return nil, "", "", fmt.Errorf("reading state: %w", err)
+	}
+	m := st.GetModule(moduleName)
+	if m == nil {
+		return nil, "", "", fmt.Errorf("Perforce is not provisioned. Run 'fabrica perforce create' first")
+	}
+	inst, ok := stateutil.ResourceByType(m, "AWS::EC2::Instance")
+	if !ok || inst.Identifier == "" {
+		return nil, "", "", fmt.Errorf("Perforce instance not found in state")
+	}
+	cfg := perforceBackupCfg(c.runtime.Config)
+	backupRoot := perforce.ResolveBackupPath(cfg.Path)
+	return st, inst.Identifier, backupRoot, nil
+}
+
+func (c deleteCommand) confirmDelete() bool {
+	if c.assumeYes {
+		return true
+	}
+	fmt.Fprintf(c.out, "This will permanently delete backup %s (local and S3 if exported).\n", c.backupID)
+	if !c.confirm("Delete backup?") {
+		fmt.Fprintln(c.out, "Cancelled.")
+		return false
+	}
+	return true
+}
+
+func (c deleteCommand) readBackupMetadata(ctx context.Context, instID, backupRoot string) string {
 	s3URI := ""
 	metaScript, err := perforce.GenerateReadMetaScript(backupRoot, c.backupID)
 	if err != nil {
-		return err
+		return ""
 	}
-	metaRes, err := c.runRemote(ctx, inst.Identifier, []string{metaScript})
+	metaRes, err := c.runRemote(ctx, instID, []string{metaScript})
 	if err == nil {
 		if meta, perr := perforce.ParseBackupMeta([]byte(strings.TrimSpace(metaRes.Stdout))); perr == nil {
 			s3URI = meta.S3URI
 		}
 	}
+	return s3URI
+}
 
+func (c deleteCommand) executeDelete(ctx context.Context, instID, backupRoot string) error {
+	s3URI := c.readBackupMetadata(ctx, instID, backupRoot)
 	delScript, err := perforce.GenerateDeleteScript(backupRoot, c.backupID, s3URI)
 	if err != nil {
 		return err
 	}
-	res, err := c.runRemote(ctx, inst.Identifier, []string{delScript})
+	res, err := c.runRemote(ctx, instID, []string{delScript})
 	if err != nil {
 		return fmt.Errorf("delete remote command failed: %w", err)
 	}
 	if res.ExitCode != 0 {
 		return fmt.Errorf("delete script exit %d: %s", res.ExitCode, res.Stderr)
 	}
+	return nil
+}
 
-	// Clear last-backup props if this was the cached id.
+func (c deleteCommand) clearLastBackup(st *fabricastate.State) {
+	m := st.GetModule(moduleName)
 	for i := range m.Resources {
 		if m.Resources[i].TypeName == "AWS::EC2::Instance" && m.Resources[i].Properties != nil {
 			if m.Resources[i].Properties["lastBackupId"] == c.backupID {
@@ -132,7 +163,4 @@ func (c deleteCommand) run(ctx context.Context) error {
 	if err := c.writeState(st); err != nil {
 		fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
 	}
-
-	fmt.Fprintf(c.out, "Deleted backup %s\n", c.backupID)
-	return nil
 }

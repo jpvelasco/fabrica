@@ -89,15 +89,36 @@ func (c command) run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reading state: %w", err)
 	}
+
 	m := st.GetModule(moduleName)
 	if m == nil {
-		if c.jsonOut {
-			return c.emitJSON(statusJSON{Provisioned: false})
-		}
-		fmt.Fprintln(c.out, "Deploy is not set up. Run 'fabrica deploy setup' to begin.")
-		return nil
+		return c.handleNotProvisioned()
 	}
 
+	alias, active, candidates := c.classifyFleets(ctx, m)
+
+	if c.jsonOut {
+		return c.emitJSON(statusJSON{
+			Provisioned:        true,
+			Alias:              alias.Identifier,
+			ActiveFleet:        active,
+			RollbackCandidates: candidates,
+		})
+	}
+
+	c.renderText(alias, active, candidates)
+	return nil
+}
+
+func (c command) handleNotProvisioned() error {
+	if c.jsonOut {
+		return c.emitJSON(statusJSON{Provisioned: false})
+	}
+	fmt.Fprintln(c.out, "Deploy is not set up. Run 'fabrica deploy setup' to begin.")
+	return nil
+}
+
+func (c command) classifyFleets(ctx context.Context, m *fabricastate.ModuleState) (fabricastate.ModuleResource, *fleetJSON, []fleetJSON) {
 	alias, _ := stateutil.ResourceByType(m, deploy.TypeGameLiftAlias)
 
 	var active *fleetJSON
@@ -120,22 +141,25 @@ func (c command) run(ctx context.Context) error {
 			candidates = append(candidates, f)
 		}
 	}
+	return alias, active, candidates
+}
 
-	if c.jsonOut {
-		return c.emitJSON(statusJSON{
-			Provisioned:        true,
-			Alias:              alias.Identifier,
-			ActiveFleet:        active,
-			RollbackCandidates: candidates,
-		})
-	}
+func (c command) renderText(alias fabricastate.ModuleResource, active *fleetJSON, candidates []fleetJSON) {
+	c.renderHeader(alias, active, candidates)
+	c.renderActiveFleet(active)
+	c.renderRollbackCandidates(candidates)
+	c.renderNextSteps(active, candidates)
+}
 
+func (c command) renderHeader(alias fabricastate.ModuleResource, active *fleetJSON, candidates []fleetJSON) {
 	fmt.Fprintln(c.out, "Deploy status")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "%s\n", summaryLine(alias.Identifier, active, candidates))
 	fmt.Fprintf(c.out, "  Alias: %s\n", orDash(alias.Identifier))
 	fmt.Fprintln(c.out)
+}
 
+func (c command) renderActiveFleet(active *fleetJSON) {
 	fmt.Fprintln(c.out, "Active fleet (alias points here):")
 	if active != nil {
 		fmt.Fprintf(c.out, "  %s %s  build=%s  status=%s\n",
@@ -144,7 +168,9 @@ func (c command) run(ctx context.Context) error {
 		fmt.Fprintln(c.out, "  (none) — run 'fabrica deploy promote <build-version>' to deploy a build")
 	}
 	fmt.Fprintln(c.out)
+}
 
+func (c command) renderRollbackCandidates(candidates []fleetJSON) {
 	fmt.Fprintln(c.out, "Rollback candidates (retained fleets):")
 	if len(candidates) > 0 {
 		for _, f := range candidates {
@@ -154,7 +180,9 @@ func (c command) run(ctx context.Context) error {
 	} else {
 		fmt.Fprintln(c.out, "  (none) — only one fleet promoted so far")
 	}
+}
 
+func (c command) renderNextSteps(active *fleetJSON, candidates []fleetJSON) {
 	fmt.Fprintln(c.out)
 	fmt.Fprintln(c.out, "Next steps:")
 	if active == nil {
@@ -165,7 +193,6 @@ func (c command) run(ctx context.Context) error {
 	if len(candidates) > 0 {
 		fmt.Fprintln(c.out, "  fabrica deploy rollback                  Flip the alias to the newest retained fleet")
 	}
-	return nil
 }
 
 // summaryLine is the one-line headline at the top of the status output,
