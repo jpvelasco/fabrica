@@ -55,7 +55,7 @@ state:
 deploy:
   buildBucket: test-builds-123456789012
 `
-	if err := os.WriteFile("fabrica.yaml", []byte(cfgContent), 0644); err != nil {
+	if err := os.WriteFile("fabrica.yaml", []byte(cfgContent), 0600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	t.Cleanup(func() { os.Remove("fabrica.yaml") })
