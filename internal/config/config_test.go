@@ -329,3 +329,219 @@ func TestCostConfigRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected first budget: %+v", loaded.Cost.Budgets[0])
 	}
 }
+
+// TestLoadInvalidYAML verifies error when YAML is malformed.
+func TestLoadInvalidYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.yaml")
+	if err := os.WriteFile(path, []byte(":::invalid yaml content {{{"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for invalid YAML, got nil")
+	}
+	if !strings.Contains(err.Error(), "parsing config") {
+		t.Errorf("expected parsing error, got: %v", err)
+	}
+}
+
+// TestLoadEmptyFile verifies empty file returns defaults.
+func TestLoadEmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty.yaml")
+	if err := os.WriteFile(path, []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error for empty file: %v", err)
+	}
+	// Empty file should still return defaults
+	if cfg.Cloud.Provider != "aws" {
+		t.Errorf("provider = %q, want aws", cfg.Cloud.Provider)
+	}
+}
+
+// TestSaveAndLoadRoundTrip verifies Save then Load round-trips config data.
+func TestSaveAndLoadRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "roundtrip.yaml")
+
+	cfg := Defaults()
+	cfg.Cloud.AWS.Region = "eu-west-1"
+	cfg.Cloud.AWS.AccountID = "987654321098"
+	cfg.State.Bucket = "my-state-bucket"
+
+	if err := cfg.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Cloud.AWS.Region != "eu-west-1" {
+		t.Errorf("region = %q, want eu-west-1", loaded.Cloud.AWS.Region)
+	}
+	if loaded.Cloud.AWS.AccountID != "987654321098" {
+		t.Errorf("account = %q, want 987654321098", loaded.Cloud.AWS.AccountID)
+	}
+	if loaded.State.Bucket != "my-state-bucket" {
+		t.Errorf("bucket = %q, want my-state-bucket", loaded.State.Bucket)
+	}
+}
+
+// TestSaveEmptyPath uses default filename.
+func TestSaveEmptyPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	cfg := Defaults()
+	cfg.Cloud.AWS.AccountID = "123456789012"
+
+	if err := cfg.Save(""); err != nil {
+		t.Fatalf("Save with empty path: %v", err)
+	}
+
+	// Verify the default file was created
+	if _, err := os.Stat(DefaultFile); err != nil {
+		t.Fatalf("expected default file %s to exist: %v", DefaultFile, err)
+	}
+}
+
+// TestNormalizeDefaults verifies normalize fills in missing defaults.
+func TestNormalizeDefaults(t *testing.T) {
+	cfg := &Config{}
+	cfg.normalize()
+
+	if cfg.Cloud.Provider != DefaultProvider {
+		t.Errorf("provider = %q, want %s", cfg.Cloud.Provider, DefaultProvider)
+	}
+	if cfg.Cloud.AWS.Region != DefaultAWSRegion {
+		t.Errorf("region = %q, want %s", cfg.Cloud.AWS.Region, DefaultAWSRegion)
+	}
+	if cfg.State.Table != DefaultStateTable {
+		t.Errorf("table = %q, want %s", cfg.State.Table, DefaultStateTable)
+	}
+	if cfg.Cloud.AWS.Tags == nil {
+		t.Error("expected non-nil tags map after normalize")
+	}
+}
+
+// TestNormalizePreservesExistingValues verifies normalize does not overwrite set values.
+func TestNormalizePreservesExistingValues(t *testing.T) {
+	cfg := &Config{
+		Cloud: Cloud{
+			Provider: "aws",
+			AWS: AWS{
+				Region: "ap-southeast-1",
+				Tags:   map[string]string{"env": "prod"},
+			},
+		},
+		State: State{
+			Table: "custom-lock-table",
+		},
+	}
+	cfg.normalize()
+
+	if cfg.Cloud.AWS.Region != "ap-southeast-1" {
+		t.Errorf("region = %q, want ap-southeast-1 (should not be overwritten)", cfg.Cloud.AWS.Region)
+	}
+	if cfg.State.Table != "custom-lock-table" {
+		t.Errorf("table = %q, want custom-lock-table (should not be overwritten)", cfg.State.Table)
+	}
+	if cfg.Cloud.AWS.Tags["env"] != "prod" {
+		t.Errorf("tags.env = %q, want prod", cfg.Cloud.AWS.Tags["env"])
+	}
+}
+
+// TestLoadProfileSpecific verifies loading a profile-specific config file.
+func TestLoadProfileSpecific(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fabrica-prod.yaml")
+	content := `cloud:
+  aws:
+    region: us-west-2
+    accountId: "999999999999"
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Cloud.AWS.Region != "us-west-2" {
+		t.Errorf("region = %q, want us-west-2", cfg.Cloud.AWS.Region)
+	}
+	if cfg.Cloud.AWS.AccountID != "999999999999" {
+		t.Errorf("accountID = %q, want 999999999999", cfg.Cloud.AWS.AccountID)
+	}
+}
+
+// TestYAMLWithAllFields verifies YAML output includes all config sections.
+func TestYAMLWithAllFields(t *testing.T) {
+	cfg := Defaults()
+	cfg.Cloud.AWS.Region = "us-east-1"
+	cfg.Cloud.AWS.AccountID = "123456789012"
+	cfg.Perforce.InstanceType = "m5.xlarge"
+	cfg.Horde.InstanceType = "m7i.2xlarge"
+
+	data, err := cfg.YAML()
+	if err != nil {
+		t.Fatalf("YAML: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{"cloud:", "perforce:", "horde:", "accountId:"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("YAML missing %q:\n%s", want, text)
+		}
+	}
+}
+
+// TestSaveToReadOnlyPath verifies Save returns error when path is not writable.
+func TestSaveToReadOnlyPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "readonly", "fabrica.yaml")
+
+	cfg := Defaults()
+	err := cfg.Save(path)
+	if err == nil {
+		t.Fatal("expected error when parent directory does not exist")
+	}
+	if !strings.Contains(err.Error(), "writing config") {
+		t.Errorf("expected writing config error, got: %v", err)
+	}
+}
+
+// TestLoadWithPartialDefaults verifies that loading a partial file still
+// has default values for missing sections.
+func TestLoadWithPartialDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "partial.yaml")
+	content := `cloud:
+  aws:
+    region: eu-central-1
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Cloud.AWS.Region != "eu-central-1" {
+		t.Errorf("region = %q, want eu-central-1", cfg.Cloud.AWS.Region)
+	}
+	// Provider defaults preserved
+	if cfg.Cloud.Provider != "aws" {
+		t.Errorf("provider = %q, want aws (default)", cfg.Cloud.Provider)
+	}
+	// Tags should not be nil after Load (normalize is called)
+	if cfg.Cloud.AWS.Tags == nil {
+		t.Error("tags should not be nil after Load")
+	}
+}

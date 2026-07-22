@@ -1,7 +1,9 @@
 package cost
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -258,5 +260,200 @@ func TestEstimatorsNotNil(t *testing.T) {
 		if e == nil {
 			t.Errorf("%s: Get returned nil estimator", n)
 		}
+	}
+}
+
+// TestReportRender verifies the Report.Render output format.
+func TestReportRender(t *testing.T) {
+	var b strings.Builder
+	report := Report{
+		Results: []EstimateResult{
+			{
+				Resource: Resource{TypeName: "AWS::S3::Bucket", Name: "state-bucket"},
+				Monthly:  Monthly{Amount: 0.023, Confidence: High},
+			},
+			{
+				Resource: Resource{TypeName: "AWS::DynamoDB::Table", Name: "lock-table"},
+				Monthly:  Monthly{Amount: 0.12, Confidence: Medium},
+			},
+		},
+		Total:      0.143,
+		Confidence: Medium,
+	}
+	report.Render(&b, 50)
+	out := b.String()
+	if !strings.Contains(out, "Cost estimate:") {
+		t.Errorf("missing header:\n%s", out)
+	}
+	if !strings.Contains(out, "state-bucket") {
+		t.Errorf("missing resource name:\n%s", out)
+	}
+	if !strings.Contains(out, "lock-table") {
+		t.Errorf("missing resource name:\n%s", out)
+	}
+	if !strings.Contains(out, "Confidence: medium") {
+		t.Errorf("missing confidence:\n%s", out)
+	}
+}
+
+// TestReportRenderWithErrors verifies error resources show "(no estimate)".
+func TestReportRenderWithErrors(t *testing.T) {
+	var b strings.Builder
+	report := Report{
+		Results: []EstimateResult{
+			{
+				Resource: Resource{TypeName: "AWS::S3::Bucket", Name: "good-bucket"},
+				Monthly:  Monthly{Amount: 0.023, Confidence: High},
+			},
+			{
+				Resource: Resource{TypeName: "AWS::Unknown::Type", Name: "unknown-resource"},
+				Err:      fmt.Errorf("no cost estimator for unknown type"),
+			},
+		},
+		Total:      0.023,
+		Confidence: Low,
+	}
+	report.Render(&b, 50)
+	out := b.String()
+	if !strings.Contains(out, "unknown-resource") {
+		t.Errorf("missing resource name:\n%s", out)
+	}
+	if !strings.Contains(out, "(no estimate)") {
+		t.Errorf("missing no-estimate marker:\n%s", out)
+	}
+}
+
+// TestReportRenderEmpty verifies empty report renders correctly.
+func TestReportRenderEmpty(t *testing.T) {
+	var b strings.Builder
+	report := Report{
+		Results:    []EstimateResult{},
+		Total:      0,
+		Confidence: High,
+	}
+	report.Render(&b, 50)
+	out := b.String()
+	if !strings.Contains(out, "Cost estimate:") {
+		t.Errorf("missing header:\n%s", out)
+	}
+}
+
+// TestBudgetStateString verifies BudgetState.String output.
+func TestBudgetStateString(t *testing.T) {
+	tests := []struct {
+		state BudgetState
+		want  string
+	}{
+		{BudgetOK, "OK"},
+		{BudgetWarn, "WARN"},
+		{BudgetOver, "OVER"},
+		{BudgetState(99), "OK"},
+	}
+	for _, tt := range tests {
+		if got := tt.state.String(); got != tt.want {
+			t.Errorf("BudgetState(%d).String() = %q, want %q", tt.state, got, tt.want)
+		}
+	}
+}
+
+// TestEvaluateBudgetsMultipleScopes verifies multiple budgets with different scopes.
+func TestEvaluateBudgetsMultipleScopes(t *testing.T) {
+	perScope := map[string]float64{
+		"total":    500,
+		"perforce": 100,
+		"horde":    200,
+	}
+	thresholds := []BudgetThreshold{
+		{Scope: "total", Monthly: 1000},
+		{Scope: "perforce", Monthly: 50},
+		{Scope: "horde", Monthly: 250, WarnPct: 70},
+		{Scope: "deploy", Monthly: 200},
+	}
+	statuses := EvaluateBudgets(perScope, thresholds)
+	if len(statuses) != 4 {
+		t.Fatalf("want 4 statuses, got %d", len(statuses))
+	}
+	byScope := map[string]BudgetStatus{}
+	for _, s := range statuses {
+		byScope[s.Scope] = s
+	}
+	if byScope["total"].State != BudgetOK {
+		t.Errorf("total: want OK, got %v", byScope["total"].State)
+	}
+	if byScope["perforce"].State != BudgetOver {
+		t.Errorf("perforce: want Over, got %v", byScope["perforce"].State)
+	}
+	if byScope["horde"].State != BudgetWarn {
+		t.Errorf("horde: want Warn (200 >= 250*0.7=175), got %v", byScope["horde"].State)
+	}
+	if !byScope["deploy"].NoMatch {
+		t.Error("deploy: want NoMatch=true")
+	}
+}
+
+// TestEvaluateBudgetsZeroThreshold verifies zero monthly threshold.
+func TestEvaluateBudgetsZeroThreshold(t *testing.T) {
+	statuses := EvaluateBudgets(map[string]float64{"a": 100}, []BudgetThreshold{
+		{Scope: "a", Monthly: 0},
+	})
+	if len(statuses) != 1 {
+		t.Fatalf("want 1 status, got %d", len(statuses))
+	}
+	if statuses[0].State != BudgetOK {
+		t.Errorf("zero threshold should be OK, got %v", statuses[0].State)
+	}
+}
+
+// TestEvaluateBudgetsEmpty verifies empty inputs.
+func TestEvaluateBudgetsEmpty(t *testing.T) {
+	statuses := EvaluateBudgets(map[string]float64{}, []BudgetThreshold{})
+	if len(statuses) != 0 {
+		t.Fatalf("want 0 statuses, got %d", len(statuses))
+	}
+}
+
+// TestProjectEdgeCases verifies Project with edge case values.
+func TestProjectEdgeCases(t *testing.T) {
+	// 1-day forecast
+	f := Project(100, 1, Medium)
+	if f.Days != 1 {
+		t.Errorf("days = %d, want 1", f.Days)
+	}
+	if !approx(f.HorizonCost, f.DailyBurn) {
+		t.Errorf("1-day horizon should equal daily burn: %v vs %v", f.HorizonCost, f.DailyBurn)
+	}
+
+	// Large horizon
+	f = Project(1000, 365, High)
+	if !approx(f.HorizonCost, f.DailyBurn*365) {
+		t.Errorf("365-day horizon: %v vs %v", f.HorizonCost, f.DailyBurn*365)
+	}
+	if !approx(f.Annualized, 1000*12) {
+		t.Errorf("annualized: %v vs %v", f.Annualized, 1000*12)
+	}
+}
+
+// TestEstimateAllMixOfKnownAndUnknown verifies EstimateAll with mixed resource types.
+func TestEstimateAllMixOfKnownAndUnknown(t *testing.T) {
+	report := Global.EstimateAll([]Resource{
+		{TypeName: "AWS::S3::Bucket", Name: "bucket"},
+		{TypeName: "AWS::EC2::Instance", Name: "instance"},
+		{TypeName: "AWS::DynamoDB::Table", Name: "table"},
+	})
+	if len(report.Results) != 3 {
+		t.Fatalf("result count = %d, want 3", len(report.Results))
+	}
+	// S3 and DynamoDB should succeed, EC2 should fail
+	errCount := 0
+	for _, r := range report.Results {
+		if r.Err != nil {
+			errCount++
+		}
+	}
+	if errCount != 1 {
+		t.Errorf("expected 1 error (EC2), got %d", errCount)
+	}
+	if report.Confidence != Low {
+		t.Errorf("confidence = %s, want low (due to missing estimator)", report.Confidence)
 	}
 }

@@ -116,27 +116,15 @@ type createOutput struct {
 }
 
 func (c createCommand) run(ctx context.Context) error {
-	st, err := c.readState()
+	st, m, inst, err := c.validateProvisioning()
 	if err != nil {
-		return fmt.Errorf("reading state: %w", err)
-	}
-	m := st.GetModule(moduleName)
-	if m == nil {
-		return fmt.Errorf("Perforce is not provisioned. Run 'fabrica perforce create' first")
-	}
-	if m.Status != "ready" {
-		return fmt.Errorf("Perforce status is %q; backups require status ready. Run 'fabrica perforce status' first", m.Status)
-	}
-	inst, ok := stateutil.ResourceByType(m, "AWS::EC2::Instance")
-	if !ok || inst.Identifier == "" {
-		return fmt.Errorf("Perforce instance not found in state")
+		return err
 	}
 
 	cfg := perforceBackupCfg(c.runtime.Config)
-	backupRoot := perforce.ResolveBackupPath(cfg.Path)
-	s3Export := cfg.S3Export && !c.noS3
-	if s3Export && cfg.S3Bucket == "" {
-		return fmt.Errorf("perforce.backup.s3Export is true but s3Bucket is empty — set perforce.backup.s3Bucket or pass --no-s3")
+	backupRoot, s3Export, err := c.resolveBackupConfig(cfg)
+	if err != nil {
+		return err
 	}
 
 	id := perforce.NewBackupID(c.now(), c.name)
@@ -146,6 +134,58 @@ func (c createCommand) run(ctx context.Context) error {
 		return c.printDryRun(id, dest, s3Export, cfg)
 	}
 
+	c.printBackupPlan(id, dest, s3Export, cfg)
+	if cancelled := c.confirmBackup(); cancelled != nil {
+		return nil // user cancelled; not an error
+	}
+
+	if err := c.checkRemoteSupport(); err != nil {
+		return err
+	}
+
+	script, err := c.buildBackupScript(id, backupRoot, m.Version, s3Export, cfg)
+	if err != nil {
+		return err
+	}
+
+	if err := c.executeBackup(ctx, inst.Identifier, script); err != nil {
+		return err
+	}
+
+	c.updateStateAfterBackup(st, m, id)
+	c.printBackupComplete(id, dest, s3Export)
+	return nil
+}
+
+func (c createCommand) validateProvisioning() (*fabricastate.State, *fabricastate.ModuleState, fabricastate.ModuleResource, error) {
+	st, err := c.readState()
+	if err != nil {
+		return nil, nil, fabricastate.ModuleResource{}, fmt.Errorf("reading state: %w", err)
+	}
+	m := st.GetModule(moduleName)
+	if m == nil {
+		return nil, nil, fabricastate.ModuleResource{}, fmt.Errorf("Perforce is not provisioned. Run 'fabrica perforce create' first")
+	}
+	if m.Status != "ready" {
+		return nil, nil, fabricastate.ModuleResource{}, fmt.Errorf("Perforce status is %q; backups require status ready. Run 'fabrica perforce status' first", m.Status)
+	}
+	inst, ok := stateutil.ResourceByType(m, "AWS::EC2::Instance")
+	if !ok || inst.Identifier == "" {
+		return nil, nil, fabricastate.ModuleResource{}, fmt.Errorf("Perforce instance not found in state")
+	}
+	return st, m, inst, nil
+}
+
+func (c createCommand) resolveBackupConfig(cfg config.PerforceBackupConfig) (string, bool, error) {
+	backupRoot := perforce.ResolveBackupPath(cfg.Path)
+	s3Export := cfg.S3Export && !c.noS3
+	if s3Export && cfg.S3Bucket == "" {
+		return "", false, fmt.Errorf("perforce.backup.s3Export is true but s3Bucket is empty — set perforce.backup.s3Bucket or pass --no-s3")
+	}
+	return backupRoot, s3Export, nil
+}
+
+func (c createCommand) printBackupPlan(id, dest string, s3Export bool, cfg config.PerforceBackupConfig) {
 	fmt.Fprintln(c.out, "Perforce backup")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "  Backup ID:  %s\n", id)
@@ -159,26 +199,35 @@ func (c createCommand) run(ctx context.Context) error {
 	fmt.Fprintln(c.out)
 	fmt.Fprintln(c.out, "WARNING: Checkpoint briefly quiesces Helix Core; clients may stall.")
 	fmt.Fprintln(c.out)
+}
 
-	if !c.assumeYes {
-		if !c.confirm("Create backup now?") {
-			fmt.Fprintln(c.out, "Cancelled. No remote commands were run.")
-			return nil
-		}
+func (c createCommand) confirmBackup() error {
+	if c.assumeYes {
+		return nil
 	}
+	if !c.confirm("Create backup now?") {
+		fmt.Fprintln(c.out, "Cancelled. No remote commands were run.")
+		return fmt.Errorf("cancelled by user")
+	}
+	return nil
+}
 
+func (c createCommand) checkRemoteSupport() error {
 	if c.runRemote == nil {
 		return fmt.Errorf("provider does not support remote commands (SSM). Use the AWS provider and ensure the instance has an SSM instance profile")
 	}
+	return nil
+}
+
+func (c createCommand) buildBackupScript(id, backupRoot, helixVersion string, s3Export bool, cfg config.PerforceBackupConfig) (string, error) {
 	adminPass, err := c.readCreds()
 	if err != nil {
-		return err
+		return "", err
 	}
-
-	script, err := perforce.GenerateBackupScript(perforce.BackupScriptConfig{
+	return perforce.GenerateBackupScript(perforce.BackupScriptConfig{
 		BackupID:      id,
 		BackupRoot:    backupRoot,
-		HelixVersion:  m.Version,
+		HelixVersion:  helixVersion,
 		Name:          perforce.SanitizeBackupName(c.name),
 		Description:   c.description,
 		AdminPassword: adminPass,
@@ -186,20 +235,21 @@ func (c createCommand) run(ctx context.Context) error {
 		S3Bucket:      cfg.S3Bucket,
 		S3Prefix:      cfg.S3Prefix,
 	})
-	if err != nil {
-		return err
-	}
+}
 
+func (c createCommand) executeBackup(ctx context.Context, instanceID string, script string) error {
 	fmt.Fprintln(c.out, "Running backup via SSM...")
-	res, err := c.runRemote(ctx, inst.Identifier, []string{script})
+	res, err := c.runRemote(ctx, instanceID, []string{script})
 	if err != nil {
 		return fmt.Errorf("backup remote command failed: %w\nIf the instance has no SSM profile, recreate Perforce with a current Fabrica or attach AmazonSSMManagedInstanceCore and retry.\nstderr: %s", err, res.Stderr)
 	}
 	if res.ExitCode != 0 {
 		return fmt.Errorf("backup script exit %d: %s", res.ExitCode, res.Stderr)
 	}
+	return nil
+}
 
-	// Update last-backup cache on instance properties.
+func (c createCommand) updateStateAfterBackup(st *fabricastate.State, m *fabricastate.ModuleState, id string) {
 	for i := range m.Resources {
 		if m.Resources[i].TypeName == "AWS::EC2::Instance" {
 			if m.Resources[i].Properties == nil {
@@ -214,18 +264,19 @@ func (c createCommand) run(ctx context.Context) error {
 	if err := c.writeState(st); err != nil {
 		fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
 	}
+}
 
+func (c createCommand) printBackupComplete(id, dest string, s3Export bool) {
 	if c.jsonOut {
 		data, _ := json.MarshalIndent(createOutput{
 			BackupID: id, Status: "complete", DryRun: false, S3Export: s3Export, Path: dest,
 		}, "", "  ")
 		fmt.Fprintln(c.out, string(data))
-		return nil
+		return
 	}
 	fmt.Fprintln(c.out)
 	fmt.Fprintf(c.out, "Backup complete: %s\n", id)
 	fmt.Fprintf(c.out, "  Stored at: %s\n", dest)
-	return nil
 }
 
 func (c createCommand) printDryRun(id, dest string, s3Export bool, cfg config.PerforceBackupConfig) error {

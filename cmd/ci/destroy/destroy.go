@@ -98,49 +98,66 @@ func (c command) run(ctx context.Context) error {
 	role, hasRole := stateutil.ResourceByType(m, ci.TypeAWSIAMRole)
 
 	if c.dryRun {
-		fmt.Fprintln(c.out, "CI (destroy dry run)")
-		fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-		fmt.Fprintln(c.out, "Resources that would be deleted (in order):")
-		if hasProject {
-			fmt.Fprintf(c.out, "  1. %s: %s\n", ci.TypeAWSCodeBuildProject, project.Identifier)
-		}
-		if hasRole {
-			fmt.Fprintf(c.out, "  2. %s: %s\n", ci.TypeAWSIAMRole, role.Identifier)
-		}
-		fmt.Fprintln(c.out, "Run without --dry-run to proceed.")
+		c.printDryRun(project, hasProject, role, hasRole)
 		return nil
 	}
 
-	account := st.Account
-	if c.runtime.Config != nil && c.runtime.Config.Cloud.AWS.AccountID != "" {
-		account = c.runtime.Config.Cloud.AWS.AccountID
-	}
+	account := c.resolveAccount(st)
 
 	if !c.skipConfirm {
-		phrase := fmt.Sprintf("destroy %s %s", moduleName, account)
-		if !c.assumeYes {
-			fmt.Fprintln(c.out, "CI — destroy plan")
-			fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-			if hasProject {
-				fmt.Fprintf(c.out, "  CodeBuild project: %s\n", project.Identifier)
-			}
-			if hasRole {
-				fmt.Fprintf(c.out, "  IAM role:          %s\n", role.Identifier)
-			}
-			fmt.Fprintln(c.out, "IRREVERSIBLE: deletes the CodeBuild project and IAM role.")
-			fmt.Fprintln(c.out)
-			fmt.Fprintf(c.out, "Type this exact phrase to continue:\n\n  %s\n\n", phrase)
-			if !c.confirm("Enter confirmation phrase", phrase) {
-				fmt.Fprintln(c.out, "Cancelled. No AWS calls were made.")
-				return nil
-			}
-			fmt.Fprintln(c.out, "Confirmation accepted.")
-		} else {
-			fmt.Fprintln(c.out, "Proceeding without interactive confirmation (--yes flag set).")
+		if !c.confirmDestroy(account, project, hasProject, role, hasRole) {
+			return nil
 		}
 	}
 
 	return c.apply(ctx, st, m, project, hasProject, role, hasRole)
+}
+
+func (c command) printDryRun(project fabricastate.ModuleResource, hasProject bool, role fabricastate.ModuleResource, hasRole bool) {
+	fmt.Fprintln(c.out, "CI (destroy dry run)")
+	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
+	fmt.Fprintln(c.out, "Resources that would be deleted (in order):")
+	if hasProject {
+		fmt.Fprintf(c.out, "  1. %s: %s\n", ci.TypeAWSCodeBuildProject, project.Identifier)
+	}
+	if hasRole {
+		fmt.Fprintf(c.out, "  2. %s: %s\n", ci.TypeAWSIAMRole, role.Identifier)
+	}
+	fmt.Fprintln(c.out, "Run without --dry-run to proceed.")
+}
+
+func (c command) resolveAccount(st *fabricastate.State) string {
+	account := st.Account
+	if c.runtime.Config != nil && c.runtime.Config.Cloud.AWS.AccountID != "" {
+		account = c.runtime.Config.Cloud.AWS.AccountID
+	}
+	return account
+}
+
+func (c command) confirmDestroy(account string, project fabricastate.ModuleResource, hasProject bool, role fabricastate.ModuleResource, hasRole bool) bool {
+	if c.assumeYes {
+		fmt.Fprintln(c.out, "Proceeding without interactive confirmation (--yes flag set).")
+		return true
+	}
+
+	phrase := fmt.Sprintf("destroy %s %s", moduleName, account)
+	fmt.Fprintln(c.out, "CI — destroy plan")
+	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
+	if hasProject {
+		fmt.Fprintf(c.out, "  CodeBuild project: %s\n", project.Identifier)
+	}
+	if hasRole {
+		fmt.Fprintf(c.out, "  IAM role:          %s\n", role.Identifier)
+	}
+	fmt.Fprintln(c.out, "IRREVERSIBLE: deletes the CodeBuild project and IAM role.")
+	fmt.Fprintln(c.out)
+	fmt.Fprintf(c.out, "Type this exact phrase to continue:\n\n  %s\n\n", phrase)
+	if !c.confirm("Enter confirmation phrase", phrase) {
+		fmt.Fprintln(c.out, "Cancelled. No AWS calls were made.")
+		return false
+	}
+	fmt.Fprintln(c.out, "Confirmation accepted.")
+	return true
 }
 
 func (c command) apply(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, project fabricastate.ModuleResource, hasProject bool, role fabricastate.ModuleResource, hasRole bool) error {

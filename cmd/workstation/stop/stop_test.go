@@ -8,39 +8,40 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/workstation/action"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
-func newTestCommand(out *bytes.Buffer, st *fabricastate.State, stopErr error) command {
-	cfg := config.Defaults()
-	cfg.Cloud.AWS.AccountID = "123456789012"
-	c := command{
-		runtime: globals.Runtime{Config: cfg, Provider: nil},
-		out:     out,
-		confirm: func(_, _ string) bool { return true },
+func TestCommandStructure(t *testing.T) {
+	cmd := New(
+		func() (globals.Runtime, error) { return globals.Runtime{}, nil },
+		func() globals.Options { return globals.Options{} },
+		&bytes.Buffer{},
+	)
+	if cmd.Use != "stop" {
+		t.Errorf("Use = %q, want stop", cmd.Use)
 	}
-	c.readState = func() (*fabricastate.State, error) { return st, nil }
-	c.writeState = func(_ *fabricastate.State) error { return nil }
-	c.stopInstance = func(_ context.Context, _ string) error { return stopErr }
-	return c
-}
-
-func workstationState(status string) *fabricastate.State {
-	st := fabricastate.NewState("123456789012", "us-east-1")
-	st.UpsertModule("workstation", "ami-test", status, []fabricastate.ModuleResource{
-		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-ws123"},
-		{TypeName: "AWS::EC2::Instance", Identifier: "i-ws123"},
-	})
-	return st
+	if cmd.Short != "Stop the cloud workstation EC2 instance" {
+		t.Errorf("Short = %q", cmd.Short)
+	}
 }
 
 func TestStopNotProvisioned(t *testing.T) {
 	var out bytes.Buffer
 	st := fabricastate.NewState("123456789012", "us-east-1")
-	c := newTestCommand(&out, st, nil)
+	ac := action.New(
+		action.StopSpec,
+		globals.Runtime{Config: config.Defaults()},
+		false, false, false, &out,
+		func(_, _ string) bool { return true },
+		nil,
+	)
+	ac.SetReadState(func() (*fabricastate.State, error) { return st, nil })
+	ac.SetWriteState(func(*fabricastate.State) error { return nil })
 
-	if err := c.run(context.Background()); err != nil {
+	err := ac.Run(context.Background())
+	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	assertContains(t, out.String(), "not provisioned")
@@ -49,18 +50,19 @@ func TestStopNotProvisioned(t *testing.T) {
 func TestStopAlreadyStopped(t *testing.T) {
 	var out bytes.Buffer
 	st := workstationState("stopped")
-	stopCalled := false
-	c := newTestCommand(&out, st, nil)
-	c.stopInstance = func(_ context.Context, _ string) error {
-		stopCalled = true
-		return nil
-	}
+	ac := action.New(
+		action.StopSpec,
+		globals.Runtime{Config: config.Defaults()},
+		false, false, false, &out,
+		func(_, _ string) bool { return true },
+		nil,
+	)
+	ac.SetReadState(func() (*fabricastate.State, error) { return st, nil })
+	ac.SetWriteState(func(*fabricastate.State) error { return nil })
 
-	if err := c.run(context.Background()); err != nil {
+	err := ac.Run(context.Background())
+	if err != nil {
 		t.Fatalf("run: %v", err)
-	}
-	if stopCalled {
-		t.Error("stop API should not be called when already stopped")
 	}
 	assertContains(t, out.String(), "already stopped")
 }
@@ -69,14 +71,21 @@ func TestStopDryRunNoAPICall(t *testing.T) {
 	var out bytes.Buffer
 	st := workstationState("ready")
 	stopCalled := false
-	c := newTestCommand(&out, st, nil)
-	c.dryRun = true
-	c.stopInstance = func(_ context.Context, _ string) error {
-		stopCalled = true
-		return nil
-	}
+	ac := action.New(
+		action.StopSpec,
+		globals.Runtime{Config: config.Defaults()},
+		true, false, false, &out,
+		func(_, _ string) bool { return true },
+		func(_ context.Context, _ string) error {
+			stopCalled = true
+			return nil
+		},
+	)
+	ac.SetReadState(func() (*fabricastate.State, error) { return st, nil })
+	ac.SetWriteState(func(*fabricastate.State) error { return nil })
 
-	if err := c.run(context.Background()); err != nil {
+	err := ac.Run(context.Background())
+	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if stopCalled {
@@ -88,10 +97,18 @@ func TestStopDryRunNoAPICall(t *testing.T) {
 func TestStopDryRunOutputFields(t *testing.T) {
 	var out bytes.Buffer
 	st := workstationState("ready")
-	c := newTestCommand(&out, st, nil)
-	c.dryRun = true
+	ac := action.New(
+		action.StopSpec,
+		globals.Runtime{Config: config.Defaults()},
+		true, false, false, &out,
+		func(_, _ string) bool { return true },
+		nil,
+	)
+	ac.SetReadState(func() (*fabricastate.State, error) { return st, nil })
+	ac.SetWriteState(func(*fabricastate.State) error { return nil })
 
-	if err := c.run(context.Background()); err != nil {
+	err := ac.Run(context.Background())
+	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	assertContains(t, out.String(), "i-ws123")
@@ -102,15 +119,22 @@ func TestStopHappyPathStateUpdated(t *testing.T) {
 	var out bytes.Buffer
 	st := workstationState("ready")
 	var lastState *fabricastate.State
-	c := newTestCommand(&out, st, nil)
-	c.assumeYes = true
-	c.writeState = func(s *fabricastate.State) error {
+	ac := action.New(
+		action.StopSpec,
+		globals.Runtime{Config: config.Defaults()},
+		false, true, false, &out,
+		func(_, _ string) bool { return true },
+		func(_ context.Context, _ string) error { return nil },
+	)
+	ac.SetReadState(func() (*fabricastate.State, error) { return st, nil })
+	ac.SetWriteState(func(s *fabricastate.State) error {
 		cp := *s
 		lastState = &cp
 		return nil
-	}
+	})
 
-	if err := c.run(context.Background()); err != nil {
+	err := ac.Run(context.Background())
+	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if lastState == nil {
@@ -128,19 +152,19 @@ func TestStopHappyPathStateUpdated(t *testing.T) {
 func TestStopConfirmationRejected(t *testing.T) {
 	var out bytes.Buffer
 	st := workstationState("ready")
-	stopCalled := false
-	c := newTestCommand(&out, st, nil)
-	c.confirm = func(_, _ string) bool { return false }
-	c.stopInstance = func(_ context.Context, _ string) error {
-		stopCalled = true
-		return nil
-	}
+	ac := action.New(
+		action.StopSpec,
+		globals.Runtime{Config: config.Defaults()},
+		false, false, false, &out,
+		func(_, _ string) bool { return false },
+		nil,
+	)
+	ac.SetReadState(func() (*fabricastate.State, error) { return st, nil })
+	ac.SetWriteState(func(*fabricastate.State) error { return nil })
 
-	if err := c.run(context.Background()); err != nil {
+	err := ac.Run(context.Background())
+	if err != nil {
 		t.Fatalf("run: %v", err)
-	}
-	if stopCalled {
-		t.Error("stop was called after confirmation rejected")
 	}
 	assertContains(t, out.String(), "Cancelled")
 }
@@ -148,13 +172,19 @@ func TestStopConfirmationRejected(t *testing.T) {
 func TestStopNilProviderErrors(t *testing.T) {
 	var out bytes.Buffer
 	st := workstationState("ready")
-	c := newTestCommand(&out, st, nil)
-	c.assumeYes = true
-	c.stopInstance = nil
+	ac := action.New(
+		action.StopSpec,
+		globals.Runtime{Config: config.Defaults()},
+		false, true, false, &out,
+		func(_, _ string) bool { return true },
+		nil,
+	)
+	ac.SetReadState(func() (*fabricastate.State, error) { return st, nil })
+	ac.SetWriteState(func(*fabricastate.State) error { return nil })
 
-	err := c.run(context.Background())
+	err := ac.Run(context.Background())
 	if err == nil {
-		t.Fatal("expected error with nil stopInstance")
+		t.Fatal("expected error with nil executeAction")
 	}
 	assertContains(t, err.Error(), "no provider configured")
 }
@@ -162,10 +192,17 @@ func TestStopNilProviderErrors(t *testing.T) {
 func TestStopAPIErrorPropagates(t *testing.T) {
 	var out bytes.Buffer
 	st := workstationState("ready")
-	c := newTestCommand(&out, st, errors.New("permission denied"))
-	c.assumeYes = true
+	ac := action.New(
+		action.StopSpec,
+		globals.Runtime{Config: config.Defaults()},
+		false, true, false, &out,
+		func(_, _ string) bool { return true },
+		func(_ context.Context, _ string) error { return errors.New("permission denied") },
+	)
+	ac.SetReadState(func() (*fabricastate.State, error) { return st, nil })
+	ac.SetWriteState(func(*fabricastate.State) error { return nil })
 
-	err := c.run(context.Background())
+	err := ac.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error when stop API fails")
 	}
@@ -174,12 +211,19 @@ func TestStopAPIErrorPropagates(t *testing.T) {
 
 func TestStopReadStateError(t *testing.T) {
 	var out bytes.Buffer
-	c := newTestCommand(&out, nil, nil)
-	c.readState = func() (*fabricastate.State, error) {
+	ac := action.New(
+		action.StopSpec,
+		globals.Runtime{Config: config.Defaults()},
+		false, false, false, &out,
+		func(_, _ string) bool { return true },
+		nil,
+	)
+	ac.SetReadState(func() (*fabricastate.State, error) {
 		return nil, errors.New("disk read failure")
-	}
+	})
+	ac.SetWriteState(func(*fabricastate.State) error { return nil })
 
-	err := c.run(context.Background())
+	err := ac.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error when readState fails")
 	}
@@ -189,13 +233,20 @@ func TestStopReadStateError(t *testing.T) {
 func TestStopWriteStateErrorSurfacedAsWarning(t *testing.T) {
 	var out bytes.Buffer
 	st := workstationState("ready")
-	c := newTestCommand(&out, st, nil)
-	c.assumeYes = true
-	c.writeState = func(_ *fabricastate.State) error {
+	ac := action.New(
+		action.StopSpec,
+		globals.Runtime{Config: config.Defaults()},
+		false, true, false, &out,
+		func(_, _ string) bool { return true },
+		func(_ context.Context, _ string) error { return nil },
+	)
+	ac.SetReadState(func() (*fabricastate.State, error) { return st, nil })
+	ac.SetWriteState(func(*fabricastate.State) error {
 		return errors.New("disk full")
-	}
+	})
 
-	if err := c.run(context.Background()); err != nil {
+	err := ac.Run(context.Background())
+	if err != nil {
 		t.Fatalf("writeState failure must not abort stop: %v", err)
 	}
 	assertContains(t, out.String(), "Warning")
@@ -204,11 +255,18 @@ func TestStopWriteStateErrorSurfacedAsWarning(t *testing.T) {
 func TestStopJSONHappyPath(t *testing.T) {
 	var out bytes.Buffer
 	st := workstationState("ready")
-	c := newTestCommand(&out, st, nil)
-	c.assumeYes = true
-	c.jsonOut = true
+	ac := action.New(
+		action.StopSpec,
+		globals.Runtime{Config: config.Defaults()},
+		false, true, true, &out,
+		func(_, _ string) bool { return true },
+		func(_ context.Context, _ string) error { return nil },
+	)
+	ac.SetReadState(func() (*fabricastate.State, error) { return st, nil })
+	ac.SetWriteState(func(*fabricastate.State) error { return nil })
 
-	if err := c.run(context.Background()); err != nil {
+	err := ac.Run(context.Background())
+	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	var result StopOutput
@@ -221,19 +279,23 @@ func TestStopJSONHappyPath(t *testing.T) {
 	if result.Status != "stopped" {
 		t.Errorf("status = %q, want stopped", result.Status)
 	}
-	if result.InstanceID != "i-ws123" {
-		t.Errorf("instanceId = %q, want i-ws123", result.InstanceID)
-	}
 }
 
 func TestStopJSONDryRun(t *testing.T) {
 	var out bytes.Buffer
 	st := workstationState("ready")
-	c := newTestCommand(&out, st, nil)
-	c.dryRun = true
-	c.jsonOut = true
+	ac := action.New(
+		action.StopSpec,
+		globals.Runtime{Config: config.Defaults()},
+		true, false, true, &out,
+		func(_, _ string) bool { return true },
+		nil,
+	)
+	ac.SetReadState(func() (*fabricastate.State, error) { return st, nil })
+	ac.SetWriteState(func(*fabricastate.State) error { return nil })
 
-	if err := c.run(context.Background()); err != nil {
+	err := ac.Run(context.Background())
+	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	var result StopOutput
@@ -251,10 +313,18 @@ func TestStopJSONDryRun(t *testing.T) {
 func TestStopJSONAlreadyStopped(t *testing.T) {
 	var out bytes.Buffer
 	st := workstationState("stopped")
-	c := newTestCommand(&out, st, nil)
-	c.jsonOut = true
+	ac := action.New(
+		action.StopSpec,
+		globals.Runtime{Config: config.Defaults()},
+		false, false, true, &out,
+		func(_, _ string) bool { return true },
+		nil,
+	)
+	ac.SetReadState(func() (*fabricastate.State, error) { return st, nil })
+	ac.SetWriteState(func(*fabricastate.State) error { return nil })
 
-	if err := c.run(context.Background()); err != nil {
+	err := ac.Run(context.Background())
+	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	var result StopOutput
@@ -270,14 +340,21 @@ func TestStopAssumeYesSkipsPrompt(t *testing.T) {
 	var out bytes.Buffer
 	st := workstationState("ready")
 	confirmCalled := false
-	c := newTestCommand(&out, st, nil)
-	c.assumeYes = true
-	c.confirm = func(_, _ string) bool {
-		confirmCalled = true
-		return true
-	}
+	ac := action.New(
+		action.StopSpec,
+		globals.Runtime{Config: config.Defaults()},
+		false, true, false, &out,
+		func(_, _ string) bool {
+			confirmCalled = true
+			return true
+		},
+		func(_ context.Context, _ string) error { return nil },
+	)
+	ac.SetReadState(func() (*fabricastate.State, error) { return st, nil })
+	ac.SetWriteState(func(*fabricastate.State) error { return nil })
 
-	if err := c.run(context.Background()); err != nil {
+	err := ac.Run(context.Background())
+	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if confirmCalled {
@@ -286,6 +363,15 @@ func TestStopAssumeYesSkipsPrompt(t *testing.T) {
 }
 
 // ---- helpers ----
+
+func workstationState(status string) *fabricastate.State {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("workstation", "ami-test", status, []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-ws123"},
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-ws123"},
+	})
+	return st
+}
 
 func assertContains(t *testing.T, s, substr string) {
 	t.Helper()

@@ -297,3 +297,175 @@ func TestStateTimestamps(t *testing.T) {
 		t.Errorf("Updated not within expected range: %v", st.Updated)
 	}
 }
+
+// TestGetModuleExisting verifies GetModule returns the module when it exists.
+func TestGetModuleExisting(t *testing.T) {
+	st := NewState("123", "us-east-1")
+	st.UpsertModule("perforce", "2024.2", "ready", []ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-p4"},
+	})
+
+	m := st.GetModule("perforce")
+	if m == nil {
+		t.Fatal("GetModule returned nil for existing module")
+	}
+	if m.Name != "perforce" {
+		t.Errorf("module name = %q, want perforce", m.Name)
+	}
+	if m.Status != "ready" {
+		t.Errorf("module status = %q, want ready", m.Status)
+	}
+}
+
+// TestGetModuleNonExistent verifies GetModule returns nil for missing module.
+func TestGetModuleNonExistent(t *testing.T) {
+	st := NewState("123", "us-east-1")
+	st.UpsertModule("perforce", "2024.2", "ready", []ModuleResource{})
+
+	m := st.GetModule("horde")
+	if m != nil {
+		t.Errorf("GetModule should return nil for non-existent module, got %+v", m)
+	}
+}
+
+// TestGetModuleEmptyState verifies GetModule returns nil on empty state.
+func TestGetModuleEmptyState(t *testing.T) {
+	st := NewState("123", "us-east-1")
+	m := st.GetModule("anything")
+	if m != nil {
+		t.Errorf("GetModule should return nil on empty state, got %+v", m)
+	}
+}
+
+// TestGetModuleResourceExisting verifies GetModuleResource finds the resource.
+func TestGetModuleResourceExisting(t *testing.T) {
+	st := NewState("123", "us-east-1")
+	st.UpsertModule("perforce", "2024.2", "ready", []ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-123"},
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-456"},
+	})
+
+	res, ok := st.GetModuleResource("perforce", "AWS::EC2::Instance")
+	if !ok {
+		t.Fatal("GetModuleResource should return true for existing resource")
+	}
+	if res.Identifier != "i-456" {
+		t.Errorf("resource identifier = %q, want i-456", res.Identifier)
+	}
+}
+
+// TestGetModuleResourceWrongModule verifies GetModuleResource returns false for wrong module.
+func TestGetModuleResourceWrongModule(t *testing.T) {
+	st := NewState("123", "us-east-1")
+	st.UpsertModule("perforce", "2024.2", "ready", []ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-456"},
+	})
+
+	_, ok := st.GetModuleResource("horde", "AWS::EC2::Instance")
+	if ok {
+		t.Error("GetModuleResource should return false for wrong module")
+	}
+}
+
+// TestGetModuleResourceWrongType verifies GetModuleResource returns false for wrong type.
+func TestGetModuleResourceWrongType(t *testing.T) {
+	st := NewState("123", "us-east-1")
+	st.UpsertModule("perforce", "2024.2", "ready", []ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-456"},
+	})
+
+	_, ok := st.GetModuleResource("perforce", "AWS::S3::Bucket")
+	if ok {
+		t.Error("GetModuleResource should return false for wrong resource type")
+	}
+}
+
+// TestGetModuleResourceNonExistentModule verifies GetModuleResource returns false for missing module.
+func TestGetModuleResourceNonExistentModule(t *testing.T) {
+	st := NewState("123", "us-east-1")
+
+	_, ok := st.GetModuleResource("nonexistent", "AWS::EC2::Instance")
+	if ok {
+		t.Error("GetModuleResource should return false for non-existent module")
+	}
+}
+
+// TestDefaultBucketWithAccount verifies default bucket name includes account ID.
+func TestDefaultBucketWithAccount(t *testing.T) {
+	got := DefaultBucket("123456789012")
+	want := "fabrica-state-123456789012"
+	if got != want {
+		t.Errorf("DefaultBucket = %q, want %q", got, want)
+	}
+}
+
+// TestDefaultBucketEmptyAccount verifies default bucket uses placeholder for empty account.
+func TestDefaultBucketEmptyAccount(t *testing.T) {
+	got := DefaultBucket("")
+	want := "fabrica-state-<account-id>"
+	if got != want {
+		t.Errorf("DefaultBucket(\"\") = %q, want %q", got, want)
+	}
+}
+
+// TestResolveBackendNamesNilConfig verifies defaults when config is nil.
+func TestResolveBackendNamesNilConfig(t *testing.T) {
+	got := ResolveBackendNames(nil, "123456789012")
+	if got.Bucket != "fabrica-state-123456789012" {
+		t.Errorf("bucket = %q, want fabrica-state-123456789012", got.Bucket)
+	}
+	if got.Table != config.DefaultStateTable {
+		t.Errorf("table = %q, want %s", got.Table, config.DefaultStateTable)
+	}
+}
+
+// TestResolveBackendNamesPartialConfig verifies only set fields override defaults.
+func TestResolveBackendNamesPartialConfig(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.State.Bucket = "my-bucket"
+	// Table is empty — should use default
+
+	got := ResolveBackendNames(cfg, "123456789012")
+	if got.Bucket != "my-bucket" {
+		t.Errorf("bucket = %q, want my-bucket", got.Bucket)
+	}
+	if got.Table != config.DefaultStateTable {
+		t.Errorf("table = %q, want %s", got.Table, config.DefaultStateTable)
+	}
+}
+
+// TestLockAcquireTokenFormat verifies the lock token is 32 hex chars.
+func TestLockAcquireTokenFormat(t *testing.T) {
+	lc := newMockLockClient()
+	ls := NewLockStore("fabrica-state-lock", "us-east-1", lc)
+
+	token, err := ls.Acquire(context.Background(), "my-resource", "test-holder")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	if len(token) != 32 {
+		t.Errorf("token length = %d, want 32", len(token))
+	}
+	// Verify it's valid hex
+	for _, c := range token {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			t.Errorf("token contains non-hex char: %c", c)
+			break
+		}
+	}
+}
+
+// TestGenTokenUniqueness verifies multiple tokens are unique.
+func TestGenTokenUniqueness(t *testing.T) {
+	seen := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		token, err := genToken()
+		if err != nil {
+			t.Fatalf("genToken[%d]: %v", i, err)
+		}
+		if seen[token] {
+			t.Errorf("duplicate token at iteration %d: %s", i, token)
+		}
+		seen[token] = true
+	}
+}

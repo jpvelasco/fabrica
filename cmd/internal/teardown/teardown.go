@@ -136,42 +136,9 @@ func (c Command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 		fmt.Fprintln(c.Out)
 	}
 
-	destroyed := make([]string, 0, len(resources))
-
-	for _, res := range resources {
-		r := res // copy for mutation
-
-		if r.TypeName == "AWS::EC2::Instance" {
-			skip, err := c.checkInstanceBeforeDelete(ctx, &r)
-			if err != nil {
-				return err
-			}
-			if skip {
-				// Instance already gone — remove from state and continue.
-				c.removeResourceAndPersist(st, m, r.TypeName)
-				continue
-			}
-		}
-
-		if !c.JSONOut {
-			fmt.Fprintf(c.Out, "Deleting %s %s...\n", r.TypeName, r.Identifier)
-		}
-
-		if err := c.DeleteResource(ctx, &r); err != nil {
-			if errors.Is(err, cloud.ErrResourceNotFound) {
-				if !c.JSONOut {
-					fmt.Fprintf(c.Out, "  Already deleted: %s\n", r.Identifier)
-				}
-			} else {
-				return fmt.Errorf("deleting %s %s: %w", r.TypeName, r.Identifier, err)
-			}
-		} else if !c.JSONOut {
-			fmt.Fprintf(c.Out, "  Deleted: %s\n", r.Identifier)
-		}
-		destroyed = append(destroyed, r.Identifier)
-
-		// Remove this resource from state immediately so partial failure is recoverable.
-		c.removeResourceAndPersist(st, m, r.TypeName)
+	destroyed, err := c.deleteResources(ctx, st, m, resources)
+	if err != nil {
+		return err
 	}
 
 	// All resources gone — remove the module from state entirely.
@@ -191,6 +158,73 @@ func (c Command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 		fmt.Fprintf(c.Out, "  Deleted: %s\n", id)
 	}
 	return nil
+}
+
+// deleteResources iterates over the resources in order, deleting each one and
+// removing it from state afterward so partial failures are recoverable.
+// Returns the list of destroyed identifiers and any error that stopped the loop.
+func (c Command) deleteResources(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, resources []cloud.Resource) ([]string, error) {
+	destroyed := make([]string, 0, len(resources))
+
+	for _, res := range resources {
+		if skip, err := c.shouldSkipBeforeDelete(ctx, res); err != nil {
+			return nil, err
+		} else if skip {
+			c.removeResourceAndPersist(st, m, res.TypeName)
+			continue
+		}
+		if err := c.deleteOneResource(ctx, st, m, res); err != nil {
+			return nil, err
+		}
+		destroyed = append(destroyed, res.Identifier)
+	}
+
+	return destroyed, nil
+}
+
+// shouldSkipBeforeDelete checks whether an EC2 instance is already terminated
+// or not found before attempting deletion. For non-EC2 resources, always returns
+// (false, nil). Returns (true, nil) when the instance is already gone.
+// Returns (false, error) for hard failures (e.g. transitional state, Get error).
+func (c Command) shouldSkipBeforeDelete(ctx context.Context, res cloud.Resource) (bool, error) {
+	if res.TypeName != "AWS::EC2::Instance" {
+		return false, nil
+	}
+	r := res // copy for mutation by GetResource
+	return c.checkInstanceBeforeDelete(ctx, &r)
+}
+
+// deleteOneResource deletes a single resource, prints progress, and removes it from state.
+func (c Command) deleteOneResource(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, res cloud.Resource) error {
+	r := res // copy for mutation
+
+	if !c.JSONOut {
+		fmt.Fprintf(c.Out, "Deleting %s %s...\n", r.TypeName, r.Identifier)
+	}
+
+	if err := c.DeleteResource(ctx, &r); err != nil {
+		if err := c.handleDeleteResult(r, st, m, err); err != nil {
+			return err
+		}
+	} else {
+		if !c.JSONOut {
+			fmt.Fprintf(c.Out, "  Deleted: %s\n", r.Identifier)
+		}
+	}
+	c.removeResourceAndPersist(st, m, r.TypeName)
+	return nil
+}
+
+// handleDeleteResult classifies a deletion error: ErrResourceNotFound is a no-op
+// (resource already gone), everything else is a hard failure.
+func (c Command) handleDeleteResult(r cloud.Resource, st *fabricastate.State, m *fabricastate.ModuleState, err error) error {
+	if errors.Is(err, cloud.ErrResourceNotFound) {
+		if !c.JSONOut {
+			fmt.Fprintf(c.Out, "  Already deleted: %s\n", r.Identifier)
+		}
+		return nil
+	}
+	return fmt.Errorf("deleting %s %s: %w", r.TypeName, r.Identifier, err)
 }
 
 // removeResourceAndPersist drops a resource from the module and writes state,

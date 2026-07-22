@@ -1,6 +1,10 @@
 package lore
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/jpvelasco/fabrica/internal/ec2state"
+)
 
 // SGDesiredState returns the Cloud Control desired-state JSON for the Lore
 // security group. Opens TCP 41337 (gRPC), UDP 41337 (QUIC), and TCP 41339
@@ -43,33 +47,15 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 
 // InstanceDesiredState returns the Cloud Control desired-state JSON for the
 // Lore EC2 instance. ImageId is the user-provided AMI ID from LoreConfig.
+// DeleteOnTermination is true: the EBS store dies with the instance.
 func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMessage, error) {
-	doc := map[string]any{
-		"ImageId":          plan.AmiID,
-		"InstanceType":     plan.InstanceType,
-		"SubnetId":         plan.SubnetID,
-		"SecurityGroupIds": []string{sgID},
-		"UserData":         userData,
-		// DeleteOnTermination true: destroy/teardown terminates the instance and
-		// the gp3 store dies with it. V1 does not track AWS::EC2::Volume as a
-		// separate state resource (same surface as create→destroy only).
-		"BlockDeviceMappings": []map[string]any{
-			{
-				"DeviceName": "/dev/sdf",
-				"Ebs": map[string]any{
-					"VolumeSize":          plan.VolumeSize,
-					"VolumeType":          "gp3",
-					"DeleteOnTermination": true,
-				},
-			},
-		},
-		"Tags": []map[string]string{
-			{"Key": "ManagedBy", "Value": "fabrica"},
-			{"Key": "Name", "Value": plan.InstanceName},
-		},
-		"MetadataOptions": map[string]any{
-			"HttpTokens": "required",
-		},
-	}
-	return json.Marshal(doc)
+	return ec2state.Build([]ec2state.InstanceOption{
+		ec2state.WithAMI(plan.AmiID),
+		ec2state.WithInstanceType(plan.InstanceType),
+		ec2state.WithSubnet(plan.SubnetID),
+		ec2state.WithSecurityGroup(sgID),
+		ec2state.WithUserData(userData),
+		ec2state.WithVolumeSize(plan.VolumeSize),
+		ec2state.WithInstanceName(plan.InstanceName),
+	})
 }

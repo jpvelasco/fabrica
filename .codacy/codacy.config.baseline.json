@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "metadata": {
+    "source": "local",
+    "provider": null,
+    "organization": null,
+    "repositoryId": null,
+    "repositoryName": null,
+    "createdAt": "2026-07-22T03:26:46.599Z",
+    "updatedAt": "2026-07-22T03:26:46.599Z",
+    "languages": [
+      "Go",
+      "JSON",
+      "Javascript",
+      "Markdown",
+      "TypeScript",
+      "YAML"
+    ]
+  },
+  "tools": [],
+  "exclude": []
+}

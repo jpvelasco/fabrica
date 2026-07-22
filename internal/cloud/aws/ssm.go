@@ -29,11 +29,8 @@ type ssmClientFactory func(aws.Config) ssmClient
 // RunCommand executes shell commands on instanceID via SSM Run Command
 // (AWS-RunShellScript) and waits for the invocation to finish.
 func (p *awsProvider) RunCommand(ctx context.Context, instanceID string, commands []string) (fabricac.RemoteResult, error) {
-	if instanceID == "" {
-		return fabricac.RemoteResult{}, fmt.Errorf("instance ID is required for remote command")
-	}
-	if len(commands) == 0 {
-		return fabricac.RemoteResult{}, fmt.Errorf("at least one command is required")
+	if err := p.validateRunCommandArgs(instanceID, commands); err != nil {
+		return fabricac.RemoteResult{}, err
 	}
 
 	cfg, err := p.stateBackendConfig(ctx)
@@ -42,6 +39,25 @@ func (p *awsProvider) RunCommand(ctx context.Context, instanceID string, command
 	}
 	client := p.ssmClient(cfg)
 
+	cmdID, err := p.sendCommand(ctx, client, instanceID, commands)
+	if err != nil {
+		return fabricac.RemoteResult{}, err
+	}
+
+	return p.pollInvocation(ctx, client, cmdID, instanceID)
+}
+
+func (p *awsProvider) validateRunCommandArgs(instanceID string, commands []string) error {
+	if instanceID == "" {
+		return fmt.Errorf("instance ID is required for remote command")
+	}
+	if len(commands) == 0 {
+		return fmt.Errorf("at least one command is required")
+	}
+	return nil
+}
+
+func (p *awsProvider) sendCommand(ctx context.Context, client ssmClient, instanceID string, commands []string) (string, error) {
 	sendOut, err := client.SendCommand(ctx, &ssm.SendCommandInput{
 		DocumentName: aws.String("AWS-RunShellScript"),
 		InstanceIds:  []string{instanceID},
@@ -50,20 +66,19 @@ func (p *awsProvider) RunCommand(ctx context.Context, instanceID string, command
 		},
 	})
 	if err != nil {
-		return fabricac.RemoteResult{}, fmt.Errorf("ssm SendCommand on %s: %w", instanceID, err)
+		return "", fmt.Errorf("ssm SendCommand on %s: %w", instanceID, err)
 	}
 	if sendOut.Command == nil || sendOut.Command.CommandId == nil {
-		return fabricac.RemoteResult{}, fmt.Errorf("ssm SendCommand on %s: empty command id", instanceID)
+		return "", fmt.Errorf("ssm SendCommand on %s: empty command id", instanceID)
 	}
-	cmdID := aws.ToString(sendOut.Command.CommandId)
+	return aws.ToString(sendOut.Command.CommandId), nil
+}
 
+func (p *awsProvider) pollInvocation(ctx context.Context, client ssmClient, cmdID, instanceID string) (fabricac.RemoteResult, error) {
 	deadline := time.Now().Add(ssmWaitTimeout)
 	for {
-		if err := ctx.Err(); err != nil {
-			return fabricac.RemoteResult{}, fmt.Errorf("waiting for ssm command %s: %w", cmdID, err)
-		}
-		if time.Now().After(deadline) {
-			return fabricac.RemoteResult{}, fmt.Errorf("waiting for ssm command %s on %s: timed out after %s — check SSM agent and instance profile", cmdID, instanceID, ssmWaitTimeout)
+		if err := p.checkDeadline(ctx, cmdID, instanceID, deadline); err != nil {
+			return fabricac.RemoteResult{}, err
 		}
 
 		inv, err := client.GetCommandInvocation(ctx, &ssm.GetCommandInvocationInput{
@@ -71,44 +86,65 @@ func (p *awsProvider) RunCommand(ctx context.Context, instanceID string, command
 			InstanceId: aws.String(instanceID),
 		})
 		if err != nil {
-			// Invocation may not be ready immediately after SendCommand.
-			select {
-			case <-ctx.Done():
+			if !p.waitForNextPoll(ctx) {
 				return fabricac.RemoteResult{}, ctx.Err()
-			case <-time.After(ssmPollInterval):
-				continue
 			}
+			continue
 		}
 
-		status := inv.Status
-		switch status {
-		case ssmtypes.CommandInvocationStatusPending,
-			ssmtypes.CommandInvocationStatusInProgress,
-			ssmtypes.CommandInvocationStatusDelayed:
-			select {
-			case <-ctx.Done():
-				return fabricac.RemoteResult{}, ctx.Err()
-			case <-time.After(ssmPollInterval):
-				continue
-			}
-		case ssmtypes.CommandInvocationStatusSuccess:
-			return fabricac.RemoteResult{
-				ExitCode: int(inv.ResponseCode),
-				Stdout:   aws.ToString(inv.StandardOutputContent),
-				Stderr:   aws.ToString(inv.StandardErrorContent),
-			}, nil
-		default:
-			// Failed / Cancelled / TimedOut / Cancelling
-			exit := int(inv.ResponseCode)
-			stdout := aws.ToString(inv.StandardOutputContent)
-			stderr := aws.ToString(inv.StandardErrorContent)
-			return fabricac.RemoteResult{
-					ExitCode: exit,
-					Stdout:   stdout,
-					Stderr:   stderr,
-				}, fmt.Errorf("ssm command %s on %s finished with status %s (exit %d): %s",
-					cmdID, instanceID, status, exit, stderr)
+		result, done, err := p.handleInvocationStatus(ctx, inv, cmdID, instanceID)
+		if err != nil {
+			return result, err
 		}
+		if done {
+			return result, nil
+		}
+	}
+}
+
+func (p *awsProvider) checkDeadline(ctx context.Context, cmdID, instanceID string, deadline time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("waiting for ssm command %s: %w", cmdID, err)
+	}
+	if time.Now().After(deadline) {
+		return fmt.Errorf("waiting for ssm command %s on %s: timed out after %s — check SSM agent and instance profile", cmdID, instanceID, ssmWaitTimeout)
+	}
+	return nil
+}
+
+func (p *awsProvider) waitForNextPoll(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(ssmPollInterval):
+		return true
+	}
+}
+
+func (p *awsProvider) handleInvocationStatus(ctx context.Context, inv *ssm.GetCommandInvocationOutput, cmdID, instanceID string) (fabricac.RemoteResult, bool, error) {
+	status := inv.Status
+	switch status {
+	case ssmtypes.CommandInvocationStatusPending,
+		ssmtypes.CommandInvocationStatusInProgress,
+		ssmtypes.CommandInvocationStatusDelayed:
+		if !p.waitForNextPoll(ctx) {
+			return fabricac.RemoteResult{}, false, ctx.Err()
+		}
+		return fabricac.RemoteResult{}, false, nil
+	case ssmtypes.CommandInvocationStatusSuccess:
+		return p.resultFromInvocation(inv), true, nil
+	default:
+		return p.resultFromInvocation(inv), true,
+			fmt.Errorf("ssm command %s on %s finished with status %s (exit %d): %s",
+				cmdID, instanceID, status, int(inv.ResponseCode), aws.ToString(inv.StandardErrorContent))
+	}
+}
+
+func (p *awsProvider) resultFromInvocation(inv *ssm.GetCommandInvocationOutput) fabricac.RemoteResult {
+	return fabricac.RemoteResult{
+		ExitCode: int(inv.ResponseCode),
+		Stdout:   aws.ToString(inv.StandardOutputContent),
+		Stderr:   aws.ToString(inv.StandardErrorContent),
 	}
 }
 
