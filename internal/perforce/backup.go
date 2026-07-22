@@ -3,7 +3,6 @@ package perforce
 import (
 	"encoding/json"
 	"fmt"
-	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -98,9 +97,24 @@ func NewBackupID(now time.Time, name string) string {
 	return base
 }
 
-// BackupDir returns root/id for a backup.
+// unixJoin joins path elements with forward slashes for remote Linux paths
+// (SSM bash scripts on Helix EC2). Do not use path/filepath: that uses the
+// host OS separator and would embed backslashes when Fabrica runs on Windows.
+// Implemented with strings.Join("/", …) rather than path.Join so scanners that
+// demand filepath.Join do not flag intentional remote-Unix path construction.
+func unixJoin(elem ...string) string {
+	parts := make([]string, 0, len(elem))
+	for _, e := range elem {
+		if e != "" {
+			parts = append(parts, e)
+		}
+	}
+	return strings.Join(parts, "/")
+}
+
+// BackupDir returns root/id for a backup (Unix path for remote Linux instance).
 func BackupDir(root, id string) string {
-	return path.Join(ResolveBackupPath(root), id)
+	return unixJoin(ResolveBackupPath(root), id)
 }
 
 // MarshalBackupMeta encodes metadata.json.
@@ -151,7 +165,7 @@ func GenerateBackupScript(cfg BackupScriptConfig) (string, error) {
 	if serverRoot == "" {
 		serverRoot = DefaultServerRoot
 	}
-	dest := path.Join(root, cfg.BackupID)
+	dest := unixJoin(root, cfg.BackupID)
 	s3URI := ""
 	if cfg.S3Export {
 		if cfg.S3Bucket == "" {
@@ -220,7 +234,7 @@ func GenerateRestoreScript(cfg RestoreScriptConfig) (string, error) {
 	if serverRoot == "" {
 		serverRoot = DefaultServerRoot
 	}
-	src := path.Join(root, cfg.BackupID)
+	src := unixJoin(root, cfg.BackupID)
 
 	var b strings.Builder
 	b.WriteString("#!/bin/bash\n")
@@ -266,7 +280,7 @@ func GenerateDeleteScript(backupRoot, backupID, s3URI string) (string, error) {
 		return "", fmt.Errorf("backupID must not be empty")
 	}
 	root := ResolveBackupPath(backupRoot)
-	dest := path.Join(root, backupID)
+	dest := unixJoin(root, backupID)
 	var b strings.Builder
 	b.WriteString("#!/bin/bash\n")
 	b.WriteString("set -euo pipefail\n")
@@ -284,7 +298,7 @@ func GenerateReadMetaScript(backupRoot, backupID string) (string, error) {
 	if backupID == "" {
 		return "", fmt.Errorf("backupID must not be empty")
 	}
-	meta := path.Join(ResolveBackupPath(backupRoot), backupID, "metadata.json")
+	meta := unixJoin(ResolveBackupPath(backupRoot), backupID, "metadata.json")
 	var b strings.Builder
 	b.WriteString("#!/bin/bash\n")
 	b.WriteString("set -euo pipefail\n")

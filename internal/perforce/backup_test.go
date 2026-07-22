@@ -39,6 +39,10 @@ func TestBackupDirAndResolve(t *testing.T) {
 	if got := BackupDir("/hxdepots/fabrica-backups", "id1"); got != "/hxdepots/fabrica-backups/id1" {
 		t.Errorf("BackupDir = %q", got)
 	}
+	// Multi-segment join must stay Unix-style (not host filepath.Join).
+	if got := unixJoin(DefaultBackupPath, "id1", "metadata.json"); got != "/hxdepots/fabrica-backups/id1/metadata.json" {
+		t.Errorf("unixJoin multi = %q", got)
+	}
 	if got := ResolveS3Prefix(""); got != DefaultS3Prefix {
 		t.Errorf("default s3 prefix = %q", got)
 	}
