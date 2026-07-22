@@ -13,7 +13,7 @@ const {
   MARKER,
   resolveWithin,
   validateDownloadUrl,
-  validateRedirectUrl,
+  validateRedirectUrl
 } = require("./install.js");
 
 test("getArchiveName: platform/arch matrix", () => {
