@@ -54,7 +54,7 @@ func TestEveryCommandIsDocumented(t *testing.T) {
 	rootCmd := root.New(io.Discard)
 
 	// README lives at the repo root, two dirs up from cmd/root/.
-	readmePath := filepath.Join("..", "..", "README.md")
+	readmePath := filepath.Clean(filepath.Join("..", "..", "README.md"))
 	data, err := os.ReadFile(readmePath)
 	if err != nil {
 		t.Fatalf("reading README (%s): %v", readmePath, err)

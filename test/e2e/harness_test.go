@@ -80,7 +80,7 @@ deploy:
 // readState loads .fabrica/state.json; fails the test if it is missing.
 func readState(t *testing.T) *state.State {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(".fabrica", "state.json"))
+	data, err := os.ReadFile(filepath.Clean(filepath.Join(".fabrica", "state.json")))
 	if err != nil {
 		t.Fatalf("readState: %v", err)
 	}
