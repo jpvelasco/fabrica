@@ -178,7 +178,7 @@ gh api repos/OWNER/REPO/rulesets/RULESET_ID \
 
 Sister repos should match this pattern (see `.github/workflows/ci.yml` Test job):
 
-1. **Auth:** OIDC (`permissions.id-token: write` + `use_oidc: true`). Optional repo secret `CODECOV_TOKEN` (upload token from Codecov UI) is passed through for protected-branch create-commit; OIDC remains primary when both are present.
+1. **Auth (XOR):** default **OIDC** (`permissions.id-token: write` + `use_oidc: ${{ secrets.CODECOV_TOKEN == '' }}`). If repo secret `CODECOV_TOKEN` is set, **disable OIDC** and use the upload token only — `codecov-action` documents that `use_oidc: true` **ignores** any token. Do not enable both at once.
 2. **Action:** `codecov/codecov-action@v7` (pin full SHA) twice:
    - coverage: `files: ./coverage.out`, `fail_ci_if_error: true`, `use_pypi: true`, `slug: OWNER/REPO`
    - test analytics: `report_type: test_results`, `files: ./junit.xml`, `fail_ci_if_error: false`

@@ -94,7 +94,8 @@ jobs:
         run: go tool cover -func=coverage.out
       # Codecov standard (fabrica → roll out to sister repos):
       #   - codecov-action@v7 only (no separate test-results-action)
-      #   - OIDC (optional CODECOV_TOKEN secret if OIDC alone is insufficient)
+      #   - Auth is XOR: OIDC when CODECOV_TOKEN is unset; token when set.
+      #     (codecov-action: use_oidc ignores any token if both are enabled.)
       #   - Explicit override_* so push-to-main uploads are tagged with the real
       #     SHA/branch (action only auto-fills those for pull_request events;
       #     empty CC_SHA on push was leaving main without a usable base report).
@@ -104,9 +105,9 @@ jobs:
         if: runner.os == 'Linux' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
         with:
-          # Prefer OIDC; if CODECOV_TOKEN is set it is still passed for CLI
-          # create-commit on protected branches when OIDC JWT is not enough.
-          use_oidc: true
+          # OIDC when no secret; if CODECOV_TOKEN is set, use_oidc is false so
+          # the upload token is actually used (not ignored).
+          use_oidc: ${{ secrets.CODECOV_TOKEN == '' }}
           token: ${{ secrets.CODECOV_TOKEN }}
           use_pypi: true
           files: ./coverage.out
@@ -122,7 +123,7 @@ jobs:
         if: ${{ !cancelled() && runner.os == 'Linux' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
         with:
-          use_oidc: true
+          use_oidc: ${{ secrets.CODECOV_TOKEN == '' }}
           token: ${{ secrets.CODECOV_TOKEN }}
           use_pypi: true
           report_type: test_results
