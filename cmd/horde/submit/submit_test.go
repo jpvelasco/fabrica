@@ -343,14 +343,14 @@ func TestSubmitWithInjectedClient(t *testing.T) {
 	}
 }
 
-// TestSubmitResolvePrivateIP verifies the provider-resolve path when no
-// client is injected: the command resolves instance IP via Cloud Control Get.
-func TestSubmitResolvePrivateIP(t *testing.T) {
-	var out bytes.Buffer
+// newSubmitCommandWithFakeRC builds a submit command with a fake provider
+// that returns the given actualState JSON via Cloud Control Get.
+func newSubmitCommandWithFakeRC(t *testing.T, actualStateJSON string) command {
+	t.Helper()
 	st := hordeProvisionedState()
 	fakeRC := &fakeResourceClient{
 		getFn: func(_ context.Context, r *cloud.Resource) error {
-			r.ActualState = json.RawMessage(`{"PrivateIpAddress":"10.0.1.42"}`)
+			r.ActualState = json.RawMessage(actualStateJSON)
 			return nil
 		},
 	}
@@ -358,13 +358,20 @@ func TestSubmitResolvePrivateIP(t *testing.T) {
 	cfg := config.Defaults()
 	c := command{
 		runtime:     globals.Runtime{Config: cfg, Provider: fakeProv},
-		out:         &out,
+		out:         &bytes.Buffer{},
 		hordeClient: nil,
 		sleep:       func(time.Duration) {},
 		now:         time.Now,
 	}
 	c.readState = func() (*fabricastate.State, error) { return st, nil }
 	c.buildGraphPath = writeTempBuildGraph(t)
+	return c
+}
+
+// TestSubmitResolvePrivateIP verifies the provider-resolve path when no
+// client is injected: the command resolves instance IP via Cloud Control Get.
+func TestSubmitResolvePrivateIP(t *testing.T) {
+	c := newSubmitCommandWithFakeRC(t, `{"PrivateIpAddress":"10.0.1.42"}`)
 
 	err := c.run(context.Background())
 	if err == nil {
@@ -375,25 +382,7 @@ func TestSubmitResolvePrivateIP(t *testing.T) {
 
 // TestSubmitResolvePrivateIPEmptyState verifies error when Get returns empty ActualState.
 func TestSubmitResolvePrivateIPEmptyState(t *testing.T) {
-	var out bytes.Buffer
-	st := hordeProvisionedState()
-	fakeRC := &fakeResourceClient{
-		getFn: func(_ context.Context, r *cloud.Resource) error {
-			r.ActualState = json.RawMessage(`{}`)
-			return nil
-		},
-	}
-	fakeProv := &fakeSubmitProvider{rc: fakeRC}
-	cfg := config.Defaults()
-	c := command{
-		runtime:     globals.Runtime{Config: cfg, Provider: fakeProv},
-		out:         &out,
-		hordeClient: nil,
-		sleep:       func(time.Duration) {},
-		now:         time.Now,
-	}
-	c.readState = func() (*fabricastate.State, error) { return st, nil }
-	c.buildGraphPath = writeTempBuildGraph(t)
+	c := newSubmitCommandWithFakeRC(t, `{}`)
 
 	err := c.run(context.Background())
 	if err == nil {

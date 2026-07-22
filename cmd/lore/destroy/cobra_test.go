@@ -75,12 +75,6 @@ func newRuntime(provider cloud.Provider) globals.RuntimeSource {
 	return func() (globals.Runtime, error) { return rt, nil }
 }
 
-func newNilProviderRuntime() globals.RuntimeSource {
-	cfg := config.Defaults()
-	rt := globals.Runtime{Config: cfg, Provider: nil}
-	return func() (globals.Runtime, error) { return rt, nil }
-}
-
 func loreStateJSON() string {
 	return `{"account":"123456789012","region":"us-east-1","modules":[
 		{"name":"lore","version":"ami-0abc123","status":"provisioning","resources":[
@@ -147,7 +141,7 @@ func TestDestroyCobraJSONDryRunWithProvider(t *testing.T) {
 		t.Fatalf("json dry-run: %v", err)
 	}
 	var result teardown.Output
-	if err := json.Unmarshal([]byte(out.String()), &result); err != nil {
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("invalid JSON: %v\noutput: %s", err, out.String())
 	}
 	if !result.DryRun {
@@ -169,7 +163,7 @@ func TestDestroyCobraJSONYesWithProvider(t *testing.T) {
 		t.Fatalf("json yes: %v", err)
 	}
 	var result teardown.Output
-	if err := json.Unmarshal([]byte(out.String()), &result); err != nil {
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("invalid JSON: %v\noutput: %s", err, out.String())
 	}
 	if result.DryRun {

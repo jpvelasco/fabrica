@@ -448,7 +448,7 @@ func TestLockAcquireTokenFormat(t *testing.T) {
 	}
 	// Verify it's valid hex
 	for _, c := range token {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			t.Errorf("token contains non-hex char: %c", c)
 			break
 		}

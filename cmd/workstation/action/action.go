@@ -99,7 +99,7 @@ func (c *Command) Run(ctx context.Context) error {
 	m := st.GetModule(moduleName)
 
 	if c.spec.IsAlreadyActive(m.Status) {
-		c.printAlreadyActive(instanceID)
+		c.printAlreadyActive(instanceID, m.Status)
 		return nil
 	}
 
@@ -151,13 +151,13 @@ func (c *Command) printNotProvisioned() {
 }
 
 // printAlreadyActive prints the already-active message and returns.
-func (c *Command) printAlreadyActive(instanceID string) {
+func (c *Command) printAlreadyActive(instanceID, status string) {
 	if c.jsonOut {
 		c.printJSON(ActionOutput{InstanceID: instanceID, Status: c.spec.AlreadyActiveStatus, DryRun: c.dryRun})
 		return
 	}
 	if strings.Contains(c.spec.AlreadyActiveText, "%s") {
-		fmt.Fprintf(c.out, "Instance %s "+c.spec.AlreadyActiveText+"\n", instanceID)
+		fmt.Fprintf(c.out, "Instance %s "+c.spec.AlreadyActiveText+"\n", instanceID, status)
 	} else {
 		fmt.Fprintf(c.out, "Instance %s "+c.spec.AlreadyActiveText+".\n", instanceID)
 	}
