@@ -40,7 +40,11 @@ go test ./... -run TestName
 2. Use [Conventional Commits](https://www.conventionalcommits.org/) for messages
    (`feat:`, `fix:`, `docs:`, `test:`, `chore:`, `refactor:`, `ci:`, `build:`).
 3. Write a clear PR description explaining **what** changed and **why**.
+   GitHub pre-fills [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) —
+   complete every checklist item with evidence (or **N/A + reason**). Unchecked
+   applicable boxes mean the PR is not ready for review.
 4. CI must pass (lint + build + test on ubuntu / windows / macos) before merge.
+   Codacy must report the PR up to standards when that check runs.
 5. Prefer squash-merge into `main` unless commit history is meaningful.
 
 ## Architecture notes
