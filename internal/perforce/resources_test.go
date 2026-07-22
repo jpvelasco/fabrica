@@ -104,7 +104,7 @@ func TestInstanceDesiredState_CoreFields(t *testing.T) {
 		InstanceName: "fabrica-perforce",
 		VolumeSize:   500,
 	}
-	raw, err := InstanceDesiredState(plan, "sg-123", "userdata-b64", "fabrica-perforce-profile")
+	raw, err := InstanceDesiredState(plan, "sg-123", "userdata-b64", "fabrica-perforce-profile", "ami-test123")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestInstanceDesiredState_CoreFields(t *testing.T) {
 
 func TestInstanceDesiredState_EBSNotDeletedOnTermination(t *testing.T) {
 	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 750, InstanceName: "fabrica-perforce"}
-	raw, err := InstanceDesiredState(plan, "sg-x", "ud", "")
+	raw, err := InstanceDesiredState(plan, "sg-x", "ud", "", "ami-test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestRoleDesiredState_S3ExportDefaultPrefix(t *testing.T) {
 
 func TestInstanceDesiredState_ARNProfile(t *testing.T) {
 	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce", SubnetID: "subnet-1"}
-	raw, err := InstanceDesiredState(plan, "sg-1", "ud", "arn:aws:iam::123:instance-profile/p")
+	raw, err := InstanceDesiredState(plan, "sg-1", "ud", "arn:aws:iam::123:instance-profile/p", "ami-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestInstanceProfileDesiredState(t *testing.T) {
 
 func TestInstanceDesiredState_IMDSv2Required(t *testing.T) {
 	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce"}
-	raw, err := InstanceDesiredState(plan, "sg-x", "ud", "")
+	raw, err := InstanceDesiredState(plan, "sg-x", "ud", "", "ami-test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestInstanceDesiredState_IMDSv2Required(t *testing.T) {
 
 func TestInstanceDesiredState_ManagedByTag(t *testing.T) {
 	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce"}
-	raw, err := InstanceDesiredState(plan, "sg-x", "ud", "")
+	raw, err := InstanceDesiredState(plan, "sg-x", "ud", "", "ami-test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -267,5 +267,35 @@ func TestInstanceDesiredState_ManagedByTag(t *testing.T) {
 	}
 	if tagMap["Name"] != "fabrica-perforce" {
 		t.Errorf("Name tag = %q, want fabrica-perforce", tagMap["Name"])
+	}
+}
+
+func TestInstanceDesiredState_ImageID(t *testing.T) {
+	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce"}
+	raw, err := InstanceDesiredState(plan, "sg-x", "ud", "", "ami-ubuntu2204")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if doc["ImageId"] != "ami-ubuntu2204" {
+		t.Errorf("ImageId = %v, want ami-ubuntu2204", doc["ImageId"])
+	}
+}
+
+func TestInstanceDesiredState_EmptyImageID(t *testing.T) {
+	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce"}
+	raw, err := InstanceDesiredState(plan, "sg-x", "ud", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if _, ok := doc["ImageId"]; ok {
+		t.Error("ImageId should not be present when empty")
 	}
 }

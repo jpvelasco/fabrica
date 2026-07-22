@@ -17,6 +17,7 @@ type awsProvider struct {
 	awsCfg                   awsConfig
 	clients                  resourceClients
 	ec2Mgr                   ec2Manager
+	amiRes                   *amiResolver
 	loadConfig               stateBackendConfigLoader
 	newS3StateClient         stateBackendS3ClientFactory
 	newDynamoDBStateClient   stateBackendDynamoDBClientFactory
@@ -50,6 +51,7 @@ type resourceClients struct {
 var _ fabricac.Provider = (*awsProvider)(nil)
 var _ fabricac.EC2InstanceManager = (*awsProvider)(nil)
 var _ fabricac.StateBackendBootstrapper = (*awsProvider)(nil)
+var _ fabricac.AMIResolver = (*awsProvider)(nil)
 
 func newProvider(cfg *config.Config) (fabricac.Provider, error) {
 	return &awsProvider{
@@ -93,6 +95,20 @@ func (p *awsProvider) StopInstance(ctx context.Context, instanceID string) error
 // StartInstance delegates to the ec2Manager.
 func (p *awsProvider) StartInstance(ctx context.Context, instanceID string) error {
 	return p.EC2Manager().StartInstance(ctx, instanceID)
+}
+
+// AMIResolver returns the AMI resolver for this provider.
+func (p *awsProvider) AMIResolver() fabricac.AMIResolver {
+	if p.amiRes == nil {
+		p.amiRes = newAMIResolver(p.awsCfg)
+	}
+	return p.amiRes
+}
+
+// ResolveUbuntuAMI delegates to the AMI resolver, satisfying the
+// cloud.AMIResolver interface so that type assertions in module commands work.
+func (p *awsProvider) ResolveUbuntuAMI(ctx context.Context, region string) (string, error) {
+	return p.AMIResolver().ResolveUbuntuAMI(ctx, region)
 }
 
 func init() {

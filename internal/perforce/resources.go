@@ -31,7 +31,9 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 // InstanceDesiredState returns the Cloud Control desired-state JSON for the
 // Perforce EC2 instance. When instanceProfileName is non-empty, the instance
 // is attached to that IAM instance profile (required for SSM backup/restore).
-func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName string) (json.RawMessage, error) {
+// When imageID is non-empty, it is injected as ImageId; otherwise the field
+// is omitted (useful for dry-runs where the AMI isn't resolved yet).
+func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName, imageID string) (json.RawMessage, error) {
 	doc := map[string]any{
 		"InstanceType":     plan.InstanceType,
 		"SubnetId":         plan.SubnetID,
@@ -60,8 +62,9 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName 
 		// plain string (the instance profile name), not an object with Name/Arn.
 		doc["IamInstanceProfile"] = instanceProfileName
 	}
-	// ImageId is intentionally omitted here; the caller resolves the latest
-	// Ubuntu 22.04 (jammy) AMI for the region and injects it if needed.
+	if imageID != "" {
+		doc["ImageId"] = imageID
+	}
 	return json.Marshal(doc)
 }
 
