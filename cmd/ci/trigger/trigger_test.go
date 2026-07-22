@@ -53,7 +53,7 @@ func writeTempBuildGraph(t *testing.T) string {
 	xml := `<?xml version="1.0"?><BuildGraph xmlns="http://www.epicgames.com/BuildGraph">
 		<Agent Name="BuildAgent" Type="Win64"><Node Name="Compile"/></Agent>
 	</BuildGraph>`
-	if err := os.WriteFile(path, []byte(xml), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(xml), 0600); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -136,7 +136,7 @@ func TestTriggerBadBuildGraphFailsFast(t *testing.T) {
 	var out bytes.Buffer
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "bad.xml")
-	_ = os.WriteFile(bad, []byte("not xml <<<"), 0644)
+	_ = os.WriteFile(bad, []byte("not xml <<<"), 0600)
 	c := newCmd(&out, &fakeRunner{startID: "x"}, provisionedState())
 	c.buildGraphPath = bad
 	if err := c.run(context.Background()); err == nil {

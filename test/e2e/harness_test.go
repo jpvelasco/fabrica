@@ -72,7 +72,7 @@ workstation:
 deploy:
   buildBucket: fake-build-bucket
 `
-	if err := os.WriteFile("fabrica.yaml", []byte(cfg), 0644); err != nil {
+	if err := os.WriteFile("fabrica.yaml", []byte(cfg), 0600); err != nil {
 		t.Fatalf("writeConfig: %v", err)
 	}
 }

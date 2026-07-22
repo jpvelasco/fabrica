@@ -34,6 +34,7 @@ func GeneratePassword(length int) (string, error) {
 // stored under .fabrica/.
 func WriteCredentials(path string, content string) error {
 	dir := filepath.Dir(path)
+	// #nosec G301 -- directory needs execute for traversal
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}

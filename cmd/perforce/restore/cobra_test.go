@@ -57,6 +57,7 @@ func TestCobraRestoreDryRun(t *testing.T) {
 		{"name":"perforce","version":"2024.2","status":"stopped","resources":[
 			{"typeName":"AWS::EC2::Instance","identifier":"i-abc"}
 		]}]}`
+	// #nosec G301 -- directory needs execute for traversal
 	if err := os.MkdirAll(".fabrica", 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +82,7 @@ func TestCobraRestoreMissingCredentials(t *testing.T) {
 		{"name":"perforce","version":"2024.2","status":"stopped","resources":[
 			{"typeName":"AWS::EC2::Instance","identifier":"i-abc"}
 		]}]}`
+	// #nosec G301 -- directory needs execute for traversal
 	if err := os.MkdirAll(".fabrica", 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -104,6 +106,7 @@ func TestCobraRestoreEmptyPasswordInCreds(t *testing.T) {
 		{"name":"perforce","version":"2024.2","status":"stopped","resources":[
 			{"typeName":"AWS::EC2::Instance","identifier":"i-abc"}
 		]}]}`
+	// #nosec G301 -- directory needs execute for traversal
 	if err := os.MkdirAll(".fabrica", 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -153,6 +156,7 @@ func TestCobraRestoreRequiresForce(t *testing.T) {
 		{"name":"perforce","version":"2024.2","status":"ready","resources":[
 			{"typeName":"AWS::EC2::Instance","identifier":"i-abc"}
 		]}]}`
+	// #nosec G301 -- directory needs execute for traversal
 	if err := os.MkdirAll(".fabrica", 0700); err != nil {
 		t.Fatal(err)
 	}

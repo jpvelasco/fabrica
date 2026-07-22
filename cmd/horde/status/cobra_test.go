@@ -160,6 +160,7 @@ func (r *cobraFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error
 }
 
 func writeStateFile(dir, content string) error {
+	// #nosec G301 -- directory needs execute for traversal
 	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
 		return err
 	}

@@ -29,6 +29,7 @@ func ReadStateOrNew(account, region string) (*State, error) {
 
 // WriteState persists state to the local cache file (.fabrica/state.json).
 func WriteState(st *State) error {
+	// #nosec G301 -- directory needs execute for traversal
 	if err := os.MkdirAll(".fabrica", 0700); err != nil {
 		return fmt.Errorf("creating .fabrica directory: %w", err)
 	}

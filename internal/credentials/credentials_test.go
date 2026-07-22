@@ -59,7 +59,7 @@ func TestWriteCredentials_CreatesFileAndDir(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	got, err := os.ReadFile(path)
+	got, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatalf("could not read written file: %v", err)
 	}

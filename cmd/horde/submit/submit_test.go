@@ -57,7 +57,7 @@ func writeTempBuildGraph(t *testing.T) string {
 	xml := `<?xml version="1.0"?><BuildGraph xmlns="http://www.epicgames.com/BuildGraph">
 		<Agent Name="BuildAgent" Type="Win64"><Node Name="Compile"/></Agent>
 	</BuildGraph>`
-	if err := os.WriteFile(path, []byte(xml), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(xml), 0600); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -90,7 +90,7 @@ func TestSubmitBuildGraphParseError(t *testing.T) {
 	var out bytes.Buffer
 	dir := t.TempDir()
 	badXML := filepath.Join(dir, "bad.xml")
-	if err := os.WriteFile(badXML, []byte("not xml <<<"), 0644); err != nil {
+	if err := os.WriteFile(badXML, []byte("not xml <<<"), 0600); err != nil {
 		t.Fatalf("writing bad XML: %v", err)
 	}
 
@@ -272,7 +272,7 @@ func TestSubmitMissingRequiredFields(t *testing.T) {
 	dir := t.TempDir()
 	emptyXML := filepath.Join(dir, "empty.xml")
 	xml := `<?xml version="1.0"?><BuildGraph xmlns="http://www.epicgames.com/BuildGraph"></BuildGraph>`
-	if err := os.WriteFile(emptyXML, []byte(xml), 0644); err != nil {
+	if err := os.WriteFile(emptyXML, []byte(xml), 0600); err != nil {
 		t.Fatal(err)
 	}
 

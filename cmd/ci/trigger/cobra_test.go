@@ -52,6 +52,7 @@ func newTestRuntime(provider cloud.Provider) globals.RuntimeSource {
 
 func writeStateFile(t *testing.T, dir, content string) {
 	t.Helper()
+	// #nosec G301 -- directory needs execute for traversal
 	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func writeBuildGraph(t *testing.T, dir string) string {
 	xml := `<?xml version="1.0"?><BuildGraph xmlns="http://www.epicgames.com/BuildGraph">
 		<Agent Name="BuildAgent" Type="Win64"><Node Name="Compile"/></Agent>
 	</BuildGraph>`
-	if err := os.WriteFile(path, []byte(xml), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(xml), 0600); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -143,7 +144,7 @@ func TestTriggerCobraBadBuildGraph(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	path := filepath.Join(dir, "bad.xml")
-	if err := os.WriteFile(path, []byte("not xml"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("not xml"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	provider := &ciTriggerFakeProvider{startID: "x"}

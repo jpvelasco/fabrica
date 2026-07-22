@@ -88,8 +88,8 @@ state:
   table: custom-lock
   kmsKeyId: alias/fabrica-key
 `
-	path := filepath.Join(dir, "fabrica.yaml")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	path := filepath.Clean(filepath.Join(dir, "fabrica.yaml"))
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -134,8 +134,8 @@ func TestLoadPerforceBackupConfig(t *testing.T) {
     s3Bucket: my-backup-bucket
     s3Prefix: studio/p4/
 `
-	path := filepath.Join(dir, "fabrica.yaml")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	path := filepath.Clean(filepath.Join(dir, "fabrica.yaml"))
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -167,8 +167,8 @@ func TestLoadPartialFile(t *testing.T) {
   aws:
     region: ap-southeast-1
 `
-	path := filepath.Join(dir, "fabrica.yaml")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	path := filepath.Clean(filepath.Join(dir, "fabrica.yaml"))
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -193,7 +193,7 @@ func TestLoadPartialFile(t *testing.T) {
 
 func TestSaveWritesSchemaNames(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "fabrica.yaml")
+	path := filepath.Clean(filepath.Join(dir, "fabrica.yaml"))
 
 	cfg := Defaults()
 	cfg.Cloud.AWS.AccountID = "123456789012"
@@ -203,7 +203,7 @@ func TestSaveWritesSchemaNames(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	got, err := os.ReadFile(path)
+	got, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
@@ -270,7 +270,7 @@ workstation:
 
 func TestLoadDeployConfig(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "fabrica.yaml")
+	path := filepath.Clean(filepath.Join(dir, "fabrica.yaml"))
 	if err := os.WriteFile(path, []byte(`
 cloud:
   provider: aws
@@ -314,8 +314,8 @@ func TestCostConfigRoundTrip(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "fabrica.yaml")
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	path := filepath.Clean(filepath.Join(dir, "fabrica.yaml"))
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := Load(path)
@@ -334,7 +334,7 @@ func TestCostConfigRoundTrip(t *testing.T) {
 func TestLoadInvalidYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.yaml")
-	if err := os.WriteFile(path, []byte(":::invalid yaml content {{{"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(":::invalid yaml content {{{"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Load(path)
@@ -350,7 +350,7 @@ func TestLoadInvalidYAML(t *testing.T) {
 func TestLoadEmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "empty.yaml")
-	if err := os.WriteFile(path, []byte(""), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(""), 0600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := Load(path)
@@ -465,7 +465,7 @@ func TestLoadProfileSpecific(t *testing.T) {
     region: us-west-2
     accountId: "999999999999"
 `
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -525,7 +525,7 @@ func TestLoadWithPartialDefaults(t *testing.T) {
   aws:
     region: eu-central-1
 `
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
 
