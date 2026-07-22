@@ -172,7 +172,20 @@ gh api repos/OWNER/REPO/rulesets/RULESET_ID \
 |-------|--------------------|
 | **Codacy Static Code Analysis** | Third-party; lag/missed webhooks can hard-block merges. Soft-gated via PR template + pr-auto. Revisit after sustained reliability. |
 | gosec, Trivy, CodeQL, Lint (Windows) | Run in CI; keep advisory until we want harder gates |
-| Codecov | Not always present; pr-auto Gate 5.7 when configured |
+| **`codecov/patch`** | Posted by the **Codecov GitHub App** after CI uploads coverage (not a standalone Actions job). Soft gate: visible on PRs, enforced by `codecov.yml` patch target, but App lag/outage must not deadlock merges. pr-auto Gate 5.7 when the status is present. |
+
+### Codecov standard (fabrica reference)
+
+Sister repos should match this pattern (see `.github/workflows/ci.yml` Test job):
+
+1. **Auth:** OIDC only (`permissions.id-token: write` + `use_oidc: true`). No `CODECOV_TOKEN` secret.
+2. **Action:** `codecov/codecov-action@v7` (pin full SHA) twice:
+   - coverage: `files: ./coverage.out`, `fail_ci_if_error: true`, `use_pypi: true`, `slug: OWNER/REPO`
+   - test analytics: `report_type: test_results`, `files: ./junit.xml`, `fail_ci_if_error: false`
+3. **Do not** use deprecated `codecov/test-results-action` (logs a deprecation warning; juggernaut already uses `report_type`).
+4. **Coverage generation:** Linux only with `gotestsum --junitfile junit.xml` + `go test -race -coverprofile=coverage.out -covermode=atomic ./...` (enough for pure-Go CLIs). Multi-OS matrix uploads only when platform-tagged code needs merging (juggernaut pattern).
+5. **PR UI:** Expect `codecov/patch` + `codecov[bot]` comment from the App. CI only shows nested steps under **Test (ubuntu-latest)** — that is correct.
+6. **Dashboard:** Codecov GitHub App installed on the repo; OIDC enabled for the org/repo in Codecov settings.
 
 ---
 

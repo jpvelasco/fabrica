@@ -15,7 +15,8 @@ Mark each box only when verified with evidence (CI job, local command output, or
 - [ ] Tested on: <!-- e.g. Windows 11 / pwsh, Ubuntu 24.04 -->
 - [ ] CI green on this PR (lint, build, test matrix, gosec, CodeQL, Codacy as applicable)
 - [ ] Codacy PR quality gate clean (`isUpToStandards` / 0 new issues blocking merge) — or N/A if Codacy did not run
-- [ ] New/changed code covered by tests (Codecov patch clean, or E2E-only with justification)
+- [ ] Codecov: `codecov/patch` status (and/or `codecov[bot]` comment) present after Test (ubuntu) — or N/A if no coverable Go changes / upload skipped
+- [ ] New/changed code covered by tests (Codecov patch ≥90% or E2E-only with justification)
 
 ### Scope-specific (check all that apply)
 
