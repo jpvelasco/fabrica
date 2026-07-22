@@ -209,6 +209,8 @@ func TestCreateCobraAlreadyProvisioned(t *testing.T) {
 type cobraFakeProvider struct {
 	identityErr error
 	createCalls int
+	amiID       string
+	amiErr      error
 }
 
 func (f *cobraFakeProvider) Name() string { return "fake" }
@@ -218,6 +220,16 @@ func (f *cobraFakeProvider) Identity(_ context.Context) (string, string, string,
 		return "", "", "", f.identityErr
 	}
 	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
+}
+
+func (f *cobraFakeProvider) ResolveUbuntuAMI(_ context.Context, _ string) (string, error) {
+	if f.amiErr != nil {
+		return "", f.amiErr
+	}
+	if f.amiID == "" {
+		return "ami-fake-ubuntu", nil
+	}
+	return f.amiID, nil
 }
 
 func (f *cobraFakeProvider) Resources() cloud.ResourceClient {

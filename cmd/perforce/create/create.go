@@ -40,6 +40,7 @@ type command struct {
 	readState      func() (*fabricastate.State, error)
 	writeState     func(*fabricastate.State) error
 	createResource func(ctx context.Context, r *cloud.Resource) error
+	resolveAMI     func(ctx context.Context, region string) (string, error)
 	genPassword    func(int) (string, error)
 	writeCreds     func(string, string) error
 }
@@ -90,6 +91,9 @@ making any AWS calls.`,
 			c.writeState = fabricastate.WriteState
 			if rt.Provider != nil {
 				c.createResource = rt.Provider.Resources().Create
+				if resolver, ok := rt.Provider.(cloud.AMIResolver); ok {
+					c.resolveAMI = resolver.ResolveUbuntuAMI
+				}
 			}
 			return c.run(cmd.Context())
 		},
@@ -270,7 +274,17 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		return fmt.Errorf("generating user data: %w", err)
 	}
 
-	instanceDesired, err := perforce.InstanceDesiredState(plan, sg.Identifier, userData, profileName)
+	// Resolve the Ubuntu 22.04 AMI for this region
+	var imageID string
+	if c.resolveAMI != nil {
+		imageID, err = c.resolveAMI(ctx, plan.Region)
+		if err != nil {
+			return fmt.Errorf("resolving Ubuntu AMI: %w", err)
+		}
+		fmt.Fprintf(c.out, "  Resolved AMI: %s\n", imageID)
+	}
+
+	instanceDesired, err := perforce.InstanceDesiredState(plan, sg.Identifier, userData, profileName, imageID)
 	if err != nil {
 		return fmt.Errorf("building instance desired state: %w", err)
 	}

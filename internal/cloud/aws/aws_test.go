@@ -118,6 +118,31 @@ func TestAwsProviderEC2ManagerStopStart(t *testing.T) {
 	}
 }
 
+func TestAwsProviderAMIResolver(t *testing.T) {
+	fake := &stubEC2{}
+	p := &awsProvider{
+		awsCfg: awsConfig{region: "us-east-1"},
+		amiRes: &amiResolver{
+			awsCfg:    awsConfig{region: "us-east-1"},
+			client:    fake,
+			loadCfg:   func(context.Context, string, string) (aws.Config, error) { return aws.Config{}, nil },
+			newClient: func(aws.Config) ec2APIClient { return fake },
+		},
+	}
+
+	// AMIResolver getter should return the pre-set resolver
+	resolver := p.AMIResolver()
+	if resolver == nil {
+		t.Fatal("AMIResolver nil")
+	}
+
+	// ResolveUbuntuAMI should delegate to the resolver
+	_, err := p.ResolveUbuntuAMI(context.Background(), "us-east-1")
+	if err == nil {
+		t.Fatal("expected error (stub returns no images)")
+	}
+}
+
 type stubEC2 struct{}
 
 func (stubEC2) StopInstances(context.Context, *ec2.StopInstancesInput, ...func(*ec2.Options)) (*ec2.StopInstancesOutput, error) {
@@ -128,4 +153,7 @@ func (stubEC2) StartInstances(context.Context, *ec2.StartInstancesInput, ...func
 }
 func (stubEC2) DescribeInstances(context.Context, *ec2.DescribeInstancesInput, ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
 	return &ec2.DescribeInstancesOutput{}, nil
+}
+func (stubEC2) DescribeImages(context.Context, *ec2.DescribeImagesInput, ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error) {
+	return &ec2.DescribeImagesOutput{}, nil
 }

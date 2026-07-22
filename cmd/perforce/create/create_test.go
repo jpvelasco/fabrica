@@ -31,6 +31,7 @@ func newTestCommand(out *bytes.Buffer, provider cloud.Provider, st *fabricastate
 	}
 	c.readState = func() (*fabricastate.State, error) { return st, nil }
 	c.writeState = func(_ *fabricastate.State) error { return nil }
+	c.resolveAMI = func(_ context.Context, _ string) (string, error) { return "ami-fake-ubuntu", nil }
 	if provider != nil {
 		c.createResource = provider.Resources().Create
 	}

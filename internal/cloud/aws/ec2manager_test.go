@@ -41,6 +41,10 @@ func (f *fakeEC2Client) DescribeInstances(_ context.Context, _ *ec2.DescribeInst
 	return &ec2.DescribeInstancesOutput{}, nil
 }
 
+func (f *fakeEC2Client) DescribeImages(_ context.Context, _ *ec2.DescribeImagesInput, _ ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error) {
+	return &ec2.DescribeImagesOutput{}, nil
+}
+
 func TestStopInstance_Success(t *testing.T) {
 	fake := &fakeEC2Client{}
 	m := &ec2Manager{client: fake}
