@@ -178,14 +178,20 @@ gh api repos/OWNER/REPO/rulesets/RULESET_ID \
 
 Sister repos should match this pattern (see `.github/workflows/ci.yml` Test job):
 
-1. **Auth:** OIDC only (`permissions.id-token: write` + `use_oidc: true`). No `CODECOV_TOKEN` secret.
+1. **Auth:** OIDC (`permissions.id-token: write` + `use_oidc: true`). Optional repo secret `CODECOV_TOKEN` (upload token from Codecov UI) is passed through for protected-branch create-commit; OIDC remains primary when both are present.
 2. **Action:** `codecov/codecov-action@v7` (pin full SHA) twice:
    - coverage: `files: ./coverage.out`, `fail_ci_if_error: true`, `use_pypi: true`, `slug: OWNER/REPO`
    - test analytics: `report_type: test_results`, `files: ./junit.xml`, `fail_ci_if_error: false`
-3. **Do not** use deprecated `codecov/test-results-action` (logs a deprecation warning; juggernaut already uses `report_type`).
-4. **Coverage generation:** Linux only with `gotestsum --junitfile junit.xml` + `go test -race -coverprofile=coverage.out -covermode=atomic ./...` (enough for pure-Go CLIs). Multi-OS matrix uploads only when platform-tagged code needs merging (juggernaut pattern).
-5. **PR UI:** Expect `codecov/patch` + `codecov[bot]` comment from the App. CI only shows nested steps under **Test (ubuntu-latest)** — that is correct.
-6. **Dashboard:** Codecov GitHub App installed on the repo; OIDC enabled for the org/repo in Codecov settings.
+3. **Identity (required):** always set
+   - `override_commit: ${{ github.event.pull_request.head.sha || github.sha }}`
+   - `override_branch: ${{ github.head_ref || github.ref_name }}`
+   - `override_pr: ${{ github.event.pull_request.number }}`  
+   Without these, **push-to-main** uploads often omit SHA/branch (empty `CC_SHA` / `CC_BRANCH` in logs) and Codecov never stores a usable **base** report → PRs show “Missing base commit” / “Coverage data is unknown”.
+4. **Checkout:** `fetch-depth: 0` on the Test job so git history/path mapping is complete.
+5. **Do not** use deprecated `codecov/test-results-action`.
+6. **Coverage generation:** Linux leg with `gotestsum` + `-coverprofile` (product still **builds/tests** on Windows/macOS). Multi-OS *coverage uploads* only when you have platform-tagged packages that Linux cannot exercise (juggernaut).
+7. **PR UI:** `codecov/patch` + `codecov[bot]` come from the Codecov GitHub App after both **base (main)** and **head** have processable reports ([Missing base](https://docs.codecov.com/docs/error-reference#section-missing-base-report) / [Missing head](https://docs.codecov.com/docs/error-reference#section-missing-head-commit)).
+8. **Dashboard:** App installed; after each `main` merge, open `https://app.codecov.io/gh/OWNER/REPO/commit/<main-sha>` and confirm a coverage **%** (not “unknown”).
 
 ---
 

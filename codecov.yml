@@ -1,9 +1,13 @@
 # Codecov configuration. See https://docs.codecov.com/docs/codecov-yaml
 #
-# Upload: Linux Test job in .github/workflows/ci.yml (OIDC, no CODECOV_TOKEN).
-# PR visibility: Codecov GitHub App posts `codecov/patch` (and often a PR
-# comment) after processing the upload. That status is intentional soft gate —
-# NOT a ruleset required check (see .github/GITHUB_SETTINGS.md).
+# Upload: Linux Test job in .github/workflows/ci.yml (OIDC + optional CODECOV_TOKEN).
+# CI must send override_commit/override_branch on every run (including push to
+# main) so Codecov stores base reports — otherwise PRs hit "Missing base commit"
+# / "Coverage data is unknown" (docs.codecov.com/docs/error-reference).
+#
+# PR visibility: Codecov GitHub App posts `codecov/patch` + often a PR comment
+# only after BOTH base (main) and head reports process. Soft gate — NOT in the
+# ruleset required checks (see .github/GITHUB_SETTINGS.md).
 #
 # Gates:
 #   - project: overall coverage may not drop more than the threshold vs base
