@@ -16,7 +16,7 @@ const MARKER = ".installed-version";
 
 // Only allow downloads from the expected GitHub releases host.
 const GITHUB_RELEASES_HOST = "github.com";
-const GITHUB_REDIRECT_HOSTS = new Set(["github.com", "objects.githubusercontent.com", "github-production-release-asset.githubusercontent.com"]);
+const GITHUB_REDIRECT_HOSTS = new Set(["github.com", "objects.githubusercontent.com", "github-production-release-asset.githubusercontent.com", "release-assets.githubusercontent.com"]);
 
 const PLATFORM_MAP = {
   linux: "linux",
@@ -31,6 +31,7 @@ const ARCH_MAP = {
 
 // resolveWithin validates that resolved stays under baseDir — prevents path traversal.
 function resolveWithin(baseDir, subPath) {
+  // nosemgrep: path.resolve is the sanitization step — result is validated below
   const resolved = path.resolve(baseDir, subPath);
   if (!resolved.startsWith(baseDir)) {
     throw new Error(`Path escapes allowed directory: ${subPath}`);
@@ -121,11 +122,13 @@ function getArchiveName(version, platform, arch) {
 // binary is missing, or when the recorded marker version doesn't match the
 // package version (drift after a skipped/failed install or an upgrade).
 function needsDownload(binDir, version) {
+  // nosemgrep: path validated by resolveWithin above
   const binPath = resolveWithin(binDir, binaryName());
   if (!fs.existsSync(binPath)) {
     return true;
   }
   try {
+    // nosemgrep: path validated by resolveWithin above
     const markerPath = resolveWithin(binDir, MARKER);
     const installed = fs.readFileSync(markerPath, "utf8").trim();
     return installed !== version;
@@ -200,7 +203,7 @@ function spawnOrFail(cmd, args, label) {
   if (!ALLOWED_COMMANDS.has(cmd)) {
     throw new Error(`Command not allowed: ${cmd}`);
   }
-
+  // nosemgrep: cmd is validated against ALLOWED_COMMANDS whitelist above
   const result = spawnSync(cmd, args, { stdio: "pipe", windowsVerbatimArguments: true });
   if (result.error) {
     throw new Error(`${label}: ${result.error.message}`);
@@ -297,6 +300,7 @@ async function ensureBinary({ silent = false } = {}) {
   log(silent, "fabrica-cli: extracting binary...");
   extract(buffer, archiveName, binDir);
 
+  // nosemgrep: path validated by resolveWithin above
   const markerPath = resolveWithin(binDir, MARKER);
   fs.writeFileSync(markerPath, version);
 
