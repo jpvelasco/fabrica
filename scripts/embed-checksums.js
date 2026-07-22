@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-// embed-checksums.js — Embeds SHA-256 checksums from GoReleaser's checksums.txt
+// embed-checksums.js - Embeds SHA-256 checksums from GoReleaser's checksums.txt
 // into npm/package.json's binaryChecksums field.
 //
 // Usage: node scripts/embed-checksums.js dist/checksums.txt npm/package.json
@@ -10,6 +10,28 @@
 //   <sha256hex>  <filename>
 
 const fs = require("fs");
+const path = require("path");
+
+// resolveWithin validates that resolved stays under baseDir - prevents path traversal.
+function resolveWithin(baseDir, subPath) {
+  const resolved = path.resolve(baseDir, subPath);
+  if (!resolved.startsWith(baseDir)) {
+    throw new Error(`Path escapes allowed directory: ${subPath}`);
+  }
+  return resolved;
+}
+
+// validateFile ensures the path is within the project root and the file exists.
+function validateFile(baseDir, filePath, label) {
+  const resolved = resolveWithin(baseDir, filePath);
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`${label} not found: ${resolved}`);
+  }
+  return resolved;
+}
+
+const scriptDir = __dirname;
+const projectRoot = path.resolve(scriptDir, "..");
 
 const [checksumFile, packageFile] = process.argv.slice(2);
 if (!checksumFile || !packageFile) {
@@ -17,8 +39,22 @@ if (!checksumFile || !packageFile) {
   process.exit(1);
 }
 
-const checksums = fs.readFileSync(checksumFile, "utf8");
-const pkg = JSON.parse(fs.readFileSync(packageFile, "utf8"));
+// Validate both paths are within the project root.
+const checksumPath = validateFile(projectRoot, checksumFile, "Checksum file");
+const packagePath = validateFile(projectRoot, packageFile, "Package file");
+
+// Validate input file extensions to prevent accidental misuse.
+if (!checksumPath.endsWith(".txt")) {
+  console.error(`Checksum file must be a .txt file: ${checksumPath}`);
+  process.exit(1);
+}
+if (!packagePath.endsWith("package.json")) {
+  console.error(`Package file must be package.json: ${packagePath}`);
+  process.exit(1);
+}
+
+const checksums = fs.readFileSync(checksumPath, "utf8");
+const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
 
 pkg.binaryChecksums = {};
 for (const line of checksums.split("\n")) {
@@ -31,9 +67,9 @@ for (const line of checksums.split("\n")) {
 
 const count = Object.keys(pkg.binaryChecksums).length;
 if (count === 0) {
-  console.error("Warning: no checksums found in " + checksumFile);
+  console.error("Warning: no checksums found in " + checksumPath);
   process.exit(1);
 }
 
-fs.writeFileSync(packageFile, JSON.stringify(pkg, null, 2) + "\n");
-console.log(`Embedded ${count} checksums into ${packageFile}`);
+fs.writeFileSync(packagePath, JSON.stringify(pkg, null, 2) + "\n");
+console.log(`Embedded ${count} checksums into ${packagePath}`);
