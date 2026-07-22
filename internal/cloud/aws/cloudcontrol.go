@@ -42,6 +42,17 @@ func (c *resourceClients) Create(ctx context.Context, r *fabricac.Resource) erro
 	}
 
 	if result.ProgressEvent.OperationStatus == types.OperationStatusFailed {
+		if result.ProgressEvent.ErrorCode == types.HandlerErrorCodeAlreadyExists {
+			// Resource already exists on AWS (partial-failure recovery: a previous run
+			// created the resource but WriteState failed). Capture the existing
+			// identifier so the caller can record it in state and continue.
+			// If no identifier is present, we cannot recover — return the error.
+			id := aws.ToString(result.ProgressEvent.Identifier)
+			if id != "" {
+				r.Identifier = id
+				return nil
+			}
+		}
 		return progressEventError(r.TypeName, result.ProgressEvent)
 	}
 
@@ -80,6 +91,13 @@ func (c *resourceClients) createAsync(ctx context.Context, r *fabricac.Resource)
 		}
 		ev := st.ProgressEvent
 		if ev.OperationStatus == types.OperationStatusFailed {
+			if ev.ErrorCode == types.HandlerErrorCodeAlreadyExists {
+				id := aws.ToString(ev.Identifier)
+				if id != "" {
+					r.Identifier = id
+					return nil
+				}
+			}
 			return progressEventError(r.TypeName, ev)
 		}
 		if id := aws.ToString(ev.Identifier); id != "" {

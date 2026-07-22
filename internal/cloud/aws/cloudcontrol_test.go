@@ -121,6 +121,60 @@ func TestCreate_FailedStatus_IncludesStatusMessage(t *testing.T) {
 	assertStringContains(t, err.Error(), "InvalidRequest")
 }
 
+func TestCreate_AlreadyExists_RecoverIdentifier(t *testing.T) {
+	existingID := "sg-already-exists"
+	client := &fakeCCClient{
+		createOut: &cloudcontrol.CreateResourceOutput{
+			ProgressEvent: &types.ProgressEvent{RequestToken: awssdk.String("tok")},
+		},
+	}
+	waiter := &fakeCCWaiter{
+		out: &cloudcontrol.GetResourceRequestStatusOutput{
+			ProgressEvent: &types.ProgressEvent{
+				OperationStatus: types.OperationStatusFailed,
+				ErrorCode:       types.HandlerErrorCodeAlreadyExists,
+				Identifier:      awssdk.String(existingID),
+				StatusMessage:   awssdk.String("Resource already exists"),
+			},
+		},
+	}
+	rc := newCCTestClients(client, waiter)
+
+	r := &fabricac.Resource{TypeName: "AWS::EC2::SecurityGroup", DesiredState: json.RawMessage(`{}`)}
+	err := rc.Create(context.Background(), r)
+	if err != nil {
+		t.Fatalf("Create should not error on AlreadyExists: %v", err)
+	}
+	if r.Identifier != existingID {
+		t.Errorf("Identifier = %q, want %q (recovered from existing resource)", r.Identifier, existingID)
+	}
+}
+
+func TestCreate_AlreadyExists_EmptyIdentifier(t *testing.T) {
+	client := &fakeCCClient{
+		createOut: &cloudcontrol.CreateResourceOutput{
+			ProgressEvent: &types.ProgressEvent{RequestToken: awssdk.String("tok")},
+		},
+	}
+	waiter := &fakeCCWaiter{
+		out: &cloudcontrol.GetResourceRequestStatusOutput{
+			ProgressEvent: &types.ProgressEvent{
+				OperationStatus: types.OperationStatusFailed,
+				ErrorCode:       types.HandlerErrorCodeAlreadyExists,
+				StatusMessage:   awssdk.String("Resource already exists"),
+			},
+		},
+	}
+	rc := newCCTestClients(client, waiter)
+
+	r := &fabricac.Resource{TypeName: "AWS::IAM::Role", DesiredState: json.RawMessage(`{}`)}
+	err := rc.Create(context.Background(), r)
+	if err == nil {
+		t.Fatal("Create should error on AlreadyExists without identifier")
+	}
+	assertStringContains(t, err.Error(), "Resource already exists")
+}
+
 // --- Get ---
 
 func TestGet_Success(t *testing.T) {
@@ -609,6 +663,66 @@ func TestCreateAsync_PollFailedStatus(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	assertStringContains(t, err.Error(), "bad thing")
+}
+
+func TestCreateAsync_AlreadyExists_RecoverIdentifier(t *testing.T) {
+	existingID := "fleet-already-exists"
+	client := &fakeCCClient{
+		createOut: &cloudcontrol.CreateResourceOutput{
+			ProgressEvent: &types.ProgressEvent{
+				RequestToken: awssdk.String("tok-async-aex"),
+			},
+		},
+		statusOuts: []*cloudcontrol.GetResourceRequestStatusOutput{
+			{ProgressEvent: &types.ProgressEvent{
+				OperationStatus: types.OperationStatusFailed,
+				ErrorCode:       types.HandlerErrorCodeAlreadyExists,
+				Identifier:      awssdk.String(existingID),
+				StatusMessage:   awssdk.String("Resource already exists"),
+			}},
+		},
+	}
+	rc := newCCTestClients(client, nil)
+
+	r := &fabricac.Resource{
+		TypeName:     "AWS::GameLift::Fleet",
+		DesiredState: json.RawMessage(`{"Name":"test-fleet"}`),
+	}
+	err := rc.createAsync(context.Background(), r)
+	if err != nil {
+		t.Fatalf("createAsync should not error on AlreadyExists: %v", err)
+	}
+	if r.Identifier != existingID {
+		t.Errorf("Identifier = %q, want %q (recovered from existing resource)", r.Identifier, existingID)
+	}
+}
+
+func TestCreateAsync_AlreadyExists_EmptyIdentifier(t *testing.T) {
+	client := &fakeCCClient{
+		createOut: &cloudcontrol.CreateResourceOutput{
+			ProgressEvent: &types.ProgressEvent{
+				RequestToken: awssdk.String("tok-async-aex-empty"),
+			},
+		},
+		statusOuts: []*cloudcontrol.GetResourceRequestStatusOutput{
+			{ProgressEvent: &types.ProgressEvent{
+				OperationStatus: types.OperationStatusFailed,
+				ErrorCode:       types.HandlerErrorCodeAlreadyExists,
+				StatusMessage:   awssdk.String("Resource already exists"),
+			}},
+		},
+	}
+	rc := newCCTestClients(client, nil)
+
+	r := &fabricac.Resource{
+		TypeName:     "AWS::GameLift::Fleet",
+		DesiredState: json.RawMessage(`{"Name":"test-fleet"}`),
+	}
+	err := rc.createAsync(context.Background(), r)
+	if err == nil {
+		t.Fatal("createAsync should error on AlreadyExists without identifier")
+	}
+	assertStringContains(t, err.Error(), "already exists")
 }
 
 func TestCreateAsync_TagsInjected(t *testing.T) {

@@ -68,6 +68,13 @@ type fakeStore struct {
 	// error for resources of that TypeName (drives the destroy-all failure case).
 	failDeleteType string
 
+	// failCreateType, when non-empty, makes ResourceClient.Create simulate an
+	// AlreadyExists failure for resources of that TypeName — the resource is
+	// NOT stored (simulating a previous run that created it on AWS but lost
+	// local state). failCreateID is the identifier returned to the caller.
+	failCreateType string
+	failCreateID   string
+
 	remoteCalls   []remoteCall
 	remoteHandler func(instanceID string, commands []string) (cloud.RemoteResult, error)
 	listStdout    string
@@ -116,6 +123,14 @@ type fakeRC struct{ store *fakeStore }
 func (c *fakeRC) Create(_ context.Context, r *cloud.Resource) error {
 	c.store.mu.Lock()
 	defer c.store.mu.Unlock()
+
+	// Simulate AlreadyExists: resource exists on AWS but not in the fake store
+	// (previous run created it but lost local state).
+	if c.store.failCreateType != "" && r.TypeName == c.store.failCreateType {
+		r.Identifier = c.store.failCreateID
+		return nil
+	}
+
 	slug := typeSlug(r.TypeName)
 	c.store.counters[slug]++
 	id := fmt.Sprintf("fake-%s-%d", slug, c.store.counters[slug])
