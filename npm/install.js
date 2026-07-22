@@ -30,10 +30,16 @@ const ARCH_MAP = {
 };
 
 // resolveWithin validates that resolved stays under baseDir — prevents path traversal.
+// Uses path-separator boundary check to avoid sibling-prefix escapes
+// (e.g. /workspace/fabrica matching /workspace/fabrica-evil).
 function resolveWithin(baseDir, subPath) {
   // nosemgrep: path.resolve is the sanitization step — result is validated below
   const resolved = path.resolve(baseDir, subPath);
-  if (!resolved.startsWith(baseDir)) {
+  const normalized = path.resolve(baseDir);
+  if (
+    resolved !== normalized &&
+    !resolved.startsWith(normalized + path.sep)
+  ) {
     throw new Error(`Path escapes allowed directory: ${subPath}`);
   }
   return resolved;

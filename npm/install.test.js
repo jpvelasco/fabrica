@@ -145,6 +145,26 @@ test("resolveWithin: accepts valid subpath", () => {
   }
 });
 
+test("resolveWithin: rejects sibling-prefix escape", () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "fabrica-test-"));
+  // Craft a sibling path that shares the base prefix.
+  const sibling = base.replace(/[^/\\]+$/, "fabrica-evil");
+  try {
+    fs.mkdirSync(sibling, { recursive: true });
+    assert.throws(
+      () => resolveWithin(base, `../fabrica-evil/secret.txt`),
+      /Path escapes allowed directory/
+    );
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+    try {
+      fs.rmSync(sibling, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  }
+});
+
 test("validateDownloadUrl: accepts valid GitHub releases URL", () => {
   const url = "https://github.com/jpvelasco/fabrica/releases/download/v1.0.0/fabrica_1.0.0_linux_amd64.tar.gz";
   assert.doesNotThrow(() => validateDownloadUrl(url));
@@ -172,7 +192,12 @@ test("validateDownloadUrl: rejects non-release URL", () => {
 });
 
 test("validateRedirectUrl: accepts trusted GitHub redirect hosts", () => {
-  for (const host of ["github.com", "objects.githubusercontent.com", "github-production-release-asset.githubusercontent.com"]) {
+  for (const host of [
+    "github.com",
+    "objects.githubusercontent.com",
+    "github-production-release-asset.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+  ]) {
     assert.doesNotThrow(
       () => validateRedirectUrl(`https://${host}/some/path`),
       `expected ${host} to be allowed`
