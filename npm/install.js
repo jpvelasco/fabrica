@@ -7,9 +7,16 @@ const https = require("https");
 const crypto = require("crypto");
 const { spawnSync } = require("child_process");
 
+// Whitelist of allowed commands for spawnOrFail — prevents arbitrary command execution.
+const ALLOWED_COMMANDS = new Set(["powershell", "unzip", "tar"]);
+
 const REPO = "jpvelasco/fabrica";
 const MAX_REDIRECTS = 5;
 const MARKER = ".installed-version";
+
+// Only allow downloads from the expected GitHub releases host.
+const GITHUB_RELEASES_HOST = "github.com";
+const GITHUB_REDIRECT_HOSTS = new Set(["github.com", "objects.githubusercontent.com", "github-production-release-asset.githubusercontent.com", "release-assets.githubusercontent.com"]);
 
 const PLATFORM_MAP = {
   linux: "linux",
@@ -21,6 +28,49 @@ const ARCH_MAP = {
   x64: "amd64",
   arm64: "arm64",
 };
+
+// resolveWithin validates that resolved stays under baseDir — prevents path traversal.
+// Uses path-separator boundary check to avoid sibling-prefix escapes
+// (e.g. /workspace/fabrica matching /workspace/fabrica-evil).
+function resolveWithin(baseDir, subPath) {
+  // nosemgrep: path.resolve is the sanitization step — result is validated below
+  const resolved = path.resolve(baseDir, subPath);
+  const normalized = path.resolve(baseDir);
+  if (
+    resolved !== normalized &&
+    !resolved.startsWith(normalized + path.sep)
+  ) {
+    throw new Error(`Path escapes allowed directory: ${subPath}`);
+  }
+  return resolved;
+}
+
+// validateDownloadUrl rejects URLs that do not point to the expected GitHub
+// releases host — prevents SSRF / user-controlled URL injection.
+function validateDownloadUrl(url) {
+  const parsed = new URL(url);
+  if (parsed.protocol !== "https:") {
+    throw new Error(`Download URL must use HTTPS: ${url}`);
+  }
+  if (parsed.hostname !== GITHUB_RELEASES_HOST) {
+    throw new Error(`Download URL must be from ${GITHUB_RELEASES_HOST}: ${url}`);
+  }
+  // Ensure it's a releases download URL.
+  if (!parsed.pathname.startsWith(`/${REPO}/releases/download/`)) {
+    throw new Error(`Download URL must be a release asset: ${url}`);
+  }
+}
+
+// validateRedirectUrl checks that a redirect target is a trusted GitHub host.
+function validateRedirectUrl(url) {
+  const parsed = new URL(url);
+  if (parsed.protocol !== "https:") {
+    throw new Error(`Redirect must use HTTPS: ${url}`);
+  }
+  if (!GITHUB_REDIRECT_HOSTS.has(parsed.hostname)) {
+    throw new Error(`Redirect to untrusted host: ${url}`);
+  }
+}
 
 // log writes routine progress to stderr (never stdout) so it can't corrupt
 // `--json` output, and stays quiet when silent.
@@ -78,11 +128,15 @@ function getArchiveName(version, platform, arch) {
 // binary is missing, or when the recorded marker version doesn't match the
 // package version (drift after a skipped/failed install or an upgrade).
 function needsDownload(binDir, version) {
-  if (!fs.existsSync(path.join(binDir, binaryName()))) {
+  // nosemgrep: path validated by resolveWithin above
+  const binPath = resolveWithin(binDir, binaryName());
+  if (!fs.existsSync(binPath)) {
     return true;
   }
   try {
-    const installed = fs.readFileSync(path.join(binDir, MARKER), "utf8").trim();
+    // nosemgrep: path validated by resolveWithin above
+    const markerPath = resolveWithin(binDir, MARKER);
+    const installed = fs.readFileSync(markerPath, "utf8").trim();
     return installed !== version;
   } catch {
     return true;
@@ -95,13 +149,28 @@ function download(url, redirectCount = 0) {
       return reject(new Error(`Too many redirects (max ${MAX_REDIRECTS})`));
     }
 
+    // Validate the initial URL against the allowlist.
+    if (redirectCount === 0) {
+      try {
+        validateDownloadUrl(url);
+      } catch (err) {
+        return reject(err);
+      }
+    }
+
     https
       .get(url, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          // Validate redirect target before following.
+          try {
+            validateRedirectUrl(res.headers.location);
+          } catch (err) {
+            return reject(err);
+          }
           return download(res.headers.location, redirectCount + 1).then(resolve, reject);
         }
         if (res.statusCode !== 200) {
-          return reject(new Error(`Download failed: HTTP ${res.statusCode} for ${url}`));
+          return reject(new Error(`Download failed: HTTP ${res.statusCode}`));
         }
         const chunks = [];
         res.on("data", (chunk) => chunks.push(chunk));
@@ -136,7 +205,12 @@ function psEscape(s) {
 }
 
 function spawnOrFail(cmd, args, label) {
-  const result = spawnSync(cmd, args, { stdio: "pipe" });
+  // Whitelist check — only allow known-safe commands.
+  if (!ALLOWED_COMMANDS.has(cmd)) {
+    throw new Error(`Command not allowed: ${cmd}`);
+  }
+  // nosemgrep: cmd is validated against ALLOWED_COMMANDS whitelist above
+  const result = spawnSync(cmd, args, { stdio: "pipe", windowsVerbatimArguments: true });
   if (result.error) {
     throw new Error(`${label}: ${result.error.message}`);
   }
@@ -165,7 +239,7 @@ function placeBinary(src, dest) {
 function extract(buffer, archiveName, binDir) {
   const tmpDir = fs.mkdtempSync(path.join(__dirname, ".tmp-install-"));
 
-  const archivePath = path.join(tmpDir, archiveName);
+  const archivePath = resolveWithin(tmpDir, archiveName);
   fs.writeFileSync(archivePath, buffer);
 
   try {
@@ -188,7 +262,7 @@ function extract(buffer, archiveName, binDir) {
     }
 
     const bn = binaryName();
-    const extractedBinary = path.join(tmpDir, bn);
+    const extractedBinary = resolveWithin(tmpDir, bn);
 
     if (!fs.existsSync(extractedBinary)) {
       throw new Error(`Binary ${bn} not found in archive`);
@@ -199,7 +273,7 @@ function extract(buffer, archiveName, binDir) {
     }
 
     fs.mkdirSync(binDir, { recursive: true });
-    placeBinary(extractedBinary, path.join(binDir, bn));
+    placeBinary(extractedBinary, resolveWithin(binDir, bn));
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -220,7 +294,7 @@ async function ensureBinary({ silent = false } = {}) {
   }
 
   const archiveName = getArchiveName(version, process.platform, process.arch);
-  const url = `https://github.com/${REPO}/releases/download/v${version}/${archiveName}`;
+  const url = `https://${GITHUB_RELEASES_HOST}/${REPO}/releases/download/v${version}/${archiveName}`;
 
   console.error(`fabrica-cli: fetching fabrica binary v${version}...`);
 
@@ -232,7 +306,9 @@ async function ensureBinary({ silent = false } = {}) {
   log(silent, "fabrica-cli: extracting binary...");
   extract(buffer, archiveName, binDir);
 
-  fs.writeFileSync(path.join(binDir, MARKER), version);
+  // nosemgrep: path validated by resolveWithin above
+  const markerPath = resolveWithin(binDir, MARKER);
+  fs.writeFileSync(markerPath, version);
 
   log(silent, "fabrica-cli: installed successfully");
 }
@@ -251,4 +327,8 @@ module.exports = {
   getPackageVersion,
   binaryName,
   MARKER,
+  // Exported for testing only.
+  resolveWithin,
+  validateDownloadUrl,
+  validateRedirectUrl,
 };

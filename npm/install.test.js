@@ -11,6 +11,9 @@ const {
   needsDownload,
   binaryName,
   MARKER,
+  resolveWithin,
+  validateDownloadUrl,
+  validateRedirectUrl,
 } = require("./install.js");
 
 test("getArchiveName: platform/arch matrix", () => {
@@ -115,4 +118,103 @@ test("needsDownload: tolerates trailing whitespace in marker", () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// --- Security hardening tests ---
+
+test("resolveWithin: rejects path traversal with ..", () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "fabrica-test-"));
+  try {
+    assert.throws(
+      () => resolveWithin(base, "../etc/passwd"),
+      /Path escapes allowed directory/
+    );
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("resolveWithin: accepts valid subpath", () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "fabrica-test-"));
+  try {
+    const resolved = resolveWithin(base, "sub/file.txt");
+    assert.ok(resolved.startsWith(base));
+    assert.strictEqual(resolved, path.resolve(base, "sub/file.txt"));
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("resolveWithin: rejects sibling-prefix escape", () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "fabrica-test-"));
+  // Craft a sibling path that shares the base prefix.
+  const sibling = base.replace(/[^/\\]+$/, "fabrica-evil");
+  try {
+    fs.mkdirSync(sibling, { recursive: true });
+    assert.throws(
+      () => resolveWithin(base, `../fabrica-evil/secret.txt`),
+      /Path escapes allowed directory/
+    );
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+    try {
+      fs.rmSync(sibling, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  }
+});
+
+test("validateDownloadUrl: accepts valid GitHub releases URL", () => {
+  const url = "https://github.com/jpvelasco/fabrica/releases/download/v1.0.0/fabrica_1.0.0_linux_amd64.tar.gz";
+  assert.doesNotThrow(() => validateDownloadUrl(url));
+});
+
+test("validateDownloadUrl: rejects non-HTTPS URL", () => {
+  assert.throws(
+    () => validateDownloadUrl("http://evil.com/fabrica.tar.gz"),
+    /must use HTTPS/
+  );
+});
+
+test("validateDownloadUrl: rejects non-GitHub host", () => {
+  assert.throws(
+    () => validateDownloadUrl("https://evil.com/releases/download/v1.0.0/fabrica.tar.gz"),
+    /must be from github.com/
+  );
+});
+
+test("validateDownloadUrl: rejects non-release URL", () => {
+  assert.throws(
+    () => validateDownloadUrl("https://github.com/jpvelasco/fabrica/blob/main/README.md"),
+    /must be a release asset/
+  );
+});
+
+test("validateRedirectUrl: accepts trusted GitHub redirect hosts", () => {
+  for (const host of [
+    "github.com",
+    "objects.githubusercontent.com",
+    "github-production-release-asset.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+  ]) {
+    assert.doesNotThrow(
+      () => validateRedirectUrl(`https://${host}/some/path`),
+      `expected ${host} to be allowed`
+    );
+  }
+});
+
+test("validateRedirectUrl: rejects untrusted redirect host", () => {
+  assert.throws(
+    () => validateRedirectUrl("https://evil.com/malicious"),
+    /untrusted host/
+  );
+});
+
+test("validateRedirectUrl: rejects HTTP redirect", () => {
+  assert.throws(
+    () => validateRedirectUrl("http://github.com/redirect"),
+    /must use HTTPS/
+  );
 });
