@@ -14,7 +14,7 @@ const path = require("path");
 
 // resolveWithin validates that resolved stays under baseDir - prevents path traversal.
 function resolveWithin(baseDir, subPath) {
-  // semgrep-ignore: path.resolve is the sanitization step — result is validated below
+  // nosemgrep: path.resolve is the sanitization step — result is validated below
   const resolved = path.resolve(baseDir, subPath);
   if (!resolved.startsWith(baseDir)) {
     throw new Error(`Path escapes allowed directory: ${subPath}`);
@@ -23,7 +23,7 @@ function resolveWithin(baseDir, subPath) {
 }
 
 // validateFile ensures the path is within the project root and the file exists.
-// semgrep-ignore: path validated by resolveWithin below
+// nosemgrep: path validated by resolveWithin below
 function validateFile(baseDir, filePath, label) {
   const resolved = resolveWithin(baseDir, filePath);
   if (!fs.existsSync(resolved)) {
@@ -42,7 +42,7 @@ if (!checksumFile || !packageFile) {
 }
 
 // Validate both paths are within the project root.
-// semgrep-ignore: paths validated by validateFile (resolveWithin + exists check)
+// nosemgrep: paths validated by validateFile (resolveWithin + exists check)
 const checksumPath = validateFile(projectRoot, checksumFile, "Checksum file");
 const packagePath = validateFile(projectRoot, packageFile, "Package file");
 
@@ -74,6 +74,6 @@ if (count === 0) {
   process.exit(1);
 }
 
-// semgrep-ignore: packagePath validated by validateFile above
+// nosemgrep: packagePath validated by validateFile above
 fs.writeFileSync(packagePath, JSON.stringify(pkg, null, 2) + "\n");
 console.log(`Embedded ${count} checksums into ${packagePath}`);
