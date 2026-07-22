@@ -1,23 +1,57 @@
 # GitHub Repository Settings
 
 These settings are configured outside the repo (GitHub UI or API) and cannot
-be enforced by files in the codebase. Re-apply these when setting up a fork
-or new instance.
+be enforced by files in the codebase alone. Re-apply these when setting up a
+fork or new instance. Keep this file in sync when rulesets change.
 
 > **Public repos:** all settings below can be applied via `gh api`.
 > **Private repos on free tier:** rulesets, secret scanning, push protection,
-> and CodeQL must be set via the GitHub UI.
+> and CodeQL may need the GitHub UI depending on plan.
+
+---
+
+## Protection model (rulesets vs classic)
+
+Fabrica uses **repository rulesets**, not classic branch protection.
+
+| API | What it means |
+|-----|----------------|
+| `GET .../branches/main/protection` → **404** | Classic protection is **off** — **not** “main is unprotected” |
+| `GET .../rulesets` | Ruleset inventory (`protect-main`, `protect-version-tags`, …) |
+| `GET .../rules/branches/main` | **Ground truth** for rules applied to `main` |
+
+```bash
+# Inventory
+gh api repos/OWNER/REPO/rulesets --jq '.[] | {id, name, target, enforcement}'
+
+# What actually applies to main (required checks, PR rules, etc.)
+gh api repos/OWNER/REPO/rules/branches/main \
+  --jq '{
+    rule_types: [.[].type] | unique,
+    required_checks: [.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context] | unique,
+    merge_methods: [.[] | select(.type == "pull_request") | .parameters.allowed_merge_methods] | add
+  }'
+
+# Classic (expect 404 when rulesets-only)
+gh api repos/OWNER/REPO/branches/main/protection 2>&1 | head -1
+```
+
+Agents and humans must use the ruleset endpoints when checking protection.
+Do not report “branch not protected” from a classic 404 alone.
 
 ---
 
 ## Apply via `gh api` (replace `OWNER/REPO`)
 
 ```bash
-# General settings
+# General settings — squash-only merge UI + auto-delete heads
 gh api repos/OWNER/REPO \
   --method PATCH \
   --field delete_branch_on_merge=true \
-  --field default_branch=main
+  --field default_branch=main \
+  --field allow_squash_merge=true \
+  --field allow_merge_commit=false \
+  --field allow_rebase_merge=false
 
 # Dependabot
 gh api repos/OWNER/REPO/vulnerability-alerts --method PUT
@@ -44,6 +78,7 @@ gh api repos/OWNER/REPO/code-scanning/default-setup \
 EOF
 
 # Branch ruleset: protect-main
+# If the ruleset already exists, PUT to /rulesets/{id} instead of POST.
 gh api repos/OWNER/REPO/rulesets \
   --method POST \
   --header "Content-Type: application/json" \
@@ -65,7 +100,8 @@ gh api repos/OWNER/REPO/rulesets \
         "dismiss_stale_reviews_on_push": true,
         "require_code_owner_review": true,
         "require_last_push_approval": false,
-        "required_review_thread_resolution": true
+        "required_review_thread_resolution": true,
+        "allowed_merge_methods": ["squash"]
       }
     },
     {
@@ -118,17 +154,41 @@ EOF
 > macOS Build/Test are **not** required: PR matrix skips macOS to save Actions
 > minutes; requiring them would block every PR. They still run on push to `main`.
 
+### Update an existing ruleset (example: squash-only)
+
+```bash
+# List ids
+gh api repos/OWNER/REPO/rulesets --jq '.[] | {id, name}'
+
+# PUT full ruleset body (same JSON as create, with allowed_merge_methods: ["squash"])
+gh api repos/OWNER/REPO/rulesets/RULESET_ID \
+  --method PUT \
+  --input protect-main.json
+```
+
+### Intentionally **not** required (yet)
+
+| Check | Why not in ruleset |
+|-------|--------------------|
+| **Codacy Static Code Analysis** | Third-party; lag/missed webhooks can hard-block merges. Soft-gated via PR template + pr-auto. Revisit after sustained reliability. |
+| gosec, Trivy, CodeQL, Lint (Windows) | Run in CI; keep advisory until we want harder gates |
+| Codecov | Not always present; pr-auto Gate 5.7 when configured |
+
 ---
 
 ## Current settings
 
 ### General
+
 - Default branch: `main`
 - Auto-delete head branches: enabled
+- **Merge methods:** **squash only** (`allow_squash_merge=true`; merge commit and rebase disabled in repo settings)
 
 ### Branch ruleset (`protect-main` → default branch)
+
 - Method: **Repository rulesets** (not classic branch protection)
 - Require PR before merging: yes
+- **Allowed merge methods: `squash` only**
 - Required approvals: 0
 - Dismiss stale reviews on push: yes
 - Require review from code owners: yes
@@ -137,15 +197,17 @@ EOF
 - Block force pushes: yes (`non_fast_forward`)
 - Block branch deletion: yes
 - Required checks: Lint, Vulnerability scan, Build (ubuntu/windows), Test (ubuntu/windows), Release build (snapshot)
-- **Not required (yet)** but present in CI: Lint (Windows), gosec, Trivy, CodeQL (`codeql.yml`)
+- **Not required (yet)** but present in CI: Lint (Windows), gosec, Trivy, CodeQL (`codeql.yml`), Codacy
 - Bypass: repository Admin role (solo-maintainer escape hatch)
 
 ### Tag ruleset (`protect-version-tags` → `v*`)
+
 - Restrict deletions: yes
 - Restrict updates: yes
 - Bypass: repository Admin role
 
 ### Security & Analysis
+
 - Secret scanning: enabled (public)
 - Push protection: enabled (public)
 - Dependabot alerts: enabled
