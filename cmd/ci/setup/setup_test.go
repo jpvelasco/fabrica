@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
@@ -388,7 +389,7 @@ func TestAppendUnique(t *testing.T) {
 	}
 
 	// Adding a different type should append.
-	resources = appendUnique(resources, fabricastate.ModuleResource{
+	resources = provision.AppendUnique(resources, fabricastate.ModuleResource{
 		TypeName:   "AWS::CodeBuild::Project",
 		Identifier: "fabrica-ci",
 	})
@@ -397,7 +398,7 @@ func TestAppendUnique(t *testing.T) {
 	}
 
 	// Adding a duplicate type should keep the original.
-	resources = appendUnique(resources, fabricastate.ModuleResource{
+	resources = provision.AppendUnique(resources, fabricastate.ModuleResource{
 		TypeName:   "AWS::IAM::Role",
 		Identifier: "different-role",
 	})

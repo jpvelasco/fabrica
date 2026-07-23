@@ -154,7 +154,7 @@ func (c command) applyResources(ctx context.Context, st *fabricastate.State, pla
 
 	roleARN := fmt.Sprintf("arn:aws:iam::%s:role/%s", plan.Account, plan.RoleName)
 
-	if existing, ok := existingResource(st, ci.TypeAWSIAMRole); ok {
+	if existing, ok := provision.ExistingResource(st, moduleName, ci.TypeAWSIAMRole); ok {
 		fmt.Fprintf(c.out, "  IAM role already exists — skipping: %s\n", existing.Identifier)
 		resources = append(resources, existing)
 	} else {
@@ -183,17 +183,8 @@ func (c command) applyResources(ctx context.Context, st *fabricastate.State, pla
 	} else {
 		fmt.Fprintf(c.out, "  CodeBuild project already exists — skipping: %s\n", plan.ProjectName)
 	}
-	resources = appendUnique(resources, fabricastate.ModuleResource{TypeName: ci.TypeAWSCodeBuildProject, Identifier: plan.ProjectName})
+	resources = provision.AppendUnique(resources, fabricastate.ModuleResource{TypeName: ci.TypeAWSCodeBuildProject, Identifier: plan.ProjectName})
 	return resources, nil
-}
-
-func appendUnique(resources []fabricastate.ModuleResource, r fabricastate.ModuleResource) []fabricastate.ModuleResource {
-	for _, existing := range resources {
-		if existing.TypeName == r.TypeName {
-			return resources
-		}
-	}
-	return append(resources, r)
 }
 
 func (c command) resolveHordeURL(ctx context.Context) string {
@@ -258,16 +249,6 @@ func (c command) printCompletion() {
 	fmt.Fprintln(c.out, "Next steps:")
 	fmt.Fprintf(c.out, "  fabrica ci trigger <buildgraph.xml> --target <node>   Trigger a build\n")
 	fmt.Fprintln(c.out, "  fabrica ci status                                     Show CI + build status")
-}
-
-// existingResource returns the CI module resource of the given type from current
-// state, if present — used to skip already-provisioned resources idempotently.
-func existingResource(st *fabricastate.State, typeName string) (fabricastate.ModuleResource, bool) {
-	m := st.GetModule(moduleName)
-	if m == nil {
-		return fabricastate.ModuleResource{}, false
-	}
-	return stateutil.ResourceByType(m, typeName)
 }
 
 // privateIPFromActualState extracts PrivateIpAddress from Cloud Control JSON.
