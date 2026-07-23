@@ -13,7 +13,9 @@ import (
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -413,4 +415,22 @@ func WireProvider(tc *Command, rt globals.Runtime) {
 			tc.GetResource = rc.Get
 		}
 	}
+}
+
+// NewTeardown builds a teardown.Command for orchestrated use (e.g. `fabrica
+// destroy --all`). Confirmation is skipped since the orchestrator handles the
+// aggregate confirmation. The module-specific Spec is passed by the caller.
+func NewTeardown(spec Spec, rt globals.Runtime, out io.Writer) Command {
+	tc := Command{
+		Spec:        spec,
+		Runtime:     rt,
+		SkipConfirm: true,
+		AssumeYes:   true,
+		Out:         out,
+		Confirm:     prompt.ConfirmExact,
+		ReadState:   func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+		WriteState:  fabricastate.WriteState,
+	}
+	WireProvider(&tc, rt)
+	return tc
 }
