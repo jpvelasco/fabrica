@@ -9,22 +9,17 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/cmd/perforce/restore"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
-	"github.com/spf13/cobra"
 )
 
 func runRestore(t *testing.T, rt globals.RuntimeSource, args ...string) (string, error) {
 	t.Helper()
-	var opts globals.Options
 	var out bytes.Buffer
-	root := &cobra.Command{Use: "fabrica", SilenceUsage: true, SilenceErrors: true}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.SetOut(&out)
-	root.SetErr(&out)
-	root.AddCommand(restore.New(rt, func() globals.Options { return opts }, &out))
+	root, opts := testutil.BuildTestRoot(&out)
+	root.AddCommand(restore.New(rt, func() globals.Options { return *opts }, &out))
 	root.SetArgs(append([]string{"restore"}, args...))
 	err := root.ExecuteContext(context.Background())
 	return out.String(), err
@@ -71,9 +66,7 @@ func TestCobraRestoreDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dry-run: %v\n%s", err, got)
 	}
-	if !bytes.Contains([]byte(got), []byte("dry run")) {
-		t.Fatalf("output: %s", got)
-	}
+	testutil.AssertContains(t, got, "dry run")
 }
 
 func TestCobraRestoreMissingCredentials(t *testing.T) {
@@ -170,7 +163,5 @@ func TestCobraRestoreRequiresForce(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected --force error when ready")
 	}
-	if !bytes.Contains([]byte(err.Error()), []byte("--force")) {
-		t.Fatalf("error should mention --force: %v", err)
-	}
+	testutil.AssertContains(t, err.Error(), "--force")
 }

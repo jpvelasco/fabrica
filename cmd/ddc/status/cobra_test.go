@@ -7,20 +7,15 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/ddc/status"
 	"github.com/jpvelasco/fabrica/cmd/globals"
-	"github.com/jpvelasco/fabrica/internal/config"
-	"github.com/spf13/cobra"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 )
 
 func TestCobraStatusNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var buf bytes.Buffer
-	root := &cobra.Command{Use: "fabrica"}
-	root.PersistentFlags().BoolP("json", "j", false, "")
-	root.PersistentFlags().BoolP("dry-run", "d", false, "")
-	root.PersistentFlags().BoolP("yes", "y", false, "")
-	rt := globals.Runtime{Config: &config.Config{}}
-	root.AddCommand(status.New(func() (globals.Runtime, error) { return rt, nil }, func() globals.Options {
-		return globals.Options{}
+	root, opts := testutil.BuildTestRoot(&buf)
+	root.AddCommand(status.New(testutil.NewNilProviderRuntime(), func() globals.Options {
+		return *opts
 	}, &buf))
 	root.SetArgs([]string{"status"})
 	root.SetOut(io.Discard)

@@ -6,30 +6,18 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/ci/trigger"
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
-	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(trigger.New(runtimeSource, optionsSource, out))
 	return root
 }
@@ -41,24 +29,6 @@ func runCITrigger(t *testing.T, runtimeSource globals.RuntimeSource, args ...str
 	root.SetArgs(append([]string{"trigger"}, args...))
 	err := root.ExecuteContext(context.Background())
 	return out.String(), err
-}
-
-func newTestRuntime(provider cloud.Provider) globals.RuntimeSource {
-	cfg := config.Defaults()
-	cfg.Cloud.AWS.AccountID = "123456789012"
-	rt := globals.Runtime{Config: cfg, Provider: provider}
-	return func() (globals.Runtime, error) { return rt, nil }
-}
-
-func writeStateFile(t *testing.T, dir, content string) {
-	t.Helper()
-	// #nosec G301 -- directory needs execute for traversal
-	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dir+"/.fabrica/state.json", []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func writeBuildGraph(t *testing.T, dir string) string {
@@ -83,29 +53,22 @@ func provisionedStateJSON() string {
 		]}]}`
 }
 
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	if !strings.Contains(s, substr) {
-		t.Fatalf("%q does not contain %q", s, substr)
-	}
-}
-
 // TestTriggerCobraHappyPath starts a build via the real Cobra entry point.
 func TestTriggerCobraHappyPath(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, provisionedStateJSON())
+	testutil.WriteStateFile(t, dir, provisionedStateJSON())
 	bg := writeBuildGraph(t, dir)
 
 	provider := &ciTriggerFakeProvider{startID: "fabrica-ci:abc123"}
-	got, err := runCITrigger(t, newTestRuntime(provider), bg)
+	got, err := runCITrigger(t, testutil.NewTestRuntime(provider), bg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "Build started: fabrica-ci:abc123")
-	assertContains(t, got, "fabrica-ci")
-	assertContains(t, got, "Compile")
-	assertContains(t, got, "fabrica ci status")
+	testutil.AssertContains(t, got, "Build started: fabrica-ci:abc123")
+	testutil.AssertContains(t, got, "fabrica-ci")
+	testutil.AssertContains(t, got, "Compile")
+	testutil.AssertContains(t, got, "fabrica ci status")
 	if provider.startCalls != 1 {
 		t.Errorf("expected 1 StartBuild call, got %d", provider.startCalls)
 	}
@@ -123,17 +86,17 @@ func TestTriggerCobraNotProvisioned(t *testing.T) {
 	t.Chdir(dir)
 	bg := writeBuildGraph(t, dir)
 
-	_, err := runCITrigger(t, newTestRuntime(&ciTriggerFakeProvider{startID: "x"}), bg)
+	_, err := runCITrigger(t, testutil.NewTestRuntime(&ciTriggerFakeProvider{startID: "x"}), bg)
 	if err == nil {
 		t.Fatal("expected error when CI is not provisioned")
 	}
-	assertContains(t, err.Error(), "ci setup")
+	testutil.AssertContains(t, err.Error(), "ci setup")
 }
 
 // TestTriggerCobraMissingBuildGraphArg enforces ExactArgs via Cobra.
 func TestTriggerCobraMissingBuildGraphArg(t *testing.T) {
 	t.Chdir(t.TempDir())
-	_, err := runCITrigger(t, newTestRuntime(&ciTriggerFakeProvider{}))
+	_, err := runCITrigger(t, testutil.NewTestRuntime(&ciTriggerFakeProvider{}))
 	if err == nil {
 		t.Fatal("expected error when buildgraph path is omitted")
 	}
@@ -148,7 +111,7 @@ func TestTriggerCobraBadBuildGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &ciTriggerFakeProvider{startID: "x"}
-	_, err := runCITrigger(t, newTestRuntime(provider), path)
+	_, err := runCITrigger(t, testutil.NewTestRuntime(provider), path)
 	if err == nil {
 		t.Fatal("expected parse error for invalid BuildGraph")
 	}

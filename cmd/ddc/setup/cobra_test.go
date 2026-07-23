@@ -8,9 +8,9 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/ddc/setup"
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
-	"github.com/spf13/cobra"
 )
 
 type fp struct{}
@@ -31,17 +31,13 @@ func (fp) List(ctx context.Context, typeName string) ([]cloud.Resource, error) {
 
 func TestCobraDryRun(t *testing.T) {
 	var buf bytes.Buffer
-	root := &cobra.Command{Use: "fabrica"}
-	var dry bool
-	root.PersistentFlags().BoolVarP(&dry, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(new(bool), "yes", "y", false, "")
-	root.PersistentFlags().BoolVarP(new(bool), "json", "j", false, "")
+	root, opts := testutil.BuildTestRoot(&buf)
 	rt := globals.Runtime{
 		Config:   &config.Config{DDC: config.DDCConfig{AmiID: "ami-x", VPCId: "v", SubnetId: "s"}},
 		Provider: fp{},
 	}
 	root.AddCommand(setup.New(func() (globals.Runtime, error) { return rt, nil }, func() globals.Options {
-		return globals.Options{DryRun: dry}
+		return *opts
 	}, &buf))
 	root.SetArgs([]string{"setup", "--dry-run"})
 	root.SetOut(io.Discard)

@@ -7,22 +7,17 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/cmd/lore/status"
-	"github.com/jpvelasco/fabrica/internal/config"
-	"github.com/spf13/cobra"
 )
 
 func TestStatusCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var out bytes.Buffer
-	var opts globals.Options
-	root := &cobra.Command{Use: "fabrica", SilenceUsage: true, SilenceErrors: true}
-	root.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "")
-	cfg := config.Defaults()
-	rt := globals.Runtime{Config: cfg, Provider: nil}
+	root, opts := testutil.BuildTestRoot(&out)
 	root.AddCommand(status.New(
-		func() (globals.Runtime, error) { return rt, nil },
-		func() globals.Options { return opts },
+		testutil.NewNilProviderRuntime(),
+		func() globals.Options { return *opts },
 		&out,
 	))
 	root.SetArgs([]string{"status"})

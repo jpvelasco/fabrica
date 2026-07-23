@@ -6,14 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
-	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/cmd/lore/destroy"
-	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -36,9 +34,7 @@ func TestDestroyCobraNotProvisioned(t *testing.T) {
 	if err := root.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
-	if !strings.Contains(out.String(), "not provisioned") {
-		t.Fatalf("got %q", out.String())
-	}
+	testutil.AssertContains(t, out.String(), "not provisioned")
 }
 
 func TestNewTeardownWiring(t *testing.T) {
@@ -68,13 +64,6 @@ func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobr
 	return root
 }
 
-func newRuntime(provider cloud.Provider) globals.RuntimeSource {
-	cfg := config.Defaults()
-	cfg.Cloud.AWS.AccountID = "123456789012"
-	rt := globals.Runtime{Config: cfg, Provider: provider}
-	return func() (globals.Runtime, error) { return rt, nil }
-}
-
 func loreStateJSON() string {
 	return `{"account":"123456789012","region":"us-east-1","modules":[
 		{"name":"lore","version":"ami-0abc123","status":"provisioning","resources":[
@@ -83,60 +72,45 @@ func loreStateJSON() string {
 		]}]}`
 }
 
-func writeStateFile(t *testing.T, dir, content string) {
-	t.Helper()
-	// #nosec G301 -- directory needs execute for traversal
-	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dir+"/.fabrica/state.json", []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // ---- Cobra tests with provider ----
 
 func TestDestroyCobraDryRunWithProvider(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, loreStateJSON())
+	testutil.WriteStateFile(t, dir, loreStateJSON())
 	var out bytes.Buffer
-	root := buildTestRoot(newRuntime(&cobraFakeProvider{}), &out)
+	root := buildTestRoot(testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), &out)
 	root.SetArgs([]string{"destroy", "--dry-run"})
 	if err := root.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("dry-run: %v", err)
 	}
 	got := out.String()
-	if !strings.Contains(got, "dry run") {
-		t.Errorf("expected dry run in output:\n%s", got)
-	}
-	if !strings.Contains(got, "i-lore123") {
-		t.Errorf("expected instance ID in dry run:\n%s", got)
-	}
+	testutil.AssertContains(t, got, "dry run")
+	testutil.AssertContains(t, got, "i-lore123")
 }
 
 func TestDestroyCobraYesWithProvider(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, loreStateJSON())
-	provider := &cobraFakeProvider{}
+	testutil.WriteStateFile(t, dir, loreStateJSON())
+	provider := &testutil.CobraFakeProvider{}
 	var out bytes.Buffer
-	root := buildTestRoot(newRuntime(provider), &out)
+	root := buildTestRoot(testutil.NewTestRuntime(provider), &out)
 	root.SetArgs([]string{"destroy", "--yes"})
 	if err := root.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("destroy --yes: %v", err)
 	}
-	if provider.deleteCalls != 2 {
-		t.Errorf("expected 2 delete calls, got %d", provider.deleteCalls)
+	if provider.DeleteCalls != 2 {
+		t.Errorf("expected 2 delete calls, got %d", provider.DeleteCalls)
 	}
 }
 
 func TestDestroyCobraJSONDryRunWithProvider(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, loreStateJSON())
+	testutil.WriteStateFile(t, dir, loreStateJSON())
 	var out bytes.Buffer
-	root := buildTestRoot(newRuntime(&cobraFakeProvider{}), &out)
+	root := buildTestRoot(testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), &out)
 	root.SetArgs([]string{"destroy", "--json", "--dry-run"})
 	if err := root.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("json dry-run: %v", err)
@@ -156,9 +130,9 @@ func TestDestroyCobraJSONDryRunWithProvider(t *testing.T) {
 func TestDestroyCobraJSONYesWithProvider(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, loreStateJSON())
+	testutil.WriteStateFile(t, dir, loreStateJSON())
 	var out bytes.Buffer
-	root := buildTestRoot(newRuntime(&cobraFakeProvider{}), &out)
+	root := buildTestRoot(testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), &out)
 	root.SetArgs([]string{"destroy", "--json", "--yes"})
 	if err := root.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("json yes: %v", err)
@@ -188,7 +162,7 @@ func TestDestroyCobraRuntimeError(t *testing.T) {
 
 func TestNewTeardownWiringWithProvider(t *testing.T) {
 	cfg := config.Defaults()
-	rt := globals.Runtime{Config: cfg, Provider: &cobraFakeProvider{}}
+	rt := globals.Runtime{Config: cfg, Provider: &testutil.CobraFakeProvider{}}
 	tc := destroy.NewTeardown(rt, io.Discard)
 	if !tc.SkipConfirm || !tc.AssumeYes {
 		t.Fatalf("SkipConfirm/AssumeYes must be true; got SkipConfirm=%v, AssumeYes=%v", tc.SkipConfirm, tc.AssumeYes)
@@ -203,30 +177,3 @@ func TestNewTeardownWiringWithProvider(t *testing.T) {
 		t.Errorf("module name = %q, want lore", tc.Spec.ModuleName)
 	}
 }
-
-// ---- cobraFakeProvider ----
-
-type cobraFakeProvider struct {
-	deleteCalls int
-}
-
-func (f *cobraFakeProvider) Name() string { return "fake" }
-func (f *cobraFakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-func (f *cobraFakeProvider) Resources() cloud.ResourceClient {
-	return &cobraFakeRC{provider: f}
-}
-
-type cobraFakeRC struct {
-	provider *cobraFakeProvider
-}
-
-func (r *cobraFakeRC) Create(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *cobraFakeRC) Get(_ context.Context, _ *cloud.Resource) error    { return nil }
-func (r *cobraFakeRC) Update(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *cobraFakeRC) Delete(_ context.Context, _ *cloud.Resource) error {
-	r.provider.deleteCalls++
-	return nil
-}
-func (r *cobraFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }

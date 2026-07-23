@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/cmd/perforce/backup"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
@@ -17,14 +18,8 @@ import (
 )
 
 func buildRoot(rt globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{Use: "fabrica", SilenceUsage: true, SilenceErrors: true}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-	root.AddCommand(backup.New(rt, func() globals.Options { return opts }, out))
+	root, opts := testutil.BuildTestRoot(out)
+	root.AddCommand(backup.New(rt, func() globals.Options { return *opts }, out))
 	return root
 }
 
@@ -122,9 +117,7 @@ func TestCobraBackupDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dry-run: %v\n%s", err, got)
 	}
-	if !bytes.Contains([]byte(got), []byte("dry run")) {
-		t.Fatalf("output: %s", got)
-	}
+	testutil.AssertContains(t, got, "dry run")
 }
 
 func TestCobraBackupList(t *testing.T) {
@@ -137,9 +130,7 @@ func TestCobraBackupList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v\n%s", err, got)
 	}
-	if !bytes.Contains([]byte(got), []byte("No backups")) {
-		t.Fatalf("output: %s", got)
-	}
+	testutil.AssertContains(t, got, "No backups")
 }
 
 func TestCobraBackupDeleteDryRun(t *testing.T) {
@@ -152,9 +143,7 @@ func TestCobraBackupDeleteDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("delete dry-run: %v\n%s", err, got)
 	}
-	if !bytes.Contains([]byte(got), []byte("Would delete")) {
-		t.Fatalf("output: %s", got)
-	}
+	testutil.AssertContains(t, got, "Would delete")
 }
 
 func TestCobraBackupNotProvisioned(t *testing.T) {
@@ -179,9 +168,7 @@ func TestCobraBackupCreateYes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("backup --yes: %v\n%s", err, got)
 	}
-	if !bytes.Contains([]byte(got), []byte("Backup complete")) {
-		t.Fatalf("output: %s", got)
-	}
+	testutil.AssertContains(t, got, "Backup complete")
 }
 
 func TestCobraBackupMissingCredentials(t *testing.T) {
@@ -207,7 +194,5 @@ func TestCobraBackupDeleteYes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("delete: %v\n%s", err, got)
 	}
-	if !bytes.Contains([]byte(got), []byte("Deleted backup")) {
-		t.Fatalf("output: %s", got)
-	}
+	testutil.AssertContains(t, got, "Deleted backup")
 }

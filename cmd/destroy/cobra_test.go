@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/destroy"
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
@@ -18,18 +18,8 @@ import (
 // flag hierarchy: --dry-run and --yes are persistent flags on root, inherited
 // by the destroy subcommand.
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(destroy.New(runtimeSource, optionsSource, out))
 	return root
 }
@@ -72,7 +62,7 @@ func TestDestroyCobraNoAllFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected clean exit, got: %v", err)
 	}
-	assertCobraContains(t, got, "To destroy infrastructure, use --all:")
+	testutil.AssertContains(t, got, "To destroy infrastructure, use --all:")
 }
 
 // TestDestroyCobraDryRunNoAWSCalls verifies that --all --dry-run produces
@@ -87,7 +77,7 @@ func TestDestroyCobraDryRunNoAWSCalls(t *testing.T) {
 		t.Fatalf("dry run made AWS calls: bucketDeleteCalls=%d tableDeleteCalls=%d",
 			provider.bucketDeleteCalls, provider.tableDeleteCalls)
 	}
-	assertCobraContains(t, got, "Nothing has been deleted. Run without --dry-run to proceed.")
+	testutil.AssertContains(t, got, "Nothing has been deleted. Run without --dry-run to proceed.")
 }
 
 // TestDestroyCobraDryRunWithNilProvider verifies that --all --dry-run with
@@ -97,7 +87,7 @@ func TestDestroyCobraDryRunWithNilProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected clean exit with nil provider in dry-run, got: %v", err)
 	}
-	assertCobraContains(t, got, "No infrastructure found. Nothing to destroy.")
+	testutil.AssertContains(t, got, "No infrastructure found. Nothing to destroy.")
 }
 
 // TestDestroyCobraDryRunOutput verifies dry-run output contains all key fields.
@@ -114,7 +104,7 @@ func TestDestroyCobraDryRunOutput(t *testing.T) {
 		"DynamoDB table: fabrica-locks-test",
 	}
 	for _, want := range checks {
-		assertCobraContains(t, got, want)
+		testutil.AssertContains(t, got, want)
 	}
 }
 
@@ -132,7 +122,7 @@ func TestDestroyCobraYesFlagPerformsDeletion(t *testing.T) {
 	if !provider.deletedTable {
 		t.Fatal("DynamoDB table was not deleted")
 	}
-	assertCobraContains(t, got, "Destroy --all complete. All modules and the state backend were removed.")
+	testutil.AssertContains(t, got, "Destroy --all complete. All modules and the state backend were removed.")
 }
 
 // TestDestroyCobraNilProvider verifies that --all --yes with a nil provider
@@ -142,7 +132,7 @@ func TestDestroyCobraNilProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected clean exit with nil provider, got: %v", err)
 	}
-	assertCobraContains(t, got, "No infrastructure found. Nothing to destroy.")
+	testutil.AssertContains(t, got, "No infrastructure found. Nothing to destroy.")
 }
 
 // TestDestroyCobraIdentityFailurePropagates verifies that an identity
@@ -176,7 +166,7 @@ func TestDestroyCobraAllWithModules(t *testing.T) {
 		]}
 	]}`
 
-	writeTestStateFile(t, dir, stateWithModules)
+	testutil.WriteStateFile(t, dir, stateWithModules)
 
 	provider := &cobraFakeProviderWithCI{}
 	got, err := runDestroy(t, newCobraTestRuntime(provider), "--all", "--yes")
@@ -194,7 +184,7 @@ func TestDestroyCobraAllWithModules(t *testing.T) {
 		t.Fatal("backend should be deleted when all modules succeed")
 	}
 
-	assertCobraContains(t, got, "complete")
+	testutil.AssertContains(t, got, "complete")
 }
 
 // TestDestroyCobraReadStateError verifies error when state read fails.
@@ -215,18 +205,6 @@ func TestDestroyCobraReadStateError(t *testing.T) {
 	_, err := runDestroy(t, src, "--all", "--yes")
 	if err == nil {
 		t.Fatal("expected error when state read fails")
-	}
-}
-
-// writeTestStateFile writes state to .fabrica/state.json.
-func writeTestStateFile(t *testing.T, dir, content string) {
-	t.Helper()
-	// #nosec G301 -- directory needs execute for traversal
-	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dir+"/.fabrica/state.json", []byte(content), 0600); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -317,13 +295,6 @@ func (f *cobraFakeProvider) DeleteStateLockTable(_ context.Context, table string
 	f.tableDeleteCalls++
 	f.deletedTable = true
 	return cloud.StateBackendDeleteResult{Identifier: table, Deleted: true}, nil
-}
-
-func assertCobraContains(t *testing.T, s, substr string) {
-	t.Helper()
-	if !cobraContainsString(s, substr) {
-		t.Fatalf("%q does not contain %q", s, substr)
-	}
 }
 
 func cobraContainsString(s, substr string) bool {

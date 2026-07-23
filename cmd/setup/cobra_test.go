@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/cmd/setup"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
@@ -16,19 +17,8 @@ import (
 // buildTestRoot wires a minimal root replicating the persistent-flag hierarchy
 // (--dry-run and --yes live on root, not on the subcommand).
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) (*cobra.Command, *globals.Options) {
-	opts := &globals.Options{}
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return *opts }
-	root.AddCommand(setup.New(runtimeSource, optionsSource, out))
+	root, opts := testutil.BuildTestRoot(out)
+	root.AddCommand(setup.New(runtimeSource, func() globals.Options { return *opts }, out))
 	return root, opts
 }
 
@@ -55,9 +45,9 @@ func TestSetupCobraDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "Setup (dry run)")
-	assertContains(t, got, "Cost estimate:")
-	assertContains(t, got, "Run without --dry-run to create these resources.")
+	testutil.AssertContains(t, got, "Setup (dry run)")
+	testutil.AssertContains(t, got, "Cost estimate:")
+	testutil.AssertContains(t, got, "Run without --dry-run to create these resources.")
 }
 
 // TestSetupCobraYesApplies verifies --yes drives a successful apply with no prompt.
@@ -67,8 +57,8 @@ func TestSetupCobraYesApplies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "Proceeding without confirmation")
-	assertContains(t, got, "Setup complete")
+	testutil.AssertContains(t, got, "Proceeding without confirmation")
+	testutil.AssertContains(t, got, "Setup complete")
 }
 
 // TestSetupCobraRuntimeError verifies runtimeSource errors surface as command errors.
@@ -95,14 +85,4 @@ func (f *cobraFakeProvider) EnsureStateBucket(_ context.Context, bucket, _ strin
 }
 func (f *cobraFakeProvider) EnsureStateLockTable(_ context.Context, table string) (cloud.StateBackendCreateResult, error) {
 	return cloud.StateBackendCreateResult{Identifier: table, Created: true}, nil
-}
-
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return
-		}
-	}
-	t.Fatalf("%q does not contain %q", s, substr)
 }

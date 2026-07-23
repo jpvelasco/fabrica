@@ -5,11 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/cost/report"
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -17,19 +17,8 @@ import (
 // buildTestRoot constructs a minimal root command that mirrors the production
 // flag hierarchy: --dry-run, --yes, and --json are persistent flags on root.
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(report.New(runtimeSource, optionsSource, out))
 	return root
 }
@@ -62,41 +51,18 @@ func reportStateJSON() string {
 		]}]}`
 }
 
-// writeStateFile writes state to the standard .fabrica/state.json location.
-func writeStateFile(t *testing.T, dir, content string) {
-	t.Helper()
-	// #nosec G301 -- directory needs execute for traversal
-	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dir+"/.fabrica/state.json", []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// assertContains checks that s contains substr.
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return
-		}
-	}
-	t.Fatalf("%q does not contain %q", s, substr)
-}
-
 // TestCostReportCobraText verifies text output with provisioned module.
 func TestCostReportCobraText(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, reportStateJSON())
+	testutil.WriteStateFile(t, dir, reportStateJSON())
 
 	got, err := runCostReport(t, newTestRuntime(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	for _, want := range []string{"perforce", "Total", "Confidence"} {
-		assertContains(t, got, want)
+		testutil.AssertContains(t, got, want)
 	}
 }
 
@@ -104,20 +70,20 @@ func TestCostReportCobraText(t *testing.T) {
 func TestCostReportCobraTextEmpty(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, `{"account":"123456789012","region":"us-east-1","modules":[]}`)
+	testutil.WriteStateFile(t, dir, `{"account":"123456789012","region":"us-east-1","modules":[]}`)
 
 	got, err := runCostReport(t, newTestRuntime(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "No provisioned modules")
+	testutil.AssertContains(t, got, "No provisioned modules")
 }
 
 // TestCostReportCobraJSON verifies JSON output with provisioned module.
 func TestCostReportCobraJSON(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, reportStateJSON())
+	testutil.WriteStateFile(t, dir, reportStateJSON())
 
 	got, err := runCostReport(t, newTestRuntime(nil), "--json")
 	if err != nil {
@@ -149,7 +115,7 @@ func TestCostReportCobraJSON(t *testing.T) {
 func TestCostReportCobraJSONEmpty(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, `{"account":"123456789012","region":"us-east-1","modules":[]}`)
+	testutil.WriteStateFile(t, dir, `{"account":"123456789012","region":"us-east-1","modules":[]}`)
 
 	got, err := runCostReport(t, newTestRuntime(nil), "--json")
 	if err != nil {
@@ -177,7 +143,7 @@ func TestCostReportCobraNoState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "No provisioned modules")
+	testutil.AssertContains(t, got, "No provisioned modules")
 }
 
 // TestCostReportCobraRuntimeError verifies runtimeSource errors surface as command errors.
@@ -196,20 +162,20 @@ func TestCostReportCobraRuntimeError(t *testing.T) {
 func TestCostReportCobraConfidenceFieldPresent(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, reportStateJSON())
+	testutil.WriteStateFile(t, dir, reportStateJSON())
 
 	got, err := runCostReport(t, newTestRuntime(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "Confidence:")
+	testutil.AssertContains(t, got, "Confidence:")
 }
 
 // TestCostReportCobraJSONConfidenceFieldPresent verifies confidence field in JSON output.
 func TestCostReportCobraJSONConfidenceFieldPresent(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, reportStateJSON())
+	testutil.WriteStateFile(t, dir, reportStateJSON())
 
 	got, err := runCostReport(t, newTestRuntime(nil), "--json")
 	if err != nil {
