@@ -18,7 +18,7 @@ Mark each box only when verified with evidence (CI job, local command output, or
 - [ ] Codecov: `codecov/patch` status (and/or `codecov[bot]` comment) present after Test (ubuntu) — or N/A if no coverable Go changes / upload skipped
 - [ ] New/changed code covered by tests (Codecov patch ≥90% or E2E-only with justification)
 
-### Scope-specific (check all that apply)
+### Scope-specific (check only the boxes that apply; leave unchecked with reason if not applicable)
 
 - [ ] `go test ./internal/<module>/...` and/or `go test ./cmd/<module>/...` for packages touched
 - [ ] `cd npm && npm test` — if `npm/` changed
