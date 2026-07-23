@@ -1,0 +1,9 @@
+# Socket Security — supply-chain risk scanner for Go dependencies.
+# Scans go.mod / go.sum on every PR via the Socket GitHub App.
+# Dashboard: https://socket.dev/dashboard/org/jpvelasco
+# Docs: https://docs.socket.dev/docs/socket-yml
+version: 2
+
+githubApp:
+  enabled: true
+  dependencyOverviewEnabled: true
