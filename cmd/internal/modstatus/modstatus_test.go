@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -400,4 +401,53 @@ func assertContains(t *testing.T, s, substr string) {
 		}
 	}
 	t.Fatalf("%q\ndoes not contain\n%q", s, substr)
+}
+
+// ---- tests for shared helpers ----
+
+func TestWriteCommonFields(t *testing.T) {
+	info := Info{
+		InstanceID:    "i-abc123",
+		InstanceState: "running",
+		InstanceType:  "m5.xlarge",
+		PrivateIP:     "10.0.1.42",
+	}
+	var buf bytes.Buffer
+	WriteCommonFields(&buf, info)
+	out := buf.String()
+	if !strings.Contains(out, "i-abc123") {
+		t.Error("expected InstanceID in output")
+	}
+	if !strings.Contains(out, "running") {
+		t.Error("expected InstanceState in output")
+	}
+	if !strings.Contains(out, "m5.xlarge") {
+		t.Error("expected InstanceType in output")
+	}
+	if !strings.Contains(out, "10.0.1.42") {
+		t.Error("expected PrivateIP in output")
+	}
+}
+
+func TestWriteCommonFields_Empty(t *testing.T) {
+	var buf bytes.Buffer
+	WriteCommonFields(&buf, Info{})
+	if buf.Len() > 0 {
+		t.Fatalf("expected empty output for empty Info, got %q", buf.String())
+	}
+}
+
+func TestWriteNotProvisionedJSON(t *testing.T) {
+	var buf bytes.Buffer
+	WriteNotProvisionedJSON(&buf)
+	var result map[string]interface{}
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &result); err != nil {
+		t.Fatalf("unexpected error unmarshaling JSON: %v", err)
+	}
+	if result["provisioned"] != false {
+		t.Fatalf("expected provisioned=false, got %v", result["provisioned"])
+	}
+	if result["status"] != "not_provisioned" {
+		t.Fatalf("expected status=not_provisioned, got %v", result["status"])
+	}
 }

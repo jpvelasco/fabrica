@@ -790,3 +790,65 @@ func TestRunSkipConfirmBypassesConfirmation(t *testing.T) {
 		t.Fatal("expected state to be written")
 	}
 }
+
+func TestRemoveModule(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("perforce", "2024.1", "ready", nil)
+	st.UpsertModule("horde", "2024.1", "ready", nil)
+
+	RemoveModule(st, "perforce")
+
+	if st.GetModule("perforce") != nil {
+		t.Error("perforce should be removed")
+	}
+	if st.GetModule("horde") == nil {
+		t.Error("horde should still exist")
+	}
+}
+
+func TestRemoveModuleNonexistent(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "2024.1", "ready", nil)
+
+	RemoveModule(st, "nonexistent")
+
+	if st.GetModule("horde") == nil {
+		t.Error("horde should still exist")
+	}
+}
+
+type fakeProviderWithRC struct {
+	rc *fakeResourceClient
+}
+
+func (f *fakeProviderWithRC) Name() string { return "test" }
+func (f *fakeProviderWithRC) Identity(_ context.Context) (string, string, string, error) {
+	return "123456789012", "", "us-east-1", nil
+}
+func (f *fakeProviderWithRC) Resources() cloud.ResourceClient { return f.rc }
+
+func TestWireProvider(t *testing.T) {
+	fakeRC := &fakeResourceClient{}
+	rt := globals.Runtime{Provider: &fakeProviderWithRC{rc: fakeRC}}
+
+	tc := &Command{}
+	WireProvider(tc, rt)
+
+	if tc.DeleteResource == nil {
+		t.Error("DeleteResource should be set")
+	}
+	if tc.GetResource == nil {
+		t.Error("GetResource should be set")
+	}
+}
+
+func TestWireProviderNilProvider(t *testing.T) {
+	rt := globals.Runtime{Provider: nil}
+
+	tc := &Command{}
+	WireProvider(tc, rt)
+
+	if tc.DeleteResource != nil {
+		t.Error("DeleteResource should remain nil")
+	}
+}
