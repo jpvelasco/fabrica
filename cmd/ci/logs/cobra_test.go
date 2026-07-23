@@ -7,30 +7,17 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/ci/logs"
 	"github.com/jpvelasco/fabrica/cmd/globals"
-	"github.com/jpvelasco/fabrica/internal/cloud"
-	"github.com/jpvelasco/fabrica/internal/config"
-	"github.com/spf13/cobra"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 )
-
-type cobraProvider struct{}
-
-func (cobraProvider) Name() string { return "fake" }
-func (cobraProvider) Identity(context.Context) (string, string, string, error) {
-	return "123456789012", "arn", "us-west-2", nil
-}
-func (cobraProvider) Resources() cloud.ResourceClient { return nil }
 
 // TestLogsCobraWiring exercises New(): a provider without CodeBuildRunner must
 // produce a clean error (not a panic) through the full Cobra execution path.
 func TestLogsCobraWiring(t *testing.T) {
 	var out bytes.Buffer
-	root := &cobra.Command{Use: "fabrica", SilenceUsage: true, SilenceErrors: true}
-	root.SetOut(&out)
-	root.SetErr(&out)
-	src := func() (globals.Runtime, error) {
-		return globals.Runtime{Config: config.Defaults(), Provider: cobraProvider{}}, nil
-	}
-	root.AddCommand(logs.New(src, func() globals.Options { return globals.Options{} }, &out))
+	root, opts := testutil.BuildTestRoot(&out)
+	optionsSource := func() globals.Options { return *opts }
+	src := testutil.NewTestRuntime(&testutil.CobraFakeProvider{})
+	root.AddCommand(logs.New(src, optionsSource, &out))
 	root.SetArgs([]string{"logs", "build-1"})
 
 	if err := root.ExecuteContext(context.Background()); err == nil {
@@ -41,11 +28,10 @@ func TestLogsCobraWiring(t *testing.T) {
 // TestLogsRequiresBuildID verifies the ExactArgs(1) constraint.
 func TestLogsRequiresBuildID(t *testing.T) {
 	var out bytes.Buffer
-	root := &cobra.Command{Use: "fabrica", SilenceUsage: true, SilenceErrors: true}
-	root.SetOut(&out)
-	root.SetErr(&out)
-	src := func() (globals.Runtime, error) { return globals.Runtime{Config: config.Defaults()}, nil }
-	root.AddCommand(logs.New(src, func() globals.Options { return globals.Options{} }, &out))
+	root, opts := testutil.BuildTestRoot(&out)
+	optionsSource := func() globals.Options { return *opts }
+	src := testutil.NewNilProviderRuntime()
+	root.AddCommand(logs.New(src, optionsSource, &out))
 	root.SetArgs([]string{"logs"})
 
 	if err := root.ExecuteContext(context.Background()); err == nil {

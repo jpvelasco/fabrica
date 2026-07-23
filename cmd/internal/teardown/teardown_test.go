@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -850,5 +851,51 @@ func TestWireProviderNilProvider(t *testing.T) {
 
 	if tc.DeleteResource != nil {
 		t.Error("DeleteResource should remain nil")
+	}
+}
+
+// TestNewTeardownWiring verifies NewTeardown returns a Command with correct wiring.
+func TestNewTeardownWiring(t *testing.T) {
+	var out bytes.Buffer
+	rt := globals.Runtime{Config: config.Defaults(), Provider: &testutil.CobraFakeProvider{}}
+	tc := NewTeardown(testSpec, rt, &out)
+
+	if !tc.SkipConfirm || !tc.AssumeYes {
+		t.Fatalf("SkipConfirm/AssumeYes must be true; got SkipConfirm=%v, AssumeYes=%v", tc.SkipConfirm, tc.AssumeYes)
+	}
+	if tc.ReadState == nil {
+		t.Fatal("ReadState must be wired")
+	}
+	if tc.WriteState == nil {
+		t.Fatal("WriteState must be wired")
+	}
+	if tc.DeleteResource == nil {
+		t.Fatal("DeleteResource must be wired when provider is non-nil")
+	}
+	if tc.GetResource == nil {
+		t.Fatal("GetResource must be wired when provider is non-nil")
+	}
+	if tc.Confirm == nil {
+		t.Fatal("Confirm must be wired")
+	}
+	if tc.Spec.ModuleName != "perforce" {
+		t.Errorf("Spec.ModuleName = %q, want perforce", tc.Spec.ModuleName)
+	}
+}
+
+// TestNewTeardownNilProvider verifies NewTeardown handles nil provider gracefully.
+func TestNewTeardownNilProvider(t *testing.T) {
+	var out bytes.Buffer
+	rt := globals.Runtime{Config: config.Defaults(), Provider: nil}
+	tc := NewTeardown(testSpec, rt, &out)
+
+	if !tc.SkipConfirm || !tc.AssumeYes {
+		t.Fatal("SkipConfirm/AssumeYes must be true even with nil provider")
+	}
+	if tc.ReadState == nil || tc.WriteState == nil {
+		t.Fatal("ReadState and WriteState must always be wired")
+	}
+	if tc.DeleteResource != nil || tc.GetResource != nil {
+		t.Fatal("DeleteResource/GetResource must be nil when provider is nil")
 	}
 }

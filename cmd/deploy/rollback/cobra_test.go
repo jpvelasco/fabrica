@@ -3,30 +3,18 @@ package rollback_test
 import (
 	"bytes"
 	"context"
-	"os"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/deploy/rollback"
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
-	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(rollback.New(runtimeSource, optionsSource, out))
 	return root
 }
@@ -38,13 +26,6 @@ func runRollback(t *testing.T, runtimeSource globals.RuntimeSource, args ...stri
 	root.SetArgs(append([]string{"rollback"}, args...))
 	err := root.ExecuteContext(context.Background())
 	return out.String(), err
-}
-
-func newTestRuntime(provider cloud.Provider) globals.RuntimeSource {
-	cfg := config.Defaults()
-	cfg.Cloud.AWS.AccountID = "123456789012"
-	rt := globals.Runtime{Config: cfg, Provider: provider}
-	return func() (globals.Runtime, error) { return rt, nil }
 }
 
 // deployStateWithFleets returns a JSON string with deploy module having an alias and two fleets.
@@ -62,45 +43,24 @@ func deployStateWithFleets(activeFleet, supersededFleet string) string {
 		{"name":"deploy","version":"v2","status":"ready","resources":` + resources + `}]}`
 }
 
-func writeStateFile(t *testing.T, dir, content string) {
-	t.Helper()
-	// #nosec G301 -- directory needs execute for traversal
-	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dir+"/.fabrica/state.json", []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return
-		}
-	}
-	t.Fatalf("%q does not contain %q", s, substr)
-}
-
 // TestRollbackCobraHappyPath verifies the happy path: two fleets exist,
 // rollback flips the alias and outputs confirmation + next steps.
 func TestRollbackCobraHappyPath(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
+	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
 	provider := &cobraFakeProvider{
 		fleetStatusMap: map[string]string{"fleet-old": "ACTIVE"},
 	}
-	got, err := runRollback(t, newTestRuntime(provider), "--yes")
+	got, err := runRollback(t, testutil.NewTestRuntime(provider), "--yes")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "fleet-old")
-	assertContains(t, got, "Rolled back")
-	assertContains(t, got, "Next steps:")
-	assertContains(t, got, "fabrica deploy status")
+	testutil.AssertContains(t, got, "fleet-old")
+	testutil.AssertContains(t, got, "Rolled back")
+	testutil.AssertContains(t, got, "Next steps:")
+	testutil.AssertContains(t, got, "fabrica deploy status")
 
 	// Verify state was updated: alias flip call made.
 	if provider.updateCalls != 1 {
@@ -112,9 +72,9 @@ func TestRollbackCobraHappyPath(t *testing.T) {
 func TestRollbackCobraNoCandidate(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, deployStateWithFleets("fleet-new", ""))
+	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", ""))
 
-	_, err := runRollback(t, newTestRuntime(&cobraFakeProvider{}))
+	_, err := runRollback(t, testutil.NewTestRuntime(&cobraFakeProvider{}))
 	if err == nil {
 		t.Fatal("expected error when no previous fleet to roll back to")
 	}
@@ -126,7 +86,7 @@ func TestRollbackCobraNoCandidate(t *testing.T) {
 // TestRollbackCobraNotProvisioned verifies error when deploy module doesn't exist.
 func TestRollbackCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	_, err := runRollback(t, newTestRuntime(&cobraFakeProvider{}))
+	_, err := runRollback(t, testutil.NewTestRuntime(&cobraFakeProvider{}))
 	if err == nil {
 		t.Fatal("expected error when deploy not set up")
 	}
@@ -139,13 +99,9 @@ func TestRollbackCobraNotProvisioned(t *testing.T) {
 func TestRollbackCobraNilProviderFails(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
+	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
-	src := func() (globals.Runtime, error) {
-		cfg := config.Defaults()
-		cfg.Cloud.AWS.AccountID = "123456789012"
-		return globals.Runtime{Config: cfg, Provider: nil}, nil
-	}
+	src := testutil.NewNilProviderRuntime()
 	_, err := runRollback(t, src)
 	if err == nil {
 		t.Fatal("expected error with nil provider")
@@ -156,28 +112,28 @@ func TestRollbackCobraNilProviderFails(t *testing.T) {
 func TestRollbackCobraYesFlagBypassesConfirm(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
+	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
 	provider := &cobraFakeProvider{
 		fleetStatusMap: map[string]string{"fleet-old": "ACTIVE"},
 	}
-	got, err := runRollback(t, newTestRuntime(provider), "--yes")
+	got, err := runRollback(t, testutil.NewTestRuntime(provider), "--yes")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if provider.updateCalls != 1 {
 		t.Errorf("expected alias flip with --yes, got %d update calls", provider.updateCalls)
 	}
-	assertContains(t, got, "Rolled back")
+	testutil.AssertContains(t, got, "Rolled back")
 }
 
 // TestRollbackCobraJSONDryRun verifies --json --dry-run work together.
 func TestRollbackCobraJSONDryRun(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
+	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
-	_, err := runRollback(t, newTestRuntime(&cobraFakeProvider{
+	_, err := runRollback(t, testutil.NewTestRuntime(&cobraFakeProvider{
 		fleetStatusMap: map[string]string{"fleet-old": "ACTIVE"},
 	}), "--json", "--dry-run", "--yes")
 	if err != nil {

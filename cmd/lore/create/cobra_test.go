@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/cmd/lore/create"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
@@ -15,18 +16,8 @@ import (
 )
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(create.New(runtimeSource, optionsSource, out))
 	return root
 }

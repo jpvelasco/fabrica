@@ -3,30 +3,19 @@ package destroy_test
 import (
 	"bytes"
 	"context"
-	"os"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/deploy/destroy"
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(destroy.New(runtimeSource, optionsSource, out))
 	return root
 }
@@ -40,17 +29,10 @@ func runDestroy(t *testing.T, runtimeSource globals.RuntimeSource, args ...strin
 	return out.String(), err
 }
 
-func newRuntime(provider cloud.Provider) globals.RuntimeSource {
-	cfg := config.Defaults()
-	cfg.Cloud.AWS.AccountID = "123456789012"
-	rt := globals.Runtime{Config: cfg, Provider: provider}
-	return func() (globals.Runtime, error) { return rt, nil }
-}
-
 // TestDestroyCobraNotProvisioned verifies clean message when deploy is not provisioned.
 func TestDestroyCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runDestroy(t, newRuntime(&cobraFakeProvider{}))
+	got, err := runDestroy(t, testutil.NewTestRuntime(&cobraFakeProvider{}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -63,10 +45,10 @@ func TestDestroyCobraNotProvisioned(t *testing.T) {
 func TestDestroyCobraDryRun(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, deployStateJSON())
+	testutil.WriteStateFile(t, dir, deployStateJSON())
 
 	provider := &cobraFakeProvider{}
-	got, err := runDestroy(t, newRuntime(provider), "--dry-run")
+	got, err := runDestroy(t, testutil.NewTestRuntime(provider), "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -107,17 +89,6 @@ func deployStateJSON() string {
 			{"typeName":"AWS::GameLift::Alias","identifier":"alias-1"},
 			{"typeName":"AWS::IAM::Role","identifier":"role-1"}
 		]}]}`
-}
-
-func writeStateFile(t *testing.T, dir, content string) {
-	t.Helper()
-	// #nosec G301 -- directory needs execute for traversal
-	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dir+"/.fabrica/state.json", []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func contains(s, substr string) bool {

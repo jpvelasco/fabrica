@@ -9,28 +9,16 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/ci"
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
-	"github.com/jpvelasco/fabrica/internal/config"
-	"github.com/spf13/cobra"
 )
-
-func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{Use: "fabrica", SilenceUsage: true, SilenceErrors: true}
-	root.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "")
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-	optionsSource := func() globals.Options { return opts }
-	root.AddCommand(ci.New(runtimeSource, optionsSource, out))
-	return root
-}
 
 func run(t *testing.T, src globals.RuntimeSource, args ...string) (string, error) {
 	t.Helper()
 	var out bytes.Buffer
-	root := buildTestRoot(src, &out)
+	root, opts := testutil.BuildTestRoot(&out)
+	optionsSource := func() globals.Options { return *opts }
+	root.AddCommand(ci.New(src, optionsSource, &out))
 	root.SetArgs(args)
 	err := root.ExecuteContext(context.Background())
 	return out.String(), err
@@ -45,11 +33,7 @@ func (cobraProvider) Identity(context.Context) (string, string, string, error) {
 func (cobraProvider) Resources() cloud.ResourceClient { return nil }
 
 func cobraRuntime() globals.RuntimeSource {
-	cfg := config.Defaults()
-	cfg.Cloud.AWS.AccountID = "123456789012"
-	return func() (globals.Runtime, error) {
-		return globals.Runtime{Config: cfg, Provider: cobraProvider{}}, nil
-	}
+	return testutil.NewTestRuntime(cobraProvider{})
 }
 
 func TestCISubcommandsRegistered(t *testing.T) {

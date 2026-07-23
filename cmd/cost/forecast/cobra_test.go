@@ -5,12 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/cost/forecast"
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -18,15 +17,8 @@ import (
 // buildTestRoot constructs a minimal root command mirroring the production flag
 // hierarchy: --dry-run, --yes, and --json are persistent flags on root.
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{Use: "fabrica", SilenceUsage: true, SilenceErrors: true}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(forecast.New(runtimeSource, optionsSource, out))
 	return root
 }
@@ -57,27 +49,14 @@ func perforceStateJSON() string {
 		]}]}`
 }
 
-func writeStateFile(t *testing.T, dir, content string) {
-	t.Helper()
-	// #nosec G301 -- directory needs execute for traversal
-	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dir+"/.fabrica/state.json", []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func assertContains(t *testing.T, s, substr string) {
 	t.Helper()
-	if !strings.Contains(s, substr) {
-		t.Fatalf("output does not contain %q:\n%s", substr, s)
-	}
+	testutil.AssertContains(t, s, substr)
 }
 
 func TestForecastCobraDefaultHorizon(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeStateFile(t, ".", perforceStateJSON())
+	testutil.WriteStateFile(t, ".", perforceStateJSON())
 	got, err := runForecast(t, newTestRuntime())
 	if err != nil {
 		t.Fatalf("forecast: %v", err)
@@ -89,7 +68,7 @@ func TestForecastCobraDefaultHorizon(t *testing.T) {
 
 func TestForecastCobraCustomDays(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeStateFile(t, ".", perforceStateJSON())
+	testutil.WriteStateFile(t, ".", perforceStateJSON())
 	got, err := runForecast(t, newTestRuntime(), "--days", "90")
 	if err != nil {
 		t.Fatalf("forecast: %v", err)
@@ -99,7 +78,7 @@ func TestForecastCobraCustomDays(t *testing.T) {
 
 func TestForecastCobraJSON(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeStateFile(t, ".", perforceStateJSON())
+	testutil.WriteStateFile(t, ".", perforceStateJSON())
 	got, err := runForecast(t, newTestRuntime(), "--json", "--days", "60")
 	if err != nil {
 		t.Fatalf("forecast: %v", err)

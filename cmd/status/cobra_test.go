@@ -9,24 +9,14 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/cmd/status"
-	"github.com/jpvelasco/fabrica/internal/cloud"
-	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(status.New(runtimeSource, optionsSource, out))
 	return root
 }
@@ -40,16 +30,10 @@ func runStatus(t *testing.T, runtimeSource globals.RuntimeSource, args ...string
 	return out.String(), err
 }
 
-func newCobraRuntime(provider cloud.Provider) globals.RuntimeSource {
-	cfg := config.Defaults()
-	rt := globals.Runtime{Config: cfg, Provider: provider}
-	return func() (globals.Runtime, error) { return rt, nil }
-}
-
 // TestStatusCobraEmpty verifies a clean exit and setup hint when no state exists.
 func TestStatusCobraEmpty(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runStatus(t, newCobraRuntime(nil))
+	got, err := runStatus(t, testutil.NewNilProviderRuntime())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -61,7 +45,7 @@ func TestStatusCobraEmpty(t *testing.T) {
 // TestStatusCobraJSON verifies --json produces a parseable StatusReport.
 func TestStatusCobraJSON(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runStatus(t, newCobraRuntime(nil), "--json")
+	got, err := runStatus(t, testutil.NewNilProviderRuntime(), "--json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,7 +58,7 @@ func TestStatusCobraJSON(t *testing.T) {
 // TestStatusCobraProbeFlagAccepted verifies --probe parses without error.
 func TestStatusCobraProbeFlagAccepted(t *testing.T) {
 	t.Chdir(t.TempDir())
-	if _, err := runStatus(t, newCobraRuntime(nil), "--probe"); err != nil {
+	if _, err := runStatus(t, testutil.NewNilProviderRuntime(), "--probe"); err != nil {
 		t.Fatalf("--probe caused error: %v", err)
 	}
 }

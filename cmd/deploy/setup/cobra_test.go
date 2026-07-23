@@ -5,30 +5,19 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/deploy/setup"
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(setup.New(runtimeSource, optionsSource, out))
 	return root
 }
@@ -50,13 +39,6 @@ func newTestRuntime(provider cloud.Provider) globals.RuntimeSource {
 	return func() (globals.Runtime, error) { return rt, nil }
 }
 
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	if !strings.Contains(s, substr) {
-		t.Fatalf("%q does not contain %q", s, substr)
-	}
-}
-
 // TestSetupCobraDryRunShowsPlan exercises the real Cobra entry with --dry-run.
 func TestSetupCobraDryRunShowsPlan(t *testing.T) {
 	t.Chdir(t.TempDir())
@@ -65,11 +47,11 @@ func TestSetupCobraDryRunShowsPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "Deploy setup (dry run)")
-	assertContains(t, got, "IAM role")
-	assertContains(t, got, "GameLift alias")
-	assertContains(t, got, "fabrica-builds")
-	assertContains(t, got, "Cost estimate")
+	testutil.AssertContains(t, got, "Deploy setup (dry run)")
+	testutil.AssertContains(t, got, "IAM role")
+	testutil.AssertContains(t, got, "GameLift alias")
+	testutil.AssertContains(t, got, "fabrica-builds")
+	testutil.AssertContains(t, got, "Cost estimate")
 	if provider.createCalls != 0 {
 		t.Errorf("dry-run must not create resources, got %d creates", provider.createCalls)
 	}
@@ -85,9 +67,9 @@ func TestSetupCobraYesCreatesResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "Deploy setup complete")
-	assertContains(t, got, "Next steps:")
-	assertContains(t, got, "fabrica deploy promote")
+	testutil.AssertContains(t, got, "Deploy setup complete")
+	testutil.AssertContains(t, got, "Next steps:")
+	testutil.AssertContains(t, got, "fabrica deploy promote")
 	if provider.createCalls != 2 {
 		t.Errorf("expected 2 creates (role + alias), got %d", provider.createCalls)
 	}
@@ -108,7 +90,7 @@ func TestSetupCobraRequiresBuildBucket(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when buildBucket is unset")
 	}
-	assertContains(t, err.Error(), "buildBucket")
+	testutil.AssertContains(t, err.Error(), "buildBucket")
 }
 
 // TestSetupCobraNilProvider errors through the real Cobra wiring.
@@ -123,7 +105,7 @@ func TestSetupCobraNilProvider(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when provider is nil")
 	}
-	assertContains(t, err.Error(), "no cloud provider")
+	testutil.AssertContains(t, err.Error(), "no cloud provider")
 }
 
 // TestSetupCobraRuntimeError surfaces runtimeSource failures.

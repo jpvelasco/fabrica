@@ -10,22 +10,14 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/horde/submit"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
-	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(submit.New(runtimeSource, optionsSource, out))
 	return root
 }
@@ -40,9 +32,7 @@ func runSubmit(t *testing.T, runtimeSource globals.RuntimeSource, args ...string
 }
 
 func newCobraRuntime(provider cloud.Provider) globals.RuntimeSource {
-	cfg := config.Defaults()
-	rt := globals.Runtime{Config: cfg, Provider: provider}
-	return func() (globals.Runtime, error) { return rt, nil }
+	return testutil.NewTestRuntime(provider)
 }
 
 func writeTempBuildGraph(t *testing.T) string {
@@ -60,7 +50,7 @@ func writeTempBuildGraph(t *testing.T) string {
 
 // TestSubmitCobraMissingArg verifies that omitting the positional arg produces a usage error.
 func TestSubmitCobraMissingArg(t *testing.T) {
-	_, err := runSubmit(t, newCobraRuntime(&cobraFakeProvider{}))
+	_, err := runSubmit(t, newCobraRuntime(&testutil.CobraFakeProvider{}))
 	if err == nil {
 		t.Fatal("expected error when buildgraph-file arg is missing")
 	}
@@ -73,7 +63,7 @@ func TestSubmitCobraWaitFlagAccepted(t *testing.T) {
 	path := writeTempBuildGraph(t)
 	for _, flag := range []string{"--wait", "-w"} {
 		t.Run(flag, func(t *testing.T) {
-			_, err := runSubmit(t, newCobraRuntime(&cobraFakeProvider{}), flag, path)
+			_, err := runSubmit(t, newCobraRuntime(&testutil.CobraFakeProvider{}), flag, path)
 			// Error expected (not provisioned), but not a flag-parse error.
 			if err != nil && err.Error() == "unknown flag: "+flag {
 				t.Fatalf("%s flag not recognised", flag)
@@ -86,13 +76,11 @@ func TestSubmitCobraWaitFlagAccepted(t *testing.T) {
 func TestSubmitCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
 	path := writeTempBuildGraph(t)
-	_, err := runSubmit(t, newCobraRuntime(&cobraFakeProvider{}), path)
+	_, err := runSubmit(t, newCobraRuntime(&testutil.CobraFakeProvider{}), path)
 	if err == nil {
 		t.Fatal("expected error when horde not provisioned")
 	}
-	if !cobraContainsString(err.Error(), "not provisioned") {
-		t.Fatalf("error %q does not mention not provisioned", err.Error())
-	}
+	testutil.AssertContains(t, err.Error(), "not provisioned")
 }
 
 // TestSubmitCobraRuntimeError verifies runtimeSource error surfaces as command error.
@@ -105,37 +93,4 @@ func TestSubmitCobraRuntimeError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from runtimeSource")
 	}
-}
-
-// ---- cobraFakeProvider ----
-
-type cobraFakeProvider struct{}
-
-func (f *cobraFakeProvider) Name() string { return "fake" }
-
-func (f *cobraFakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-
-func (f *cobraFakeProvider) Resources() cloud.ResourceClient {
-	return &cobraFakeRC{}
-}
-
-type cobraFakeRC struct{}
-
-func (r *cobraFakeRC) Create(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *cobraFakeRC) Get(_ context.Context, _ *cloud.Resource) error    { return nil }
-func (r *cobraFakeRC) Update(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *cobraFakeRC) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *cobraFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
-	return nil, nil
-}
-
-func cobraContainsString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/cost/alerts"
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
@@ -19,19 +20,8 @@ import (
 // buildTestRoot constructs a minimal root command that mirrors the production
 // flag hierarchy: --dry-run, --yes, and --json are persistent flags on root.
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(alerts.New(runtimeSource, optionsSource, out))
 	return root
 }
@@ -79,9 +69,7 @@ func writeStateFile(t *testing.T, st *fabricastate.State) {
 // assertContains checks that s contains substr.
 func assertContains(t *testing.T, s, substr string) {
 	t.Helper()
-	if !strings.Contains(s, substr) {
-		t.Fatalf("%q does not contain %q", s, substr)
-	}
+	testutil.AssertContains(t, s, substr)
 }
 
 // assertNotContains checks that s does not contain substr.

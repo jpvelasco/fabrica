@@ -9,6 +9,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/doctor"
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
@@ -32,13 +33,8 @@ func (f *cobraFakeProvider) Resources() cloud.ResourceClient { return nil }
 
 // buildTestRoot replicates the persistent-flag hierarchy (--json lives on root).
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{Use: "fabrica", SilenceUsage: true, SilenceErrors: true}
-	root.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(doctor.New(runtimeSource, optionsSource, out))
 	return root
 }
