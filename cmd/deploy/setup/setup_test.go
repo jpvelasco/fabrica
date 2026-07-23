@@ -99,6 +99,71 @@ func TestSetupConfirmRejected(t *testing.T) {
 	}
 }
 
+func TestSetupIdempotentExistingResources(t *testing.T) {
+	var out bytes.Buffer
+	// Pre-seed state with existing role + alias so existingResource returns true.
+	st := &fabricastate.State{
+		Account: "123456789012",
+		Region:  "us-east-1",
+		Modules: []fabricastate.ModuleState{{
+			Name:    "deploy",
+			Version: "fabrica-deploy",
+			Status:  "ready",
+			Resources: []fabricastate.ModuleResource{
+				{TypeName: "AWS::IAM::Role", Identifier: "existing-role"},
+				{TypeName: "AWS::GameLift::Alias", Identifier: "existing-alias"},
+			},
+		}},
+	}
+	created := map[string]int{}
+	c := &command{
+		runtime:    baseRuntime(),
+		assumeYes:  true,
+		out:        &out,
+		costs:      fabricacost.Global,
+		readState:  func() (*fabricastate.State, error) { return st, nil },
+		writeState: func(s *fabricastate.State) error { st = s; return nil },
+		createResource: func(_ context.Context, r *cloud.Resource) error {
+			created[r.TypeName]++
+			r.Identifier = r.TypeName + "-id"
+			return nil
+		},
+		getResource: func(_ context.Context, _ *cloud.Resource) error { return nil },
+		confirm:     func(string) bool { return true },
+	}
+	c.runtime.Provider = fakeProvider{}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	s := out.String()
+	if !strings.Contains(s, "already exists") {
+		t.Errorf("expected skip message for existing resources:\n%s", s)
+	}
+	if created["AWS::IAM::Role"] > 0 {
+		t.Error("should not create IAM role when it already exists")
+	}
+	if created["AWS::GameLift::Alias"] > 0 {
+		t.Error("should not create alias when it already exists")
+	}
+}
+
+func TestSetupNoCreateResource(t *testing.T) {
+	var out bytes.Buffer
+	c := &command{
+		runtime:    baseRuntime(),
+		assumeYes:  true,
+		out:        &out,
+		costs:      fabricacost.Global,
+		readState:  func() (*fabricastate.State, error) { return fabricastate.NewState("123456789012", "us-east-1"), nil },
+		writeState: func(s *fabricastate.State) error { return nil },
+		confirm:    func(string) bool { return true },
+	}
+	c.runtime.Provider = fakeProvider{}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected error when createResource is nil")
+	}
+}
+
 // fakeProvider supplies Identity for the command.
 type fakeProvider struct{}
 
