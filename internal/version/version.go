@@ -9,3 +9,11 @@ var Version = "dev"
 //
 //	-X github.com/jpvelasco/fabrica/internal/version.Commit=abc1234
 var Commit = "unknown"
+
+// String returns Version, or "Version (Commit)" when a real commit is set.
+func String() string {
+	if Commit == "" || Commit == "unknown" {
+		return Version
+	}
+	return Version + " (" + Commit + ")"
+}
