@@ -64,7 +64,12 @@ jobs:
       contents: read
       id-token: write
     steps:
+      # fetch-depth: 0 so Codecov can walk git history for path mapping and so
+      # parent/base SHAs exist when the App compares PR head vs main (avoids
+      # "Missing base commit" / unusable reports on shallow clones).
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: go.mod
@@ -89,37 +94,44 @@ jobs:
         run: go tool cover -func=coverage.out
       # Codecov standard (fabrica → roll out to sister repos):
       #   - codecov-action@v7 only (no separate test-results-action)
-      #   - OIDC (no CODECOV_TOKEN secret) + use_pypi (reliable CLI install)
-      #   - Linux coverage upload is authoritative; PR visibility is the Codecov
-      #     GitHub App (codecov/patch status + codecov[bot] comment), not a
-      #     standalone Actions job. Do NOT add codecov/patch to ruleset required
-      #     checks — App lag must not deadlock merges (soft gate via PR template).
+      #   - Auth is XOR: OIDC when CODECOV_TOKEN is unset; token when set.
+      #     (codecov-action: use_oidc ignores any token if both are enabled.)
+      #   - Explicit override_* so push-to-main uploads are tagged with the real
+      #     SHA/branch (action only auto-fills those for pull_request events;
+      #     empty CC_SHA on push was leaving main without a usable base report).
+      #   - Do NOT add codecov/patch to ruleset required checks (soft gate).
       - name: Upload coverage to Codecov
         # Skip fork PRs: OIDC tokens aren't issued to forked-repo runs.
         if: runner.os == 'Linux' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
         with:
-          use_oidc: true
+          # OIDC when no secret; if CODECOV_TOKEN is set, use_oidc is false so
+          # the upload token is actually used (not ignored).
+          use_oidc: ${{ secrets.CODECOV_TOKEN == '' }}
+          token: ${{ secrets.CODECOV_TOKEN }}
           use_pypi: true
-          disable_search: true
           files: ./coverage.out
-          # slug pins the Codecov project when org has multiple repos
           slug: jpvelasco/fabrica
+          # PR head SHA on pull_request; otherwise the push SHA (main).
+          override_commit: ${{ github.event.pull_request.head.sha || github.sha }}
+          override_branch: ${{ github.head_ref || github.ref_name }}
+          override_pr: ${{ github.event.pull_request.number }}
           fail_ci_if_error: true
       - name: Upload test results to Codecov
         # Test Analytics (failed-test / flaky reporting). Same Action as coverage
         # with report_type: test_results — replaces deprecated test-results-action.
-        # !cancelled() so results still upload when tests fail.
         if: ${{ !cancelled() && runner.os == 'Linux' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
         with:
-          use_oidc: true
+          use_oidc: ${{ secrets.CODECOV_TOKEN == '' }}
+          token: ${{ secrets.CODECOV_TOKEN }}
           use_pypi: true
-          disable_search: true
           report_type: test_results
           files: ./junit.xml
           slug: jpvelasco/fabrica
-          # Analytics must not fail the Test job if Codecov is briefly down.
+          override_commit: ${{ github.event.pull_request.head.sha || github.sha }}
+          override_branch: ${{ github.head_ref || github.ref_name }}
+          override_pr: ${{ github.event.pull_request.number }}
           fail_ci_if_error: false
 
   goreleaser:
