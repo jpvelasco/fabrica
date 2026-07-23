@@ -123,8 +123,8 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	c := newTestCommand(&out, provider, st)
 	c.assumeYes = true
 	c.writeState = func(s *fabricastate.State) error {
-		copy := *s
-		writtenStates = append(writtenStates, &copy)
+		sCopy := *s
+		writtenStates = append(writtenStates, &sCopy)
 		return nil
 	}
 
@@ -165,8 +165,8 @@ func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
 	c := newTestCommand(&out, provider, st)
 	c.assumeYes = true
 	c.writeState = func(s *fabricastate.State) error {
-		copy := *s
-		lastWrittenState = &copy
+		sCopy := *s
+		lastWrittenState = &sCopy
 		return nil
 	}
 
