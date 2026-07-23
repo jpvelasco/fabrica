@@ -10,24 +10,15 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/horde/create"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(create.New(runtimeSource, optionsSource, out))
 	return root
 }
@@ -67,7 +58,7 @@ func TestCreateCobraDryRunNoAWSCalls(t *testing.T) {
 	if provider.createCalls != 0 {
 		t.Fatalf("dry-run made %d create calls, want 0", provider.createCalls)
 	}
-	assertCobraContains(t, got, "dry run")
+	testutil.AssertContains(t, got, "dry run")
 }
 
 // TestCreateCobraDryRunOutputFields verifies account, region, resource names, cost appear.
@@ -84,7 +75,7 @@ func TestCreateCobraDryRunOutputFields(t *testing.T) {
 		"fabrica-horde",
 		"Cost estimate:",
 	} {
-		assertCobraContains(t, got, want)
+		testutil.AssertContains(t, got, want)
 	}
 }
 
@@ -107,8 +98,8 @@ func TestCreateCobraNilProvider(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when provider is nil")
 	}
-	assertCobraContains(t, err.Error(), "no provider configured")
-	assertCobraContains(t, err.Error(), "fabrica setup")
+	testutil.AssertContains(t, err.Error(), "no provider configured")
+	testutil.AssertContains(t, err.Error(), "fabrica setup")
 }
 
 // TestCreateCobraIdentityFailure verifies identity errors surface as command errors.
@@ -130,7 +121,7 @@ func TestCreateCobraDryRunInstanceTypeFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertCobraContains(t, got, "m7i.4xlarge")
+	testutil.AssertContains(t, got, "m7i.4xlarge")
 }
 
 // TestCreateCobraDryRunVolumeSizeFlag verifies --volume-size appears in dry-run output.
@@ -140,7 +131,7 @@ func TestCreateCobraDryRunVolumeSizeFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertCobraContains(t, got, "500 GiB")
+	testutil.AssertContains(t, got, "500 GiB")
 }
 
 // TestCreateCobraAlreadyProvisioned verifies early exit when module is in state.
@@ -169,7 +160,7 @@ func TestCreateCobraAlreadyProvisioned(t *testing.T) {
 	if provider.createCalls != 0 {
 		t.Fatalf("already provisioned: made %d create calls, want 0", provider.createCalls)
 	}
-	assertCobraContains(t, got, "already provisioned")
+	testutil.AssertContains(t, got, "already provisioned")
 }
 
 // TestCreateCobraRuntimeError verifies runtimeSource error surfaces as command error.
@@ -223,13 +214,6 @@ func (r *cobraFakeResourceClient) Update(_ context.Context, _ *cloud.Resource) e
 func (r *cobraFakeResourceClient) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
 func (r *cobraFakeResourceClient) List(_ context.Context, _ string) ([]cloud.Resource, error) {
 	return nil, nil
-}
-
-func assertCobraContains(t *testing.T, s, substr string) {
-	t.Helper()
-	if !cobraContainsString(s, substr) {
-		t.Fatalf("%q does not contain %q", s, substr)
-	}
 }
 
 func cobraContainsString(s, substr string) bool {

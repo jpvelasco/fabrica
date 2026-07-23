@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/cmd/workstation/stop"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
@@ -16,19 +16,8 @@ import (
 )
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(stop.New(runtimeSource, optionsSource, out))
 	return root
 }
@@ -55,20 +44,20 @@ func TestStopCobraNotProvisioned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertCobraContains(t, got, "not provisioned")
+	testutil.AssertContains(t, got, "not provisioned")
 }
 
 func TestStopCobraDryRun(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, provisionedStateJSON("ready"))
+	testutil.WriteStateFile(t, dir, provisionedStateJSON("ready"))
 
 	provider := &cobraFakeProvider{}
 	got, err := runStop(t, newRuntime(provider), "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertCobraContains(t, got, "dry run")
+	testutil.AssertContains(t, got, "dry run")
 	if provider.stopCalls != 0 {
 		t.Errorf("dry-run made %d stop calls, want 0", provider.stopCalls)
 	}
@@ -77,7 +66,7 @@ func TestStopCobraDryRun(t *testing.T) {
 func TestStopCobraYesFlag(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, provisionedStateJSON("ready"))
+	testutil.WriteStateFile(t, dir, provisionedStateJSON("ready"))
 
 	provider := &cobraFakeProvider{}
 	got, err := runStop(t, newRuntime(provider), "--yes")
@@ -87,13 +76,13 @@ func TestStopCobraYesFlag(t *testing.T) {
 	if provider.stopCalls != 1 {
 		t.Errorf("expected 1 stop call, got %d", provider.stopCalls)
 	}
-	assertCobraContains(t, got, "stopped")
+	testutil.AssertContains(t, got, "stopped")
 }
 
 func TestStopCobraAlreadyStopped(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, provisionedStateJSON("stopped"))
+	testutil.WriteStateFile(t, dir, provisionedStateJSON("stopped"))
 
 	provider := &cobraFakeProvider{}
 	got, err := runStop(t, newRuntime(provider), "--yes")
@@ -103,13 +92,13 @@ func TestStopCobraAlreadyStopped(t *testing.T) {
 	if provider.stopCalls != 0 {
 		t.Errorf("already-stopped: expected 0 stop calls, got %d", provider.stopCalls)
 	}
-	assertCobraContains(t, got, "already stopped")
+	testutil.AssertContains(t, got, "already stopped")
 }
 
 func TestStopCobraJSONYes(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, provisionedStateJSON("ready"))
+	testutil.WriteStateFile(t, dir, provisionedStateJSON("ready"))
 
 	got, err := runStop(t, newRuntime(&cobraFakeProvider{}), "--json", "--yes")
 	if err != nil {
@@ -145,27 +134,6 @@ func provisionedStateJSON(status string) string {
 			{"typeName":"AWS::EC2::SecurityGroup","identifier":"sg-cobrawstest"},
 			{"typeName":"AWS::EC2::Instance","identifier":"i-cobrawstest"}
 		]}]}`
-}
-
-func writeStateFile(t *testing.T, dir, content string) {
-	t.Helper()
-	// #nosec G301 -- directory needs execute for traversal
-	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dir+"/.fabrica/state.json", []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func assertCobraContains(t *testing.T, s, substr string) {
-	t.Helper()
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return
-		}
-	}
-	t.Fatalf("%q does not contain %q", s, substr)
 }
 
 // cobraFakeProvider implements both cloud.Provider and cloud.EC2InstanceManager.

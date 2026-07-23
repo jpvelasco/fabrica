@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/cmd/workstation/create"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
@@ -14,17 +15,8 @@ import (
 )
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(create.New(runtimeSource, optionsSource, out))
 	return root
 }
@@ -57,7 +49,7 @@ func TestCreateCobraDryRunNoAWSCalls(t *testing.T) {
 	if provider.createCalls != 0 {
 		t.Fatalf("dry-run made %d create calls, want 0", provider.createCalls)
 	}
-	assertCobraContains(t, got, "dry run")
+	testutil.AssertContains(t, got, "dry run")
 }
 
 func TestCreateCobraDryRunOutputFields(t *testing.T) {
@@ -67,7 +59,7 @@ func TestCreateCobraDryRunOutputFields(t *testing.T) {
 		t.Fatalf("dry-run failed: %v", err)
 	}
 	for _, want := range []string{"123456789012", "us-east-1", "fabrica-workstation-sg", "Cost estimate:"} {
-		assertCobraContains(t, got, want)
+		testutil.AssertContains(t, got, want)
 	}
 }
 
@@ -91,7 +83,7 @@ func TestCreateCobraNilProvider(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when provider is nil")
 	}
-	assertCobraContains(t, err.Error(), "no provider configured")
+	testutil.AssertContains(t, err.Error(), "no provider configured")
 }
 
 func TestCreateCobraInstanceTypeFlag(t *testing.T) {
@@ -100,7 +92,7 @@ func TestCreateCobraInstanceTypeFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertCobraContains(t, got, "g5.2xlarge")
+	testutil.AssertContains(t, got, "g5.2xlarge")
 }
 
 func TestCreateCobraVolumeSizeFlag(t *testing.T) {
@@ -109,7 +101,7 @@ func TestCreateCobraVolumeSizeFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertCobraContains(t, got, "200 GiB")
+	testutil.AssertContains(t, got, "200 GiB")
 }
 
 func TestCreateCobraAmiIDMissing(t *testing.T) {
@@ -125,7 +117,7 @@ func TestCreateCobraAmiIDMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when AmiID is missing")
 	}
-	assertCobraContains(t, err.Error(), "workstation.amiId")
+	testutil.AssertContains(t, err.Error(), "workstation.amiId")
 }
 
 type cobraFakeProvider struct {
@@ -157,14 +149,4 @@ func (r *cobraFakeRC) Update(_ context.Context, _ *cloud.Resource) error { retur
 func (r *cobraFakeRC) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
 func (r *cobraFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
 	return nil, nil
-}
-
-func assertCobraContains(t *testing.T, s, substr string) {
-	t.Helper()
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return
-		}
-	}
-	t.Fatalf("%q does not contain %q", s, substr)
 }

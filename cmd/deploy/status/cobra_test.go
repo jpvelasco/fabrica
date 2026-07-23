@@ -4,30 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/deploy/status"
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
-	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(status.New(runtimeSource, optionsSource, out))
 	return root
 }
@@ -39,13 +27,6 @@ func runStatus(t *testing.T, runtimeSource globals.RuntimeSource, args ...string
 	root.SetArgs(append([]string{"status"}, args...))
 	err := root.ExecuteContext(context.Background())
 	return out.String(), err
-}
-
-func newTestRuntime(provider cloud.Provider) globals.RuntimeSource {
-	cfg := config.Defaults()
-	cfg.Cloud.AWS.AccountID = "123456789012"
-	rt := globals.Runtime{Config: cfg, Provider: provider}
-	return func() (globals.Runtime, error) { return rt, nil }
 }
 
 // deployStateWithFleets returns a JSON string with deploy module having an alias and fleets.
@@ -63,52 +44,22 @@ func deployStateWithFleets(activeFleet, supersededFleet string) string {
 		{"name":"deploy","version":"v2","status":"ready","resources":` + resources + `}]}`
 }
 
-func writeStateFile(t *testing.T, dir, content string) {
-	t.Helper()
-	// #nosec G301 -- directory needs execute for traversal
-	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dir+"/.fabrica/state.json", []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return
-		}
-	}
-	t.Fatalf("%q does not contain %q", s, substr)
-}
-
-func assertNotContains(t *testing.T, s, substr string) {
-	t.Helper()
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			t.Fatalf("%q should not contain %q", s, substr)
-		}
-	}
-}
-
 // TestStatusCobraNotProvisioned verifies clean message when no deploy state exists.
 func TestStatusCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runStatus(t, newTestRuntime(&cobraFakeProvider{}))
+	got, err := runStatus(t, testutil.NewTestRuntime(&cobraFakeProvider{}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "not set up")
-	assertContains(t, got, "fabrica deploy setup")
+	testutil.AssertContains(t, got, "not set up")
+	testutil.AssertContains(t, got, "fabrica deploy setup")
 }
 
 // TestStatusCobraHappyPathWithCandidate verifies the happy path: active fleet + rollback candidate.
 func TestStatusCobraHappyPathWithCandidate(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
+	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
 	provider := &cobraFakeProvider{
 		fleetStatusMap: map[string]string{
@@ -116,35 +67,35 @@ func TestStatusCobraHappyPathWithCandidate(t *testing.T) {
 			"fleet-old": "ACTIVE",
 		},
 	}
-	got, err := runStatus(t, newTestRuntime(provider))
+	got, err := runStatus(t, testutil.NewTestRuntime(provider))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "[OK]")
-	assertContains(t, got, "Active fleet")
-	assertContains(t, got, "fleet-new")
-	assertContains(t, got, "Next steps:")
-	assertContains(t, got, "fabrica deploy promote")
-	assertContains(t, got, "fabrica deploy rollback")
+	testutil.AssertContains(t, got, "[OK]")
+	testutil.AssertContains(t, got, "Active fleet")
+	testutil.AssertContains(t, got, "fleet-new")
+	testutil.AssertContains(t, got, "Next steps:")
+	testutil.AssertContains(t, got, "fabrica deploy promote")
+	testutil.AssertContains(t, got, "fabrica deploy rollback")
 }
 
 // TestStatusCobraSingleFleetNoRollback verifies output when only one fleet (no rollback candidate).
 func TestStatusCobraSingleFleetNoRollback(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, deployStateWithFleets("fleet-new", ""))
+	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", ""))
 
 	provider := &cobraFakeProvider{
 		fleetStatusMap: map[string]string{"fleet-new": "ACTIVE"},
 	}
-	got, err := runStatus(t, newTestRuntime(provider))
+	got, err := runStatus(t, testutil.NewTestRuntime(provider))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "Active fleet")
-	assertContains(t, got, "fleet-new")
-	assertContains(t, got, "Next steps:")
-	assertContains(t, got, "fabrica deploy promote")
+	testutil.AssertContains(t, got, "Active fleet")
+	testutil.AssertContains(t, got, "fleet-new")
+	testutil.AssertContains(t, got, "Next steps:")
+	testutil.AssertContains(t, got, "fabrica deploy promote")
 	// Rollback line should NOT appear when no candidates exist.
 	assertNotContains(t, got, "fabrica deploy rollback")
 }
@@ -153,24 +104,24 @@ func TestStatusCobraSingleFleetNoRollback(t *testing.T) {
 func TestStatusCobraDryRunNoProviderCall(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
+	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
 	provider := &cobraFakeProvider{
 		fleetStatusMap: map[string]string{"fleet-new": "ACTIVE"},
 	}
-	got, err := runStatus(t, newTestRuntime(provider), "--dry-run")
+	got, err := runStatus(t, testutil.NewTestRuntime(provider), "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Status is read-only, so --dry-run should not make a visible difference
 	// in the output. Just verify it completes.
-	assertContains(t, got, "Active fleet")
+	testutil.AssertContains(t, got, "Active fleet")
 }
 
 // TestStatusCobraJSONNotProvisioned verifies --json output when not provisioned.
 func TestStatusCobraJSONNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runStatus(t, newTestRuntime(&cobraFakeProvider{}), "--json")
+	got, err := runStatus(t, testutil.NewTestRuntime(&cobraFakeProvider{}), "--json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -187,7 +138,7 @@ func TestStatusCobraJSONNotProvisioned(t *testing.T) {
 func TestStatusCobraJSONWithFleets(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
+	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
 	provider := &cobraFakeProvider{
 		fleetStatusMap: map[string]string{
@@ -195,7 +146,7 @@ func TestStatusCobraJSONWithFleets(t *testing.T) {
 			"fleet-old": "ACTIVE",
 		},
 	}
-	got, err := runStatus(t, newTestRuntime(provider), "--json")
+	got, err := runStatus(t, testutil.NewTestRuntime(provider), "--json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -224,9 +175,9 @@ func TestStatusCobraJSONWithFleets(t *testing.T) {
 func TestStatusCobraJSONDryRun(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
+	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
-	_, err := runStatus(t, newTestRuntime(&cobraFakeProvider{
+	_, err := runStatus(t, testutil.NewTestRuntime(&cobraFakeProvider{
 		fleetStatusMap: map[string]string{"fleet-new": "ACTIVE"},
 	}), "--json", "--dry-run")
 	if err != nil {
@@ -238,9 +189,9 @@ func TestStatusCobraJSONDryRun(t *testing.T) {
 func TestStatusCobraYesFlagWithDryRun(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
+	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
-	_, err := runStatus(t, newTestRuntime(&cobraFakeProvider{
+	_, err := runStatus(t, testutil.NewTestRuntime(&cobraFakeProvider{
 		fleetStatusMap: map[string]string{"fleet-new": "ACTIVE"},
 	}), "--yes", "--dry-run")
 	if err != nil {
@@ -251,15 +202,11 @@ func TestStatusCobraYesFlagWithDryRun(t *testing.T) {
 // TestStatusCobraNilProvider verifies nil provider with no state exits cleanly.
 func TestStatusCobraNilProvider(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runStatus(t, func() (globals.Runtime, error) {
-		cfg := config.Defaults()
-		cfg.Cloud.AWS.AccountID = "123456789012"
-		return globals.Runtime{Config: cfg, Provider: nil}, nil
-	})
+	got, err := runStatus(t, testutil.NewNilProviderRuntime())
 	if err != nil {
 		t.Fatalf("nil provider: unexpected error: %v", err)
 	}
-	assertContains(t, got, "not set up")
+	testutil.AssertContains(t, got, "not set up")
 }
 
 // TestStatusCobraRuntimeError verifies runtimeSource errors surface as command errors.
@@ -338,4 +285,13 @@ func (r *cobraFakeRC) Update(_ context.Context, _ *cloud.Resource) error { retur
 func (r *cobraFakeRC) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
 func (r *cobraFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
 	return nil, nil
+}
+
+func assertNotContains(t *testing.T, s, substr string) {
+	t.Helper()
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			t.Fatalf("%q should not contain %q", s, substr)
+		}
+	}
 }
