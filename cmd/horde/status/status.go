@@ -9,6 +9,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -111,9 +112,7 @@ func resolvePorts(rt globals.Runtime) (port, grpcPort int) {
 
 func (renderer) NotProvisioned(out io.Writer, jsonOut bool) {
 	if jsonOut {
-		o := StatusOutput{Provisioned: false, Status: "not_provisioned"}
-		data, _ := json.MarshalIndent(o, "", "  ")
-		fmt.Fprintln(out, string(data))
+		modstatus.WriteNotProvisionedJSON(out)
 		return
 	}
 	fmt.Fprintln(out, "Horde is not provisioned. Run 'fabrica horde create' to set it up.")
@@ -132,20 +131,8 @@ func (r renderer) printText(out io.Writer, info modstatus.Info) {
 	fmt.Fprintln(out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(out, "  Status:        %s\n", info.ModuleStatus)
 
-	if info.InstanceID != "" {
-		label := info.InstanceID
-		if info.InstanceState != "" {
-			label += fmt.Sprintf("  (%s)", info.InstanceState)
-		}
-		fmt.Fprintf(out, "  Instance ID:   %s\n", label)
-	}
-
-	if info.InstanceType != "" {
-		fmt.Fprintf(out, "  Instance type: %s\n", info.InstanceType)
-	}
-
+	modstatus.WriteCommonFields(out, info)
 	if info.PrivateIP != "" {
-		fmt.Fprintf(out, "  Private IP:    %s\n", info.PrivateIP)
 		fmt.Fprintf(out, "  Horde HTTP:    http://%s:%d\n", info.PrivateIP, r.port)
 		fmt.Fprintf(out, "  Horde gRPC:    %s:%d\n", info.PrivateIP, r.grpcPort)
 	}
@@ -192,10 +179,5 @@ func (r renderer) printJSON(out io.Writer, info modstatus.Info) {
 }
 
 func readState(rt globals.Runtime) (*fabricastate.State, error) {
-	account, region := "", ""
-	if rt.Config != nil {
-		account = rt.Config.Cloud.AWS.AccountID
-		region = rt.Config.Cloud.AWS.Region
-	}
-	return fabricastate.ReadStateOrNew(account, region)
+	return provision.ReadState(rt)
 }

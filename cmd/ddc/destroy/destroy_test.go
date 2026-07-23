@@ -16,12 +16,12 @@ import (
 func TestResourceOrder(t *testing.T) {
 	m := &fabricastate.ModuleState{
 		Resources: []fabricastate.ModuleResource{
-			{TypeName: ddc.TypeAWSEC2SecurityGroup, Identifier: "sg-1"},
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-1"},
 			{TypeName: ddc.TypeAWSIAMRole, Identifier: "role"},
 			{TypeName: ddc.TypeAWSIAMInstanceProfile, Identifier: "prof"},
 			{TypeName: ddc.TypeAWSS3Bucket, Identifier: "bucket"},
-			{TypeName: ddc.TypeAWSEC2Instance, Identifier: "i-scylla", Properties: map[string]string{"role": ddc.RoleScylla}},
-			{TypeName: ddc.TypeAWSEC2Instance, Identifier: "i-ddc", Properties: map[string]string{"role": ddc.RoleCoordinator}},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-scylla", Properties: map[string]string{"role": ddc.RoleScylla}},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-ddc", Properties: map[string]string{"role": ddc.RoleCoordinator}},
 		},
 	}
 	got := ResourceOrder(m)
@@ -63,8 +63,8 @@ func TestNewTeardownRun(t *testing.T) {
 	fp := &delFake{}
 	st := &fabricastate.State{Account: "123"}
 	st.UpsertModule("ddc", "ami", "ready", []fabricastate.ModuleResource{
-		{TypeName: ddc.TypeAWSEC2Instance, Identifier: "i-1", Properties: map[string]string{"role": ddc.RoleCoordinator}},
-		{TypeName: ddc.TypeAWSEC2SecurityGroup, Identifier: "sg-1"},
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-1", Properties: map[string]string{"role": ddc.RoleCoordinator}},
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-1"},
 	})
 	rt := globals.Runtime{Config: &config.Config{}, Provider: fp}
 	var buf bytes.Buffer

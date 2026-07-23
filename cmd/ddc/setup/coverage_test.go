@@ -132,7 +132,7 @@ func TestRunApplyScylla(t *testing.T) {
 	}
 	var roles []string
 	for _, r := range m.Resources {
-		if r.TypeName == ddc.TypeAWSEC2Instance && r.Properties != nil {
+		if r.TypeName == cloud.TypeAWSEC2Instance && r.Properties != nil {
 			roles = append(roles, r.Properties["role"])
 		}
 	}

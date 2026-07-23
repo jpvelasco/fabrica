@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -102,21 +101,12 @@ func readState(rt globals.Runtime) (*fabricastate.State, error) {
 
 // probeReady performs GET http://host:port/health/ready.
 func probeReady(address string) bool {
-	url := "http://" + address + "/health/ready"
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(url) //nolint:gosec // private IP health probe
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	return modstatus.ProbeHTTP(address, "/health/ready")
 }
 
 func (renderer) NotProvisioned(out io.Writer, jsonOut bool) {
 	if jsonOut {
-		o := StatusOutput{Provisioned: false, Status: "not_provisioned"}
-		data, _ := json.MarshalIndent(o, "", "  ")
-		fmt.Fprintln(out, string(data))
+		modstatus.WriteNotProvisionedJSON(out)
 		return
 	}
 	fmt.Fprintln(out, "DDC is not provisioned. Run 'fabrica ddc setup' to set it up.")
@@ -135,18 +125,8 @@ func (r renderer) printText(out io.Writer, info modstatus.Info) {
 	fmt.Fprintln(out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(out, "  Status:        %s\n", info.ModuleStatus)
 	fmt.Fprintf(out, "  Backend:       %s\n", r.backend)
-	if info.InstanceID != "" {
-		label := info.InstanceID
-		if info.InstanceState != "" {
-			label += fmt.Sprintf("  (%s)", info.InstanceState)
-		}
-		fmt.Fprintf(out, "  Instance ID:   %s\n", label)
-	}
-	if info.InstanceType != "" {
-		fmt.Fprintf(out, "  Instance type: %s\n", info.InstanceType)
-	}
+	modstatus.WriteCommonFields(out, info)
 	if info.PrivateIP != "" {
-		fmt.Fprintf(out, "  Private IP:    %s\n", info.PrivateIP)
 		fmt.Fprintf(out, "  Public URL:    http://%s:%d\n", info.PrivateIP, r.publicPort)
 		fmt.Fprintf(out, "  Health:        http://%s:%d/health/ready\n", info.PrivateIP, r.publicPort)
 	}

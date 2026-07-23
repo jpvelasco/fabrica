@@ -1,10 +1,9 @@
 package ddc
 
 import (
-	"bytes"
-	"encoding/base64"
-	"fmt"
 	"text/template"
+
+	"github.com/jpvelasco/fabrica/internal/userdata"
 )
 
 // UserDataConfig is input for the DDC (Jupiter) cloud-init script.
@@ -23,7 +22,7 @@ type UserDataConfig struct {
 	ScyllaContact string
 }
 
-var ddcUserDataTmpl = template.Must(template.New("ddc-userdata").Option("missingkey=error").Parse(`#!/bin/bash
+var userDataRenderer = userdata.New(template.Must(template.New("ddc-userdata").Option("missingkey=error").Parse(`#!/bin/bash
 set -euo pipefail
 exec > >(tee /var/log/fabrica-ddc-init.log) 2>&1
 
@@ -89,15 +88,14 @@ EOF
 systemctl enable unreal-cloud-ddc 2>/dev/null || true
 systemctl restart unreal-cloud-ddc 2>/dev/null || systemctl start unreal-cloud-ddc 2>/dev/null || true
 echo "Fabrica DDC cloud-init complete (backend=$BACKEND)"
-`))
+`)))
 
 // Generate returns base64-encoded user data for the DDC instance.
 func Generate(cfg UserDataConfig) (string, error) {
-	raw, err := GenerateRaw(cfg)
-	if err != nil {
-		return "", err
+	if cfg.StorePath == "" {
+		cfg.StorePath = DefaultStorePath
 	}
-	return base64.StdEncoding.EncodeToString([]byte(raw)), nil
+	return userDataRenderer.RenderBase64(cfg)
 }
 
 // GenerateRaw returns plain-text cloud-init for tests.
@@ -105,11 +103,7 @@ func GenerateRaw(cfg UserDataConfig) (string, error) {
 	if cfg.StorePath == "" {
 		cfg.StorePath = DefaultStorePath
 	}
-	var buf bytes.Buffer
-	if err := ddcUserDataTmpl.Execute(&buf, cfg); err != nil {
-		return "", fmt.Errorf("rendering ddc user data: %w", err)
-	}
-	return buf.String(), nil
+	return userDataRenderer.Render(cfg)
 }
 
 // ScyllaUserDataConfig is cloud-init for the optional 1-node Scylla bootstrap host.
@@ -118,7 +112,7 @@ type ScyllaUserDataConfig struct {
 	ClusterName string
 }
 
-var scyllaUserDataTmpl = template.Must(template.New("scylla-userdata").Option("missingkey=error").Parse(`#!/bin/bash
+var scyllaUserDataRenderer = userdata.New(template.Must(template.New("scylla-userdata").Option("missingkey=error").Parse(`#!/bin/bash
 set -euo pipefail
 exec > >(tee /var/log/fabrica-ddc-scylla-init.log) 2>&1
 STORE="{{ .StorePath }}"
@@ -150,15 +144,17 @@ mountpoint -q "$STORE" || mount "$DATA_DEV" "$STORE"
 systemctl enable scylla-server 2>/dev/null || true
 systemctl restart scylla-server 2>/dev/null || systemctl start scylla-server 2>/dev/null || true
 echo "Fabrica DDC Scylla bootstrap complete cluster=$CLUSTER (NOT production HA)"
-`))
+`)))
 
 // GenerateScylla returns base64 user data for the Scylla bootstrap instance.
 func GenerateScylla(cfg ScyllaUserDataConfig) (string, error) {
-	raw, err := GenerateScyllaRaw(cfg)
-	if err != nil {
-		return "", err
+	if cfg.StorePath == "" {
+		cfg.StorePath = "/var/lib/scylla"
 	}
-	return base64.StdEncoding.EncodeToString([]byte(raw)), nil
+	if cfg.ClusterName == "" {
+		cfg.ClusterName = "fabrica-ddc"
+	}
+	return scyllaUserDataRenderer.RenderBase64(cfg)
 }
 
 // GenerateScyllaRaw returns plain-text Scylla cloud-init for tests.
@@ -169,9 +165,5 @@ func GenerateScyllaRaw(cfg ScyllaUserDataConfig) (string, error) {
 	if cfg.ClusterName == "" {
 		cfg.ClusterName = "fabrica-ddc"
 	}
-	var buf bytes.Buffer
-	if err := scyllaUserDataTmpl.Execute(&buf, cfg); err != nil {
-		return "", fmt.Errorf("rendering scylla user data: %w", err)
-	}
-	return buf.String(), nil
+	return scyllaUserDataRenderer.Render(cfg)
 }

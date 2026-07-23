@@ -51,7 +51,7 @@ func TestWrapDeleteOtherError(t *testing.T) {
 	fn := wrapDelete(func(ctx context.Context, r *cloud.Resource) error {
 		return fmt.Errorf("permission denied")
 	})
-	err := fn(context.Background(), &cloud.Resource{TypeName: ddc.TypeAWSEC2Instance, Identifier: "i-1"})
+	err := fn(context.Background(), &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-1"})
 	if err == nil || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("err = %v", err)
 	}
@@ -64,8 +64,8 @@ func TestWrapDeleteOtherError(t *testing.T) {
 func TestResourceOrderUnmarkedEC2(t *testing.T) {
 	m := &fabricastate.ModuleState{
 		Resources: []fabricastate.ModuleResource{
-			{TypeName: ddc.TypeAWSEC2Instance, Identifier: "i-other"},
-			{TypeName: ddc.TypeAWSEC2Instance, Identifier: "i-ddc", Properties: map[string]string{"role": ddc.RoleCoordinator}},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-other"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-ddc", Properties: map[string]string{"role": ddc.RoleCoordinator}},
 		},
 	}
 	got := resourceOrder(m)
@@ -100,9 +100,9 @@ func TestNewExecuteWithModuleDryRun(t *testing.T) {
 	// provision.ReadState reads from disk — write a state file via WriteState
 	st := &fabricastate.State{Account: "123456789012", Region: "us-east-1"}
 	st.UpsertModule("ddc", "ami", "ready", []fabricastate.ModuleResource{
-		{TypeName: ddc.TypeAWSEC2Instance, Identifier: "i-1", Properties: map[string]string{"role": ddc.RoleCoordinator}},
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-1", Properties: map[string]string{"role": ddc.RoleCoordinator}},
 		{TypeName: ddc.TypeAWSS3Bucket, Identifier: "bucket"},
-		{TypeName: ddc.TypeAWSEC2SecurityGroup, Identifier: "sg-1"},
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-1"},
 	})
 	if err := fabricastate.WriteState(st); err != nil {
 		t.Fatal(err)
@@ -160,8 +160,8 @@ func TestNewExecuteDestroyYes(t *testing.T) {
 	t.Chdir(t.TempDir())
 	st := &fabricastate.State{Account: "123456789012", Region: "us-east-1"}
 	st.UpsertModule("ddc", "ami", "ready", []fabricastate.ModuleResource{
-		{TypeName: ddc.TypeAWSEC2Instance, Identifier: "i-1", Properties: map[string]string{"role": ddc.RoleCoordinator}},
-		{TypeName: ddc.TypeAWSEC2SecurityGroup, Identifier: "sg-1"},
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-1", Properties: map[string]string{"role": ddc.RoleCoordinator}},
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-1"},
 	})
 	if err := fabricastate.WriteState(st); err != nil {
 		t.Fatal(err)

@@ -26,7 +26,7 @@ func resourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 	for _, r := range m.Resources {
 		res := cloud.Resource{TypeName: r.TypeName, Identifier: r.Identifier}
 		switch r.TypeName {
-		case ddc.TypeAWSEC2Instance:
+		case cloud.TypeAWSEC2Instance:
 			roleName := ""
 			if r.Properties != nil {
 				roleName = r.Properties["role"]
@@ -45,7 +45,7 @@ func resourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 			profile = append(profile, res)
 		case ddc.TypeAWSIAMRole:
 			role = append(role, res)
-		case ddc.TypeAWSEC2SecurityGroup:
+		case cloud.TypeAWSEC2SecurityGroup:
 			sg = append(sg, res)
 		}
 	}
