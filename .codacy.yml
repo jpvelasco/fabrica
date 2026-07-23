@@ -1,7 +1,2 @@
 ---
-engines:
-  govet:
-    enabled: true
-  staticcheck:
-    enabled: true
 exclude_paths: []
