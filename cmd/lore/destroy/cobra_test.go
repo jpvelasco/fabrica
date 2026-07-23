@@ -19,15 +19,12 @@ import (
 func TestDestroyCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var out bytes.Buffer
-	var opts globals.Options
-	root := &cobra.Command{Use: "fabrica", SilenceUsage: true, SilenceErrors: true}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	cfg := config.Defaults()
-	rt := globals.Runtime{Config: cfg, Provider: nil}
+	root, opts := testutil.BuildTestRoot(&out)
+	rt := globals.Runtime{Config: config.Defaults(), Provider: nil}
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(destroy.New(
 		func() (globals.Runtime, error) { return rt, nil },
-		func() globals.Options { return opts },
+		optionsSource,
 		&out,
 	))
 	root.SetArgs([]string{"destroy", "--yes"})
@@ -52,14 +49,8 @@ func TestNewTeardownWiring(t *testing.T) {
 // ---- Helper builders ----
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{Use: "fabrica", SilenceUsage: true, SilenceErrors: true}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(destroy.New(runtimeSource, optionsSource, out))
 	return root
 }

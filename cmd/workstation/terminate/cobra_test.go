@@ -17,19 +17,8 @@ import (
 )
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	var opts globals.Options
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.PersistentFlags().BoolVarP(&opts.DryRun, "dry-run", "d", false, "")
-	root.PersistentFlags().BoolVarP(&opts.AssumeYes, "yes", "y", false, "")
-	root.PersistentFlags().BoolVarP(&opts.JSONOutput, "json", "j", false, "")
-	root.SetOut(out)
-	root.SetErr(out)
-
-	optionsSource := func() globals.Options { return opts }
+	root, opts := testutil.BuildTestRoot(out)
+	optionsSource := func() globals.Options { return *opts }
 	root.AddCommand(terminate.New(runtimeSource, optionsSource, out))
 	return root
 }
