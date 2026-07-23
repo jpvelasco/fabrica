@@ -27,18 +27,7 @@ var spec = teardown.Spec{
 // `fabrica destroy --all`. Confirmation is skipped (the orchestrator confirms
 // the aggregate operation).
 func NewTeardown(rt globals.Runtime, out io.Writer) teardown.Command {
-	tc := teardown.Command{
-		Spec:        spec,
-		Runtime:     rt,
-		SkipConfirm: true,
-		AssumeYes:   true,
-		Out:         out,
-		Confirm:     prompt.ConfirmExact,
-		ReadState:   func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-		WriteState:  fabricastate.WriteState,
-	}
-	teardown.WireProvider(&tc, rt)
-	return tc
+	return teardown.NewTeardown(spec, rt, out)
 }
 
 // New returns the "horde destroy" subcommand. Global flags (--dry-run, --yes,
@@ -76,7 +65,7 @@ With --dry-run, shows the destroy plan without making any AWS calls.`,
 				JSONOut:    opts.JSONOutput,
 				Out:        out,
 				Confirm:    prompt.ConfirmExact,
-				ReadState:  func() (*fabricastate.State, error) { return readState(rt) },
+				ReadState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
 				WriteState: fabricastate.WriteState,
 			}
 			if rt.Provider != nil {
@@ -86,8 +75,4 @@ With --dry-run, shows the destroy plan without making any AWS calls.`,
 			return c.Run(cmd.Context())
 		},
 	}
-}
-
-func readState(rt globals.Runtime) (*fabricastate.State, error) {
-	return provision.ReadState(rt)
 }
