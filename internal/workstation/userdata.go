@@ -1,10 +1,10 @@
 package workstation
 
 import (
-	"bytes"
-	"encoding/base64"
 	"fmt"
 	"text/template"
+
+	"github.com/jpvelasco/fabrica/internal/userdata"
 )
 
 // UserDataConfig is the input shape for the DCV cloud-init script.
@@ -15,7 +15,7 @@ type UserDataConfig struct {
 	PerforceServerAddr string // host:port of the Perforce server (e.g. 10.0.1.5:1666)
 }
 
-var userDataTmpl = template.Must(template.New("userdata").Option("missingkey=error").Parse(`#!/bin/bash
+var userDataRenderer = userdata.New(template.Must(template.New("userdata").Option("missingkey=error").Parse(`#!/bin/bash
 set -euo pipefail
 
 # Install NICE DCV server
@@ -50,16 +50,21 @@ chmod 600 /home/ubuntu/.p4config
 
 # Set P4CONFIG env globally so p4 auto-discovers it
 echo 'export P4CONFIG=~/.p4config' >> /home/ubuntu/.profile
-{{ end }}`))
+{{ end }}`)))
 
 // Generate renders the cloud-init script and returns it base64-encoded
 // (the format EC2 expects for UserData in Cloud Control).
 func Generate(cfg UserDataConfig) (string, error) {
-	raw, err := GenerateRaw(cfg)
-	if err != nil {
-		return "", err
+	if cfg.SessionPassword == "" {
+		return "", fmt.Errorf("SessionPassword must not be empty")
 	}
-	return base64.StdEncoding.EncodeToString([]byte(raw)), nil
+	if cfg.IdleTimeoutMinutes <= 0 {
+		cfg.IdleTimeoutMinutes = DefaultIdleTimeoutMinutes
+	}
+	if cfg.MountPerforce && cfg.PerforceServerAddr == "" {
+		return "", fmt.Errorf("PerforceServerAddr must not be empty when MountPerforce is true")
+	}
+	return userDataRenderer.RenderBase64(cfg)
 }
 
 // GenerateRaw renders the cloud-init script without base64 encoding.
@@ -74,9 +79,5 @@ func GenerateRaw(cfg UserDataConfig) (string, error) {
 	if cfg.MountPerforce && cfg.PerforceServerAddr == "" {
 		return "", fmt.Errorf("PerforceServerAddr must not be empty when MountPerforce is true")
 	}
-	var buf bytes.Buffer
-	if err := userDataTmpl.Execute(&buf, cfg); err != nil {
-		return "", fmt.Errorf("rendering userdata template: %w", err)
-	}
-	return buf.String(), nil
+	return userDataRenderer.Render(cfg)
 }

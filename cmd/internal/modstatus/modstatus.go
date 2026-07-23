@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -218,4 +219,45 @@ func DefaultProbeTCP(address string) bool {
 	}
 	_ = conn.Close() // best-effort; probe result already decided
 	return true
+}
+
+// ProbeHTTP performs a GET request against the given address+path with a 3s timeout.
+// Returns true when the response status is 200.
+func ProbeHTTP(address, path string) bool {
+	url := "http://" + address + path
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == 200
+}
+
+// WriteCommonFields writes the shared InstanceID, InstanceType, and PrivateIP
+// lines. Call this from each module's Result renderer instead of duplicating.
+func WriteCommonFields(out io.Writer, info Info) {
+	if info.InstanceID != "" {
+		label := info.InstanceID
+		if info.InstanceState != "" {
+			label += fmt.Sprintf("  (%s)", info.InstanceState)
+		}
+		fmt.Fprintf(out, "  Instance ID:   %s\n", label)
+	}
+	if info.InstanceType != "" {
+		fmt.Fprintf(out, "  Instance type: %s\n", info.InstanceType)
+	}
+	if info.PrivateIP != "" {
+		fmt.Fprintf(out, "  Private IP:    %s\n", info.PrivateIP)
+	}
+}
+
+// WriteNotProvisionedJSON writes the standard not-provisioned JSON output.
+// Call this from the NotProvisioned renderer when jsonOut is true.
+func WriteNotProvisionedJSON(out io.Writer) {
+	data, _ := json.Marshal(map[string]interface{}{
+		"provisioned": false,
+		"status":      "not_provisioned",
+	})
+	fmt.Fprintln(out, string(data))
 }

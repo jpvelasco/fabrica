@@ -3,6 +3,7 @@ package lore
 import (
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
@@ -11,10 +12,10 @@ func TestCostResourcesDefaults(t *testing.T) {
 	if len(res) != 2 {
 		t.Fatalf("len = %d, want 2", len(res))
 	}
-	if res[0].TypeName != TypeAWSEC2Instance || res[0].Name != "m5.xlarge" {
+	if res[0].TypeName != cloud.TypeAWSEC2Instance || res[0].Name != "m5.xlarge" {
 		t.Errorf("instance = %+v", res[0])
 	}
-	if res[1].TypeName != TypeAWSEC2Volume || res[1].Name != "gp3-500GiB" {
+	if res[1].TypeName != cloud.TypeAWSEC2Volume || res[1].Name != "gp3-500GiB" {
 		t.Errorf("volume = %+v", res[1])
 	}
 }

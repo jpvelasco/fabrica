@@ -232,12 +232,12 @@ func (c command) createSecurityGroup(ctx context.Context, plan *ddc.SetupPlan, r
 	if err != nil {
 		return "", fmt.Errorf("building SG desired state: %w", err)
 	}
-	sg := &cloud.Resource{TypeName: ddc.TypeAWSEC2SecurityGroup, DesiredState: sgState}
+	sg := &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, DesiredState: sgState}
 	if err := c.createResource(ctx, sg); err != nil {
 		return "", fmt.Errorf("creating security group: %w", err)
 	}
 	fmt.Fprintf(c.out, "  created security group: %s\n", sg.Identifier)
-	*resources = append(*resources, fabricastate.ModuleResource{TypeName: ddc.TypeAWSEC2SecurityGroup, Identifier: sg.Identifier})
+	*resources = append(*resources, fabricastate.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: sg.Identifier})
 	st.UpsertModule(moduleName, plan.AmiID, "provisioning", *resources)
 	_ = c.writeState(st)
 	return sg.Identifier, nil
@@ -257,13 +257,13 @@ func (c command) createDDCInstance(ctx context.Context, plan *ddc.SetupPlan, sgI
 	if err != nil {
 		return "", "", fmt.Errorf("building ddc instance desired state: %w", err)
 	}
-	inst := &cloud.Resource{TypeName: ddc.TypeAWSEC2Instance, DesiredState: instState}
+	inst := &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, DesiredState: instState}
 	if err := c.createResource(ctx, inst); err != nil {
 		return "", "", fmt.Errorf("creating ddc instance: %w", err)
 	}
 	fmt.Fprintf(c.out, "  created DDC instance: %s\n", inst.Identifier)
 	*resources = append(*resources, fabricastate.ModuleResource{
-		TypeName: ddc.TypeAWSEC2Instance, Identifier: inst.Identifier,
+		TypeName: cloud.TypeAWSEC2Instance, Identifier: inst.Identifier,
 		Properties: map[string]string{
 			"region": plan.Region, "role": ddc.RoleCoordinator,
 			"instanceType": plan.InstanceType,
@@ -286,13 +286,13 @@ func (c command) createScyllaInstance(ctx context.Context, plan *ddc.SetupPlan, 
 	if err != nil {
 		return fmt.Errorf("building scylla instance desired state: %w", err)
 	}
-	scylla := &cloud.Resource{TypeName: ddc.TypeAWSEC2Instance, DesiredState: scyllaState}
+	scylla := &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, DesiredState: scyllaState}
 	if err := c.createResource(ctx, scylla); err != nil {
 		return fmt.Errorf("creating scylla instance: %w", err)
 	}
 	fmt.Fprintf(c.out, "  created Scylla bootstrap instance: %s\n", scylla.Identifier)
 	*resources = append(*resources, fabricastate.ModuleResource{
-		TypeName: ddc.TypeAWSEC2Instance, Identifier: scylla.Identifier,
+		TypeName: cloud.TypeAWSEC2Instance, Identifier: scylla.Identifier,
 		Properties: map[string]string{
 			"region": plan.Region, "role": ddc.RoleScylla,
 			"instanceType": plan.ScyllaInstanceType,

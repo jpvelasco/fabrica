@@ -9,6 +9,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -90,9 +91,7 @@ Use --wait / -w to poll every 15 seconds until Helix Core is reachable
 
 func (renderer) NotProvisioned(out io.Writer, jsonOut bool) {
 	if jsonOut {
-		o := StatusOutput{Provisioned: false, Status: "not_provisioned"}
-		data, _ := json.MarshalIndent(o, "", "  ")
-		fmt.Fprintln(out, string(data))
+		modstatus.WriteNotProvisionedJSON(out)
 		return
 	}
 	fmt.Fprintln(out, "Perforce is not provisioned. Run 'fabrica perforce create' to set it up.")
@@ -117,18 +116,8 @@ func printText(out io.Writer, info modstatus.Info) {
 }
 
 func printInstanceFields(out io.Writer, info modstatus.Info) {
-	if info.InstanceID != "" {
-		label := info.InstanceID
-		if info.InstanceState != "" {
-			label += fmt.Sprintf("  (%s)", info.InstanceState)
-		}
-		fmt.Fprintf(out, "  Instance ID:   %s\n", label)
-	}
-	if info.InstanceType != "" {
-		fmt.Fprintf(out, "  Instance type: %s\n", info.InstanceType)
-	}
+	modstatus.WriteCommonFields(out, info)
 	if info.PrivateIP != "" {
-		fmt.Fprintf(out, "  Private IP:    %s\n", info.PrivateIP)
 		fmt.Fprintf(out, "  P4PORT:        tcp:%s:%d\n", info.PrivateIP, p4Port)
 	}
 	if info.SGID != "" {
@@ -195,10 +184,5 @@ func printJSON(out io.Writer, info modstatus.Info) {
 }
 
 func readState(rt globals.Runtime) (*fabricastate.State, error) {
-	account, region := "", ""
-	if rt.Config != nil {
-		account = rt.Config.Cloud.AWS.AccountID
-		region = rt.Config.Cloud.AWS.Region
-	}
-	return fabricastate.ReadStateOrNew(account, region)
+	return provision.ReadState(rt)
 }

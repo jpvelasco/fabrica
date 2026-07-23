@@ -390,6 +390,11 @@ func removeResource(m *fabricastate.ModuleState, typeName string) {
 }
 
 func removeModule(st *fabricastate.State, name string) {
+	RemoveModule(st, name)
+}
+
+// RemoveModule removes the module with the given name from state.
+func RemoveModule(st *fabricastate.State, name string) {
 	filtered := st.Modules[:0]
 	for _, m := range st.Modules {
 		if m.Name != name {
@@ -397,4 +402,15 @@ func removeModule(st *fabricastate.State, name string) {
 		}
 	}
 	st.Modules = filtered
+}
+
+// WireProvider sets DeleteResource and GetResource on the Command from the
+// Runtime's Provider (if configured). Call this after constructing the Command.
+func WireProvider(tc *Command, rt globals.Runtime) {
+	if rt.Provider != nil {
+		if rc := rt.Provider.Resources(); rc != nil {
+			tc.DeleteResource = rc.Delete
+			tc.GetResource = rc.Get
+		}
+	}
 }

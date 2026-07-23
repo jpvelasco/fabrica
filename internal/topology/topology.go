@@ -3,7 +3,12 @@
 // only a single home-region host with co-located coordinator + edge roles.
 package topology
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+
+	"github.com/jpvelasco/fabrica/internal/cloud"
+)
 
 // Role is the logical role of a node in a distributed topology.
 type Role string
@@ -92,4 +97,21 @@ func (t Topology) Regions() []string {
 		add(e.Region)
 	}
 	return out
+}
+
+// ResolveVPC returns the effective VPC ID, subnet ID, and whether the
+// default VPC was resolved via the resolver. If both vpcID and subnetID are
+// already set, the resolver is skipped. If one is missing and resolver is nil,
+// the empty values are returned as-is (caller responsibility to validate).
+func ResolveVPC(ctx context.Context, vpcID, subnetID string, resolver cloud.VPCResolver) (string, string, bool, error) {
+	defaultVPC := false
+	if (vpcID == "" || subnetID == "") && resolver != nil {
+		var err error
+		vpcID, subnetID, err = resolver.ResolveDefaultVPC(ctx)
+		if err != nil {
+			return "", "", false, fmt.Errorf("resolving default VPC: %w", err)
+		}
+		defaultVPC = true
+	}
+	return vpcID, subnetID, defaultVPC, nil
 }

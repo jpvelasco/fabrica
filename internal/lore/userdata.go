@@ -1,10 +1,9 @@
 package lore
 
 import (
-	"bytes"
-	"encoding/base64"
-	"fmt"
 	"text/template"
+
+	"github.com/jpvelasco/fabrica/internal/userdata"
 )
 
 // UserDataConfig is the input shape for the Lore cloud-init script.
@@ -15,7 +14,7 @@ type UserDataConfig struct {
 	HTTPPort  int
 }
 
-var userDataTmpl = template.Must(template.New("lore-userdata").Parse(`#!/bin/bash
+var userDataRenderer = userdata.New(template.Must(template.New("lore-userdata").Parse(`#!/bin/bash
 set -euo pipefail
 exec > >(tee /var/log/fabrica-lore-init.log) 2>&1
 
@@ -113,7 +112,7 @@ fi
 
 touch /var/lib/cloud/instance/lore-ready
 echo "Lore cloud-init complete (gRPC/QUIC {{ .GRPCPort }}, HTTP {{ .HTTPPort }})"
-`))
+`)))
 
 // GenerateRaw renders the cloud-init script without base64 encoding.
 // Used in tests to inspect script content directly.
@@ -130,19 +129,23 @@ func GenerateRaw(cfg UserDataConfig) (string, error) {
 	if cfg.HTTPPort <= 0 {
 		cfg.HTTPPort = DefaultHTTPPort
 	}
-	var buf bytes.Buffer
-	if err := userDataTmpl.Execute(&buf, cfg); err != nil {
-		return "", fmt.Errorf("rendering userdata template: %w", err)
-	}
-	return buf.String(), nil
+	return userDataRenderer.Render(cfg)
 }
 
 // Generate renders the cloud-init script and returns it base64-encoded
 // (the format EC2 expects for UserData in Cloud Control).
 func Generate(cfg UserDataConfig) (string, error) {
-	raw, err := GenerateRaw(cfg)
-	if err != nil {
-		return "", err
+	if cfg.StorePath == "" {
+		cfg.StorePath = DefaultStorePath
 	}
-	return base64.StdEncoding.EncodeToString([]byte(raw)), nil
+	if cfg.ConfigDir == "" {
+		cfg.ConfigDir = DefaultConfigDir
+	}
+	if cfg.GRPCPort <= 0 {
+		cfg.GRPCPort = DefaultGRPCPort
+	}
+	if cfg.HTTPPort <= 0 {
+		cfg.HTTPPort = DefaultHTTPPort
+	}
+	return userDataRenderer.RenderBase64(cfg)
 }

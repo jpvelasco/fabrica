@@ -7,6 +7,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/topology"
 )
 
 const (
@@ -59,16 +60,9 @@ func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region 
 		allowedCIDR = "10.0.0.0/8"
 	}
 
-	vpcID := cfg.VPCId
-	subnetID := cfg.SubnetId
-	defaultVPC := false
-	if (vpcID == "" || subnetID == "") && resolver != nil {
-		var err error
-		vpcID, subnetID, err = resolver.ResolveDefaultVPC(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("resolving default VPC: %w", err)
-		}
-		defaultVPC = true
+	vpcID, subnetID, defaultVPC, err := topology.ResolveVPC(ctx, cfg.VPCId, cfg.SubnetId, resolver)
+	if err != nil {
+		return nil, err
 	}
 
 	return &CreatePlan{

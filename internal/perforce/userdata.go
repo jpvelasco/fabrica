@@ -1,10 +1,10 @@
 package perforce
 
 import (
-	"bytes"
-	"encoding/base64"
 	"fmt"
 	"text/template"
+
+	"github.com/jpvelasco/fabrica/internal/userdata"
 )
 
 // UserDataConfig is the input shape for the cloud-init script.
@@ -16,7 +16,7 @@ type UserDataConfig struct {
 	DataMount  string // "/hxdepots"
 }
 
-var userDataTmpl = template.Must(template.New("userdata").Parse(`#!/bin/bash
+var userDataRenderer = userdata.New(template.Must(template.New("userdata").Parse(`#!/bin/bash
 set -euo pipefail
 
 wget -qO - https://package.perforce.com/perforce.pubkey | apt-key add -
@@ -39,7 +39,7 @@ echo "{{ .DataDevice }} {{ .DataMount }} ext4 defaults,nofail 0 2" >> /etc/fstab
 
 systemctl enable helix-p4d
 systemctl start helix-p4d
-`))
+`)))
 
 // GenerateRaw renders the cloud-init script without base64 encoding,
 // applying defaults for any unset fields. Used in tests to inspect the
@@ -57,20 +57,23 @@ func GenerateRaw(cfg UserDataConfig) (string, error) {
 	if cfg.AdminPass == "" {
 		return "", fmt.Errorf("AdminPass must not be empty")
 	}
-
-	var buf bytes.Buffer
-	if err := userDataTmpl.Execute(&buf, cfg); err != nil {
-		return "", fmt.Errorf("rendering userdata template: %w", err)
-	}
-	return buf.String(), nil
+	return userDataRenderer.Render(cfg)
 }
 
 // Generate renders the cloud-init user data script and returns it base64-encoded
 // (the format EC2 expects for UserData in Cloud Control).
 func Generate(cfg UserDataConfig) (string, error) {
-	raw, err := GenerateRaw(cfg)
-	if err != nil {
-		return "", err
+	if cfg.DataDevice == "" {
+		cfg.DataDevice = "/dev/nvme1n1"
 	}
-	return base64.StdEncoding.EncodeToString([]byte(raw)), nil
+	if cfg.DataMount == "" {
+		cfg.DataMount = "/hxdepots"
+	}
+	if cfg.ServerID == "" {
+		cfg.ServerID = "fabrica-perforce"
+	}
+	if cfg.AdminPass == "" {
+		return "", fmt.Errorf("AdminPass must not be empty")
+	}
+	return userDataRenderer.RenderBase64(cfg)
 }

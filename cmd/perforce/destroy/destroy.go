@@ -62,12 +62,7 @@ func NewTeardown(rt globals.Runtime, out io.Writer) teardown.Command {
 		ReadState:   func() (*fabricastate.State, error) { return provision.ReadState(rt) },
 		WriteState:  fabricastate.WriteState,
 	}
-	if rt.Provider != nil {
-		if rc := rt.Provider.Resources(); rc != nil {
-			tc.DeleteResource = rc.Delete
-			tc.GetResource = rc.Get
-		}
-	}
+	teardown.WireProvider(&tc, rt)
 	return tc
 }
 
@@ -119,10 +114,5 @@ With --dry-run, shows the destroy plan without making any AWS calls.`,
 }
 
 func readState(rt globals.Runtime) (*fabricastate.State, error) {
-	account, region := "", ""
-	if rt.Config != nil {
-		account = rt.Config.Cloud.AWS.AccountID
-		region = rt.Config.Cloud.AWS.Region
-	}
-	return fabricastate.ReadStateOrNew(account, region)
+	return provision.ReadState(rt)
 }

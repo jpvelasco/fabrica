@@ -86,12 +86,7 @@ func NewTeardown(rt globals.Runtime, out io.Writer) teardown.Command {
 		ReadState:   func() (*fabricastate.State, error) { return provision.ReadState(rt) },
 		WriteState:  fabricastate.WriteState,
 	}
-	if rt.Provider != nil {
-		if rc := rt.Provider.Resources(); rc != nil {
-			tc.DeleteResource = rc.Delete
-			tc.GetResource = rc.Get
-		}
-	}
+	teardown.WireProvider(&tc, rt)
 	return tc
 }
 

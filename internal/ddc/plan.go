@@ -19,9 +19,6 @@ const (
 
 // Cloud Control / state type names.
 const (
-	TypeAWSEC2Instance        = "AWS::EC2::Instance"
-	TypeAWSEC2SecurityGroup   = "AWS::EC2::SecurityGroup"
-	TypeAWSEC2Volume          = "AWS::EC2::Volume"
 	TypeAWSS3Bucket           = "AWS::S3::Bucket"
 	TypeAWSIAMRole            = "AWS::IAM::Role"
 	TypeAWSIAMInstanceProfile = "AWS::IAM::InstanceProfile"
@@ -180,15 +177,7 @@ func resolveDefaults(cfg config.DDCConfig, account, region string) ddcDefaults {
 }
 
 func resolveVPC(ctx context.Context, vpcID, subnetID string, resolver cloud.VPCResolver) (string, string, bool, error) {
-	if (vpcID == "" || subnetID == "") && resolver != nil {
-		var err error
-		vpcID, subnetID, err = resolver.ResolveDefaultVPC(ctx)
-		if err != nil {
-			return "", "", false, fmt.Errorf("resolving default VPC: %w", err)
-		}
-		return vpcID, subnetID, true, nil
-	}
-	return vpcID, subnetID, false, nil
+	return topology.ResolveVPC(ctx, vpcID, subnetID, resolver)
 }
 
 func instanceTypeOrDefault(v string) string {

@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/lore"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
@@ -96,21 +96,12 @@ Use --wait / -w to poll every 15 seconds until Lore is reachable
 // probeHealthCheck performs GET http://address/health_check (address is host:port
 // from modstatus). Returns true only on HTTP 200.
 func probeHealthCheck(address string) bool {
-	url := "http://" + address + "/health_check"
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(url) //nolint:gosec // private IP health probe; URL built from state
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	return modstatus.ProbeHTTP(address, "/health_check")
 }
 
 func (renderer) NotProvisioned(out io.Writer, jsonOut bool) {
 	if jsonOut {
-		o := StatusOutput{Provisioned: false, Status: "not_provisioned"}
-		data, _ := json.MarshalIndent(o, "", "  ")
-		fmt.Fprintln(out, string(data))
+		modstatus.WriteNotProvisionedJSON(out)
 		return
 	}
 	fmt.Fprintln(out, "Lore is not provisioned. Run 'fabrica lore create' to set it up.")
@@ -129,20 +120,8 @@ func (r renderer) printText(out io.Writer, info modstatus.Info) {
 	fmt.Fprintln(out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(out, "  Status:        %s\n", info.ModuleStatus)
 
-	if info.InstanceID != "" {
-		label := info.InstanceID
-		if info.InstanceState != "" {
-			label += fmt.Sprintf("  (%s)", info.InstanceState)
-		}
-		fmt.Fprintf(out, "  Instance ID:   %s\n", label)
-	}
-
-	if info.InstanceType != "" {
-		fmt.Fprintf(out, "  Instance type: %s\n", info.InstanceType)
-	}
-
+	modstatus.WriteCommonFields(out, info)
 	if info.PrivateIP != "" {
-		fmt.Fprintf(out, "  Private IP:    %s\n", info.PrivateIP)
 		fmt.Fprintf(out, "  Lore HTTP:     http://%s:%d/health_check\n", info.PrivateIP, r.httpPort)
 		fmt.Fprintf(out, "  Lore gRPC:     %s:%d (tcp+udp)\n", info.PrivateIP, r.grpcPort)
 	}
@@ -189,10 +168,5 @@ func (r renderer) printJSON(out io.Writer, info modstatus.Info) {
 }
 
 func readState(rt globals.Runtime) (*fabricastate.State, error) {
-	account, region := "", ""
-	if rt.Config != nil {
-		account = rt.Config.Cloud.AWS.AccountID
-		region = rt.Config.Cloud.AWS.Region
-	}
-	return fabricastate.ReadStateOrNew(account, region)
+	return provision.ReadState(rt)
 }

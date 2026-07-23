@@ -13,6 +13,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
+	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/internal/ci"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/prompt"
@@ -186,7 +187,7 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 		c.removeAndPersist(st, m, ci.TypeAWSIAMRole)
 	}
 
-	removeModule(st, moduleName)
+	teardown.RemoveModule(st, moduleName)
 	if err := c.writeState(st); err != nil {
 		fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
 	}
@@ -209,16 +210,6 @@ func (c command) removeAndPersist(st *fabricastate.State, m *fabricastate.Module
 	if err := c.writeState(st); err != nil {
 		fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
 	}
-}
-
-func removeModule(st *fabricastate.State, name string) {
-	filtered := st.Modules[:0]
-	for _, m := range st.Modules {
-		if m.Name != name {
-			filtered = append(filtered, m)
-		}
-	}
-	st.Modules = filtered
 }
 
 // RunOrchestrated runs the CI teardown with confirmation skipped, for use by
