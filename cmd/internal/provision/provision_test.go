@@ -7,6 +7,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/config"
+	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
 func TestConfirmPhrase(t *testing.T) {
@@ -61,5 +62,57 @@ func TestReadState_SeedsAccountRegionFromConfig(t *testing.T) {
 	}
 	if st.Account != "123456789012" || st.Region != "eu-west-1" {
 		t.Errorf("account/region = %q/%q, want from config", st.Account, st.Region)
+	}
+}
+
+func TestExistingResource_Found(t *testing.T) {
+	st := &fabricastate.State{Modules: []fabricastate.ModuleState{{
+		Name:      "ci",
+		Resources: []fabricastate.ModuleResource{{TypeName: "AWS::IAM::Role", Identifier: "my-role"}},
+	}}}
+	res, ok := ExistingResource(st, "ci", "AWS::IAM::Role")
+	if !ok {
+		t.Fatal("expected resource found")
+	}
+	if res.Identifier != "my-role" {
+		t.Errorf("Identifier = %q, want my-role", res.Identifier)
+	}
+}
+
+func TestExistingResource_ModuleNotFound(t *testing.T) {
+	st := &fabricastate.State{Modules: []fabricastate.ModuleState{}}
+	_, ok := ExistingResource(st, "ci", "AWS::IAM::Role")
+	if ok {
+		t.Error("expected not found for missing module")
+	}
+}
+
+func TestExistingResource_TypeNotFound(t *testing.T) {
+	st := &fabricastate.State{Modules: []fabricastate.ModuleState{{
+		Name:      "ci",
+		Resources: []fabricastate.ModuleResource{{TypeName: "AWS::IAM::Role", Identifier: "my-role"}},
+	}}}
+	_, ok := ExistingResource(st, "ci", "AWS::CodeBuild::Project")
+	if ok {
+		t.Error("expected not found for missing type")
+	}
+}
+
+func TestAppendUnique_AddsNew(t *testing.T) {
+	resources := []fabricastate.ModuleResource{{TypeName: "AWS::IAM::Role", Identifier: "role"}}
+	resources = AppendUnique(resources, fabricastate.ModuleResource{TypeName: "AWS::CodeBuild::Project", Identifier: "project"})
+	if len(resources) != 2 {
+		t.Errorf("len = %d, want 2", len(resources))
+	}
+}
+
+func TestAppendUnique_SkipsDuplicate(t *testing.T) {
+	resources := []fabricastate.ModuleResource{{TypeName: "AWS::IAM::Role", Identifier: "role"}}
+	resources = AppendUnique(resources, fabricastate.ModuleResource{TypeName: "AWS::IAM::Role", Identifier: "other-role"})
+	if len(resources) != 1 {
+		t.Errorf("len = %d, want 1", len(resources))
+	}
+	if resources[0].Identifier != "role" {
+		t.Errorf("Identifier = %q, want role", resources[0].Identifier)
 	}
 }

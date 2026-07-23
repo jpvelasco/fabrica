@@ -16,6 +16,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/stateutil"
 )
 
 // ReadState reads the local state cache, seeding a fresh state with the
@@ -43,4 +44,26 @@ func PrintConfirmInstructions(out io.Writer, phrase string) {
 	fmt.Fprintf(out, "  %s\n", phrase)
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Any other input cancels.")
+}
+
+// ExistingResource returns the module resource of the given type from current
+// state, if present — used to skip already-provisioned resources idempotently.
+// Returns (zero value, false) when the module or resource is not found.
+func ExistingResource(st *fabricastate.State, moduleName, typeName string) (fabricastate.ModuleResource, bool) {
+	m := st.GetModule(moduleName)
+	if m == nil {
+		return fabricastate.ModuleResource{}, false
+	}
+	return stateutil.ResourceByType(m, typeName)
+}
+
+// AppendUnique appends r to resources only if no resource with the same
+// TypeName already exists. Returns the (possibly extended) slice.
+func AppendUnique(resources []fabricastate.ModuleResource, r fabricastate.ModuleResource) []fabricastate.ModuleResource {
+	for _, existing := range resources {
+		if existing.TypeName == r.TypeName {
+			return resources
+		}
+	}
+	return append(resources, r)
 }

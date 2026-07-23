@@ -16,7 +16,6 @@ import (
 	"github.com/jpvelasco/fabrica/internal/deploy"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
-	"github.com/jpvelasco/fabrica/internal/stateutil"
 	"github.com/spf13/cobra"
 )
 
@@ -132,7 +131,7 @@ func (c command) apply(ctx context.Context, plan *deploy.SetupPlan) error {
 
 	var resources []fabricastate.ModuleResource
 
-	if existing, ok := existingResource(st, deploy.TypeAWSIAMRole); ok {
+	if existing, ok := provision.ExistingResource(st, moduleName, deploy.TypeAWSIAMRole); ok {
 		fmt.Fprintf(c.out, "  IAM role already exists — skipping: %s\n", existing.Identifier)
 		resources = append(resources, existing)
 	} else {
@@ -150,9 +149,9 @@ func (c command) apply(ctx context.Context, plan *deploy.SetupPlan) error {
 		_ = c.writeState(st)
 	}
 
-	if existing, ok := existingResource(st, deploy.TypeGameLiftAlias); ok {
+	if existing, ok := provision.ExistingResource(st, moduleName, deploy.TypeGameLiftAlias); ok {
 		fmt.Fprintf(c.out, "  alias already exists — skipping: %s\n", existing.Identifier)
-		resources = appendUnique(resources, existing)
+		resources = provision.AppendUnique(resources, existing)
 	} else {
 		aliasState, err := deploy.AliasDesiredState(plan)
 		if err != nil {
@@ -163,7 +162,7 @@ func (c command) apply(ctx context.Context, plan *deploy.SetupPlan) error {
 			return fmt.Errorf("creating GameLift alias: %w", err)
 		}
 		fmt.Fprintf(c.out, "  created GameLift alias: %s\n", r.Identifier)
-		resources = appendUnique(resources, fabricastate.ModuleResource{TypeName: deploy.TypeGameLiftAlias, Identifier: r.Identifier})
+		resources = provision.AppendUnique(resources, fabricastate.ModuleResource{TypeName: deploy.TypeGameLiftAlias, Identifier: r.Identifier})
 	}
 
 	st.UpsertModule(moduleName, plan.AliasName, "ready", resources)
@@ -172,23 +171,6 @@ func (c command) apply(ctx context.Context, plan *deploy.SetupPlan) error {
 	}
 	c.printCompletion()
 	return nil
-}
-
-func appendUnique(resources []fabricastate.ModuleResource, r fabricastate.ModuleResource) []fabricastate.ModuleResource {
-	for _, e := range resources {
-		if e.TypeName == r.TypeName {
-			return resources
-		}
-	}
-	return append(resources, r)
-}
-
-func existingResource(st *fabricastate.State, typeName string) (fabricastate.ModuleResource, bool) {
-	m := st.GetModule(moduleName)
-	if m == nil {
-		return fabricastate.ModuleResource{}, false
-	}
-	return stateutil.ResourceByType(m, typeName)
 }
 
 func (c command) printDryRun(plan *deploy.SetupPlan) {
