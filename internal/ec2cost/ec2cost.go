@@ -6,6 +6,7 @@ package ec2cost
 import (
 	"fmt"
 
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/cost"
 )
 
@@ -14,7 +15,7 @@ import (
 // calling this helper.
 func InstanceAndVolume(instanceType string, volumeSize int) []cost.Resource {
 	return []cost.Resource{
-		{TypeName: "AWS::EC2::Instance", Name: instanceType},
-		{TypeName: "AWS::EC2::Volume", Name: fmt.Sprintf("gp3-%dGiB", volumeSize)},
+		{TypeName: cloud.TypeAWSEC2Instance, Name: instanceType},
+		{TypeName: cloud.TypeAWSEC2Volume, Name: fmt.Sprintf("gp3-%dGiB", volumeSize)},
 	}
 }

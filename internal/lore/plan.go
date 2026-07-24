@@ -18,11 +18,6 @@ const (
 	DefaultConfigDir = "/etc/loreserver"
 )
 
-const (
-	TypeAWSEC2Instance = "AWS::EC2::Instance"
-	TypeAWSEC2Volume   = "AWS::EC2::Volume"
-)
-
 // CreatePlan holds everything needed to provision Lore: resolved names,
 // resource specs, cost inputs. No AWS SDK types — callers execute the plan.
 type CreatePlan struct {
