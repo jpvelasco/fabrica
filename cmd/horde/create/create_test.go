@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
@@ -30,7 +30,7 @@ func newTestCommand(out *bytes.Buffer, provider cloud.Provider, st *fabricastate
 		confirm: func(_, _ string) bool { return true },
 	}
 	c.readState = func() (*fabricastate.State, error) { return st, nil }
-	c.writeState = func(_ *fabricastate.State) error { return nil }
+	c.writeState = testutil.StateWriteNever()
 	if provider != nil {
 		c.createResource = provider.Resources().Create
 	}
@@ -40,24 +40,24 @@ func newTestCommand(out *bytes.Buffer, provider cloud.Provider, st *fabricastate
 // TestCreateDryRunNoAWSCalls verifies --dry-run makes zero provider calls.
 func TestCreateDryRunNoAWSCalls(t *testing.T) {
 	var out bytes.Buffer
-	provider := &fakeProvider{}
-	st := fabricastate.NewState("123456789012", "us-east-1")
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
 	c := newTestCommand(&out, provider, st)
 	c.dryRun = true
 
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if provider.createCalls != 0 {
-		t.Fatalf("dry-run made %d create calls, want 0", provider.createCalls)
+	if provider.CreateCalls != 0 {
+		t.Fatalf("dry-run made %d create calls, want 0", provider.CreateCalls)
 	}
 }
 
 // TestCreateDryRunOutputFields verifies key fields appear in dry-run output.
 func TestCreateDryRunOutputFields(t *testing.T) {
 	var out bytes.Buffer
-	provider := &fakeProvider{}
-	st := fabricastate.NewState("123456789012", "us-east-1")
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
 	c := newTestCommand(&out, provider, st)
 	c.dryRun = true
 
@@ -79,8 +79,8 @@ func TestCreateDryRunOutputFields(t *testing.T) {
 // TestCreateAlreadyProvisioned verifies clean exit when module is already in state.
 func TestCreateAlreadyProvisioned(t *testing.T) {
 	var out bytes.Buffer
-	provider := &fakeProvider{}
-	st := fabricastate.NewState("123456789012", "us-east-1")
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
 	st.UpsertModule("horde", "ami-existing", "provisioning", []fabricastate.ModuleResource{
 		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-existing"},
 		{TypeName: "AWS::EC2::Instance", Identifier: "i-existing"},
@@ -90,8 +90,8 @@ func TestCreateAlreadyProvisioned(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if provider.createCalls != 0 {
-		t.Fatalf("already-exists: made %d create calls, want 0", provider.createCalls)
+	if provider.CreateCalls != 0 {
+		t.Fatalf("already-exists: made %d create calls, want 0", provider.CreateCalls)
 	}
 	assert.Contains(t, out.String(), "already provisioned")
 }
@@ -99,8 +99,8 @@ func TestCreateAlreadyProvisioned(t *testing.T) {
 // TestCreateMissingAmiID verifies error when AmiID is not configured.
 func TestCreateMissingAmiID(t *testing.T) {
 	var out bytes.Buffer
-	provider := &fakeProvider{}
-	st := fabricastate.NewState("123456789012", "us-east-1")
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
 	c := newTestCommand(&out, provider, st)
 	c.runtime.Config.Horde.AmiID = ""
 
@@ -110,7 +110,7 @@ func TestCreateMissingAmiID(t *testing.T) {
 	}
 	assert.Contains(t, err.Error(), "horde.amiId is required")
 	assert.Contains(t, err.Error(), "horde-ami.md")
-	if provider.createCalls != 0 {
+	if provider.CreateCalls != 0 {
 		t.Fatal("missing AmiID: create was called")
 	}
 }
@@ -118,33 +118,29 @@ func TestCreateMissingAmiID(t *testing.T) {
 // TestCreateHappyPathOrderAndState verifies SG created before instance, both in state.
 func TestCreateHappyPathOrderAndState(t *testing.T) {
 	var out bytes.Buffer
-	provider := &fakeProvider{}
-	st := fabricastate.NewState("123456789012", "us-east-1")
-	var writtenStates []*fabricastate.State
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
+	capture := &testutil.StateWriteCapture{}
 	c := newTestCommand(&out, provider, st)
 	c.assumeYes = true
-	c.writeState = func(s *fabricastate.State) error {
-		sCopy := *s
-		writtenStates = append(writtenStates, &sCopy)
-		return nil
-	}
+	c.writeState = capture.WriteFunc()
 
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if provider.createCalls != 2 {
-		t.Fatalf("expected 2 create calls, got %d", provider.createCalls)
+	if provider.CreateCalls != 2 {
+		t.Fatalf("expected 2 create calls, got %d", provider.CreateCalls)
 	}
-	if provider.createdTypes[0] != "AWS::EC2::SecurityGroup" {
-		t.Errorf("first created resource = %q, want AWS::EC2::SecurityGroup", provider.createdTypes[0])
+	if provider.CreatedTypes[0] != "AWS::EC2::SecurityGroup" {
+		t.Errorf("first created resource = %q, want AWS::EC2::SecurityGroup", provider.CreatedTypes[0])
 	}
-	if provider.createdTypes[1] != "AWS::EC2::Instance" {
-		t.Errorf("second created resource = %q, want AWS::EC2::Instance", provider.createdTypes[1])
+	if provider.CreatedTypes[1] != "AWS::EC2::Instance" {
+		t.Errorf("second created resource = %q, want AWS::EC2::Instance", provider.CreatedTypes[1])
 	}
-	if len(writtenStates) < 2 {
-		t.Fatalf("expected >=2 state writes, got %d", len(writtenStates))
+	if len(capture.States) < 2 {
+		t.Fatalf("expected >=2 state writes, got %d", len(capture.States))
 	}
-	final := writtenStates[len(writtenStates)-1]
+	final := capture.Last()
 	m := final.GetModule("horde")
 	if m == nil {
 		t.Fatal("horde module not in final state")
@@ -160,26 +156,26 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 // TestCreateInstanceFailurePreservesPartialState verifies SG is in state even on instance error.
 func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
 	var out bytes.Buffer
-	provider := &fakeProvider{instanceCreateErr: errors.New("quota exceeded")}
-	st := fabricastate.NewState("123456789012", "us-east-1")
-	var lastWrittenState *fabricastate.State
+	provider := &testutil.TestProvider{
+		CreateErr: map[string]error{
+			cloud.TypeAWSEC2Instance: errors.New("quota exceeded"),
+		},
+	}
+	st := testutil.NewTestState()
+	capture := &testutil.StateWriteCapture{}
 	c := newTestCommand(&out, provider, st)
 	c.assumeYes = true
-	c.writeState = func(s *fabricastate.State) error {
-		sCopy := *s
-		lastWrittenState = &sCopy
-		return nil
-	}
+	c.writeState = capture.WriteFunc()
 
 	err := c.run(context.Background())
 	if err == nil {
 		t.Fatal("expected error on instance create failure")
 	}
 	assert.Contains(t, err.Error(), "creating EC2 instance")
-	if lastWrittenState == nil {
+	if !capture.Written() {
 		t.Fatal("state was never written")
 	}
-	_, hasSG := lastWrittenState.GetModuleResource("horde", "AWS::EC2::SecurityGroup")
+	_, hasSG := capture.Last().GetModuleResource("horde", "AWS::EC2::SecurityGroup")
 	if !hasSG {
 		t.Error("SG resource not recorded in state after instance failure")
 	}
@@ -188,16 +184,16 @@ func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
 // TestCreateConfirmationRejected verifies cancellation skips create.
 func TestCreateConfirmationRejected(t *testing.T) {
 	var out bytes.Buffer
-	provider := &fakeProvider{}
-	st := fabricastate.NewState("123456789012", "us-east-1")
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
 	c := newTestCommand(&out, provider, st)
 	c.confirm = func(_, _ string) bool { return false }
 
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if provider.createCalls != 0 {
-		t.Fatalf("cancelled: made %d create calls, want 0", provider.createCalls)
+	if provider.CreateCalls != 0 {
+		t.Fatalf("cancelled: made %d create calls, want 0", provider.CreateCalls)
 	}
 	assert.Contains(t, out.String(), "Cancelled")
 }
@@ -211,8 +207,8 @@ func TestCreateNilProviderReturnsError(t *testing.T) {
 		costs:   fabricacost.Global,
 		out:     &out,
 	}
-	c.readState = func() (*fabricastate.State, error) { return fabricastate.NewState("", ""), nil }
-	c.writeState = func(_ *fabricastate.State) error { return nil }
+	c.readState = func() (*fabricastate.State, error) { return testutil.NewTestState(), nil }
+	c.writeState = testutil.StateWriteNever()
 
 	err := c.run(context.Background())
 	if err == nil {
@@ -225,8 +221,8 @@ func TestCreateNilProviderReturnsError(t *testing.T) {
 // TestCreateAllowedCIDRWarning verifies 0.0.0.0/0 warning appears in dry-run output.
 func TestCreateAllowedCIDRWarning(t *testing.T) {
 	var out bytes.Buffer
-	provider := &fakeProvider{}
-	st := fabricastate.NewState("123456789012", "us-east-1")
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
 	c := newTestCommand(&out, provider, st)
 	c.dryRun = true
 	c.runtime.Config.Horde.AllowedCIDR = "0.0.0.0/0"
@@ -241,8 +237,8 @@ func TestCreateAllowedCIDRWarning(t *testing.T) {
 // TestCreateDryRunDefaultVPCNote verifies "Default VPC" note appears when no VPC configured.
 func TestCreateDryRunDefaultVPCNote(t *testing.T) {
 	var out bytes.Buffer
-	provider := &fakeProvider{}
-	st := fabricastate.NewState("123456789012", "us-east-1")
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
 	c := newTestCommand(&out, provider, st)
 	c.dryRun = true
 	// No VPC configured in hordeCfg; resolver is nil so DefaultVPC won't be set.
@@ -261,8 +257,8 @@ func TestCreateDryRunDefaultVPCNote(t *testing.T) {
 // TestCreateDryRunM7i2xlargeRecommendation verifies m7i.2xlarge tip in dry-run when default type.
 func TestCreateDryRunM7i2xlargeRecommendation(t *testing.T) {
 	var out bytes.Buffer
-	provider := &fakeProvider{}
-	st := fabricastate.NewState("123456789012", "us-east-1")
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
 	c := newTestCommand(&out, provider, st)
 	c.dryRun = true
 	// Default instance type is m7i.xlarge → tip about m7i.2xlarge should appear.
@@ -276,15 +272,15 @@ func TestCreateDryRunM7i2xlargeRecommendation(t *testing.T) {
 // TestCreateIdentityFailureAbortsEarly verifies no AWS calls on identity error.
 func TestCreateIdentityFailureAbortsEarly(t *testing.T) {
 	var out bytes.Buffer
-	provider := &fakeProvider{identityErr: errors.New("credentials unavailable")}
-	st := fabricastate.NewState("", "")
+	provider := &testutil.TestProvider{IdentityErr: errors.New("credentials unavailable")}
+	st := testutil.NewTestStateWith("", "")
 	c := newTestCommand(&out, provider, st)
 
 	err := c.run(context.Background())
 	if err == nil {
 		t.Fatal("expected error when identity fails")
 	}
-	if provider.createCalls != 0 {
+	if provider.CreateCalls != 0 {
 		t.Fatal("identity failure: create was called")
 	}
 	assert.Contains(t, err.Error(), "resolving identity")
@@ -293,8 +289,12 @@ func TestCreateIdentityFailureAbortsEarly(t *testing.T) {
 // TestCreateSGFailureNoStateWritten verifies state is never written when SG creation fails.
 func TestCreateSGFailureNoStateWritten(t *testing.T) {
 	var out bytes.Buffer
-	provider := &fakeProvider{sgCreateErr: errors.New("sg quota")}
-	st := fabricastate.NewState("123456789012", "us-east-1")
+	provider := &testutil.TestProvider{
+		CreateErr: map[string]error{
+			cloud.TypeAWSEC2SecurityGroup: errors.New("sg quota"),
+		},
+	}
+	st := testutil.NewTestState()
 	stateWritten := false
 	c := newTestCommand(&out, provider, st)
 	c.assumeYes = true
@@ -316,8 +316,8 @@ func TestCreateSGFailureNoStateWritten(t *testing.T) {
 // TestCreateFlagOverridesConfigInstanceType verifies --instance-type flag wins over config.
 func TestCreateFlagOverridesConfigInstanceType(t *testing.T) {
 	var out bytes.Buffer
-	provider := &fakeProvider{}
-	st := fabricastate.NewState("123456789012", "us-east-1")
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
 	c := newTestCommand(&out, provider, st)
 	c.dryRun = true
 	c.instanceType = "m7i.4xlarge"
@@ -332,8 +332,8 @@ func TestCreateFlagOverridesConfigInstanceType(t *testing.T) {
 // TestCreateFlagOverridesConfigVolumeSize verifies --volume-size flag wins over config.
 func TestCreateFlagOverridesConfigVolumeSize(t *testing.T) {
 	var out bytes.Buffer
-	provider := &fakeProvider{}
-	st := fabricastate.NewState("123456789012", "us-east-1")
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
 	c := newTestCommand(&out, provider, st)
 	c.dryRun = true
 	c.volumeSize = 500
@@ -342,56 +342,4 @@ func TestCreateFlagOverridesConfigVolumeSize(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	assert.Contains(t, out.String(), "500 GiB")
-}
-
-// ---- fakeProvider ----
-
-type fakeProvider struct {
-	identityErr       error
-	sgCreateErr       error
-	instanceCreateErr error
-	createCalls       int
-	createdTypes      []string
-}
-
-func (f *fakeProvider) Name() string { return "fake" }
-
-func (f *fakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	if f.identityErr != nil {
-		return "", "", "", f.identityErr
-	}
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-
-func (f *fakeProvider) Resources() cloud.ResourceClient {
-	return &fakeResourceClient{provider: f}
-}
-
-type fakeResourceClient struct {
-	provider *fakeProvider
-}
-
-func (r *fakeResourceClient) Create(_ context.Context, res *cloud.Resource) error {
-	r.provider.createCalls++
-	r.provider.createdTypes = append(r.provider.createdTypes, res.TypeName)
-	if res.TypeName == "AWS::EC2::SecurityGroup" && r.provider.sgCreateErr != nil {
-		return r.provider.sgCreateErr
-	}
-	if res.TypeName == "AWS::EC2::Instance" && r.provider.instanceCreateErr != nil {
-		return r.provider.instanceCreateErr
-	}
-	switch res.TypeName {
-	case "AWS::EC2::SecurityGroup":
-		res.Identifier = fmt.Sprintf("sg-fake%04d", r.provider.createCalls)
-	case "AWS::EC2::Instance":
-		res.Identifier = fmt.Sprintf("i-fake%04d", r.provider.createCalls)
-	}
-	return nil
-}
-
-func (r *fakeResourceClient) Get(_ context.Context, _ *cloud.Resource) error    { return nil }
-func (r *fakeResourceClient) Update(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *fakeResourceClient) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *fakeResourceClient) List(_ context.Context, _ string) ([]cloud.Resource, error) {
-	return nil, nil
 }
