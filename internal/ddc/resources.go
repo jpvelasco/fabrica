@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/jpvelasco/fabrica/internal/ec2state"
+	"github.com/jpvelasco/fabrica/internal/iamrole"
 )
 
 // SGDesiredState returns Cloud Control desired-state for the DDC security group.
@@ -54,15 +55,8 @@ func RoleDesiredState(plan *SetupPlan) (json.RawMessage, error) {
 	bucketArn := fmt.Sprintf("arn:aws:s3:::%s", plan.Bucket)
 	objectsArn := bucketArn + "/*"
 	doc := map[string]any{
-		"RoleName": plan.RoleName,
-		"AssumeRolePolicyDocument": map[string]any{
-			"Version": "2012-10-17",
-			"Statement": []map[string]any{{
-				"Effect":    "Allow",
-				"Principal": map[string]any{"Service": "ec2.amazonaws.com"},
-				"Action":    "sts:AssumeRole",
-			}},
-		},
+		"RoleName":                 plan.RoleName,
+		"AssumeRolePolicyDocument": iamrole.AssumeRolePolicyDocument(iamrole.ServiceEC2),
 		"ManagedPolicyArns": []string{
 			"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
 		},
@@ -84,11 +78,7 @@ func RoleDesiredState(plan *SetupPlan) (json.RawMessage, error) {
 				},
 			},
 		}},
-		"Tags": []map[string]string{
-			{"Key": "ManagedBy", "Value": "fabrica"},
-			{"Key": "Name", "Value": plan.RoleName},
-			{"Key": "FabricaModule", "Value": "ddc"},
-		},
+		"Tags": iamrole.RoleTags(plan.RoleName, map[string]string{"FabricaModule": "ddc"}),
 	}
 	return json.Marshal(doc)
 }
