@@ -136,11 +136,13 @@ jobs:
       - name: Upload coverage to Codacy
         # Codacy coverage complements Codecov — feeds the Codacy dashboard's
         # coverage tab. Uses the project token (not OIDC — Codacy doesn't support it).
+        # language: Go forces the Go coverprofile parser (default picks LCOV).
         if: ${{ !cancelled() && runner.os == 'Linux' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         uses: codacy/codacy-coverage-reporter-action@89d6c85cfafaec52c72b6c5e8b2878d33104c699  # v1.3.0
         with:
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
           coverage-reports: coverage.out
+          language: Go
 
   goreleaser:
     name: Release build (snapshot)
@@ -198,9 +200,10 @@ jobs:
           # annotations handle blocking. Our lint/gosec/trivy jobs already gate.
           max-allowed-issues: 2147483647
           # Standalone Go tools — run-natively without Docker containers.
+          # Note: only run-gosec and run-staticcheck are supported as standalone
+          # flags; GolangCI-Lint runs through the main CLI tool execution.
           run-gosec: "true"
           run-staticcheck: "true"
-          run-golangci-lint: "true"
           # Containerized tools (Aligncheck, Deadcode) run via the CLI's Docker images.
           run-docker-tools: "true"
 
