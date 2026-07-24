@@ -95,3 +95,22 @@ func TestGenerateEmptyPasswordErrors(t *testing.T) {
 		t.Fatal("expected error for empty MongoPassword")
 	}
 }
+
+func TestValidate(t *testing.T) {
+	t.Run("empty mongo password", func(t *testing.T) {
+		cfg := UserDataConfig{}
+		err := cfg.validate()
+		if err == nil {
+			t.Fatal("expected error for empty MongoPassword")
+		}
+		if !strings.Contains(err.Error(), "MongoPassword") {
+			t.Errorf("error %q should mention MongoPassword", err.Error())
+		}
+	})
+	t.Run("valid config", func(t *testing.T) {
+		cfg := UserDataConfig{MongoPassword: "secret"}
+		if err := cfg.validate(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}

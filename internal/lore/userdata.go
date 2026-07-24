@@ -114,9 +114,8 @@ touch /var/lib/cloud/instance/lore-ready
 echo "Lore cloud-init complete (gRPC/QUIC {{ .GRPCPort }}, HTTP {{ .HTTPPort }})"
 `)))
 
-// GenerateRaw renders the cloud-init script without base64 encoding.
-// Used in tests to inspect script content directly.
-func GenerateRaw(cfg UserDataConfig) (string, error) {
+// applyDefaults fills zero-value fields with module defaults.
+func (cfg *UserDataConfig) applyDefaults() {
 	if cfg.StorePath == "" {
 		cfg.StorePath = DefaultStorePath
 	}
@@ -129,23 +128,18 @@ func GenerateRaw(cfg UserDataConfig) (string, error) {
 	if cfg.HTTPPort <= 0 {
 		cfg.HTTPPort = DefaultHTTPPort
 	}
+}
+
+// GenerateRaw renders the cloud-init script without base64 encoding.
+// Used in tests to inspect script content directly.
+func GenerateRaw(cfg UserDataConfig) (string, error) {
+	cfg.applyDefaults()
 	return userDataRenderer.Render(cfg)
 }
 
 // Generate renders the cloud-init script and returns it base64-encoded
 // (the format EC2 expects for UserData in Cloud Control).
 func Generate(cfg UserDataConfig) (string, error) {
-	if cfg.StorePath == "" {
-		cfg.StorePath = DefaultStorePath
-	}
-	if cfg.ConfigDir == "" {
-		cfg.ConfigDir = DefaultConfigDir
-	}
-	if cfg.GRPCPort <= 0 {
-		cfg.GRPCPort = DefaultGRPCPort
-	}
-	if cfg.HTTPPort <= 0 {
-		cfg.HTTPPort = DefaultHTTPPort
-	}
+	cfg.applyDefaults()
 	return userDataRenderer.RenderBase64(cfg)
 }

@@ -112,3 +112,62 @@ func TestGenerateRawNoMountPerforceNoP4Block(t *testing.T) {
 		t.Error("without --mount-perforce, userdata must not contain helix-cli")
 	}
 }
+
+func TestApplyDefaults(t *testing.T) {
+	t.Run("fills zero idle timeout", func(t *testing.T) {
+		cfg := UserDataConfig{SessionPassword: "pw"}
+		cfg.applyDefaults()
+		if cfg.IdleTimeoutMinutes != DefaultIdleTimeoutMinutes {
+			t.Errorf("IdleTimeoutMinutes = %d, want %d", cfg.IdleTimeoutMinutes, DefaultIdleTimeoutMinutes)
+		}
+	})
+	t.Run("preserves existing idle timeout", func(t *testing.T) {
+		cfg := UserDataConfig{SessionPassword: "pw", IdleTimeoutMinutes: 45}
+		cfg.applyDefaults()
+		if cfg.IdleTimeoutMinutes != 45 {
+			t.Errorf("IdleTimeoutMinutes = %d, want 45", cfg.IdleTimeoutMinutes)
+		}
+	})
+}
+
+func TestValidate(t *testing.T) {
+	t.Run("empty session password", func(t *testing.T) {
+		cfg := UserDataConfig{}
+		err := cfg.validate()
+		if err == nil {
+			t.Fatal("expected error for empty SessionPassword")
+		}
+		if !containsStr(err.Error(), "SessionPassword") {
+			t.Errorf("error %q should mention SessionPassword", err.Error())
+		}
+	})
+	t.Run("mount perforce without addr", func(t *testing.T) {
+		cfg := UserDataConfig{SessionPassword: "pw", MountPerforce: true}
+		err := cfg.validate()
+		if err == nil {
+			t.Fatal("expected error for MountPerforce without PerforceServerAddr")
+		}
+		if !containsStr(err.Error(), "PerforceServerAddr") {
+			t.Errorf("error %q should mention PerforceServerAddr", err.Error())
+		}
+	})
+	t.Run("valid config", func(t *testing.T) {
+		cfg := UserDataConfig{SessionPassword: "pw"}
+		if err := cfg.validate(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	t.Run("valid config with perforce", func(t *testing.T) {
+		cfg := UserDataConfig{SessionPassword: "pw", MountPerforce: true, PerforceServerAddr: "10.0.1.5:1666"}
+		if err := cfg.validate(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestGenerate_ValidationError(t *testing.T) {
+	_, err := Generate(UserDataConfig{})
+	if err == nil {
+		t.Fatal("expected error for empty SessionPassword")
+	}
+}

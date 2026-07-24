@@ -41,10 +41,9 @@ systemctl enable helix-p4d
 systemctl start helix-p4d
 `)))
 
-// GenerateRaw renders the cloud-init script without base64 encoding,
-// applying defaults for any unset fields. Used in tests to inspect the
-// script content directly.
-func GenerateRaw(cfg UserDataConfig) (string, error) {
+// applyDefaults fills zero-value fields with module defaults.
+// Does not validate required fields — use validate before calling.
+func (cfg *UserDataConfig) applyDefaults() {
 	if cfg.DataDevice == "" {
 		cfg.DataDevice = "/dev/nvme1n1"
 	}
@@ -54,8 +53,22 @@ func GenerateRaw(cfg UserDataConfig) (string, error) {
 	if cfg.ServerID == "" {
 		cfg.ServerID = "fabrica-perforce"
 	}
+}
+
+// validate checks required fields. Call after applyDefaults.
+func (cfg *UserDataConfig) validate() error {
 	if cfg.AdminPass == "" {
-		return "", fmt.Errorf("AdminPass must not be empty")
+		return fmt.Errorf("AdminPass must not be empty")
+	}
+	return nil
+}
+
+// GenerateRaw renders the cloud-init script without base64 encoding.
+// Used in tests to inspect the script content directly.
+func GenerateRaw(cfg UserDataConfig) (string, error) {
+	cfg.applyDefaults()
+	if err := cfg.validate(); err != nil {
+		return "", err
 	}
 	return userDataRenderer.Render(cfg)
 }
@@ -63,17 +76,9 @@ func GenerateRaw(cfg UserDataConfig) (string, error) {
 // Generate renders the cloud-init user data script and returns it base64-encoded
 // (the format EC2 expects for UserData in Cloud Control).
 func Generate(cfg UserDataConfig) (string, error) {
-	if cfg.DataDevice == "" {
-		cfg.DataDevice = "/dev/nvme1n1"
-	}
-	if cfg.DataMount == "" {
-		cfg.DataMount = "/hxdepots"
-	}
-	if cfg.ServerID == "" {
-		cfg.ServerID = "fabrica-perforce"
-	}
-	if cfg.AdminPass == "" {
-		return "", fmt.Errorf("AdminPass must not be empty")
+	cfg.applyDefaults()
+	if err := cfg.validate(); err != nil {
+		return "", err
 	}
 	return userDataRenderer.RenderBase64(cfg)
 }
