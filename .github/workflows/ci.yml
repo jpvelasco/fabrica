@@ -143,7 +143,6 @@ jobs:
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
           coverage-reports: coverage.out
           language: Go
-          language: Go
 
   goreleaser:
     name: Release build (snapshot)
