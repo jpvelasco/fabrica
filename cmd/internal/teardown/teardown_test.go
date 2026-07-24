@@ -899,3 +899,66 @@ func TestNewTeardownNilProvider(t *testing.T) {
 		t.Fatal("DeleteResource/GetResource must be nil when provider is nil")
 	}
 }
+
+// TestSDKDeleteFuncErrNotHandledFallsBackToCloudControl verifies that when
+// SDKDeleteFunc returns ErrNotHandled, the engine falls back to Cloud Control
+// DeleteResource for that resource type.
+func TestSDKDeleteFuncErrNotHandledFallsBackToCloudControl(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("test-module", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::Custom::SDKResource", Identifier: "sdk-res"},
+		{TypeName: "AWS::Custom::CCResource", Identifier: "cc-res"},
+	})
+
+	var sdkDeleted []string
+	var ccDeleted []string
+
+	tc := Command{
+		Spec: Spec{
+			ModuleName:     "test-module",
+			Verb:           "destroy",
+			VersionLabel:   "Version",
+			Title:          "Test",
+			NotProvisioned: "Not provisioned.",
+			PlanHeader:     "Test plan",
+			DryRunHeader:   "Test dry run",
+			Irreversible:   "Irreversible.",
+			SuccessMessage: "Done.",
+			ResourceOrder: func(m *fabricastate.ModuleState) []cloud.Resource {
+				var out []cloud.Resource
+				for i := range m.Resources {
+					out = append(out, cloud.Resource{
+						TypeName:   m.Resources[i].TypeName,
+						Identifier: m.Resources[i].Identifier,
+					})
+				}
+				return out
+			},
+		},
+		SkipConfirm: true,
+		Out:         &bytes.Buffer{},
+		ReadState:   func() (*fabricastate.State, error) { return st, nil },
+		WriteState:  func(*fabricastate.State) error { return nil },
+		SDKDeleteFunc: func(ctx context.Context, typeName, identifier string) error {
+			if typeName == "AWS::Custom::SDKResource" {
+				sdkDeleted = append(sdkDeleted, identifier)
+				return nil
+			}
+			return cloud.ErrNotHandled
+		},
+		DeleteResource: func(ctx context.Context, r *cloud.Resource) error {
+			ccDeleted = append(ccDeleted, r.Identifier)
+			return nil
+		},
+	}
+
+	if err := tc.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(sdkDeleted) != 1 || sdkDeleted[0] != "sdk-res" {
+		t.Fatalf("SDK deleted = %v, want [sdk-res]", sdkDeleted)
+	}
+	if len(ccDeleted) != 1 || ccDeleted[0] != "cc-res" {
+		t.Fatalf("Cloud Control deleted = %v, want [cc-res]", ccDeleted)
+	}
+}

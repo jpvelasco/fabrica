@@ -81,6 +81,12 @@ type Command struct {
 	WriteState     func(*fabricastate.State) error
 	DeleteResource func(ctx context.Context, r *cloud.Resource) error
 	GetResource    func(ctx context.Context, r *cloud.Resource) error
+
+	// SDKDeleteFunc, when non-nil, is called instead of DeleteResource for
+	// resources whose type name matches a key. Used for resource types that
+	// lack Cloud Control DELETE support (e.g. AWS::CodeBuild::Project).
+	// The identifier is the resource identifier (project name, etc.).
+	SDKDeleteFunc func(ctx context.Context, typeName, identifier string) error
 }
 
 // Run executes the teardown: read state, plan, confirm, then delete resources
@@ -204,8 +210,31 @@ func (c Command) deleteOneResource(ctx context.Context, st *fabricastate.State, 
 		fmt.Fprintf(c.Out, "Deleting %s %s...\n", r.TypeName, r.Identifier)
 	}
 
-	if err := c.DeleteResource(ctx, &r); err != nil {
-		if err := c.handleDeleteResult(r, st, m, err); err != nil {
+	var delErr error
+	if c.SDKDeleteFunc != nil {
+		delErr = c.SDKDeleteFunc(ctx, r.TypeName, r.Identifier)
+		if errors.Is(delErr, cloud.ErrNotHandled) {
+			// SDK didn't handle this type — fall back to Cloud Control.
+			if err := c.DeleteResource(ctx, &r); err != nil {
+				if err := c.handleDeleteResult(r, st, m, err); err != nil {
+					return err
+				}
+			}
+			if !c.JSONOut {
+				fmt.Fprintf(c.Out, "  Deleted: %s\n", r.Identifier)
+			}
+			c.removeResourceAndPersist(st, m, r.TypeName)
+			return nil
+		}
+	} else {
+		if err := c.DeleteResource(ctx, &r); err != nil {
+			if err := c.handleDeleteResult(r, st, m, err); err != nil {
+				return err
+			}
+		}
+	}
+	if delErr != nil {
+		if err := c.handleDeleteResult(r, st, m, delErr); err != nil {
 			return err
 		}
 	} else {

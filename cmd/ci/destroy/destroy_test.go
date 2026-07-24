@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -22,31 +23,28 @@ func seededCIState() *fabricastate.State {
 
 func TestRunDeletesProjectThenRole(t *testing.T) {
 	st := seededCIState()
-	var deletedProject string
-	var deletedResources []string
-	c := command{
-		runtime:     globals.Runtime{},
-		out:         &bytes.Buffer{},
-		skipConfirm: true,
-		readState:   func() (*fabricastate.State, error) { return st, nil },
-		writeState:  func(*fabricastate.State) error { return nil },
-		deleteProject: func(_ context.Context, name string) error {
-			deletedProject = name
+	var deletedSDK []string
+	var deletedCloudControl []string
+
+	tc := buildTeardownForTest(st, nil, func(ctx context.Context, typeName, identifier string) error {
+		if typeName == "AWS::CodeBuild::Project" {
+			deletedSDK = append(deletedSDK, identifier)
 			return nil
-		},
-		deleteResource: func(_ context.Context, r *cloud.Resource) error {
-			deletedResources = append(deletedResources, r.Identifier)
-			return nil
-		},
-	}
-	if err := c.run(context.Background()); err != nil {
+		}
+		return cloud.ErrNotHandled
+	}, func(ctx context.Context, r *cloud.Resource) error {
+		deletedCloudControl = append(deletedCloudControl, r.Identifier)
+		return nil
+	})
+
+	if err := tc.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if deletedProject != "fabrica-ci" {
-		t.Fatalf("project delete = %q, want fabrica-ci", deletedProject)
+	if len(deletedSDK) != 1 || deletedSDK[0] != "fabrica-ci" {
+		t.Fatalf("project delete = %v, want [fabrica-ci]", deletedSDK)
 	}
-	if len(deletedResources) != 1 || deletedResources[0] != "fabrica-ci-codebuild" {
-		t.Fatalf("role delete = %v, want [fabrica-ci-codebuild]", deletedResources)
+	if len(deletedCloudControl) != 1 || deletedCloudControl[0] != "fabrica-ci-codebuild" {
+		t.Fatalf("role delete = %v, want [fabrica-ci-codebuild]", deletedCloudControl)
 	}
 	if st.GetModule("ci") != nil {
 		t.Fatal("ci module should be removed from state after teardown")
@@ -56,16 +54,20 @@ func TestRunDeletesProjectThenRole(t *testing.T) {
 func TestRunNotProvisioned(t *testing.T) {
 	st := fabricastate.NewState("123456789012", "us-east-1")
 	var out bytes.Buffer
-	c := command{
-		runtime:        globals.Runtime{},
-		out:            &out,
-		skipConfirm:    true,
-		readState:      func() (*fabricastate.State, error) { return st, nil },
-		writeState:     func(*fabricastate.State) error { return nil },
-		deleteProject:  func(context.Context, string) error { t.Fatal("no delete expected"); return nil },
-		deleteResource: func(context.Context, *cloud.Resource) error { t.Fatal("no delete expected"); return nil },
+
+	tc := teardown.Command{
+		Spec: teardown.Spec{
+			ModuleName:     "ci",
+			Verb:           "destroy",
+			VersionLabel:   "Project",
+			Title:          "CI",
+			NotProvisioned: "CI is not provisioned. Nothing to destroy.",
+		},
+		Out:       &out,
+		ReadState: func() (*fabricastate.State, error) { return st, nil },
 	}
-	if err := c.run(context.Background()); err != nil {
+
+	if err := tc.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if !bytes.Contains(out.Bytes(), []byte("not provisioned")) {
@@ -75,82 +77,31 @@ func TestRunNotProvisioned(t *testing.T) {
 
 func TestRunProjectMissingIsNotError(t *testing.T) {
 	st := seededCIState()
-	c := command{
-		runtime:     globals.Runtime{},
-		out:         &bytes.Buffer{},
-		skipConfirm: true,
-		readState:   func() (*fabricastate.State, error) { return st, nil },
-		writeState:  func(*fabricastate.State) error { return nil },
-		// DeleteProject swallows missing-project per the CodeBuildRunner contract,
-		// so a nil return here models that; run() must not error.
-		deleteProject:  func(context.Context, string) error { return nil },
-		deleteResource: func(context.Context, *cloud.Resource) error { return nil },
-	}
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run should tolerate missing project: %v", err)
-	}
-}
-
-func TestRunInteractiveConfirmAccepted(t *testing.T) {
-	st := seededCIState()
-	var gotPhrase string
-	var deletedProject string
-	c := command{
-		runtime:    globals.Runtime{},
-		out:        &bytes.Buffer{},
-		readState:  func() (*fabricastate.State, error) { return st, nil },
-		writeState: func(*fabricastate.State) error { return nil },
-		confirm: func(_ string, phrase string) bool {
-			gotPhrase = phrase
-			return true
-		},
-		deleteProject:  func(_ context.Context, name string) error { deletedProject = name; return nil },
-		deleteResource: func(context.Context, *cloud.Resource) error { return nil },
-	}
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if gotPhrase != "destroy ci 123456789012" {
-		t.Fatalf("confirm phrase = %q, want %q", gotPhrase, "destroy ci 123456789012")
-	}
-	if deletedProject != "fabrica-ci" {
-		t.Fatalf("accepted confirm should delete project, got %q", deletedProject)
-	}
-}
-
-func TestRunInteractiveConfirmRejected(t *testing.T) {
-	st := seededCIState()
 	var out bytes.Buffer
-	c := command{
-		runtime:        globals.Runtime{},
-		out:            &out,
-		readState:      func() (*fabricastate.State, error) { return st, nil },
-		writeState:     func(*fabricastate.State) error { return nil },
-		confirm:        func(string, string) bool { return false },
-		deleteProject:  func(context.Context, string) error { t.Fatal("reject must not delete"); return nil },
-		deleteResource: func(context.Context, *cloud.Resource) error { t.Fatal("reject must not delete"); return nil },
-	}
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if !bytes.Contains(out.Bytes(), []byte("Cancelled")) {
-		t.Fatalf("expected cancellation message, got:\n%s", out.String())
+
+	tc := buildTeardownForTest(st, nil,
+		func(ctx context.Context, typeName, identifier string) error {
+			// Models CodeBuildRunner returning nil for missing project.
+			return nil
+		},
+		func(ctx context.Context, r *cloud.Resource) error { return nil },
+	)
+	tc.Out = &out
+
+	if err := tc.Run(context.Background()); err != nil {
+		t.Fatalf("run should tolerate missing project: %v", err)
 	}
 }
 
 func TestRunDryRunListsResources(t *testing.T) {
 	st := seededCIState()
 	var out bytes.Buffer
-	c := command{
-		runtime:        globals.Runtime{},
-		dryRun:         true,
-		out:            &out,
-		readState:      func() (*fabricastate.State, error) { return st, nil },
-		writeState:     func(*fabricastate.State) error { return nil },
-		deleteProject:  func(context.Context, string) error { t.Fatal("dry-run must not delete"); return nil },
-		deleteResource: func(context.Context, *cloud.Resource) error { t.Fatal("dry-run must not delete"); return nil },
-	}
-	if err := c.run(context.Background()); err != nil {
+
+	tc := buildTeardownForTest(st, nil, nil, nil)
+	tc.DryRun = true
+	tc.Out = &out
+
+	if err := tc.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if !bytes.Contains(out.Bytes(), []byte("dry run")) || !bytes.Contains(out.Bytes(), []byte("fabrica-ci")) {
@@ -160,38 +111,46 @@ func TestRunDryRunListsResources(t *testing.T) {
 
 func TestRunProjectDeleteErrorPropagates(t *testing.T) {
 	st := seededCIState()
-	c := command{
-		runtime:     globals.Runtime{},
-		out:         &bytes.Buffer{},
-		skipConfirm: true,
-		readState:   func() (*fabricastate.State, error) { return st, nil },
-		writeState:  func(*fabricastate.State) error { return nil },
-		deleteProject: func(context.Context, string) error {
-			return errContext("codebuild boom")
-		},
-		deleteResource: func(context.Context, *cloud.Resource) error {
-			t.Fatal("role delete must not run after project error")
+	var roleDeleted bool
+
+	tc := buildTeardownForTest(st, nil,
+		func(ctx context.Context, typeName, identifier string) error {
+			if typeName == "AWS::CodeBuild::Project" {
+				return errContext("codebuild boom")
+			}
 			return nil
 		},
-	}
-	err := c.run(context.Background())
+		func(ctx context.Context, r *cloud.Resource) error {
+			roleDeleted = true
+			return nil
+		},
+	)
+
+	err := tc.Run(context.Background())
 	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("codebuild boom")) {
 		t.Fatalf("expected project delete error to propagate, got: %v", err)
+	}
+	if roleDeleted {
+		t.Fatal("role delete must not run after project error")
 	}
 }
 
 func TestRunRoleDeleteErrorPropagates(t *testing.T) {
 	st := seededCIState()
-	c := command{
-		runtime:        globals.Runtime{},
-		out:            &bytes.Buffer{},
-		skipConfirm:    true,
-		readState:      func() (*fabricastate.State, error) { return st, nil },
-		writeState:     func(*fabricastate.State) error { return nil },
-		deleteProject:  func(context.Context, string) error { return nil },
-		deleteResource: func(context.Context, *cloud.Resource) error { return errContext("iam boom") },
-	}
-	err := c.run(context.Background())
+
+	tc := buildTeardownForTest(st, nil,
+		func(ctx context.Context, typeName, identifier string) error {
+			if typeName == "AWS::CodeBuild::Project" {
+				return nil
+			}
+			return cloud.ErrNotHandled
+		},
+		func(ctx context.Context, r *cloud.Resource) error {
+			return errContext("iam boom")
+		},
+	)
+
+	err := tc.Run(context.Background())
 	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("iam boom")) {
 		t.Fatalf("expected role delete error to propagate, got: %v", err)
 	}
@@ -202,7 +161,6 @@ type errContext string
 
 func (e errContext) Error() string { return string(e) }
 
-// TestRunOrchestratedNotProvisioned verifies RunOrchestrated handles empty state gracefully.
 func TestRunOrchestratedNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
 	rt := globals.Runtime{Config: &config.Config{}}
@@ -211,39 +169,6 @@ func TestRunOrchestratedNotProvisioned(t *testing.T) {
 	}
 }
 
-// TestRunOrchestratedWithProvider verifies RunOrchestrated tears down with provider wired.
-func TestRunOrchestratedWithProvider(t *testing.T) {
-	st := seededCIState()
-	var deletedProject string
-	var deletedResources []string
-	rt := globals.Runtime{Provider: &testProvider{}}
-	c := command{
-		runtime:     rt,
-		out:         &bytes.Buffer{},
-		skipConfirm: true,
-		readState:   func() (*fabricastate.State, error) { return st, nil },
-		writeState:  func(*fabricastate.State) error { return nil },
-		deleteProject: func(_ context.Context, name string) error {
-			deletedProject = name
-			return nil
-		},
-		deleteResource: func(_ context.Context, r *cloud.Resource) error {
-			deletedResources = append(deletedResources, r.Identifier)
-			return nil
-		},
-	}
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run with provider: %v", err)
-	}
-	if deletedProject != "fabrica-ci" {
-		t.Fatalf("project delete = %q, want fabrica-ci", deletedProject)
-	}
-	if len(deletedResources) != 1 || deletedResources[0] != "fabrica-ci-codebuild" {
-		t.Fatalf("role delete = %v, want [fabrica-ci-codebuild]", deletedResources)
-	}
-}
-
-// TestRunOrchestratedProvisioned verifies RunOrchestrated fully exercises the teardown path.
 func TestRunOrchestratedProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
 
@@ -262,6 +187,41 @@ func TestRunOrchestratedProvisioned(t *testing.T) {
 	}
 }
 
+// buildTeardownForTest constructs a teardown.Command with CI-specific specs
+// and injected test seams.
+func buildTeardownForTest(st *fabricastate.State, rt *globals.Runtime, sdkDelete func(ctx context.Context, typeName, identifier string) error, deleteResource func(ctx context.Context, r *cloud.Resource) error) teardown.Command {
+	runtime := globals.Runtime{}
+	if rt != nil {
+		runtime = *rt
+	}
+	tc := teardown.Command{
+		Spec: teardown.Spec{
+			ModuleName:     "ci",
+			Verb:           "destroy",
+			VersionLabel:   "Project",
+			Title:          "CI",
+			NotProvisioned: "CI is not provisioned. Nothing to destroy.",
+			PlanHeader:     "CI — destroy plan",
+			DryRunHeader:   "CI (destroy dry run)",
+			Irreversible:   "IRREVERSIBLE: deletes the CodeBuild project and IAM role.",
+			SuccessMessage: "CI infrastructure destroyed.",
+			ResourceOrder:  ciResourceOrder,
+		},
+		Runtime:     runtime,
+		SkipConfirm: true,
+		Out:         &bytes.Buffer{},
+		ReadState:   func() (*fabricastate.State, error) { return st, nil },
+		WriteState:  func(*fabricastate.State) error { return nil },
+	}
+	if sdkDelete != nil {
+		tc.SDKDeleteFunc = sdkDelete
+	}
+	if deleteResource != nil {
+		tc.DeleteResource = deleteResource
+	}
+	return tc
+}
+
 type testCBProvider struct{}
 
 func (p *testCBProvider) Name() string { return "test-cb" }
@@ -270,14 +230,6 @@ func (p *testCBProvider) Identity(ctx context.Context) (string, string, string, 
 }
 func (p *testCBProvider) Resources() cloud.ResourceClient                      { return &testRC{} }
 func (p *testCBProvider) DeleteProject(ctx context.Context, name string) error { return nil }
-
-type testProvider struct{}
-
-func (p *testProvider) Name() string { return "test" }
-func (p *testProvider) Identity(ctx context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-func (p *testProvider) Resources() cloud.ResourceClient { return &testRC{} }
 
 type testRC struct{}
 

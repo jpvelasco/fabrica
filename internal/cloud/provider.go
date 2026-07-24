@@ -12,6 +12,10 @@ import (
 // resource does not exist in the provider (already deleted or never created).
 var ErrResourceNotFound = errors.New("resource not found")
 
+// ErrNotHandled is returned by SDKDeleteFunc when the resource type is not
+// managed by the SDK path and should fall back to Cloud Control deletion.
+var ErrNotHandled = errors.New("not handled by SDK — fall back to Cloud Control")
+
 // Provider is the interface every cloud provider must satisfy.
 type Provider interface {
 	// Name returns the registered provider identifier (e.g. "aws").
