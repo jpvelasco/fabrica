@@ -143,27 +143,99 @@ func (c command) run(ctx context.Context) error {
 func (c command) apply(ctx context.Context, st *fabricastate.State, plan *ddc.SetupPlan) error {
 	var resources []fabricastate.ModuleResource
 
-	if err := c.createIAMRole(ctx, plan, &resources, st); err != nil {
-		return err
-	}
-	if err := c.createInstanceProfile(ctx, plan, &resources, st); err != nil {
-		return err
-	}
-	_, err := c.createS3Bucket(ctx, plan, &resources, st)
+	// IAM Role
+	resources, err := provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:             "IAM role",
+		TypeName:          cloud.TypeAWSIAMRole,
+		BuildDesiredState: func() ([]byte, error) { return ddc.RoleDesiredState(plan) },
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating IAM role: %w", err)
 	}
-	sgID, err := c.createSecurityGroup(ctx, plan, &resources, st)
+
+	// Instance Profile
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:             "Instance profile",
+		TypeName:          cloud.TypeAWSIAMInstanceProfile,
+		BuildDesiredState: func() ([]byte, error) { return ddc.InstanceProfileDesiredState(plan) },
+		IgnoreWriteError:  true,
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating instance profile: %w", err)
 	}
-	instID, profileName, err := c.createDDCInstance(ctx, plan, sgID, &resources, st)
+
+	// S3 Bucket
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:             "S3 bucket",
+		TypeName:          ddc.TypeAWSS3Bucket,
+		BuildDesiredState: func() ([]byte, error) { return ddc.BucketDesiredState(plan) },
+		Properties:        map[string]string{"region": plan.Region, "role": ddc.RoleBlob},
+		IgnoreWriteError:  true,
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating S3 bucket: %w", err)
 	}
+
+	// Security Group
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:             "Security group",
+		TypeName:          cloud.TypeAWSEC2SecurityGroup,
+		BuildDesiredState: func() ([]byte, error) { return ddc.SGDesiredState(plan) },
+		IgnoreWriteError:  true,
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return fmt.Errorf("creating security group: %w", err)
+	}
+	sgID := resources[len(resources)-1].Identifier
+
+	// DDC Instance
+	ud, err := ddc.Generate(ddc.UserDataConfig{
+		StorePath: ddc.DefaultStorePath, Bucket: plan.Bucket, Region: plan.Region,
+		Namespace: plan.Namespace, PublicPort: plan.PublicPort, InternalPort: plan.InternalPort,
+		Backend: plan.Backend,
+	})
+	if err != nil {
+		return fmt.Errorf("generating ddc user data: %w", err)
+	}
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:    "DDC instance",
+		TypeName: cloud.TypeAWSEC2Instance,
+		BuildDesiredState: func() ([]byte, error) {
+			return ddc.InstanceDesiredState(plan, sgID, ud, plan.InstanceProfileName)
+		},
+		Properties: map[string]string{
+			"region":       plan.Region,
+			"role":         ddc.RoleCoordinator,
+			"instanceType": plan.InstanceType,
+			"volumeSize":   strconv.Itoa(plan.VolumeSize),
+		},
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return fmt.Errorf("creating DDC instance: %w", err)
+	}
+	instID := resources[len(resources)-1].Identifier
+
+	// Optional Scylla Instance
 	if plan.Backend == ddc.BackendScylla {
-		if err := c.createScyllaInstance(ctx, plan, sgID, profileName, &resources, st); err != nil {
-			return err
+		scyllaUD, err := ddc.GenerateScylla(ddc.ScyllaUserDataConfig{ClusterName: "fabrica-ddc"})
+		if err != nil {
+			return fmt.Errorf("generating scylla user data: %w", err)
+		}
+		if _, err = provision.ExecuteStep(ctx, provision.CreateStep{
+			Label:    "Scylla bootstrap instance",
+			TypeName: cloud.TypeAWSEC2Instance,
+			BuildDesiredState: func() ([]byte, error) {
+				return ddc.ScyllaInstanceDesiredState(plan, sgID, scyllaUD, plan.InstanceProfileName)
+			},
+			Properties: map[string]string{
+				"region":       plan.Region,
+				"role":         ddc.RoleScylla,
+				"instanceType": plan.ScyllaInstanceType,
+				"volumeSize":   strconv.Itoa(plan.ScyllaVolumeSize),
+			},
+			IgnoreWriteError: true,
+		}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState); err != nil {
+			return fmt.Errorf("creating Scylla instance: %w", err)
 		}
 	}
 
@@ -171,136 +243,6 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, plan *ddc.Se
 		return err
 	}
 	c.printCompletion(plan, instID)
-	return nil
-}
-
-func (c command) createIAMRole(ctx context.Context, plan *ddc.SetupPlan, resources *[]fabricastate.ModuleResource, st *fabricastate.State) error {
-	roleState, err := ddc.RoleDesiredState(plan)
-	if err != nil {
-		return fmt.Errorf("building IAM role desired state: %w", err)
-	}
-	role := &cloud.Resource{TypeName: ddc.TypeAWSIAMRole, DesiredState: roleState}
-	if err := c.createResource(ctx, role); err != nil {
-		return fmt.Errorf("creating IAM role: %w", err)
-	}
-	fmt.Fprintf(c.out, "  created IAM role: %s\n", role.Identifier)
-	*resources = append(*resources, fabricastate.ModuleResource{TypeName: ddc.TypeAWSIAMRole, Identifier: role.Identifier})
-	st.UpsertModule(moduleName, plan.AmiID, "provisioning", *resources)
-	if err := c.writeState(st); err != nil {
-		return fmt.Errorf("writing state: %w", err)
-	}
-	return nil
-}
-
-func (c command) createInstanceProfile(ctx context.Context, plan *ddc.SetupPlan, resources *[]fabricastate.ModuleResource, st *fabricastate.State) error {
-	profState, err := ddc.InstanceProfileDesiredState(plan)
-	if err != nil {
-		return fmt.Errorf("building instance profile desired state: %w", err)
-	}
-	prof := &cloud.Resource{TypeName: ddc.TypeAWSIAMInstanceProfile, DesiredState: profState}
-	if err := c.createResource(ctx, prof); err != nil {
-		return fmt.Errorf("creating instance profile: %w", err)
-	}
-	fmt.Fprintf(c.out, "  created instance profile: %s\n", prof.Identifier)
-	*resources = append(*resources, fabricastate.ModuleResource{TypeName: ddc.TypeAWSIAMInstanceProfile, Identifier: prof.Identifier})
-	st.UpsertModule(moduleName, plan.AmiID, "provisioning", *resources)
-	_ = c.writeState(st)
-	return nil
-}
-
-func (c command) createS3Bucket(ctx context.Context, plan *ddc.SetupPlan, resources *[]fabricastate.ModuleResource, st *fabricastate.State) (string, error) {
-	bucketState, err := ddc.BucketDesiredState(plan)
-	if err != nil {
-		return "", fmt.Errorf("building bucket desired state: %w", err)
-	}
-	bucket := &cloud.Resource{TypeName: ddc.TypeAWSS3Bucket, DesiredState: bucketState}
-	if err := c.createResource(ctx, bucket); err != nil {
-		return "", fmt.Errorf("creating S3 bucket: %w", err)
-	}
-	fmt.Fprintf(c.out, "  created S3 bucket: %s\n", bucket.Identifier)
-	*resources = append(*resources, fabricastate.ModuleResource{
-		TypeName: ddc.TypeAWSS3Bucket, Identifier: bucket.Identifier,
-		Properties: map[string]string{"region": plan.Region, "role": ddc.RoleBlob},
-	})
-	st.UpsertModule(moduleName, plan.AmiID, "provisioning", *resources)
-	_ = c.writeState(st)
-	return bucket.Identifier, nil
-}
-
-func (c command) createSecurityGroup(ctx context.Context, plan *ddc.SetupPlan, resources *[]fabricastate.ModuleResource, st *fabricastate.State) (string, error) {
-	sgState, err := ddc.SGDesiredState(plan)
-	if err != nil {
-		return "", fmt.Errorf("building SG desired state: %w", err)
-	}
-	sg := &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, DesiredState: sgState}
-	if err := c.createResource(ctx, sg); err != nil {
-		return "", fmt.Errorf("creating security group: %w", err)
-	}
-	fmt.Fprintf(c.out, "  created security group: %s\n", sg.Identifier)
-	*resources = append(*resources, fabricastate.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: sg.Identifier})
-	st.UpsertModule(moduleName, plan.AmiID, "provisioning", *resources)
-	_ = c.writeState(st)
-	return sg.Identifier, nil
-}
-
-func (c command) createDDCInstance(ctx context.Context, plan *ddc.SetupPlan, sgID string, resources *[]fabricastate.ModuleResource, st *fabricastate.State) (string, string, error) {
-	ud, err := ddc.Generate(ddc.UserDataConfig{
-		StorePath: ddc.DefaultStorePath, Bucket: plan.Bucket, Region: plan.Region,
-		Namespace: plan.Namespace, PublicPort: plan.PublicPort, InternalPort: plan.InternalPort,
-		Backend: plan.Backend,
-	})
-	if err != nil {
-		return "", "", fmt.Errorf("generating ddc user data: %w", err)
-	}
-	profileName := plan.InstanceProfileName
-	instState, err := ddc.InstanceDesiredState(plan, sgID, ud, profileName)
-	if err != nil {
-		return "", "", fmt.Errorf("building ddc instance desired state: %w", err)
-	}
-	inst := &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, DesiredState: instState}
-	if err := c.createResource(ctx, inst); err != nil {
-		return "", "", fmt.Errorf("creating ddc instance: %w", err)
-	}
-	fmt.Fprintf(c.out, "  created DDC instance: %s\n", inst.Identifier)
-	*resources = append(*resources, fabricastate.ModuleResource{
-		TypeName: cloud.TypeAWSEC2Instance, Identifier: inst.Identifier,
-		Properties: map[string]string{
-			"region": plan.Region, "role": ddc.RoleCoordinator,
-			"instanceType": plan.InstanceType,
-			"volumeSize":   strconv.Itoa(plan.VolumeSize),
-		},
-	})
-	st.UpsertModule(moduleName, plan.AmiID, "provisioning", *resources)
-	if err := c.writeState(st); err != nil {
-		return "", "", fmt.Errorf("writing state: %w", err)
-	}
-	return inst.Identifier, profileName, nil
-}
-
-func (c command) createScyllaInstance(ctx context.Context, plan *ddc.SetupPlan, sgID, profileName string, resources *[]fabricastate.ModuleResource, st *fabricastate.State) error {
-	scyllaUD, err := ddc.GenerateScylla(ddc.ScyllaUserDataConfig{ClusterName: "fabrica-ddc"})
-	if err != nil {
-		return fmt.Errorf("generating scylla user data: %w", err)
-	}
-	scyllaState, err := ddc.ScyllaInstanceDesiredState(plan, sgID, scyllaUD, profileName)
-	if err != nil {
-		return fmt.Errorf("building scylla instance desired state: %w", err)
-	}
-	scylla := &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, DesiredState: scyllaState}
-	if err := c.createResource(ctx, scylla); err != nil {
-		return fmt.Errorf("creating scylla instance: %w", err)
-	}
-	fmt.Fprintf(c.out, "  created Scylla bootstrap instance: %s\n", scylla.Identifier)
-	*resources = append(*resources, fabricastate.ModuleResource{
-		TypeName: cloud.TypeAWSEC2Instance, Identifier: scylla.Identifier,
-		Properties: map[string]string{
-			"region": plan.Region, "role": ddc.RoleScylla,
-			"instanceType": plan.ScyllaInstanceType,
-			"volumeSize":   strconv.Itoa(plan.ScyllaVolumeSize),
-		},
-	})
-	st.UpsertModule(moduleName, plan.AmiID, "provisioning", *resources)
-	_ = c.writeState(st)
 	return nil
 }
 

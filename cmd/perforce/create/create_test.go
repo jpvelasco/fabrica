@@ -288,7 +288,7 @@ func TestCreateWriteStateFailsAfterInstance(t *testing.T) {
 		return nil
 	}
 	err := c.run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "writing state after instance") {
+	if err == nil || !strings.Contains(err.Error(), "writing state after Instance") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -307,7 +307,7 @@ func TestCreateWriteStateFailsAfterProfile(t *testing.T) {
 		return nil
 	}
 	err := c.run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "writing state after instance profile") {
+	if err == nil || !strings.Contains(err.Error(), "writing state after Instance profile") {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -159,32 +159,20 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	fmt.Fprintln(c.out)
 	fmt.Fprintf(c.out, "Creating security group %s...\n", plan.SGName)
 
-	sgDesired, err := lore.SGDesiredState(plan)
+	var resources []fabricastate.ModuleResource
+	resources, err := provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:    "Security group",
+		TypeName: cloud.TypeAWSEC2SecurityGroup,
+		BuildDesiredState: func() ([]byte, error) {
+			return lore.SGDesiredState(plan)
+		},
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return fmt.Errorf("building SG desired state: %w", err)
-	}
-	sg := &cloud.Resource{
-		TypeName:     "AWS::EC2::SecurityGroup",
-		DesiredState: sgDesired,
-	}
-	if err := c.createResource(ctx, sg); err != nil {
 		return fmt.Errorf("creating security group: %w", err)
 	}
-	fmt.Fprintf(c.out, "  Security group created: %s\n", sg.Identifier)
-
-	props := map[string]string{
-		"instanceType": plan.InstanceType,
-		"volumeSize":   strconv.Itoa(plan.VolumeSize),
-	}
-	st.UpsertModule(moduleName, plan.AmiID, "provisioning", []fabricastate.ModuleResource{
-		{TypeName: "AWS::EC2::SecurityGroup", Identifier: sg.Identifier},
-	})
-	if err := c.writeState(st); err != nil {
-		return fmt.Errorf("writing state after SG creation: %w", err)
-	}
+	sgID := resources[len(resources)-1].Identifier
 
 	fmt.Fprintf(c.out, "Creating instance %s...\n", plan.InstanceName)
-
 	userData, err := lore.Generate(lore.UserDataConfig{
 		StorePath: lore.DefaultStorePath,
 		ConfigDir: lore.DefaultConfigDir,
@@ -195,28 +183,23 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		return fmt.Errorf("generating user data: %w", err)
 	}
 
-	instanceDesired, err := lore.InstanceDesiredState(plan, sg.Identifier, userData)
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:    "Instance",
+		TypeName: cloud.TypeAWSEC2Instance,
+		BuildDesiredState: func() ([]byte, error) {
+			return lore.InstanceDesiredState(plan, sgID, userData)
+		},
+		Properties: map[string]string{
+			"instanceType": plan.InstanceType,
+			"volumeSize":   strconv.Itoa(plan.VolumeSize),
+		},
+		// fail on writeState error (default)
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return fmt.Errorf("building instance desired state: %w", err)
-	}
-	instance := &cloud.Resource{
-		TypeName:     "AWS::EC2::Instance",
-		DesiredState: instanceDesired,
-	}
-	if err := c.createResource(ctx, instance); err != nil {
 		return fmt.Errorf("creating EC2 instance: %w", err)
 	}
-	fmt.Fprintf(c.out, "  Instance created: %s\n", instance.Identifier)
 
-	st.UpsertModule(moduleName, plan.AmiID, "provisioning", []fabricastate.ModuleResource{
-		{TypeName: "AWS::EC2::SecurityGroup", Identifier: sg.Identifier},
-		{TypeName: "AWS::EC2::Instance", Identifier: instance.Identifier, Properties: props},
-	})
-	if err := c.writeState(st); err != nil {
-		return fmt.Errorf("writing state after instance creation: %w", err)
-	}
-
-	c.printPostCreate(plan, instance.Identifier)
+	c.printPostCreate(plan, resources[len(resources)-1].Identifier)
 	return nil
 }
 

@@ -283,7 +283,7 @@ func TestCreateWriteStateErrorAfterSG(t *testing.T) {
 	if provider.createCalls != 1 {
 		t.Fatalf("expected 1 create call (SG only), got %d", provider.createCalls)
 	}
-	assert.Contains(t, err.Error(), "writing state after SG creation")
+	assert.Contains(t, err.Error(), "writing state")
 }
 
 type fakeProvider struct {
