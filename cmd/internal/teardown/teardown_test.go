@@ -9,6 +9,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -69,7 +70,7 @@ func TestRunNotProvisioned(t *testing.T) {
 	if err := c.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	assertContains(t, out.String(), "not provisioned")
+	assert.Contains(t, out.String(), "not provisioned")
 }
 
 func TestRunDryRunNoDeleteCalls(t *testing.T) {
@@ -89,7 +90,7 @@ func TestRunDryRunNoDeleteCalls(t *testing.T) {
 	if deleteCalled {
 		t.Error("dry-run made delete calls")
 	}
-	assertContains(t, out.String(), "dry run")
+	assert.Contains(t, out.String(), "dry run")
 }
 
 func TestRunDryRunOutputFields(t *testing.T) {
@@ -109,7 +110,7 @@ func TestRunDryRunOutputFields(t *testing.T) {
 		"AWS::EC2::SecurityGroup",
 		"without --dry-run",
 	} {
-		assertContains(t, got, want)
+		assert.Contains(t, got, want)
 	}
 }
 
@@ -229,7 +230,7 @@ func TestRunInstanceFailureLeavesStateIntact(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on instance delete failure")
 	}
-	assertContains(t, err.Error(), "deleting AWS::EC2::Instance")
+	assert.Contains(t, err.Error(), "deleting AWS::EC2::Instance")
 	if m := st.GetModule("perforce"); m == nil {
 		t.Error("module must remain in state after failed delete")
 	}
@@ -253,7 +254,7 @@ func TestRunSGFailureAfterInstanceSuccess(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on SG delete failure")
 	}
-	assertContains(t, err.Error(), "deleting AWS::EC2::SecurityGroup")
+	assert.Contains(t, err.Error(), "deleting AWS::EC2::SecurityGroup")
 
 	if lastState == nil {
 		t.Fatal("state was never written")
@@ -308,7 +309,7 @@ func TestRunConfirmationRejectedNoDeleteCalls(t *testing.T) {
 	if deleteCalled {
 		t.Error("delete was called after confirmation rejected")
 	}
-	assertContains(t, out.String(), "Cancelled")
+	assert.Contains(t, out.String(), "Cancelled")
 }
 
 func TestRunConfirmationPhrase(t *testing.T) {
@@ -328,7 +329,7 @@ func TestRunConfirmationPhrase(t *testing.T) {
 	if capturedPhrase != want {
 		t.Errorf("phrase = %q, want %q", capturedPhrase, want)
 	}
-	assertContains(t, out.String(), want)
+	assert.Contains(t, out.String(), want)
 }
 
 func TestRunReadStateError(t *testing.T) {
@@ -347,7 +348,7 @@ func TestRunReadStateError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when ReadState fails")
 	}
-	assertContains(t, err.Error(), "reading state")
+	assert.Contains(t, err.Error(), "reading state")
 	if deleteCalled {
 		t.Error("delete was called after ReadState failure")
 	}
@@ -364,7 +365,7 @@ func TestRunNilProviderErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error with nil DeleteResource")
 	}
-	assertContains(t, err.Error(), "no provider configured")
+	assert.Contains(t, err.Error(), "no provider configured")
 }
 
 func TestRunWriteStateErrorSurfacedAsWarning(t *testing.T) {
@@ -379,8 +380,8 @@ func TestRunWriteStateErrorSurfacedAsWarning(t *testing.T) {
 	if err := c.Run(context.Background()); err != nil {
 		t.Fatalf("WriteState failure must not abort destroy: %v", err)
 	}
-	assertContains(t, out.String(), "Warning")
-	assertContains(t, out.String(), "disk full")
+	assert.Contains(t, out.String(), "Warning")
+	assert.Contains(t, out.String(), "disk full")
 }
 
 func TestRunJSONNotProvisioned(t *testing.T) {
@@ -564,8 +565,8 @@ func TestRunInstanceTransitionalStateReturnsError(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected error for transitional state %q", state)
 			}
-			assertContains(t, err.Error(), state)
-			assertContains(t, err.Error(), "transitional state")
+			assert.Contains(t, err.Error(), state)
+			assert.Contains(t, err.Error(), "transitional state")
 			if deleteCalled {
 				t.Error("delete must not be called when instance is in transitional state")
 			}
@@ -647,7 +648,7 @@ func TestRunGetResourceErrorPropagates(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when GetResource fails")
 	}
-	assertContains(t, err.Error(), "network timeout")
+	assert.Contains(t, err.Error(), "network timeout")
 }
 
 // TestSpecVerbInConfirmPhrase confirms the Spec's verb/module compose the phrase,
@@ -668,19 +669,6 @@ func getResource(m *fabricastate.ModuleState, typeName string) (fabricastate.Mod
 		}
 	}
 	return fabricastate.ModuleResource{}, false
-}
-
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	if len(substr) == 0 {
-		return
-	}
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return
-		}
-	}
-	t.Fatalf("%q\ndoes not contain\n%q", s, substr)
 }
 
 // fakeResourceClient tracks delete calls and returns configured errors.

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/credentials"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
@@ -45,31 +46,31 @@ func TestPerforceBackupRestoreFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("backup: %v\n%s", err, out)
 	}
-	assertContains(t, out, "Backup complete")
+	assert.Contains(t, out, "Backup complete")
 
 	out, err = runCLI(t, "perforce", "backup", "list")
 	if err != nil {
 		t.Fatalf("list: %v\n%s", err, out)
 	}
-	assertContains(t, out, "20260715-143022-smoke")
+	assert.Contains(t, out, "20260715-143022-smoke")
 
 	out, err = runCLI(t, "perforce", "status")
 	if err != nil {
 		t.Fatalf("status: %v\n%s", err, out)
 	}
-	assertContains(t, out, "Last backup")
+	assert.Contains(t, out, "Last backup")
 
 	out, err = runCLI(t, "perforce", "restore", "fake-backup", "--force", "--dry-run")
 	if err != nil {
 		t.Fatalf("restore dry-run: %v\n%s", err, out)
 	}
-	assertContains(t, out, "dry run")
+	assert.Contains(t, out, "dry run")
 
 	out, err = runCLI(t, "perforce", "backup", "delete", "20260715-143022-smoke", "--yes")
 	if err != nil {
 		t.Fatalf("delete: %v\n%s", err, out)
 	}
-	assertContains(t, out, "Deleted backup")
+	assert.Contains(t, out, "Deleted backup")
 
 	out, err = runCLI(t, "perforce", "destroy", "--dry-run")
 	if err != nil {

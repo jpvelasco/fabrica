@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
@@ -70,7 +71,7 @@ func TestCreateDryRunOutputFields(t *testing.T) {
 		"fabrica-workstation",
 		"Cost estimate:",
 	} {
-		assertContains(t, got, want)
+		assert.Contains(t, got, want)
 	}
 }
 
@@ -90,7 +91,7 @@ func TestCreateAlreadyExists(t *testing.T) {
 	if provider.createCalls != 0 {
 		t.Fatalf("already-exists: made %d create calls, want 0", provider.createCalls)
 	}
-	assertContains(t, out.String(), "already provisioned")
+	assert.Contains(t, out.String(), "already provisioned")
 }
 
 func TestCreateHappyPathOrderAndState(t *testing.T) {
@@ -146,7 +147,7 @@ func TestCreateSGFailureNoStateWritten(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on SG create failure")
 	}
-	assertContains(t, err.Error(), "creating security group")
+	assert.Contains(t, err.Error(), "creating security group")
 	if stateWritten {
 		t.Error("state must not be written when SG creation fails")
 	}
@@ -168,7 +169,7 @@ func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on instance create failure")
 	}
-	assertContains(t, err.Error(), "creating EC2 instance")
+	assert.Contains(t, err.Error(), "creating EC2 instance")
 	if lastState == nil {
 		t.Fatal("state was never written")
 	}
@@ -191,7 +192,7 @@ func TestCreateConfirmationRejected(t *testing.T) {
 	if provider.createCalls != 0 {
 		t.Fatalf("cancelled: made %d create calls, want 0", provider.createCalls)
 	}
-	assertContains(t, out.String(), "Cancelled")
+	assert.Contains(t, out.String(), "Cancelled")
 }
 
 func TestCreateNilProviderReturnsError(t *testing.T) {
@@ -209,7 +210,7 @@ func TestCreateNilProviderReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when provider is nil")
 	}
-	assertContains(t, err.Error(), "no provider configured")
+	assert.Contains(t, err.Error(), "no provider configured")
 }
 
 func TestCreateIdentityFailure(t *testing.T) {
@@ -239,7 +240,7 @@ func TestCreateInstanceTypeFlagOverridesConfig(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "g5.2xlarge")
+	assert.Contains(t, out.String(), "g5.2xlarge")
 }
 
 func TestCreateReadStateError(t *testing.T) {
@@ -257,7 +258,7 @@ func TestCreateReadStateError(t *testing.T) {
 	if provider.createCalls != 0 {
 		t.Fatal("readState failure: create was called")
 	}
-	assertContains(t, err.Error(), "reading state")
+	assert.Contains(t, err.Error(), "reading state")
 }
 
 func TestCreateWriteStateErrorAfterSG(t *testing.T) {
@@ -282,7 +283,7 @@ func TestCreateWriteStateErrorAfterSG(t *testing.T) {
 	if provider.createCalls != 1 {
 		t.Fatalf("expected 1 create call (SG only), got %d", provider.createCalls)
 	}
-	assertContains(t, err.Error(), "writing state after SG creation")
+	assert.Contains(t, err.Error(), "writing state after SG creation")
 }
 
 type fakeProvider struct {
@@ -330,16 +331,6 @@ func (r *fakeResourceClient) List(_ context.Context, _ string) ([]cloud.Resource
 	return nil, nil
 }
 
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return
-		}
-	}
-	t.Fatalf("%q does not contain %q", s, substr)
-}
-
 // stateWithPerforce returns state with a provisioned Perforce module (SG +
 // instance), for --mount-perforce address resolution tests.
 func stateWithPerforce() *fabricastate.State {
@@ -377,7 +368,7 @@ func TestResolvePerforceAddrNoModule(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when Perforce module is absent")
 	}
-	assertContains(t, err.Error(), "fabrica perforce create")
+	assert.Contains(t, err.Error(), "fabrica perforce create")
 }
 
 func TestResolvePerforceAddrNoIP(t *testing.T) {

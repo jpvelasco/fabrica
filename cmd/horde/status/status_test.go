@@ -7,6 +7,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
@@ -32,7 +33,7 @@ func TestRenderText_RunningWithIP(t *testing.T) {
 		"Horde build coordinator", "(running)", "m7i.2xlarge", "10.0.1.42",
 		"Horde HTTP:    http://10.0.1.42:5000", "Horde gRPC:    10.0.1.42:5002", "responding",
 	} {
-		assertContains(t, got, want)
+		assert.Contains(t, got, want)
 	}
 }
 
@@ -40,8 +41,8 @@ func TestRenderText_SettingUp(t *testing.T) {
 	var out bytes.Buffer
 	testRenderer().printText(&out, modstatus.Info{ModuleStatus: "provisioning", InstanceID: "i-1", SGID: "sg-1"})
 	got := out.String()
-	assertContains(t, got, "sg-1")
-	assertContains(t, got, "setting up")
+	assert.Contains(t, got, "sg-1")
+	assert.Contains(t, got, "setting up")
 }
 
 func TestRenderJSON_Fields(t *testing.T) {
@@ -121,17 +122,4 @@ func TestResolvePorts(t *testing.T) {
 	if p, g := resolvePorts(rt); p != 8080 || g != 9090 {
 		t.Errorf("overrides: got %d/%d, want 8080/9090", p, g)
 	}
-}
-
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	if len(substr) == 0 {
-		return
-	}
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return
-		}
-	}
-	t.Fatalf("%q\ndoes not contain\n%q", s, substr)
 }

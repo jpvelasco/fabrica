@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
+	"github.com/jpvelasco/fabrica/internal/assert"
 )
 
 // These tests cover Perforce-specific rendering (text + JSON). The shared
@@ -22,7 +23,7 @@ func TestRenderText_Provisioning(t *testing.T) {
 	})
 	got := out.String()
 	for _, want := range []string{"Perforce Helix Core", "provisioning", "i-abc123", "sg-abc123", "setting up"} {
-		assertContains(t, got, want)
+		assert.Contains(t, got, want)
 	}
 }
 
@@ -40,7 +41,7 @@ func TestRenderText_RunningWithIP(t *testing.T) {
 	})
 	got := out.String()
 	for _, want := range []string{"(running)", "m5.xlarge", "10.0.1.42", "P4PORT:        tcp:10.0.1.42:1666", "responding"} {
-		assertContains(t, got, want)
+		assert.Contains(t, got, want)
 	}
 }
 
@@ -52,7 +53,7 @@ func TestRenderText_Unreachable(t *testing.T) {
 		ProbeAttempted: true,
 		Reachable:      false,
 	})
-	assertContains(t, out.String(), "unreachable from this machine")
+	assert.Contains(t, out.String(), "unreachable from this machine")
 }
 
 func TestRenderText_LastBackup(t *testing.T) {
@@ -63,15 +64,15 @@ func TestRenderText_LastBackup(t *testing.T) {
 		LastBackupAt: "2026-07-15T12:00:00Z",
 	})
 	got := out.String()
-	assertContains(t, got, "Last backup")
-	assertContains(t, got, "20260715-120000")
-	assertContains(t, got, "2026-07-15T12:00:00Z")
+	assert.Contains(t, got, "Last backup")
+	assert.Contains(t, got, "20260715-120000")
+	assert.Contains(t, got, "2026-07-15T12:00:00Z")
 }
 
 func TestRenderText_LastBackupNever(t *testing.T) {
 	var out bytes.Buffer
 	printText(&out, modstatus.Info{ModuleStatus: "ready"})
-	assertContains(t, out.String(), "Last backup:   never")
+	assert.Contains(t, out.String(), "Last backup:   never")
 }
 
 func TestRenderJSON_LastBackup(t *testing.T) {
@@ -164,17 +165,4 @@ func TestRenderNotProvisioned_JSON(t *testing.T) {
 	if result.Status != "not_provisioned" {
 		t.Errorf("status = %q", result.Status)
 	}
-}
-
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	if len(substr) == 0 {
-		return
-	}
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return
-		}
-	}
-	t.Fatalf("%q\ndoes not contain\n%q", s, substr)
 }

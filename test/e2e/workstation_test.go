@@ -3,6 +3,8 @@ package e2e
 import (
 	"strings"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/assert"
 )
 
 // TestWorkstationStopStart: create → stop (status "stopped", cost drops compute)
@@ -22,7 +24,7 @@ func TestWorkstationStopStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cost (running): %v\n%s", err, runningCost)
 	}
-	assertContains(t, runningCost, "workstation")
+	assert.Contains(t, runningCost, "workstation")
 
 	// Stop: status flips to "stopped".
 	out, err = runCLI(t, "workstation", "stop", "--yes")

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/workstation/action"
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
@@ -44,7 +45,7 @@ func TestStartNotProvisioned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "not provisioned")
+	assert.Contains(t, out.String(), "not provisioned")
 }
 
 func TestStartAlreadyRunning(t *testing.T) {
@@ -66,7 +67,7 @@ func TestStartAlreadyRunning(t *testing.T) {
 			if err != nil {
 				t.Fatalf("run: %v", err)
 			}
-			assertContains(t, out.String(), "already running")
+			assert.Contains(t, out.String(), "already running")
 		})
 	}
 }
@@ -95,7 +96,7 @@ func TestStartDryRunNoAPICall(t *testing.T) {
 	if startCalled {
 		t.Error("dry-run must not call start API")
 	}
-	assertContains(t, out.String(), "dry run")
+	assert.Contains(t, out.String(), "dry run")
 }
 
 func TestStartDryRunOutputFields(t *testing.T) {
@@ -115,8 +116,8 @@ func TestStartDryRunOutputFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "i-ws123")
-	assertContains(t, out.String(), "without --dry-run")
+	assert.Contains(t, out.String(), "i-ws123")
+	assert.Contains(t, out.String(), "without --dry-run")
 }
 
 func TestStartHappyPathStateUpdated(t *testing.T) {
@@ -170,7 +171,7 @@ func TestStartConfirmationRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "Cancelled")
+	assert.Contains(t, out.String(), "Cancelled")
 }
 
 func TestStartNilProviderErrors(t *testing.T) {
@@ -190,7 +191,7 @@ func TestStartNilProviderErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error with nil executeAction")
 	}
-	assertContains(t, err.Error(), "no provider configured")
+	assert.Contains(t, err.Error(), "no provider configured")
 }
 
 func TestStartAPIErrorPropagates(t *testing.T) {
@@ -210,7 +211,7 @@ func TestStartAPIErrorPropagates(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when start API fails")
 	}
-	assertContains(t, err.Error(), "starting instance")
+	assert.Contains(t, err.Error(), "starting instance")
 }
 
 func TestStartReadStateError(t *testing.T) {
@@ -231,7 +232,7 @@ func TestStartReadStateError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when readState fails")
 	}
-	assertContains(t, err.Error(), "reading state")
+	assert.Contains(t, err.Error(), "reading state")
 }
 
 func TestStartWriteStateErrorSurfacedAsWarning(t *testing.T) {
@@ -253,7 +254,7 @@ func TestStartWriteStateErrorSurfacedAsWarning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writeState failure must not abort start: %v", err)
 	}
-	assertContains(t, out.String(), "Warning")
+	assert.Contains(t, out.String(), "Warning")
 }
 
 func TestStartJSONHappyPath(t *testing.T) {
@@ -375,14 +376,4 @@ func workstationState(status string) *fabricastate.State {
 		{TypeName: "AWS::EC2::Instance", Identifier: "i-ws123"},
 	})
 	return st
-}
-
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return
-		}
-	}
-	t.Fatalf("%q does not contain %q", s, substr)
 }

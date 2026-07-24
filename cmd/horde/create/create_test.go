@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
@@ -71,7 +72,7 @@ func TestCreateDryRunOutputFields(t *testing.T) {
 		"fabrica-horde",
 		"Cost estimate:",
 	} {
-		assertContains(t, got, want)
+		assert.Contains(t, got, want)
 	}
 }
 
@@ -92,7 +93,7 @@ func TestCreateAlreadyProvisioned(t *testing.T) {
 	if provider.createCalls != 0 {
 		t.Fatalf("already-exists: made %d create calls, want 0", provider.createCalls)
 	}
-	assertContains(t, out.String(), "already provisioned")
+	assert.Contains(t, out.String(), "already provisioned")
 }
 
 // TestCreateMissingAmiID verifies error when AmiID is not configured.
@@ -107,8 +108,8 @@ func TestCreateMissingAmiID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when AmiID is empty")
 	}
-	assertContains(t, err.Error(), "horde.amiId is required")
-	assertContains(t, err.Error(), "horde-ami.md")
+	assert.Contains(t, err.Error(), "horde.amiId is required")
+	assert.Contains(t, err.Error(), "horde-ami.md")
 	if provider.createCalls != 0 {
 		t.Fatal("missing AmiID: create was called")
 	}
@@ -174,7 +175,7 @@ func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on instance create failure")
 	}
-	assertContains(t, err.Error(), "creating EC2 instance")
+	assert.Contains(t, err.Error(), "creating EC2 instance")
 	if lastWrittenState == nil {
 		t.Fatal("state was never written")
 	}
@@ -198,7 +199,7 @@ func TestCreateConfirmationRejected(t *testing.T) {
 	if provider.createCalls != 0 {
 		t.Fatalf("cancelled: made %d create calls, want 0", provider.createCalls)
 	}
-	assertContains(t, out.String(), "Cancelled")
+	assert.Contains(t, out.String(), "Cancelled")
 }
 
 // TestCreateNilProviderReturnsError verifies nil provider returns a clear error.
@@ -217,8 +218,8 @@ func TestCreateNilProviderReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when provider is nil")
 	}
-	assertContains(t, err.Error(), "no provider configured")
-	assertContains(t, err.Error(), "fabrica setup")
+	assert.Contains(t, err.Error(), "no provider configured")
+	assert.Contains(t, err.Error(), "fabrica setup")
 }
 
 // TestCreateAllowedCIDRWarning verifies 0.0.0.0/0 warning appears in dry-run output.
@@ -233,8 +234,8 @@ func TestCreateAllowedCIDRWarning(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "WARNING")
-	assertContains(t, out.String(), "0.0.0.0/0")
+	assert.Contains(t, out.String(), "WARNING")
+	assert.Contains(t, out.String(), "0.0.0.0/0")
 }
 
 // TestCreateDryRunDefaultVPCNote verifies "Default VPC" note appears when no VPC configured.
@@ -254,7 +255,7 @@ func TestCreateDryRunDefaultVPCNote(t *testing.T) {
 	}
 	// With nil resolver, VPC is empty. The note is printed only when DefaultVPC=true.
 	// Just verify no panic and key fields are present.
-	assertContains(t, out.String(), "fabrica-horde-sg")
+	assert.Contains(t, out.String(), "fabrica-horde-sg")
 }
 
 // TestCreateDryRunM7i2xlargeRecommendation verifies m7i.2xlarge tip in dry-run when default type.
@@ -269,7 +270,7 @@ func TestCreateDryRunM7i2xlargeRecommendation(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "m7i.2xlarge")
+	assert.Contains(t, out.String(), "m7i.2xlarge")
 }
 
 // TestCreateIdentityFailureAbortsEarly verifies no AWS calls on identity error.
@@ -286,7 +287,7 @@ func TestCreateIdentityFailureAbortsEarly(t *testing.T) {
 	if provider.createCalls != 0 {
 		t.Fatal("identity failure: create was called")
 	}
-	assertContains(t, err.Error(), "resolving identity")
+	assert.Contains(t, err.Error(), "resolving identity")
 }
 
 // TestCreateSGFailureNoStateWritten verifies state is never written when SG creation fails.
@@ -306,7 +307,7 @@ func TestCreateSGFailureNoStateWritten(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on SG create failure")
 	}
-	assertContains(t, err.Error(), "creating security group")
+	assert.Contains(t, err.Error(), "creating security group")
 	if stateWritten {
 		t.Error("state must not be written when SG creation fails")
 	}
@@ -325,7 +326,7 @@ func TestCreateFlagOverridesConfigInstanceType(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "m7i.4xlarge")
+	assert.Contains(t, out.String(), "m7i.4xlarge")
 }
 
 // TestCreateFlagOverridesConfigVolumeSize verifies --volume-size flag wins over config.
@@ -340,7 +341,7 @@ func TestCreateFlagOverridesConfigVolumeSize(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "500 GiB")
+	assert.Contains(t, out.String(), "500 GiB")
 }
 
 // ---- fakeProvider ----
@@ -393,17 +394,4 @@ func (r *fakeResourceClient) Update(_ context.Context, _ *cloud.Resource) error 
 func (r *fakeResourceClient) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
 func (r *fakeResourceClient) List(_ context.Context, _ string) ([]cloud.Resource, error) {
 	return nil, nil
-}
-
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	if len(substr) == 0 {
-		return
-	}
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return
-		}
-	}
-	t.Fatalf("%q\ndoes not contain\n%q", s, substr)
 }

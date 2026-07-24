@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/root"
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -91,13 +92,6 @@ func readState(t *testing.T) *state.State {
 	return &st
 }
 
-func assertContains(t *testing.T, out, substr string) {
-	t.Helper()
-	if !strings.Contains(out, substr) {
-		t.Fatalf("output missing %q:\n%s", substr, out)
-	}
-}
-
 func assertJSON(t *testing.T, out string, target any) {
 	t.Helper()
 	// The command may print a human line before/after JSON in some paths; find
@@ -157,7 +151,7 @@ func assertEC2ModuleLifecycle(t *testing.T, module, provisionedMsg string) {
 	if err != nil {
 		t.Fatalf("%s create: %v\n%s", module, err, out)
 	}
-	assertContains(t, out, provisionedMsg)
+	assert.Contains(t, out, provisionedMsg)
 
 	st := readState(t)
 	assertModuleExists(t, st, module)
@@ -168,14 +162,14 @@ func assertEC2ModuleLifecycle(t *testing.T, module, provisionedMsg string) {
 	if err != nil {
 		t.Fatalf("status: %v\n%s", err, out)
 	}
-	assertContains(t, out, module)
+	assert.Contains(t, out, module)
 
 	out, err = runCLI(t, "cost", "report")
 	if err != nil {
 		t.Fatalf("cost report: %v\n%s", err, out)
 	}
-	assertContains(t, out, module)
-	assertContains(t, out, "Total:")
+	assert.Contains(t, out, module)
+	assert.Contains(t, out, "Total:")
 
 	out, err = runCLI(t, module, "destroy", "--yes")
 	if err != nil {
@@ -218,5 +212,5 @@ func TestHarnessFakeResolves(t *testing.T) {
 	// Fresh account: no backend, no modules. cmd/status prints this exact line
 	// (cmd/status/status.go): "Nothing provisioned yet, and your state backend
 	// isn't set up."
-	assertContains(t, out, "Nothing provisioned yet")
+	assert.Contains(t, out, "Nothing provisioned yet")
 }

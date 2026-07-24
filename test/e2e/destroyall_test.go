@@ -3,6 +3,8 @@ package e2e
 import (
 	"strings"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/assert"
 )
 
 // TestDestroyAllFullStack: provision perforce + horde, aggregate cost report,
@@ -29,16 +31,16 @@ func TestDestroyAllFullStack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cost report: %v\n%s", err, out)
 	}
-	assertContains(t, out, "perforce")
-	assertContains(t, out, "horde")
-	assertContains(t, out, "Total:")
+	assert.Contains(t, out, "perforce")
+	assert.Contains(t, out, "horde")
+	assert.Contains(t, out, "Total:")
 
 	// Full teardown.
 	out, err = runCLI(t, "destroy", "--all", "--yes")
 	if err != nil {
 		t.Fatalf("destroy --all: %v\n%s", err, out)
 	}
-	assertContains(t, out, "Destroy --all complete")
+	assert.Contains(t, out, "Destroy --all complete")
 
 	// Every module gone from state.
 	st = readState(t)
