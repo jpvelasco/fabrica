@@ -178,11 +178,12 @@ jobs:
         working-directory: npm
         run: node --test
 
-  # Codacy Analysis — runs client-side tools (Gosec, Staticcheck, GolangCI-Lint,
+  # Codacy Analysis — runs client-side tools (Staticcheck, GolangCI-Lint,
   # Aligncheck, Deadcode) and uploads results to the Codacy dashboard. Complements
   # the standalone lint/gosec/trivy jobs by feeding results back to Codacy Cloud.
-  # Requires CODACY_PROJECT_TOKEN (project-scoped, created via Codacy UI →
-  # Repository Settings → Integrations → Create API token).
+  # Gosec runs through our dedicated gosec job (the action's bundled binary
+  # panics on Go 1.25 export data). Requires CODACY_PROJECT_TOKEN (project-scoped,
+  # created via Codacy UI → Repository Settings → Integrations → Create API token).
   codacy-analysis:
     name: Codacy Analysis
     runs-on: ubuntu-latest
@@ -199,10 +200,8 @@ jobs:
           # Don't fail the workflow on issues — let Codacy quality gates and PR
           # annotations handle blocking. Our lint/gosec/trivy jobs already gate.
           max-allowed-issues: 2147483647
-          # Standalone Go tools — run-natively without Docker containers.
-          # Note: only run-gosec and run-staticcheck are supported as standalone
-          # flags; GolangCI-Lint runs through the main CLI tool execution.
-          run-gosec: "true"
+          # run-staticcheck natively; gosec is handled by our dedicated gosec job
+          # (the action's bundled gosec v2.15.0 panics on Go 1.25 export data).
           run-staticcheck: "true"
           # Containerized tools (Aligncheck, Deadcode) run via the CLI's Docker images.
           run-docker-tools: "true"
