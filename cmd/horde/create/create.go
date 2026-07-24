@@ -161,33 +161,25 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	}
 	fmt.Fprintf(c.out, "\nMongoDB credentials written to %s\n", credFile)
 
+	var resources []fabricastate.ModuleResource
+
 	// Create Security Group
 	fmt.Fprintln(c.out)
 	fmt.Fprintf(c.out, "Creating security group %s...\n", plan.SGName)
-
-	sgDesired, err := horde.SGDesiredState(plan)
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:    "Security group",
+		TypeName: cloud.TypeAWSEC2SecurityGroup,
+		BuildDesiredState: func() ([]byte, error) {
+			return horde.SGDesiredState(plan)
+		},
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return fmt.Errorf("building SG desired state: %w", err)
-	}
-	sg := &cloud.Resource{
-		TypeName:     "AWS::EC2::SecurityGroup",
-		DesiredState: sgDesired,
-	}
-	if err := c.createResource(ctx, sg); err != nil {
 		return fmt.Errorf("creating security group: %w", err)
 	}
-	fmt.Fprintf(c.out, "  Security group created: %s\n", sg.Identifier)
-
-	st.UpsertModule(moduleName, plan.AmiID, "provisioning", []fabricastate.ModuleResource{
-		{TypeName: "AWS::EC2::SecurityGroup", Identifier: sg.Identifier},
-	})
-	if err := c.writeState(st); err != nil {
-		return fmt.Errorf("writing state after SG creation: %w", err)
-	}
+	sgID := resources[len(resources)-1].Identifier
 
 	// Create EC2 Instance
 	fmt.Fprintf(c.out, "Creating instance %s...\n", plan.InstanceName)
-
 	userData, err := horde.Generate(horde.UserDataConfig{
 		MongoPassword: mongoPass,
 		Port:          plan.Port,
@@ -197,31 +189,23 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		return fmt.Errorf("generating user data: %w", err)
 	}
 
-	instanceDesired, err := horde.InstanceDesiredState(plan, sg.Identifier, userData)
-	if err != nil {
-		return fmt.Errorf("building instance desired state: %w", err)
-	}
-	instance := &cloud.Resource{
-		TypeName:     "AWS::EC2::Instance",
-		DesiredState: instanceDesired,
-	}
-	if err := c.createResource(ctx, instance); err != nil {
-		return fmt.Errorf("creating EC2 instance: %w", err)
-	}
-	fmt.Fprintf(c.out, "  Instance created: %s\n", instance.Identifier)
-
-	st.UpsertModule(moduleName, plan.AmiID, "provisioning", []fabricastate.ModuleResource{
-		{TypeName: "AWS::EC2::SecurityGroup", Identifier: sg.Identifier},
-		{TypeName: "AWS::EC2::Instance", Identifier: instance.Identifier, Properties: map[string]string{
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:    "Instance",
+		TypeName: cloud.TypeAWSEC2Instance,
+		BuildDesiredState: func() ([]byte, error) {
+			return horde.InstanceDesiredState(plan, sgID, userData)
+		},
+		Properties: map[string]string{
 			"instanceType": plan.InstanceType,
 			"volumeSize":   strconv.Itoa(plan.VolumeSize),
-		}},
-	})
-	if err := c.writeState(st); err != nil {
-		return fmt.Errorf("writing state after instance creation: %w", err)
+		},
+		// fail on writeState error (default)
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return fmt.Errorf("creating EC2 instance: %w", err)
 	}
 
-	c.printPostCreate(plan, instance.Identifier)
+	c.printPostCreate(plan, resources[len(resources)-1].Identifier)
 	return nil
 }
 
