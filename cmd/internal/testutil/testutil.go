@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -83,12 +84,9 @@ func WriteStateFile(t *testing.T, dir, content string) {
 // AssertContains checks that s contains substr and fails the test if not.
 func AssertContains(t *testing.T, s, substr string) {
 	t.Helper()
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return
-		}
+	if !strings.Contains(s, substr) {
+		t.Fatalf("%q does not contain %q", s, substr)
 	}
-	t.Fatalf("%q does not contain %q", s, substr)
 }
 
 // CobraFakeProvider is a minimal fake provider that tracks delete calls.
