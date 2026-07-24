@@ -90,19 +90,22 @@ systemctl restart unreal-cloud-ddc 2>/dev/null || systemctl start unreal-cloud-d
 echo "Fabrica DDC cloud-init complete (backend=$BACKEND)"
 `)))
 
-// Generate returns base64-encoded user data for the DDC instance.
-func Generate(cfg UserDataConfig) (string, error) {
+// applyDefaults fills zero-value fields with module defaults.
+func (cfg *UserDataConfig) applyDefaults() {
 	if cfg.StorePath == "" {
 		cfg.StorePath = DefaultStorePath
 	}
+}
+
+// Generate returns base64-encoded user data for the DDC instance.
+func Generate(cfg UserDataConfig) (string, error) {
+	cfg.applyDefaults()
 	return userDataRenderer.RenderBase64(cfg)
 }
 
 // GenerateRaw returns plain-text cloud-init for tests.
 func GenerateRaw(cfg UserDataConfig) (string, error) {
-	if cfg.StorePath == "" {
-		cfg.StorePath = DefaultStorePath
-	}
+	cfg.applyDefaults()
 	return userDataRenderer.Render(cfg)
 }
 
@@ -146,24 +149,24 @@ systemctl restart scylla-server 2>/dev/null || systemctl start scylla-server 2>/
 echo "Fabrica DDC Scylla bootstrap complete cluster=$CLUSTER (NOT production HA)"
 `)))
 
-// GenerateScylla returns base64 user data for the Scylla bootstrap instance.
-func GenerateScylla(cfg ScyllaUserDataConfig) (string, error) {
+// applyDefaults fills zero-value fields with module defaults.
+func (cfg *ScyllaUserDataConfig) applyDefaults() {
 	if cfg.StorePath == "" {
 		cfg.StorePath = "/var/lib/scylla"
 	}
 	if cfg.ClusterName == "" {
 		cfg.ClusterName = "fabrica-ddc"
 	}
+}
+
+// GenerateScylla returns base64 user data for the Scylla bootstrap instance.
+func GenerateScylla(cfg ScyllaUserDataConfig) (string, error) {
+	cfg.applyDefaults()
 	return scyllaUserDataRenderer.RenderBase64(cfg)
 }
 
 // GenerateScyllaRaw returns plain-text Scylla cloud-init for tests.
 func GenerateScyllaRaw(cfg ScyllaUserDataConfig) (string, error) {
-	if cfg.StorePath == "" {
-		cfg.StorePath = "/var/lib/scylla"
-	}
-	if cfg.ClusterName == "" {
-		cfg.ClusterName = "fabrica-ddc"
-	}
+	cfg.applyDefaults()
 	return scyllaUserDataRenderer.Render(cfg)
 }

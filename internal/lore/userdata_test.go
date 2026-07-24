@@ -48,6 +48,46 @@ func TestGenerateRawDefaults(t *testing.T) {
 	}
 }
 
+func TestApplyDefaults(t *testing.T) {
+	t.Run("fills all zeros", func(t *testing.T) {
+		cfg := UserDataConfig{}
+		cfg.applyDefaults()
+		if cfg.StorePath != DefaultStorePath {
+			t.Errorf("StorePath = %q, want %q", cfg.StorePath, DefaultStorePath)
+		}
+		if cfg.ConfigDir != DefaultConfigDir {
+			t.Errorf("ConfigDir = %q, want %q", cfg.ConfigDir, DefaultConfigDir)
+		}
+		if cfg.GRPCPort != DefaultGRPCPort {
+			t.Errorf("GRPCPort = %d, want %d", cfg.GRPCPort, DefaultGRPCPort)
+		}
+		if cfg.HTTPPort != DefaultHTTPPort {
+			t.Errorf("HTTPPort = %d, want %d", cfg.HTTPPort, DefaultHTTPPort)
+		}
+	})
+	t.Run("preserves existing values", func(t *testing.T) {
+		cfg := UserDataConfig{
+			StorePath: "/custom/store",
+			ConfigDir: "/custom/config",
+			GRPCPort:  9999,
+			HTTPPort:  9998,
+		}
+		cfg.applyDefaults()
+		if cfg.StorePath != "/custom/store" {
+			t.Errorf("StorePath = %q, want /custom/store", cfg.StorePath)
+		}
+		if cfg.ConfigDir != "/custom/config" {
+			t.Errorf("ConfigDir = %q, want /custom/config", cfg.ConfigDir)
+		}
+		if cfg.GRPCPort != 9999 {
+			t.Errorf("GRPCPort = %d, want 9999", cfg.GRPCPort)
+		}
+		if cfg.HTTPPort != 9998 {
+			t.Errorf("HTTPPort = %d, want 9998", cfg.HTTPPort)
+		}
+	})
+}
+
 func TestGenerateBase64RoundTrip(t *testing.T) {
 	encoded, err := Generate(UserDataConfig{StorePath: "/data", ConfigDir: "/cfg"})
 	if err != nil {

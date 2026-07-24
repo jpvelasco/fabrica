@@ -50,3 +50,43 @@ func TestGenerateScyllaRaw(t *testing.T) {
 		t.Fatalf("GenerateScylla: %v", err)
 	}
 }
+
+func TestApplyDefaults(t *testing.T) {
+	t.Run("empty config fills store path", func(t *testing.T) {
+		cfg := UserDataConfig{Bucket: "b", Region: "r", Namespace: "n"}
+		cfg.applyDefaults()
+		if cfg.StorePath != DefaultStorePath {
+			t.Errorf("StorePath = %q, want %q", cfg.StorePath, DefaultStorePath)
+		}
+	})
+	t.Run("preserves existing store path", func(t *testing.T) {
+		cfg := UserDataConfig{StorePath: "/custom", Bucket: "b", Region: "r", Namespace: "n"}
+		cfg.applyDefaults()
+		if cfg.StorePath != "/custom" {
+			t.Errorf("StorePath = %q, want /custom", cfg.StorePath)
+		}
+	})
+}
+
+func TestScyllaApplyDefaults(t *testing.T) {
+	t.Run("fills all zeros", func(t *testing.T) {
+		cfg := ScyllaUserDataConfig{}
+		cfg.applyDefaults()
+		if cfg.StorePath != "/var/lib/scylla" {
+			t.Errorf("StorePath = %q, want /var/lib/scylla", cfg.StorePath)
+		}
+		if cfg.ClusterName != "fabrica-ddc" {
+			t.Errorf("ClusterName = %q, want fabrica-ddc", cfg.ClusterName)
+		}
+	})
+	t.Run("preserves existing values", func(t *testing.T) {
+		cfg := ScyllaUserDataConfig{StorePath: "/custom", ClusterName: "mycluster"}
+		cfg.applyDefaults()
+		if cfg.StorePath != "/custom" {
+			t.Errorf("StorePath = %q, want /custom", cfg.StorePath)
+		}
+		if cfg.ClusterName != "mycluster" {
+			t.Errorf("ClusterName = %q, want mycluster", cfg.ClusterName)
+		}
+	})
+}

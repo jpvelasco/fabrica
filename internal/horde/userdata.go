@@ -56,11 +56,19 @@ systemctl restart horde
 touch /var/lib/cloud/instance/horde-ready
 `)))
 
+// validate checks required fields. Returns nil if valid.
+func (cfg *UserDataConfig) validate() error {
+	if cfg.MongoPassword == "" {
+		return fmt.Errorf("MongoPassword must not be empty")
+	}
+	return nil
+}
+
 // GenerateRaw renders the cloud-init script without base64 encoding.
 // Used in tests to inspect script content directly.
 func GenerateRaw(cfg UserDataConfig) (string, error) {
-	if cfg.MongoPassword == "" {
-		return "", fmt.Errorf("MongoPassword must not be empty")
+	if err := cfg.validate(); err != nil {
+		return "", err
 	}
 	return userDataRenderer.Render(cfg)
 }
@@ -68,8 +76,8 @@ func GenerateRaw(cfg UserDataConfig) (string, error) {
 // Generate renders the cloud-init script and returns it base64-encoded
 // (the format EC2 expects for UserData in Cloud Control).
 func Generate(cfg UserDataConfig) (string, error) {
-	if cfg.MongoPassword == "" {
-		return "", fmt.Errorf("MongoPassword must not be empty")
+	if err := cfg.validate(); err != nil {
+		return "", err
 	}
 	return userDataRenderer.RenderBase64(cfg)
 }

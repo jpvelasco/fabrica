@@ -52,17 +52,30 @@ chmod 600 /home/ubuntu/.p4config
 echo 'export P4CONFIG=~/.p4config' >> /home/ubuntu/.profile
 {{ end }}`)))
 
-// Generate renders the cloud-init script and returns it base64-encoded
-// (the format EC2 expects for UserData in Cloud Control).
-func Generate(cfg UserDataConfig) (string, error) {
-	if cfg.SessionPassword == "" {
-		return "", fmt.Errorf("SessionPassword must not be empty")
-	}
+// applyDefaults fills zero-value fields with module defaults.
+func (cfg *UserDataConfig) applyDefaults() {
 	if cfg.IdleTimeoutMinutes <= 0 {
 		cfg.IdleTimeoutMinutes = DefaultIdleTimeoutMinutes
 	}
+}
+
+// validate checks required fields. Returns nil if valid.
+func (cfg *UserDataConfig) validate() error {
+	if cfg.SessionPassword == "" {
+		return fmt.Errorf("SessionPassword must not be empty")
+	}
 	if cfg.MountPerforce && cfg.PerforceServerAddr == "" {
-		return "", fmt.Errorf("PerforceServerAddr must not be empty when MountPerforce is true")
+		return fmt.Errorf("PerforceServerAddr must not be empty when MountPerforce is true")
+	}
+	return nil
+}
+
+// Generate renders the cloud-init script and returns it base64-encoded
+// (the format EC2 expects for UserData in Cloud Control).
+func Generate(cfg UserDataConfig) (string, error) {
+	cfg.applyDefaults()
+	if err := cfg.validate(); err != nil {
+		return "", err
 	}
 	return userDataRenderer.RenderBase64(cfg)
 }
@@ -70,14 +83,9 @@ func Generate(cfg UserDataConfig) (string, error) {
 // GenerateRaw renders the cloud-init script without base64 encoding.
 // Used in tests to inspect script content directly.
 func GenerateRaw(cfg UserDataConfig) (string, error) {
-	if cfg.SessionPassword == "" {
-		return "", fmt.Errorf("SessionPassword must not be empty")
-	}
-	if cfg.IdleTimeoutMinutes <= 0 {
-		cfg.IdleTimeoutMinutes = DefaultIdleTimeoutMinutes
-	}
-	if cfg.MountPerforce && cfg.PerforceServerAddr == "" {
-		return "", fmt.Errorf("PerforceServerAddr must not be empty when MountPerforce is true")
+	cfg.applyDefaults()
+	if err := cfg.validate(); err != nil {
+		return "", err
 	}
 	return userDataRenderer.Render(cfg)
 }
