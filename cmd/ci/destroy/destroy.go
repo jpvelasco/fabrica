@@ -9,7 +9,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
@@ -18,14 +17,10 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
-	"github.com/jpvelasco/fabrica/internal/stateutil"
 	"github.com/spf13/cobra"
 )
 
-const (
-	moduleName = "ci"
-	lineWidth  = 58
-)
+const moduleName = "ci"
 
 type command struct {
 	runtime     globals.Runtime
@@ -34,12 +29,6 @@ type command struct {
 	skipConfirm bool
 	jsonOut     bool
 	out         io.Writer
-
-	readState      func() (*fabricastate.State, error)
-	writeState     func(*fabricastate.State) error
-	deleteProject  func(ctx context.Context, name string) error
-	deleteResource func(ctx context.Context, r *cloud.Resource) error
-	confirm        func(string, string) bool
 }
 
 // New returns the "ci destroy" subcommand.
@@ -62,22 +51,11 @@ asked to type a confirmation phrase before any deletion; pass --yes to skip, or
 			}
 			opts := optionsSource()
 			c := command{
-				runtime:    rt,
-				dryRun:     opts.DryRun,
-				assumeYes:  opts.AssumeYes,
-				jsonOut:    opts.JSONOutput,
-				out:        out,
-				readState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-				writeState: fabricastate.WriteState,
-				confirm:    prompt.ConfirmExact,
-			}
-			if rt.Provider != nil {
-				if rc := rt.Provider.Resources(); rc != nil {
-					c.deleteResource = rc.Delete
-				}
-				if r, ok := rt.Provider.(cloud.CodeBuildRunner); ok {
-					c.deleteProject = r.DeleteProject
-				}
+				runtime:   rt,
+				dryRun:    opts.DryRun,
+				assumeYes: opts.AssumeYes,
+				jsonOut:   opts.JSONOutput,
+				out:       out,
 			}
 			return c.run(cmd.Context())
 		},
@@ -85,152 +63,80 @@ asked to type a confirmation phrase before any deletion; pass --yes to skip, or
 }
 
 func (c command) run(ctx context.Context) error {
-	st, err := c.readState()
-	if err != nil {
-		return fmt.Errorf("reading state: %w", err)
-	}
-	m := st.GetModule(moduleName)
-	if m == nil {
-		fmt.Fprintln(c.out, "CI is not provisioned. Nothing to destroy.")
-		return nil
-	}
-
-	project, hasProject := stateutil.ResourceByType(m, ci.TypeAWSCodeBuildProject)
-	role, hasRole := stateutil.ResourceByType(m, ci.TypeAWSIAMRole)
-
-	if c.dryRun {
-		c.printDryRun(project, hasProject, role, hasRole)
-		return nil
-	}
-
-	account := c.resolveAccount(st)
-
-	if !c.skipConfirm {
-		if !c.confirmDestroy(account, project, hasProject, role, hasRole) {
-			return nil
-		}
-	}
-
-	return c.apply(ctx, st, m, project, hasProject, role, hasRole)
+	tc := c.buildTeardown()
+	return tc.Run(ctx)
 }
 
-func (c command) printDryRun(project fabricastate.ModuleResource, hasProject bool, role fabricastate.ModuleResource, hasRole bool) {
-	fmt.Fprintln(c.out, "CI (destroy dry run)")
-	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	fmt.Fprintln(c.out, "Resources that would be deleted (in order):")
-	if hasProject {
-		fmt.Fprintf(c.out, "  1. %s: %s\n", ci.TypeAWSCodeBuildProject, project.Identifier)
+func (c command) buildTeardown() teardown.Command {
+	var deleteProjectFn func(ctx context.Context, name string) error
+	if c.runtime.Provider != nil {
+		if r, ok := c.runtime.Provider.(cloud.CodeBuildRunner); ok {
+			deleteProjectFn = r.DeleteProject
+		}
 	}
-	if hasRole {
-		fmt.Fprintf(c.out, "  2. %s: %s\n", ci.TypeAWSIAMRole, role.Identifier)
+	tc := teardown.Command{
+		Spec: teardown.Spec{
+			ModuleName:     moduleName,
+			Verb:           "destroy",
+			VersionLabel:   "Project",
+			Title:          "CI",
+			NotProvisioned: "CI is not provisioned. Nothing to destroy.",
+			PlanHeader:     "CI — destroy plan",
+			DryRunHeader:   "CI (destroy dry run)",
+			Irreversible:   "IRREVERSIBLE: deletes the CodeBuild project and IAM role.",
+			SuccessMessage: "CI infrastructure destroyed.",
+			ResourceOrder:  ciResourceOrder,
+		},
+		Runtime:     c.runtime,
+		DryRun:      c.dryRun,
+		AssumeYes:   c.assumeYes,
+		JSONOut:     c.jsonOut,
+		Out:         c.out,
+		SkipConfirm: c.skipConfirm,
+		Confirm:     prompt.ConfirmExact,
+		ReadState:   func() (*fabricastate.State, error) { return provision.ReadState(c.runtime) },
+		WriteState:  fabricastate.WriteState,
+		SDKDeleteFunc: func(ctx context.Context, typeName, identifier string) error {
+			if typeName == ci.TypeAWSCodeBuildProject {
+				if deleteProjectFn == nil {
+					return fmt.Errorf("cloud provider does not support CodeBuild project deletion — only AWS is supported in V1")
+				}
+				return deleteProjectFn(ctx, identifier)
+			}
+			// Not a CodeBuild resource — fall back to Cloud Control for IAM role.
+			return cloud.ErrNotHandled
+		},
 	}
-	fmt.Fprintln(c.out, "Run without --dry-run to proceed.")
+	teardown.WireProvider(&tc, c.runtime)
+	return tc
 }
 
-func (c command) resolveAccount(st *fabricastate.State) string {
-	account := st.Account
-	if c.runtime.Config != nil && c.runtime.Config.Cloud.AWS.AccountID != "" {
-		account = c.runtime.Config.Cloud.AWS.AccountID
-	}
-	return account
-}
-
-func (c command) confirmDestroy(account string, project fabricastate.ModuleResource, hasProject bool, role fabricastate.ModuleResource, hasRole bool) bool {
-	if c.assumeYes {
-		fmt.Fprintln(c.out, "Proceeding without interactive confirmation (--yes flag set).")
-		return true
-	}
-
-	phrase := fmt.Sprintf("destroy %s %s", moduleName, account)
-	fmt.Fprintln(c.out, "CI — destroy plan")
-	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	if hasProject {
-		fmt.Fprintf(c.out, "  CodeBuild project: %s\n", project.Identifier)
-	}
-	if hasRole {
-		fmt.Fprintf(c.out, "  IAM role:          %s\n", role.Identifier)
-	}
-	fmt.Fprintln(c.out, "IRREVERSIBLE: deletes the CodeBuild project and IAM role.")
-	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "Type this exact phrase to continue:\n\n  %s\n\n", phrase)
-	if !c.confirm("Enter confirmation phrase", phrase) {
-		fmt.Fprintln(c.out, "Cancelled. No AWS calls were made.")
-		return false
-	}
-	fmt.Fprintln(c.out, "Confirmation accepted.")
-	return true
-}
-
-func (c command) apply(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, project fabricastate.ModuleResource, hasProject bool, role fabricastate.ModuleResource, hasRole bool) error {
-	if hasProject {
-		if c.deleteProject == nil {
-			return fmt.Errorf("cloud provider does not support CodeBuild project deletion — only AWS is supported in V1")
-		}
-		fmt.Fprintf(c.out, "Deleting CodeBuild project %s...\n", project.Identifier)
-		if err := c.deleteProject(ctx, project.Identifier); err != nil {
-			return fmt.Errorf("deleting CodeBuild project %s: %w", project.Identifier, err)
-		}
-		fmt.Fprintf(c.out, "  Deleted: %s\n", project.Identifier)
-		c.removeAndPersist(st, m, ci.TypeAWSCodeBuildProject)
-	}
-
-	if hasRole {
-		if c.deleteResource == nil {
-			return fmt.Errorf("no provider configured; run 'fabrica setup' first")
-		}
-		fmt.Fprintf(c.out, "Deleting IAM role %s...\n", role.Identifier)
-		r := &cloud.Resource{TypeName: ci.TypeAWSIAMRole, Identifier: role.Identifier}
-		if err := c.deleteResource(ctx, r); err != nil {
-			return fmt.Errorf("deleting IAM role %s: %w", role.Identifier, err)
-		}
-		fmt.Fprintf(c.out, "  Deleted: %s\n", role.Identifier)
-		c.removeAndPersist(st, m, ci.TypeAWSIAMRole)
-	}
-
-	teardown.RemoveModule(st, moduleName)
-	if err := c.writeState(st); err != nil {
-		fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
-	}
-	fmt.Fprintln(c.out, "CI infrastructure destroyed.")
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Next steps:")
-	fmt.Fprintln(c.out, "  fabrica ci setup           Re-provision CI when you need it again")
-	return nil
-}
-
-func (c command) removeAndPersist(st *fabricastate.State, m *fabricastate.ModuleState, typeName string) {
-	filtered := m.Resources[:0]
-	for _, r := range m.Resources {
-		if r.TypeName != typeName {
-			filtered = append(filtered, r)
+// ciResourceOrder returns the deletion-ordered resources for the CI module:
+// CodeBuild project first, then IAM role.
+func ciResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
+	var project, role *fabricastate.ModuleResource
+	for i := range m.Resources {
+		switch m.Resources[i].TypeName {
+		case ci.TypeAWSCodeBuildProject:
+			project = &m.Resources[i]
+		case ci.TypeAWSIAMRole:
+			role = &m.Resources[i]
 		}
 	}
-	m.Resources = filtered
-	st.UpsertModule(moduleName, m.Version, "destroying", m.Resources)
-	if err := c.writeState(st); err != nil {
-		fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
+	var out []cloud.Resource
+	if project != nil {
+		out = append(out, cloud.Resource{TypeName: project.TypeName, Identifier: project.Identifier})
 	}
+	if role != nil {
+		out = append(out, cloud.Resource{TypeName: role.TypeName, Identifier: role.Identifier})
+	}
+	return out
 }
 
 // RunOrchestrated runs the CI teardown with confirmation skipped, for use by
 // `fabrica destroy --all`. The aggregate confirmation is handled by the orchestrator.
 func RunOrchestrated(ctx context.Context, rt globals.Runtime, out io.Writer) error {
-	c := command{
-		runtime:     rt,
-		skipConfirm: true,
-		assumeYes:   true,
-		out:         out,
-		readState:   func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-		writeState:  fabricastate.WriteState,
-		confirm:     prompt.ConfirmExact,
-	}
-	if rt.Provider != nil {
-		if rc := rt.Provider.Resources(); rc != nil {
-			c.deleteResource = rc.Delete
-		}
-		if r, ok := rt.Provider.(cloud.CodeBuildRunner); ok {
-			c.deleteProject = r.DeleteProject
-		}
-	}
-	return c.run(ctx)
+	c := command{runtime: rt, skipConfirm: true, assumeYes: true, out: out}
+	tc := c.buildTeardown()
+	return tc.Run(ctx)
 }

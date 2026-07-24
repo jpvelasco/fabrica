@@ -100,8 +100,6 @@ func TestCIDestroyCobraYesFlagDestroysResources(t *testing.T) {
 		t.Errorf("expected 1 role delete call, got %d", provider.roleDeleteCalls)
 	}
 	testutil.AssertContains(t, got, "destroyed")
-	testutil.AssertContains(t, got, "Next steps:")
-	testutil.AssertContains(t, got, "fabrica ci setup")
 }
 
 // TestCIDestroyCobraJSONNotProvisioned verifies --json output when not provisioned.
