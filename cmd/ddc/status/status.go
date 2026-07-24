@@ -1,7 +1,6 @@
 package status
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -22,15 +21,10 @@ const (
 
 // StatusOutput is the JSON view of DDC status (single home-region).
 type StatusOutput struct {
-	Provisioned  bool   `json:"provisioned"`
-	Status       string `json:"status"`
-	InstanceID   string `json:"instanceId,omitempty"`
-	SGID         string `json:"sgId,omitempty"`
-	InstanceType string `json:"instanceType,omitempty"`
-	PrivateIP    string `json:"privateIp,omitempty"`
-	PublicURL    string `json:"publicUrl,omitempty"`
-	DDCStatus    string `json:"ddcStatus,omitempty"`
-	Backend      string `json:"backend,omitempty"`
+	modstatus.BaseStatusOutput
+	PublicURL string `json:"publicUrl,omitempty"`
+	DDCStatus string `json:"ddcStatus,omitempty"`
+	Backend   string `json:"backend,omitempty"`
 }
 
 type renderer struct {
@@ -109,7 +103,7 @@ func (renderer) NotProvisioned(out io.Writer, jsonOut bool) {
 		modstatus.WriteNotProvisionedJSON(out)
 		return
 	}
-	fmt.Fprintln(out, "DDC is not provisioned. Run 'fabrica ddc setup' to set it up.")
+	modstatus.WriteNotProvisionedText(out, "DDC", "fabrica ddc setup")
 }
 
 func (r renderer) Result(out io.Writer, info modstatus.Info, jsonOut bool) {
@@ -130,44 +124,18 @@ func (r renderer) printText(out io.Writer, info modstatus.Info) {
 		fmt.Fprintf(out, "  Public URL:    http://%s:%d\n", info.PrivateIP, r.publicPort)
 		fmt.Fprintf(out, "  Health:        http://%s:%d/health/ready\n", info.PrivateIP, r.publicPort)
 	}
-	if info.SGID != "" {
-		fmt.Fprintf(out, "  Security Group: %s\n", info.SGID)
-	}
-	if info.ProbeAttempted {
-		if info.Reachable {
-			fmt.Fprintln(out, "  DDC:           responding (/health/ready)")
-		} else {
-			fmt.Fprintln(out, "  DDC:           unreachable from this machine (check VPN/network)")
-		}
-	} else if info.ModuleStatus == "provisioning" {
-		fmt.Fprintln(out, "  DDC:           setting up...")
-	}
+	modstatus.WriteSecurityGroup(out, info.SGID)
+	modstatus.WriteProbeStatusText(out, info, "DDC", "")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "  Note: V1 is single home-region only (no multi-region edges).")
 }
 
 func (r renderer) printJSON(out io.Writer, info modstatus.Info) {
-	o := StatusOutput{
-		Provisioned:  true,
-		Status:       info.ModuleStatus,
-		InstanceID:   info.InstanceID,
-		SGID:         info.SGID,
-		InstanceType: info.InstanceType,
-		PrivateIP:    info.PrivateIP,
-		Backend:      r.backend,
-	}
+	o := StatusOutput{Backend: r.backend}
+	o.BaseStatusOutput = modstatus.NewBaseStatusOutput(info)
 	if info.PrivateIP != "" {
 		o.PublicURL = fmt.Sprintf("http://%s:%d", info.PrivateIP, r.publicPort)
 	}
-	if info.ProbeAttempted {
-		if info.Reachable {
-			o.DDCStatus = "responding"
-		} else {
-			o.DDCStatus = "unreachable"
-		}
-	} else if info.ModuleStatus == "provisioning" {
-		o.DDCStatus = "setting up"
-	}
-	data, _ := json.MarshalIndent(o, "", "  ")
-	fmt.Fprintln(out, string(data))
+	o.DDCStatus = modstatus.ProbeStatus(info)
+	modstatus.WriteJSON(out, o)
 }

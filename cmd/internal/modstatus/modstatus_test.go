@@ -439,3 +439,164 @@ func TestWriteNotProvisionedJSON(t *testing.T) {
 		t.Fatalf("expected status=not_provisioned, got %v", result["status"])
 	}
 }
+
+func TestWriteNotProvisionedText(t *testing.T) {
+	var buf bytes.Buffer
+	WriteNotProvisionedText(&buf, "Perforce", "fabrica perforce create")
+	out := buf.String()
+	if !strings.Contains(out, "Perforce is not provisioned") {
+		t.Errorf("missing module name: %q", out)
+	}
+	if !strings.Contains(out, "fabrica perforce create") {
+		t.Errorf("missing create command: %q", out)
+	}
+}
+
+func TestWriteSecurityGroup(t *testing.T) {
+	t.Run("with sg id", func(t *testing.T) {
+		var buf bytes.Buffer
+		WriteSecurityGroup(&buf, "sg-abc123")
+		if !strings.Contains(buf.String(), "sg-abc123") {
+			t.Errorf("missing sg id: %q", buf.String())
+		}
+	})
+	t.Run("empty sg id", func(t *testing.T) {
+		var buf bytes.Buffer
+		WriteSecurityGroup(&buf, "")
+		if buf.Len() > 0 {
+			t.Errorf("expected empty output: %q", buf.String())
+		}
+	})
+}
+
+func TestWriteProbeStatusText(t *testing.T) {
+	t.Run("reachable with version", func(t *testing.T) {
+		var buf bytes.Buffer
+		info := Info{ProbeAttempted: true, Reachable: true}
+		WriteProbeStatusText(&buf, info, "Helix Core", "2024.2")
+		out := buf.String()
+		if !strings.Contains(out, "responding") || !strings.Contains(out, "2024.2") {
+			t.Errorf("unexpected output: %q", out)
+		}
+	})
+	t.Run("reachable without version", func(t *testing.T) {
+		var buf bytes.Buffer
+		info := Info{ProbeAttempted: true, Reachable: true}
+		WriteProbeStatusText(&buf, info, "Horde", "")
+		if !strings.Contains(buf.String(), "Horde:    responding") {
+			t.Errorf("unexpected output: %q", buf.String())
+		}
+	})
+	t.Run("unreachable", func(t *testing.T) {
+		var buf bytes.Buffer
+		info := Info{ProbeAttempted: true, Reachable: false}
+		WriteProbeStatusText(&buf, info, "Lore", "")
+		if !strings.Contains(buf.String(), "unreachable from this machine") {
+			t.Errorf("unexpected output: %q", buf.String())
+		}
+	})
+	t.Run("provisioning", func(t *testing.T) {
+		var buf bytes.Buffer
+		info := Info{ModuleStatus: "provisioning"}
+		WriteProbeStatusText(&buf, info, "DDC", "")
+		if !strings.Contains(buf.String(), "setting up") {
+			t.Errorf("unexpected output: %q", buf.String())
+		}
+	})
+	t.Run("no probe no provisioning", func(t *testing.T) {
+		var buf bytes.Buffer
+		info := Info{ModuleStatus: "ready"}
+		WriteProbeStatusText(&buf, info, "DDC", "")
+		if buf.Len() > 0 {
+			t.Errorf("expected empty output: %q", buf.String())
+		}
+	})
+}
+
+func TestProbeStatus(t *testing.T) {
+	t.Run("responding", func(t *testing.T) {
+		info := Info{ProbeAttempted: true, Reachable: true}
+		if got := ProbeStatus(info); got != "responding" {
+			t.Errorf("ProbeStatus = %q, want responding", got)
+		}
+	})
+	t.Run("unreachable", func(t *testing.T) {
+		info := Info{ProbeAttempted: true, Reachable: false}
+		if got := ProbeStatus(info); got != "unreachable" {
+			t.Errorf("ProbeStatus = %q, want unreachable", got)
+		}
+	})
+	t.Run("setting up", func(t *testing.T) {
+		info := Info{ModuleStatus: "provisioning"}
+		if got := ProbeStatus(info); got != "setting up" {
+			t.Errorf("ProbeStatus = %q, want setting up", got)
+		}
+	})
+	t.Run("no probe info", func(t *testing.T) {
+		info := Info{ModuleStatus: "ready"}
+		if got := ProbeStatus(info); got != "" {
+			t.Errorf("ProbeStatus = %q, want empty", got)
+		}
+	})
+}
+
+func TestNewBaseStatusOutput(t *testing.T) {
+	info := Info{
+		ModuleStatus: "ready",
+		InstanceID:   "i-abc",
+		SGID:         "sg-xyz",
+		InstanceType: "m5.xlarge",
+		PrivateIP:    "10.0.1.1",
+	}
+	b := NewBaseStatusOutput(info)
+	if b.Provisioned != true {
+		t.Error("Provisioned should be true")
+	}
+	if b.Status != "ready" {
+		t.Errorf("Status = %q, want ready", b.Status)
+	}
+	if b.InstanceID != "i-abc" {
+		t.Errorf("InstanceID = %q, want i-abc", b.InstanceID)
+	}
+	if b.SGID != "sg-xyz" {
+		t.Errorf("SGID = %q, want sg-xyz", b.SGID)
+	}
+	if b.InstanceType != "m5.xlarge" {
+		t.Errorf("InstanceType = %q, want m5.xlarge", b.InstanceType)
+	}
+	if b.PrivateIP != "10.0.1.1" {
+		t.Errorf("PrivateIP = %q, want 10.0.1.1", b.PrivateIP)
+	}
+}
+
+func TestBaseStatusOutputFillFromInfo(t *testing.T) {
+	b := BaseStatusOutput{}
+	info := Info{
+		ModuleStatus: "provisioning",
+		InstanceID:   "i-123",
+		PrivateIP:    "10.0.2.2",
+	}
+	b.FillFromInfo(info)
+	if b.Provisioned != true {
+		t.Error("Provisioned should be true")
+	}
+	if b.Status != "provisioning" {
+		t.Errorf("Status = %q, want provisioning", b.Status)
+	}
+	if b.InstanceID != "i-123" {
+		t.Errorf("InstanceID = %q, want i-123", b.InstanceID)
+	}
+}
+
+func TestWriteJSON(t *testing.T) {
+	var buf bytes.Buffer
+	WriteJSON(&buf, map[string]any{"key": "value", "nested": map[string]any{"a": 1}})
+	out := buf.String()
+	if !strings.Contains(out, `"key": "value"`) {
+		t.Errorf("missing key: %q", out)
+	}
+	// Verify it's indented
+	if !strings.Contains(out, "  ") {
+		t.Error("expected indented JSON")
+	}
+}

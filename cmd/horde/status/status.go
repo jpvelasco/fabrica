@@ -1,7 +1,6 @@
 package status
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -24,15 +23,10 @@ const (
 
 // StatusOutput is the JSON-serialisable view of a Horde status.
 type StatusOutput struct {
-	Provisioned  bool   `json:"provisioned"`
-	Status       string `json:"status"`
-	InstanceID   string `json:"instanceId,omitempty"`
-	SGID         string `json:"sgId,omitempty"`
-	InstanceType string `json:"instanceType,omitempty"`
-	PrivateIP    string `json:"privateIp,omitempty"`
-	HordeURL     string `json:"hordeUrl,omitempty"`
-	HordeGRPC    string `json:"hordeGrpc,omitempty"`
-	HordeStatus  string `json:"hordeStatus,omitempty"` // "responding" | "unreachable" | "setting up"
+	modstatus.BaseStatusOutput
+	HordeURL    string `json:"hordeUrl,omitempty"`
+	HordeGRPC   string `json:"hordeGrpc,omitempty"`
+	HordeStatus string `json:"hordeStatus,omitempty"` // "responding" | "unreachable" | "setting up"
 }
 
 // renderer implements modstatus.Renderer for Horde-specific output. It carries
@@ -115,7 +109,7 @@ func (renderer) NotProvisioned(out io.Writer, jsonOut bool) {
 		modstatus.WriteNotProvisionedJSON(out)
 		return
 	}
-	fmt.Fprintln(out, "Horde is not provisioned. Run 'fabrica horde create' to set it up.")
+	modstatus.WriteNotProvisionedText(out, "Horde", "fabrica horde create")
 }
 
 func (r renderer) Result(out io.Writer, info modstatus.Info, jsonOut bool) {
@@ -136,46 +130,19 @@ func (r renderer) printText(out io.Writer, info modstatus.Info) {
 		fmt.Fprintf(out, "  Horde HTTP:    http://%s:%d\n", info.PrivateIP, r.port)
 		fmt.Fprintf(out, "  Horde gRPC:    %s:%d\n", info.PrivateIP, r.grpcPort)
 	}
-
-	if info.SGID != "" {
-		fmt.Fprintf(out, "  Security Group: %s\n", info.SGID)
-	}
-
-	if info.ProbeAttempted {
-		if info.Reachable {
-			fmt.Fprintln(out, "  Horde:         responding")
-		} else {
-			fmt.Fprintln(out, "  Horde:         unreachable from this machine (check VPN/network)")
-		}
-	} else if info.ModuleStatus == "provisioning" {
-		fmt.Fprintln(out, "  Horde:         setting up... (~3 min from launch)")
-	}
+	modstatus.WriteSecurityGroup(out, info.SGID)
+	modstatus.WriteProbeStatusText(out, info, "Horde", "")
 }
 
 func (r renderer) printJSON(out io.Writer, info modstatus.Info) {
-	o := StatusOutput{
-		Provisioned:  true,
-		Status:       info.ModuleStatus,
-		InstanceID:   info.InstanceID,
-		SGID:         info.SGID,
-		InstanceType: info.InstanceType,
-		PrivateIP:    info.PrivateIP,
-	}
+	o := StatusOutput{}
+	o.BaseStatusOutput = modstatus.NewBaseStatusOutput(info)
 	if info.PrivateIP != "" {
 		o.HordeURL = fmt.Sprintf("http://%s:%d", info.PrivateIP, r.port)
 		o.HordeGRPC = fmt.Sprintf("%s:%d", info.PrivateIP, r.grpcPort)
 	}
-	if info.ProbeAttempted {
-		if info.Reachable {
-			o.HordeStatus = "responding"
-		} else {
-			o.HordeStatus = "unreachable"
-		}
-	} else if info.ModuleStatus == "provisioning" {
-		o.HordeStatus = "setting up"
-	}
-	data, _ := json.MarshalIndent(o, "", "  ")
-	fmt.Fprintln(out, string(data))
+	o.HordeStatus = modstatus.ProbeStatus(info)
+	modstatus.WriteJSON(out, o)
 }
 
 func readState(rt globals.Runtime) (*fabricastate.State, error) {

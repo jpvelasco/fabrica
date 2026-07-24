@@ -261,3 +261,94 @@ func WriteNotProvisionedJSON(out io.Writer) {
 	})
 	fmt.Fprintln(out, string(data))
 }
+
+// WriteNotProvisionedText writes the standard not-provisioned text output.
+// moduleName is the display name (e.g. "Perforce", "Horde"),
+// createCmd is the command to run (e.g. "fabrica perforce create").
+func WriteNotProvisionedText(out io.Writer, moduleName, createCmd string) {
+	fmt.Fprintf(out, "%s is not provisioned. Run '%s' to set it up.\n", moduleName, createCmd)
+}
+
+// WriteJSON marshals v as indented JSON and writes it to out.
+// Call this from each module's printJSON instead of duplicating the marshal+print.
+func WriteJSON(out io.Writer, v any) {
+	data, _ := json.MarshalIndent(v, "", "  ")
+	fmt.Fprintln(out, string(data))
+}
+
+// WriteSecurityGroup writes the SG ID line if present.
+func WriteSecurityGroup(out io.Writer, sgID string) {
+	if sgID != "" {
+		fmt.Fprintf(out, "  Security Group: %s\n", sgID)
+	}
+}
+
+// WriteProbeStatusText renders the probe reachability status in text form.
+// label is the module-specific label (e.g. "Helix Core", "Horde", "Lore", "DDC").
+// version is optional — if non-empty it is appended to the responding line.
+func WriteProbeStatusText(out io.Writer, info Info, label, version string) {
+	if info.ProbeAttempted {
+		if info.Reachable {
+			if version != "" {
+				fmt.Fprintf(out, "  %s:    %s (responding)\n", label, version)
+				return
+			}
+			fmt.Fprintln(out, "  "+label+":    responding")
+			return
+		}
+		fmt.Fprintln(out, "  "+label+":    unreachable from this machine (check VPN/network)")
+		return
+	}
+	if info.ModuleStatus == "provisioning" {
+		fmt.Fprintln(out, "  "+label+":    setting up... (~3 min from launch)")
+	}
+}
+
+// ProbeStatus returns the probe status string for JSON output.
+// Returns "responding", "unreachable", "setting up", or "" (no probe info).
+func ProbeStatus(info Info) string {
+	if info.ProbeAttempted {
+		if info.Reachable {
+			return "responding"
+		}
+		return "unreachable"
+	}
+	if info.ModuleStatus == "provisioning" {
+		return "setting up"
+	}
+	return ""
+}
+
+// BaseStatusOutput contains the common fields shared by all EC2-instance
+// StatusOutput structs. Embed this in module-specific output types.
+type BaseStatusOutput struct {
+	Provisioned  bool   `json:"provisioned"`
+	Status       string `json:"status"`
+	InstanceID   string `json:"instanceId,omitempty"`
+	SGID         string `json:"sgId,omitempty"`
+	InstanceType string `json:"instanceType,omitempty"`
+	PrivateIP    string `json:"privateIp,omitempty"`
+}
+
+// NewBaseStatusOutput creates a BaseStatusOutput from an Info.
+func NewBaseStatusOutput(info Info) BaseStatusOutput {
+	return BaseStatusOutput{
+		Provisioned:  true,
+		Status:       info.ModuleStatus,
+		InstanceID:   info.InstanceID,
+		SGID:         info.SGID,
+		InstanceType: info.InstanceType,
+		PrivateIP:    info.PrivateIP,
+	}
+}
+
+// FillFromInfo populates the common fields from an Info.
+// Useful when the struct is not using embedding.
+func (b *BaseStatusOutput) FillFromInfo(info Info) {
+	b.Provisioned = true
+	b.Status = info.ModuleStatus
+	b.InstanceID = info.InstanceID
+	b.SGID = info.SGID
+	b.InstanceType = info.InstanceType
+	b.PrivateIP = info.PrivateIP
+}

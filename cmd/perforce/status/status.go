@@ -1,7 +1,6 @@
 package status
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -22,13 +21,8 @@ const (
 
 // StatusOutput is the JSON-serialisable view of a Perforce status.
 type StatusOutput struct {
-	Provisioned  bool   `json:"provisioned"`
-	Status       string `json:"status"`
-	InstanceID   string `json:"instanceId,omitempty"`
-	SGID         string `json:"sgId,omitempty"`
+	modstatus.BaseStatusOutput
 	Version      string `json:"version,omitempty"`
-	InstanceType string `json:"instanceType,omitempty"`
-	PrivateIP    string `json:"privateIp,omitempty"`
 	P4PORT       string `json:"p4port,omitempty"`
 	HelixCore    string `json:"helixCore,omitempty"`
 	LastBackupId string `json:"lastBackupId,omitempty"`
@@ -94,7 +88,7 @@ func (renderer) NotProvisioned(out io.Writer, jsonOut bool) {
 		modstatus.WriteNotProvisionedJSON(out)
 		return
 	}
-	fmt.Fprintln(out, "Perforce is not provisioned. Run 'fabrica perforce create' to set it up.")
+	modstatus.WriteNotProvisionedText(out, "Perforce", "fabrica perforce create")
 }
 
 func (renderer) Result(out io.Writer, info modstatus.Info, jsonOut bool) {
@@ -110,37 +104,16 @@ func printText(out io.Writer, info modstatus.Info) {
 	fmt.Fprintln(out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(out, "  Status:        %s\n", info.ModuleStatus)
 
-	printInstanceFields(out, info)
-	printHelixCoreStatus(out, info)
-	printBackupStatus(out, info)
-}
-
-func printInstanceFields(out io.Writer, info modstatus.Info) {
 	modstatus.WriteCommonFields(out, info)
 	if info.PrivateIP != "" {
 		fmt.Fprintf(out, "  P4PORT:        tcp:%s:%d\n", info.PrivateIP, p4Port)
 	}
-	if info.SGID != "" {
-		fmt.Fprintf(out, "  Security Group: %s\n", info.SGID)
-	}
+	modstatus.WriteSecurityGroup(out, info.SGID)
 	if info.Version != "" {
 		fmt.Fprintf(out, "  Version:       %s\n", info.Version)
 	}
-}
-
-func printHelixCoreStatus(out io.Writer, info modstatus.Info) {
-	if info.ProbeAttempted {
-		if info.Reachable {
-			fmt.Fprintf(out, "  Helix Core:    %s (responding)\n", info.Version)
-			return
-		}
-		fmt.Fprintln(out, "  Helix Core:    unreachable from this machine (check VPN/network)")
-		return
-	}
-	if info.ModuleStatus == "provisioning" {
-		fmt.Fprintln(out, "  Helix Core:    setting up... (~3 min from launch)")
-		return
-	}
+	modstatus.WriteProbeStatusText(out, info, "Helix Core", info.Version)
+	printBackupStatus(out, info)
 }
 
 func printBackupStatus(out io.Writer, info modstatus.Info) {
@@ -157,30 +130,16 @@ func printBackupStatus(out io.Writer, info modstatus.Info) {
 
 func printJSON(out io.Writer, info modstatus.Info) {
 	o := StatusOutput{
-		Provisioned:  true,
-		Status:       info.ModuleStatus,
-		InstanceID:   info.InstanceID,
-		SGID:         info.SGID,
 		Version:      info.Version,
-		InstanceType: info.InstanceType,
-		PrivateIP:    info.PrivateIP,
 		LastBackupId: info.LastBackupId,
 		LastBackupAt: info.LastBackupAt,
 	}
+	o.BaseStatusOutput = modstatus.NewBaseStatusOutput(info)
 	if info.PrivateIP != "" {
 		o.P4PORT = fmt.Sprintf("tcp:%s:%d", info.PrivateIP, p4Port)
 	}
-	if info.ProbeAttempted {
-		if info.Reachable {
-			o.HelixCore = "responding"
-		} else {
-			o.HelixCore = "unreachable"
-		}
-	} else if info.ModuleStatus == "provisioning" {
-		o.HelixCore = "setting up"
-	}
-	data, _ := json.MarshalIndent(o, "", "  ")
-	fmt.Fprintln(out, string(data))
+	o.HelixCore = modstatus.ProbeStatus(info)
+	modstatus.WriteJSON(out, o)
 }
 
 func readState(rt globals.Runtime) (*fabricastate.State, error) {
