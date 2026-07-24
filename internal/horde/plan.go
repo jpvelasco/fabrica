@@ -10,11 +10,6 @@ import (
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
 
-const (
-	TypeAWSEC2Instance = "AWS::EC2::Instance"
-	TypeAWSEC2Volume   = "AWS::EC2::Volume"
-)
-
 type CreatePlan struct {
 	Account      string
 	Region       string

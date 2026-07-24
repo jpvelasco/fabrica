@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
@@ -79,7 +80,7 @@ func TestNewCreatePlan_CostResourceTypeNames(t *testing.T) {
 	for _, r := range plan.CostResources {
 		typeNames[r.TypeName] = true
 	}
-	for _, want := range []string{"AWS::EC2::Instance", "AWS::EC2::Volume"} {
+	for _, want := range []string{cloud.TypeAWSEC2Instance, cloud.TypeAWSEC2Volume} {
 		if !typeNames[want] {
 			t.Errorf("CostResources missing TypeName %q", want)
 		}
@@ -238,10 +239,10 @@ func TestNewCreatePlan_CostResourceNamesReflectInputs(t *testing.T) {
 	}
 	var foundInstance, foundVolume bool
 	for _, r := range plan.CostResources {
-		if r.TypeName == "AWS::EC2::Instance" && r.Name == "c5.2xlarge" {
+		if r.TypeName == cloud.TypeAWSEC2Instance && r.Name == "c5.2xlarge" {
 			foundInstance = true
 		}
-		if r.TypeName == "AWS::EC2::Volume" && r.Name == "gp3-1000GiB" {
+		if r.TypeName == cloud.TypeAWSEC2Volume && r.Name == "gp3-1000GiB" {
 			foundVolume = true
 		}
 	}

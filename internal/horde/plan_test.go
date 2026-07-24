@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/assert"
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
@@ -149,14 +150,14 @@ func TestNewCreatePlanCostResources(t *testing.T) {
 	if len(plan.CostResources) != 2 {
 		t.Fatalf("CostResources len = %d, want 2", len(plan.CostResources))
 	}
-	if plan.CostResources[0].TypeName != TypeAWSEC2Instance {
-		t.Errorf("CostResources[0].TypeName = %q, want %q", plan.CostResources[0].TypeName, TypeAWSEC2Instance)
+	if plan.CostResources[0].TypeName != cloud.TypeAWSEC2Instance {
+		t.Errorf("CostResources[0].TypeName = %q, want %q", plan.CostResources[0].TypeName, cloud.TypeAWSEC2Instance)
 	}
 	if plan.CostResources[0].Name != "m7i.2xlarge" {
 		t.Errorf("CostResources[0].Name = %q, want m7i.2xlarge", plan.CostResources[0].Name)
 	}
-	if plan.CostResources[1].TypeName != TypeAWSEC2Volume {
-		t.Errorf("CostResources[1].TypeName = %q, want %q", plan.CostResources[1].TypeName, TypeAWSEC2Volume)
+	if plan.CostResources[1].TypeName != cloud.TypeAWSEC2Volume {
+		t.Errorf("CostResources[1].TypeName = %q, want %q", plan.CostResources[1].TypeName, cloud.TypeAWSEC2Volume)
 	}
 	if plan.CostResources[1].Name != "gp3-100GiB" {
 		t.Errorf("CostResources[1].Name = %q, want gp3-100GiB", plan.CostResources[1].Name)

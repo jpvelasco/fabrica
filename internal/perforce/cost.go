@@ -3,17 +3,14 @@ package perforce
 import (
 	"fmt"
 
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/ec2cost"
 )
 
-const (
-	TypeAWSEC2Instance = "AWS::EC2::Instance"
-	TypeAWSEC2Volume   = "AWS::EC2::Volume"
-
-	// gp3 EBS pricing: $0.08/GiB-month (us-east-1).
-	gp3PricePerGiB = 0.08
-)
+// gp3 EBS pricing: $0.08/GiB-month (us-east-1).
+const gp3PricePerGiB = 0.08
 
 // ec2InstancePrices is an on-demand price table for common instance types
 // (us-east-1, Linux, on-demand). Source: AWS pricing as of 2024-Q4.
@@ -93,13 +90,10 @@ func CostResources(cfg config.PerforceConfig) []cost.Resource {
 	if volumeSize <= 0 {
 		volumeSize = 500
 	}
-	return []cost.Resource{
-		{TypeName: TypeAWSEC2Instance, Name: instanceType},
-		{TypeName: TypeAWSEC2Volume, Name: fmt.Sprintf("gp3-%dGiB", volumeSize)},
-	}
+	return ec2cost.InstanceAndVolume(instanceType, volumeSize)
 }
 
 func init() {
-	cost.Global.Register(TypeAWSEC2Instance, ec2InstanceEstimator{})
-	cost.Global.Register(TypeAWSEC2Volume, ec2VolumeEstimator{})
+	cost.Global.Register(cloud.TypeAWSEC2Instance, ec2InstanceEstimator{})
+	cost.Global.Register(cloud.TypeAWSEC2Volume, ec2VolumeEstimator{})
 }

@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
 )
 
 func TestEC2InstanceEstimator_KnownType(t *testing.T) {
 	e := ec2InstanceEstimator{}
-	got, err := e.Estimate(cost.Resource{TypeName: TypeAWSEC2Instance, Name: "m5.xlarge"})
+	got, err := e.Estimate(cost.Resource{TypeName: cloud.TypeAWSEC2Instance, Name: "m5.xlarge"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -25,7 +26,7 @@ func TestEC2InstanceEstimator_KnownType(t *testing.T) {
 
 func TestEC2InstanceEstimator_UnknownType(t *testing.T) {
 	e := ec2InstanceEstimator{}
-	_, err := e.Estimate(cost.Resource{TypeName: TypeAWSEC2Instance, Name: "z99.ultraxl"})
+	_, err := e.Estimate(cost.Resource{TypeName: cloud.TypeAWSEC2Instance, Name: "z99.ultraxl"})
 	if err == nil {
 		t.Error("expected error for unknown instance type")
 	}
@@ -33,7 +34,7 @@ func TestEC2InstanceEstimator_UnknownType(t *testing.T) {
 
 func TestEC2VolumeEstimator_500GiB(t *testing.T) {
 	e := ec2VolumeEstimator{}
-	got, err := e.Estimate(cost.Resource{TypeName: TypeAWSEC2Volume, Name: "gp3-500GiB"})
+	got, err := e.Estimate(cost.Resource{TypeName: cloud.TypeAWSEC2Volume, Name: "gp3-500GiB"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -48,7 +49,7 @@ func TestEC2VolumeEstimator_500GiB(t *testing.T) {
 
 func TestEC2VolumeEstimator_InvalidName(t *testing.T) {
 	e := ec2VolumeEstimator{}
-	_, err := e.Estimate(cost.Resource{TypeName: TypeAWSEC2Volume, Name: "unknown"})
+	_, err := e.Estimate(cost.Resource{TypeName: cloud.TypeAWSEC2Volume, Name: "unknown"})
 	if err == nil {
 		t.Error("expected error for unparseable volume name")
 	}
@@ -72,7 +73,7 @@ func TestEC2InstanceEstimator_AllKnownTypes(t *testing.T) {
 	e := ec2InstanceEstimator{}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := e.Estimate(cost.Resource{TypeName: TypeAWSEC2Instance, Name: tc.name})
+			got, err := e.Estimate(cost.Resource{TypeName: cloud.TypeAWSEC2Instance, Name: tc.name})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -104,7 +105,7 @@ func TestEC2VolumeEstimator_VariousSizes(t *testing.T) {
 	for _, tc := range cases {
 		name := fmt.Sprintf("gp3-%dGiB", tc.gib)
 		t.Run(name, func(t *testing.T) {
-			got, err := e.Estimate(cost.Resource{TypeName: TypeAWSEC2Volume, Name: name})
+			got, err := e.Estimate(cost.Resource{TypeName: cloud.TypeAWSEC2Volume, Name: name})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -123,7 +124,7 @@ func TestCostRegistryDuplicatePanics(t *testing.T) {
 		}
 	}()
 	// init() already registered these; registering again must panic.
-	cost.Global.Register(TypeAWSEC2Instance, ec2InstanceEstimator{})
+	cost.Global.Register(cloud.TypeAWSEC2Instance, ec2InstanceEstimator{})
 }
 
 func TestGPUInstancePrices(t *testing.T) {
@@ -136,8 +137,8 @@ func TestGPUInstancePrices(t *testing.T) {
 		{"g5.xlarge", 1.006},
 		{"g5.2xlarge", 1.212},
 	} {
-		r := cost.Resource{TypeName: TypeAWSEC2Instance, Name: tc.typ}
-		got, err := cost.Global.Estimate(TypeAWSEC2Instance, r)
+		r := cost.Resource{TypeName: cloud.TypeAWSEC2Instance, Name: tc.typ}
+		got, err := cost.Global.Estimate(cloud.TypeAWSEC2Instance, r)
 		if err != nil {
 			t.Errorf("%s: %v", tc.typ, err)
 			continue
@@ -154,10 +155,10 @@ func TestCostResourcesDefaults(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("want 2 resources, got %d: %+v", len(got), got)
 	}
-	if got[0].TypeName != TypeAWSEC2Instance || got[0].Name != "m5.xlarge" {
+	if got[0].TypeName != cloud.TypeAWSEC2Instance || got[0].Name != "m5.xlarge" {
 		t.Errorf("instance: got %+v", got[0])
 	}
-	if got[1].TypeName != TypeAWSEC2Volume || got[1].Name != "gp3-500GiB" {
+	if got[1].TypeName != cloud.TypeAWSEC2Volume || got[1].Name != "gp3-500GiB" {
 		t.Errorf("volume: got %+v", got[1])
 	}
 }
