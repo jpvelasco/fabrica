@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/jpvelasco/fabrica/internal/ec2state"
+	"github.com/jpvelasco/fabrica/internal/iamrole"
 )
 
 // SGDesiredState returns the Cloud Control desired-state JSON for the Perforce
@@ -55,22 +56,10 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 		"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
 	}
 	doc := map[string]any{
-		"RoleName": plan.RoleName,
-		"AssumeRolePolicyDocument": map[string]any{
-			"Version": "2012-10-17",
-			"Statement": []map[string]any{
-				{
-					"Effect":    "Allow",
-					"Principal": map[string]any{"Service": "ec2.amazonaws.com"},
-					"Action":    "sts:AssumeRole",
-				},
-			},
-		},
-		"ManagedPolicyArns": managed,
-		"Tags": []map[string]string{
-			{"Key": "ManagedBy", "Value": "fabrica"},
-			{"Key": "Name", "Value": plan.RoleName},
-		},
+		"RoleName":                 plan.RoleName,
+		"AssumeRolePolicyDocument": iamrole.AssumeRolePolicyDocument(iamrole.ServiceEC2),
+		"ManagedPolicyArns":        managed,
+		"Tags":                     iamrole.RoleTags(plan.RoleName, nil),
 	}
 	if plan.BackupS3Export && plan.BackupS3Bucket != "" {
 		prefix := plan.BackupS3Prefix

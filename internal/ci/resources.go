@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/iamrole"
 )
 
 // ProjectSpec builds the provider-agnostic CodeBuild project spec for this plan.
@@ -35,27 +36,15 @@ func ProjectSpec(plan *CreatePlan, roleARN string) cloud.CodeBuildProjectSpec {
 // group) and ec2:DescribeInstances (to resolve coordinator addresses).
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 	doc := map[string]any{
-		"RoleName": plan.RoleName,
-		"AssumeRolePolicyDocument": map[string]any{
-			"Version": "2012-10-17",
-			"Statement": []map[string]any{
-				{
-					"Effect":    "Allow",
-					"Principal": map[string]any{"Service": "codebuild.amazonaws.com"},
-					"Action":    "sts:AssumeRole",
-				},
-			},
-		},
+		"RoleName":                 plan.RoleName,
+		"AssumeRolePolicyDocument": iamrole.AssumeRolePolicyDocument(iamrole.ServiceCodeBuild),
 		"Policies": []map[string]any{
 			{
 				"PolicyName":     "fabrica-ci-inline",
 				"PolicyDocument": json.RawMessage(inlinePolicyDocument(plan)),
 			},
 		},
-		"Tags": []map[string]string{
-			{"Key": "ManagedBy", "Value": "fabrica"},
-			{"Key": "Name", "Value": plan.RoleName},
-		},
+		"Tags": iamrole.RoleTags(plan.RoleName, nil),
 	}
 	return json.Marshal(doc)
 }

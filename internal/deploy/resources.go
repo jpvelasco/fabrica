@@ -3,6 +3,8 @@ package deploy
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/jpvelasco/fabrica/internal/iamrole"
 )
 
 // RoleDesiredState returns the Cloud Control desired-state JSON for the IAM role
@@ -10,15 +12,8 @@ import (
 func RoleDesiredState(plan *SetupPlan) (json.RawMessage, error) {
 	bucketArn := fmt.Sprintf("arn:aws:s3:::%s/*", plan.BuildBucket)
 	doc := map[string]any{
-		"RoleName": plan.RoleName,
-		"AssumeRolePolicyDocument": map[string]any{
-			"Version": "2012-10-17",
-			"Statement": []map[string]any{{
-				"Effect":    "Allow",
-				"Principal": map[string]any{"Service": "gamelift.amazonaws.com"},
-				"Action":    "sts:AssumeRole",
-			}},
-		},
+		"RoleName":                 plan.RoleName,
+		"AssumeRolePolicyDocument": iamrole.AssumeRolePolicyDocument(iamrole.ServiceGameLift),
 		"Policies": []map[string]any{{
 			"PolicyName": "fabrica-deploy-s3-read",
 			"PolicyDocument": map[string]any{
@@ -30,10 +25,7 @@ func RoleDesiredState(plan *SetupPlan) (json.RawMessage, error) {
 				}},
 			},
 		}},
-		"Tags": []map[string]string{
-			{"Key": "ManagedBy", "Value": "fabrica"},
-			{"Key": "Name", "Value": plan.RoleName},
-		},
+		"Tags": iamrole.RoleTags(plan.RoleName, nil),
 	}
 	return json.Marshal(doc)
 }
