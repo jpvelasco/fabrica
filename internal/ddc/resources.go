@@ -120,11 +120,7 @@ func RoleDesiredState(plan *SetupPlan) (json.RawMessage, error) {
 
 // InstanceProfileDesiredState wraps the DDC role for EC2 attachment.
 func InstanceProfileDesiredState(plan *SetupPlan) (json.RawMessage, error) {
-	doc := map[string]any{
-		"InstanceProfileName": plan.InstanceProfileName,
-		"Roles":               []string{plan.RoleName},
-	}
-	return json.Marshal(doc)
+	return ec2state.InstanceProfileDesiredState(plan.InstanceProfileName, plan.RoleName)
 }
 
 // InstanceDesiredState returns Cloud Control desired-state for the DDC (Jupiter) EC2 instance.

@@ -114,9 +114,5 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 // InstanceProfileDesiredState returns Cloud Control desired-state for the
 // instance profile that wraps the Perforce EC2 role.
 func InstanceProfileDesiredState(plan *CreatePlan) (json.RawMessage, error) {
-	doc := map[string]any{
-		"InstanceProfileName": plan.InstanceProfileName,
-		"Roles":               []string{plan.RoleName},
-	}
-	return json.Marshal(doc)
+	return ec2state.InstanceProfileDesiredState(plan.InstanceProfileName, plan.RoleName)
 }

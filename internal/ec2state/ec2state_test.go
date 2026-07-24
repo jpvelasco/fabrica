@@ -190,6 +190,19 @@ func TestWorkstationShape(t *testing.T) {
 	}
 }
 
+func TestInstanceProfileDesiredState(t *testing.T) {
+	raw, err := InstanceProfileDesiredState("my-profile", "my-role")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := doc(t, raw)
+	checkStr(t, d, "InstanceProfileName", "my-profile")
+	roles := d["Roles"].([]any)
+	if len(roles) != 1 || roles[0].(string) != "my-role" {
+		t.Errorf("Roles = %v, want [my-role]", roles)
+	}
+}
+
 func TestUserDataRaw(t *testing.T) {
 	opts := []InstanceOption{
 		WithAMI("ami-123"),

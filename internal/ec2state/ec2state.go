@@ -102,6 +102,16 @@ func WithExtraTags(key, value string) DesiredStateOption {
 	}
 }
 
+// InstanceProfileDesiredState returns Cloud Control desired-state for an EC2
+// instance profile that wraps an IAM role. Used by perforce and ddc modules.
+func InstanceProfileDesiredState(profileName, roleName string) (json.RawMessage, error) {
+	doc := map[string]any{
+		"InstanceProfileName": profileName,
+		"Roles":               []string{roleName},
+	}
+	return json.Marshal(doc)
+}
+
 // Build generates the Cloud Control desired-state JSON for an EC2 instance.
 // It applies the InstanceConfig options first, then runs each DesiredStateOption
 // over the document before marshaling.
