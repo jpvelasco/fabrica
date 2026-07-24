@@ -10,39 +10,17 @@ import (
 // security group. Opens TCP 41337 (gRPC), UDP 41337 (QUIC), and TCP 41339
 // (HTTP health) to AllowedCIDR.
 func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
-	doc := map[string]any{
-		"GroupName":        plan.SGName,
-		"GroupDescription": "Fabrica-managed security group for Lore loreserver",
-		"VpcId":            plan.VPCID,
-		"SecurityGroupIngress": []map[string]any{
-			{
-				"IpProtocol":  "tcp",
-				"FromPort":    plan.GRPCPort,
-				"ToPort":      plan.GRPCPort,
-				"CidrIp":      plan.AllowedCIDR,
-				"Description": "Lore gRPC",
-			},
-			{
-				"IpProtocol":  "udp",
-				"FromPort":    plan.GRPCPort,
-				"ToPort":      plan.GRPCPort,
-				"CidrIp":      plan.AllowedCIDR,
-				"Description": "Lore QUIC",
-			},
-			{
-				"IpProtocol":  "tcp",
-				"FromPort":    plan.HTTPPort,
-				"ToPort":      plan.HTTPPort,
-				"CidrIp":      plan.AllowedCIDR,
-				"Description": "Lore HTTP health",
-			},
+	return ec2state.SGDesiredState(
+		plan.SGName,
+		"Fabrica-managed security group for Lore loreserver",
+		plan.VPCID,
+		[]ec2state.SGIngressRule{
+			{IpProtocol: "tcp", FromPort: plan.GRPCPort, ToPort: plan.GRPCPort, CidrIp: plan.AllowedCIDR, Description: "Lore gRPC"},
+			{IpProtocol: "udp", FromPort: plan.GRPCPort, ToPort: plan.GRPCPort, CidrIp: plan.AllowedCIDR, Description: "Lore QUIC"},
+			{IpProtocol: "tcp", FromPort: plan.HTTPPort, ToPort: plan.HTTPPort, CidrIp: plan.AllowedCIDR, Description: "Lore HTTP health"},
 		},
-		"Tags": []map[string]string{
-			{"Key": "ManagedBy", "Value": "fabrica"},
-			{"Key": "Name", "Value": plan.SGName},
-		},
-	}
-	return json.Marshal(doc)
+		nil,
+	)
 }
 
 // InstanceDesiredState returns the Cloud Control desired-state JSON for the

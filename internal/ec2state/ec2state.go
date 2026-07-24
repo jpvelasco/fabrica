@@ -112,6 +112,47 @@ func InstanceProfileDesiredState(profileName, roleName string) (json.RawMessage,
 	return json.Marshal(doc)
 }
 
+// SGIngressRule is one inbound security group rule.
+type SGIngressRule struct {
+	IpProtocol  string
+	FromPort    int
+	ToPort      int
+	CidrIp      string
+	Description string
+}
+
+// SGDesiredState returns Cloud Control desired-state for a security group.
+// Callers provide the group name, description, VPC, ingress rules, and any
+// extra tags (e.g. FabricaModule). Used by all EC2-based modules to avoid
+// duplicating the envelope construction.
+func SGDesiredState(groupName, description, vpcID string, rules []SGIngressRule, extraTags map[string]string) (json.RawMessage, error) {
+	ingress := make([]map[string]any, len(rules))
+	for i, r := range rules {
+		ingress[i] = map[string]any{
+			"IpProtocol":  r.IpProtocol,
+			"FromPort":    r.FromPort,
+			"ToPort":      r.ToPort,
+			"CidrIp":      r.CidrIp,
+			"Description": r.Description,
+		}
+	}
+	tags := []map[string]string{
+		{"Key": "ManagedBy", "Value": "fabrica"},
+		{"Key": "Name", "Value": groupName},
+	}
+	for k, v := range extraTags {
+		tags = append(tags, map[string]string{"Key": k, "Value": v})
+	}
+	doc := map[string]any{
+		"GroupName":            groupName,
+		"GroupDescription":     description,
+		"VpcId":                vpcID,
+		"SecurityGroupIngress": ingress,
+		"Tags":                 tags,
+	}
+	return json.Marshal(doc)
+}
+
 // Build generates the Cloud Control desired-state JSON for an EC2 instance.
 // It applies the InstanceConfig options first, then runs each DesiredStateOption
 // over the document before marshaling.

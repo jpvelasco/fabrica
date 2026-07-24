@@ -9,44 +9,19 @@ import (
 
 // SGDesiredState returns Cloud Control desired-state for the DDC security group.
 func SGDesiredState(plan *SetupPlan) (json.RawMessage, error) {
-	ingress := []map[string]any{
-		{
-			"IpProtocol":  "tcp",
-			"FromPort":    plan.PublicPort,
-			"ToPort":      plan.PublicPort,
-			"CidrIp":      plan.AllowedCIDR,
-			"Description": "Unreal Cloud DDC public API",
-		},
-		{
-			"IpProtocol":  "tcp",
-			"FromPort":    plan.InternalPort,
-			"ToPort":      plan.InternalPort,
-			"CidrIp":      plan.InternalCIDR,
-			"Description": "Unreal Cloud DDC internal API (future peers; single-region V1)",
-		},
+	rules := []ec2state.SGIngressRule{
+		{IpProtocol: "tcp", FromPort: plan.PublicPort, ToPort: plan.PublicPort, CidrIp: plan.AllowedCIDR, Description: "Unreal Cloud DDC public API"},
+		{IpProtocol: "tcp", FromPort: plan.InternalPort, ToPort: plan.InternalPort, CidrIp: plan.InternalCIDR, Description: "Unreal Cloud DDC internal API (future peers; single-region V1)"},
 	}
 	if plan.Backend == BackendScylla {
 		// CQL only from VPC private ranges via InternalCIDR — not the public AllowedCIDR when open.
-		ingress = append(ingress, map[string]any{
-			"IpProtocol":  "tcp",
-			"FromPort":    9042,
-			"ToPort":      9042,
-			"CidrIp":      plan.InternalCIDR,
-			"Description": "Scylla CQL (bootstrap node only)",
+		rules = append(rules, ec2state.SGIngressRule{
+			IpProtocol: "tcp", FromPort: 9042, ToPort: 9042, CidrIp: plan.InternalCIDR, Description: "Scylla CQL (bootstrap node only)",
 		})
 	}
-	doc := map[string]any{
-		"GroupName":            plan.SGName,
-		"GroupDescription":     "Fabrica-managed security group for Unreal Cloud DDC",
-		"VpcId":                plan.VPCID,
-		"SecurityGroupIngress": ingress,
-		"Tags": []map[string]string{
-			{"Key": "ManagedBy", "Value": "fabrica"},
-			{"Key": "Name", "Value": plan.SGName},
-			{"Key": "FabricaModule", "Value": "ddc"},
-		},
-	}
-	return json.Marshal(doc)
+	return ec2state.SGDesiredState(plan.SGName, "Fabrica-managed security group for Unreal Cloud DDC", plan.VPCID, rules, map[string]string{
+		"FabricaModule": "ddc",
+	})
 }
 
 // BucketDesiredState returns Cloud Control desired-state for the DDC blob bucket.

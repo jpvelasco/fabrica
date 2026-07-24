@@ -9,25 +9,15 @@ import (
 // SGDesiredState returns the Cloud Control desired-state JSON for the workstation
 // security group. Allows TCP 8443 (NICE DCV HTTPS) inbound.
 func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
-	doc := map[string]any{
-		"GroupName":        plan.SGName,
-		"GroupDescription": "Fabrica-managed security group for cloud workstation (NICE DCV)",
-		"VpcId":            plan.VPCID,
-		"SecurityGroupIngress": []map[string]any{
-			{
-				"IpProtocol":  "tcp",
-				"FromPort":    plan.DCVPort,
-				"ToPort":      plan.DCVPort,
-				"CidrIp":      plan.AllowedCIDR,
-				"Description": "NICE DCV HTTPS",
-			},
+	return ec2state.SGDesiredState(
+		plan.SGName,
+		"Fabrica-managed security group for cloud workstation (NICE DCV)",
+		plan.VPCID,
+		[]ec2state.SGIngressRule{
+			{IpProtocol: "tcp", FromPort: plan.DCVPort, ToPort: plan.DCVPort, CidrIp: plan.AllowedCIDR, Description: "NICE DCV HTTPS"},
 		},
-		"Tags": []map[string]string{
-			{"Key": "ManagedBy", "Value": "fabrica"},
-			{"Key": "Name", "Value": plan.SGName},
-		},
-	}
-	return json.Marshal(doc)
+		nil,
+	)
 }
 
 // InstanceDesiredState returns the Cloud Control desired-state JSON for the

@@ -203,6 +203,57 @@ func TestInstanceProfileDesiredState(t *testing.T) {
 	}
 }
 
+func TestSGDesiredStateBasic(t *testing.T) {
+	raw, err := SGDesiredState("my-sg", "My security group", "vpc-123", []SGIngressRule{
+		{IpProtocol: "tcp", FromPort: 1666, ToPort: 1666, CidrIp: "10.0.0.0/8", Description: "p4d"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := doc(t, raw)
+	checkStr(t, d, "GroupName", "my-sg")
+	checkStr(t, d, "GroupDescription", "My security group")
+	checkStr(t, d, "VpcId", "vpc-123")
+
+	ingress := d["SecurityGroupIngress"].([]any)
+	if len(ingress) != 1 {
+		t.Fatalf("ingress len = %d, want 1", len(ingress))
+	}
+	rule := ingress[0].(map[string]any)
+	if rule["IpProtocol"].(string) != "tcp" {
+		t.Errorf("IpProtocol = %v", rule["IpProtocol"])
+	}
+	if rule["FromPort"].(float64) != 1666 {
+		t.Errorf("FromPort = %v", rule["FromPort"])
+	}
+	if rule["Description"].(string) != "p4d" {
+		t.Errorf("Description = %v", rule["Description"])
+	}
+
+	tags := d["Tags"].([]any)
+	if len(tags) != 2 {
+		t.Fatalf("Tags len = %d, want 2", len(tags))
+	}
+}
+
+func TestSGDesiredStateExtraTags(t *testing.T) {
+	raw, err := SGDesiredState("ddc-sg", "DDC SG", "vpc-123", []SGIngressRule{
+		{IpProtocol: "tcp", FromPort: 80, ToPort: 80, CidrIp: "0.0.0.0/0", Description: "HTTP"},
+	}, map[string]string{"FabricaModule": "ddc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := doc(t, raw)
+	tags := d["Tags"].([]any)
+	if len(tags) != 3 {
+		t.Fatalf("Tags len = %d, want 3", len(tags))
+	}
+	t2 := tags[2].(map[string]any)
+	if t2["Key"].(string) != "FabricaModule" || t2["Value"].(string) != "ddc" {
+		t.Errorf("extra tag = %v", t2)
+	}
+}
+
 func TestUserDataRaw(t *testing.T) {
 	opts := []InstanceOption{
 		WithAMI("ami-123"),
