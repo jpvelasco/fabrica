@@ -1,10 +1,9 @@
 package workstation
 
 import (
-	"fmt"
-
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/ec2cost"
 )
 
 // resolveSizing applies template + config + default precedence for the two
@@ -32,8 +31,5 @@ func resolveSizing(cfg config.WorkstationConfig, tmpl string) (instanceType stri
 // a template only applies at create time.
 func CostResources(cfg config.WorkstationConfig) []cost.Resource {
 	instanceType, volumeSize := resolveSizing(cfg, "")
-	return []cost.Resource{
-		{TypeName: typeEC2Instance, Name: instanceType},
-		{TypeName: typeEC2Volume, Name: fmt.Sprintf("gp3-%dGiB", volumeSize)},
-	}
+	return ec2cost.InstanceAndVolume(instanceType, volumeSize)
 }

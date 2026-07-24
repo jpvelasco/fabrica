@@ -1,10 +1,9 @@
 package lore
 
 import (
-	"fmt"
-
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/ec2cost"
 )
 
 // CostResources returns the cost inputs for a Lore module at the given config,
@@ -20,8 +19,5 @@ func CostResources(cfg config.LoreConfig) []cost.Resource {
 	if volumeSize <= 0 {
 		volumeSize = 500
 	}
-	return []cost.Resource{
-		{TypeName: TypeAWSEC2Instance, Name: instanceType},
-		{TypeName: TypeAWSEC2Volume, Name: fmt.Sprintf("gp3-%dGiB", volumeSize)},
-	}
+	return ec2cost.InstanceAndVolume(instanceType, volumeSize)
 }
