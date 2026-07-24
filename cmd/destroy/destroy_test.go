@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/assert"
 )
 
 func TestDestroyWithoutAllPrintsUsageHint(t *testing.T) {
@@ -13,7 +15,7 @@ func TestDestroyWithoutAllPrintsUsageHint(t *testing.T) {
 	if err := cmd.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "To destroy infrastructure, use --all:")
+	assert.Contains(t, out.String(), "To destroy infrastructure, use --all:")
 }
 
 func TestDestroyAllDelegatesToOrchestrator(t *testing.T) {
@@ -31,14 +33,4 @@ func TestDestroyAllDelegatesToOrchestrator(t *testing.T) {
 	if !called {
 		t.Fatal("--all should delegate to the orchestrator seam")
 	}
-}
-
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return
-		}
-	}
-	t.Fatalf("%q does not contain %q", s, substr)
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/horde/buildgraph"
@@ -102,7 +103,7 @@ func TestSubmitBuildGraphParseError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid XML")
 	}
-	assertContains(t, err.Error(), "parsing BuildGraph file")
+	assert.Contains(t, err.Error(), "parsing BuildGraph file")
 }
 
 // TestSubmitNotProvisioned verifies error when no horde module in state.
@@ -116,7 +117,7 @@ func TestSubmitNotProvisioned(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when horde not provisioned")
 	}
-	assertContains(t, err.Error(), "not provisioned")
+	assert.Contains(t, err.Error(), "not provisioned")
 }
 
 // TestSubmitFireAndForget verifies successful submit without --wait.
@@ -136,7 +137,7 @@ func TestSubmitFireAndForget(t *testing.T) {
 	if client.statusCalls != 0 {
 		t.Errorf("statusCalls = %d, want 0 (fire-and-forget)", client.statusCalls)
 	}
-	assertContains(t, out.String(), "job-abc-001")
+	assert.Contains(t, out.String(), "job-abc-001")
 }
 
 // TestSubmitWaitPollsUntilComplete verifies --wait polls until job is complete.
@@ -156,7 +157,7 @@ func TestSubmitWaitPollsUntilComplete(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "complete")
+	assert.Contains(t, out.String(), "complete")
 }
 
 // TestSubmitWaitTimeout verifies --wait surfaces timeout after 60 minutes.
@@ -179,7 +180,7 @@ func TestSubmitWaitTimeout(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "timed out")
+	assert.Contains(t, out.String(), "timed out")
 }
 
 // TestSubmitClientError verifies connection error is returned.
@@ -195,7 +196,7 @@ func TestSubmitClientError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on client failure")
 	}
-	assertContains(t, err.Error(), "connection refused")
+	assert.Contains(t, err.Error(), "connection refused")
 }
 
 // TestSubmitReadStateError verifies error is surfaced when readState fails.
@@ -211,7 +212,7 @@ func TestSubmitReadStateError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when readState fails")
 	}
-	assertContains(t, err.Error(), "reading state")
+	assert.Contains(t, err.Error(), "reading state")
 }
 
 // sequentialFakeClient returns status values in sequence.
@@ -248,7 +249,7 @@ func TestSubmitNoCoordinatorIP(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when no instance in state")
 	}
-	assertContains(t, err.Error(), "no private IP")
+	assert.Contains(t, err.Error(), "no private IP")
 }
 
 // TestSubmitMissingBuildGraphFile verifies error when file does not exist.
@@ -262,7 +263,7 @@ func TestSubmitMissingBuildGraphFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
-	assertContains(t, err.Error(), "reading BuildGraph")
+	assert.Contains(t, err.Error(), "reading BuildGraph")
 }
 
 // TestSubmitMissingRequiredFields verifies that a BuildGraph with no agents
@@ -284,7 +285,7 @@ func TestSubmitMissingRequiredFields(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "job-empty")
+	assert.Contains(t, out.String(), "job-empty")
 }
 
 // TestSubmitWaitStatusError verifies polling error is returned.
@@ -302,7 +303,7 @@ func TestSubmitWaitStatusError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when status polling fails")
 	}
-	assertContains(t, err.Error(), "polling job")
+	assert.Contains(t, err.Error(), "polling job")
 }
 
 // TestSubmitWaitErrorState verifies --wait returns nil when job errors.
@@ -319,7 +320,7 @@ func TestSubmitWaitErrorState(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "error")
+	assert.Contains(t, out.String(), "error")
 }
 
 // TestSubmitWithInjectedClient verifies that when a client is injected,
@@ -337,7 +338,7 @@ func TestSubmitWithInjectedClient(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "job-injected")
+	assert.Contains(t, out.String(), "job-injected")
 	if client.submitCalls != 1 {
 		t.Errorf("submitCalls = %d, want 1", client.submitCalls)
 	}
@@ -377,7 +378,7 @@ func TestSubmitResolvePrivateIP(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected connection error when no real Horde is running")
 	}
-	assertContains(t, err.Error(), "connecting to Horde")
+	assert.Contains(t, err.Error(), "connecting to Horde")
 }
 
 // TestSubmitResolvePrivateIPEmptyState verifies error when Get returns empty ActualState.
@@ -388,7 +389,7 @@ func TestSubmitResolvePrivateIPEmptyState(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when no private IP in ActualState")
 	}
-	assertContains(t, err.Error(), "no private IP")
+	assert.Contains(t, err.Error(), "no private IP")
 }
 
 // TestSubmitResolvePrivateIPGetError verifies error when Cloud Control Get fails.
@@ -416,7 +417,7 @@ func TestSubmitResolvePrivateIPGetError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when Get fails")
 	}
-	assertContains(t, err.Error(), "querying instance")
+	assert.Contains(t, err.Error(), "querying instance")
 }
 
 // TestSubmitResolvePrivateIPNoProvider verifies error when provider is nil
@@ -439,7 +440,7 @@ func TestSubmitResolvePrivateIPNoProvider(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when provider is nil and no client injected")
 	}
-	assertContains(t, err.Error(), "no private IP")
+	assert.Contains(t, err.Error(), "no private IP")
 }
 
 // fakeSubmitProvider implements cloud.Provider for submit tests.
@@ -527,7 +528,7 @@ func TestHordeHTTPClientSubmitAuthError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected auth error, got nil")
 	}
-	assertContains(t, err.Error(), "auth")
+	assert.Contains(t, err.Error(), "auth")
 }
 
 func TestHordeHTTPClientSubmitForbidden(t *testing.T) {
@@ -541,7 +542,7 @@ func TestHordeHTTPClientSubmitForbidden(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected auth error, got nil")
 	}
-	assertContains(t, err.Error(), "auth")
+	assert.Contains(t, err.Error(), "auth")
 }
 
 func TestHordeHTTPClientSubmitNon2xx(t *testing.T) {
@@ -556,7 +557,7 @@ func TestHordeHTTPClientSubmitNon2xx(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected non-2xx error, got nil")
 	}
-	assertContains(t, err.Error(), "500")
+	assert.Contains(t, err.Error(), "500")
 }
 
 func TestHordeHTTPClientSubmitBadResponse(t *testing.T) {
@@ -571,7 +572,7 @@ func TestHordeHTTPClientSubmitBadResponse(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected parse error, got nil")
 	}
-	assertContains(t, err.Error(), "parsing response")
+	assert.Contains(t, err.Error(), "parsing response")
 }
 
 func TestHordeHTTPClientGetJobStatusSuccess(t *testing.T) {
@@ -625,7 +626,7 @@ func TestHordeHTTPClientGetJobStatusNon2xx(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for 404")
 	}
-	assertContains(t, err.Error(), "404")
+	assert.Contains(t, err.Error(), "404")
 }
 
 func TestHordeHTTPClientGetJobStatusInvalidJSON(t *testing.T) {
@@ -640,15 +641,5 @@ func TestHordeHTTPClientGetJobStatusInvalidJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
-	assertContains(t, err.Error(), "parsing response")
-}
-
-func assertContains(t *testing.T, s, sub string) {
-	t.Helper()
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return
-		}
-	}
-	t.Fatalf("%q does not contain %q", s, sub)
+	assert.Contains(t, err.Error(), "parsing response")
 }

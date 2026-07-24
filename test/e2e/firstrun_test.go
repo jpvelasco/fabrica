@@ -1,6 +1,10 @@
 package e2e
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/assert"
+)
 
 // TestFirstRun: a fresh account runs setup, then status reports the backend is
 // ready with no modules yet.
@@ -12,19 +16,19 @@ func TestFirstRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status (pre-setup): %v\n%s", err, out)
 	}
-	assertContains(t, out, "Nothing provisioned yet")
+	assert.Contains(t, out, "Nothing provisioned yet")
 
 	// setup --yes creates the state backend (bucket + table) via the fake.
 	out, err = runCLI(t, "setup", "--yes")
 	if err != nil {
 		t.Fatalf("setup: %v\n%s", err, out)
 	}
-	assertContains(t, out, "Setup complete")
+	assert.Contains(t, out, "Setup complete")
 
 	// After setup: status reports the backend is ready but no modules.
 	out, err = runCLI(t, "status")
 	if err != nil {
 		t.Fatalf("status (post-setup): %v\n%s", err, out)
 	}
-	assertContains(t, out, "State backend is ready, but no modules are provisioned yet.")
+	assert.Contains(t, out, "State backend is ready, but no modules are provisioned yet.")
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
@@ -29,7 +30,7 @@ func TestListNoneProvisioned(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "No workstations provisioned")
+	assert.Contains(t, out.String(), "No workstations provisioned")
 }
 
 func TestListShowsProvisionedWorkstation(t *testing.T) {
@@ -45,8 +46,8 @@ func TestListShowsProvisionedWorkstation(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	got := out.String()
-	assertContains(t, got, "i-abc123")
-	assertContains(t, got, "provisioning")
+	assert.Contains(t, got, "i-abc123")
+	assert.Contains(t, got, "provisioning")
 }
 
 func TestListJSONNoneProvisioned(t *testing.T) {
@@ -59,8 +60,8 @@ func TestListJSONNoneProvisioned(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	got := out.String()
-	assertContains(t, got, `"workstations"`)
-	assertContains(t, got, `[]`)
+	assert.Contains(t, got, `"workstations"`)
+	assert.Contains(t, got, `[]`)
 }
 
 func TestListJSONShowsWorkstation(t *testing.T) {
@@ -77,8 +78,8 @@ func TestListJSONShowsWorkstation(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	got := out.String()
-	assertContains(t, got, "i-xyz")
-	assertContains(t, got, "ready")
+	assert.Contains(t, got, "i-xyz")
+	assert.Contains(t, got, "ready")
 }
 
 func TestListReadStateError(t *testing.T) {
@@ -96,15 +97,5 @@ func TestListReadStateError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when readState fails")
 	}
-	assertContains(t, err.Error(), "reading state")
-}
-
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return
-		}
-	}
-	t.Fatalf("%q does not contain %q", s, substr)
+	assert.Contains(t, err.Error(), "reading state")
 }

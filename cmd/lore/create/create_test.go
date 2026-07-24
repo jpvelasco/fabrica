@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
@@ -71,7 +72,7 @@ func TestCreateDryRunOutputFields(t *testing.T) {
 		"41339",
 		"Cost estimate:",
 	} {
-		assertContains(t, got, want)
+		assert.Contains(t, got, want)
 	}
 }
 
@@ -91,7 +92,7 @@ func TestCreateAlreadyProvisioned(t *testing.T) {
 	if provider.createCalls != 0 {
 		t.Fatalf("already-exists: made %d create calls, want 0", provider.createCalls)
 	}
-	assertContains(t, out.String(), "already provisioned")
+	assert.Contains(t, out.String(), "already provisioned")
 }
 
 func TestCreateMissingAmiID(t *testing.T) {
@@ -105,8 +106,8 @@ func TestCreateMissingAmiID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when AmiID is empty")
 	}
-	assertContains(t, err.Error(), "lore.amiId is required")
-	assertContains(t, err.Error(), "lore-ami.md")
+	assert.Contains(t, err.Error(), "lore.amiId is required")
+	assert.Contains(t, err.Error(), "lore-ami.md")
 	if provider.createCalls != 0 {
 		t.Fatal("missing AmiID: create was called")
 	}
@@ -152,7 +153,7 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	if m.Version != "ami-test123" {
 		t.Errorf("state version = %q, want ami-test123", m.Version)
 	}
-	assertContains(t, out.String(), "Lore server provisioned")
+	assert.Contains(t, out.String(), "Lore server provisioned")
 }
 
 func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
@@ -173,7 +174,7 @@ func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on instance create failure")
 	}
-	assertContains(t, err.Error(), "creating EC2 instance")
+	assert.Contains(t, err.Error(), "creating EC2 instance")
 	if lastWrittenState == nil {
 		t.Fatal("state was never written")
 	}
@@ -196,7 +197,7 @@ func TestCreateConfirmationRejected(t *testing.T) {
 	if provider.createCalls != 0 {
 		t.Fatalf("cancelled: made %d create calls, want 0", provider.createCalls)
 	}
-	assertContains(t, out.String(), "Cancelled")
+	assert.Contains(t, out.String(), "Cancelled")
 }
 
 func TestCreateNilProviderReturnsError(t *testing.T) {
@@ -214,7 +215,7 @@ func TestCreateNilProviderReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when provider is nil")
 	}
-	assertContains(t, err.Error(), "no provider configured")
+	assert.Contains(t, err.Error(), "no provider configured")
 }
 
 func TestCreateAllowedCIDRWarning(t *testing.T) {
@@ -228,8 +229,8 @@ func TestCreateAllowedCIDRWarning(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "WARNING")
-	assertContains(t, out.String(), "0.0.0.0/0")
+	assert.Contains(t, out.String(), "WARNING")
+	assert.Contains(t, out.String(), "0.0.0.0/0")
 }
 
 func TestCreateIdentityFailureAbortsEarly(t *testing.T) {
@@ -245,7 +246,7 @@ func TestCreateIdentityFailureAbortsEarly(t *testing.T) {
 	if provider.createCalls != 0 {
 		t.Fatal("identity failure: create was called")
 	}
-	assertContains(t, err.Error(), "resolving identity")
+	assert.Contains(t, err.Error(), "resolving identity")
 }
 
 func TestCreateSGFailureNoStateWritten(t *testing.T) {
@@ -265,7 +266,7 @@ func TestCreateSGFailureNoStateWritten(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on SG create failure")
 	}
-	assertContains(t, err.Error(), "creating security group")
+	assert.Contains(t, err.Error(), "creating security group")
 	if stateWritten {
 		t.Error("state must not be written when SG creation fails")
 	}
@@ -283,8 +284,8 @@ func TestCreateFlagOverridesConfig(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "m5.2xlarge")
-	assertContains(t, out.String(), "1000 GiB")
+	assert.Contains(t, out.String(), "m5.2xlarge")
+	assert.Contains(t, out.String(), "1000 GiB")
 }
 
 type fakeProvider struct {
@@ -335,11 +336,4 @@ func (r *fakeResourceClient) Update(_ context.Context, _ *cloud.Resource) error 
 func (r *fakeResourceClient) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
 func (r *fakeResourceClient) List(_ context.Context, _ string) ([]cloud.Resource, error) {
 	return nil, nil
-}
-
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	if !bytes.Contains([]byte(s), []byte(substr)) {
-		t.Fatalf("%q\ndoes not contain\n%q", s, substr)
-	}
 }

@@ -1,6 +1,10 @@
 package e2e
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/assert"
+)
 
 // TestDDCLifecycle: setup → status → cost → destroy for the ddc module.
 func TestDDCLifecycle(t *testing.T) {
@@ -10,7 +14,7 @@ func TestDDCLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: %v\n%s", err, out)
 	}
-	assertContains(t, out, "DDC provisioned")
+	assert.Contains(t, out, "DDC provisioned")
 	st := readState(t)
 	assertModuleExists(t, st, "ddc")
 	assertResourceType(t, st, "ddc", "AWS::EC2::Instance")
@@ -20,13 +24,13 @@ func TestDDCLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v\n%s", err, out)
 	}
-	assertContains(t, out, "Distributed DDC")
+	assert.Contains(t, out, "Distributed DDC")
 
 	out, err = runCLI(t, "cost", "report")
 	if err != nil {
 		t.Fatalf("cost: %v\n%s", err, out)
 	}
-	assertContains(t, out, "ddc")
+	assert.Contains(t, out, "ddc")
 
 	out, err = runCLI(t, "ddc", "destroy", "--yes")
 	if err != nil {

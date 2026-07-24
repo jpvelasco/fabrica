@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
@@ -46,9 +48,9 @@ func TestCreateDryRunDefaultVPCNote(t *testing.T) {
 		HelixVersion: "2024.2", VolumeSize: 500, DefaultVPC: true, VPCID: "vpc-def",
 		SGName: "sg", RoleName: "role", InstanceProfileName: "prof", InstanceName: "inst",
 	})
-	assertContains(t, out.String(), "default")
-	assertContains(t, out.String(), "vpc-def")
-	assertContains(t, out.String(), "Default VPC used")
+	assert.Contains(t, out.String(), "default")
+	assert.Contains(t, out.String(), "vpc-def")
+	assert.Contains(t, out.String(), "Default VPC used")
 }
 
 func TestCreateDryRunExplicitVPCNoDefault(t *testing.T) {
@@ -59,8 +61,8 @@ func TestCreateDryRunExplicitVPCNoDefault(t *testing.T) {
 		HelixVersion: "2024.2", VolumeSize: 500, DefaultVPC: false, VPCID: "vpc-explicit",
 		SGName: "sg", RoleName: "role", InstanceProfileName: "prof", InstanceName: "inst",
 	})
-	assertContains(t, out.String(), "vpc-explicit")
-	if contains(out.String(), "Default VPC used") {
+	assert.Contains(t, out.String(), "vpc-explicit")
+	if strings.Contains(out.String(), "Default VPC used") {
 		t.Fatal("should not print default VPC note")
 	}
 }
@@ -69,7 +71,7 @@ func TestCreatePasswordGenError(t *testing.T) {
 	c := newTestCommand(&bytes.Buffer{}, &fakeProvider{}, fabricastate.NewState("123456789012", "us-east-1"))
 	c.assumeYes = true
 	c.genPassword = func(int) (string, error) { return "", errors.New("entropy fail") }
-	if err := c.run(context.Background()); err == nil || !contains(err.Error(), "generating admin password") {
+	if err := c.run(context.Background()); err == nil || !strings.Contains(err.Error(), "generating admin password") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -78,7 +80,7 @@ func TestCreateWriteCredentialsError(t *testing.T) {
 	c := newTestCommand(&bytes.Buffer{}, &fakeProvider{}, fabricastate.NewState("123456789012", "us-east-1"))
 	c.assumeYes = true
 	c.writeCreds = func(string, string) error { return errors.New("perm denied") }
-	if err := c.run(context.Background()); err == nil || !contains(err.Error(), "writing credentials") {
+	if err := c.run(context.Background()); err == nil || !strings.Contains(err.Error(), "writing credentials") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -92,7 +94,7 @@ func TestCreateProceedingWithoutConfirmMessage(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	assertContains(t, out.String(), "Proceeding without interactive confirmation")
+	assert.Contains(t, out.String(), "Proceeding without interactive confirmation")
 }
 
 func TestCreateDryRunLatestVersionLabel(t *testing.T) {
@@ -106,11 +108,11 @@ func TestCreateDryRunLatestVersionLabel(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := out.String()
-	if !contains(got, "latest") {
+	if !strings.Contains(got, "latest") {
 		t.Fatalf("out: %s", got)
 	}
 	// "latest" should not get " (pinned)" suffix
-	if contains(got, "latest (pinned)") {
+	if strings.Contains(got, "latest (pinned)") {
 		t.Fatalf("latest should not be labeled pinned: %s", got)
 	}
 }
@@ -150,7 +152,7 @@ func TestCreateDryRunOutputFields(t *testing.T) {
 		"fabrica-perforce",
 		"Cost estimate:",
 	} {
-		assertContains(t, got, want)
+		assert.Contains(t, got, want)
 	}
 }
 
@@ -171,7 +173,7 @@ func TestCreateAlreadyExists(t *testing.T) {
 	if provider.createCalls != 0 {
 		t.Fatalf("already-exists: made %d create calls, want 0", provider.createCalls)
 	}
-	assertContains(t, out.String(), "already provisioned")
+	assert.Contains(t, out.String(), "already provisioned")
 }
 
 // TestCreateIdentityFailureAbortsEarly verifies no AWS calls on identity error.
@@ -188,7 +190,7 @@ func TestCreateIdentityFailureAbortsEarly(t *testing.T) {
 	if provider.createCalls != 0 {
 		t.Fatal("identity failure: create was called")
 	}
-	assertContains(t, err.Error(), "resolving identity")
+	assert.Contains(t, err.Error(), "resolving identity")
 }
 
 // TestCreateHappyPathOrderAndState verifies SG created before instance, both in state.
@@ -267,7 +269,7 @@ func TestCreateWriteStateFailsAfterRole(t *testing.T) {
 		return nil
 	}
 	err := c.run(context.Background())
-	if err == nil || !contains(err.Error(), "writing state after IAM role") {
+	if err == nil || !strings.Contains(err.Error(), "writing state after IAM role") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -286,7 +288,7 @@ func TestCreateWriteStateFailsAfterInstance(t *testing.T) {
 		return nil
 	}
 	err := c.run(context.Background())
-	if err == nil || !contains(err.Error(), "writing state after instance") {
+	if err == nil || !strings.Contains(err.Error(), "writing state after instance") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -305,7 +307,7 @@ func TestCreateWriteStateFailsAfterProfile(t *testing.T) {
 		return nil
 	}
 	err := c.run(context.Background())
-	if err == nil || !contains(err.Error(), "writing state after instance profile") {
+	if err == nil || !strings.Contains(err.Error(), "writing state after instance profile") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -323,7 +325,7 @@ func TestCreateRoleFailureAfterSG(t *testing.T) {
 		return nil
 	}
 	err := c.run(context.Background())
-	if err == nil || !contains(err.Error(), "IAM role") {
+	if err == nil || !strings.Contains(err.Error(), "IAM role") {
 		t.Fatalf("err = %v", err)
 	}
 	if last == nil {
@@ -340,7 +342,7 @@ func TestCreateProfileFailureAfterRole(t *testing.T) {
 	c := newTestCommand(&bytes.Buffer{}, provider, st)
 	c.assumeYes = true
 	err := c.run(context.Background())
-	if err == nil || !contains(err.Error(), "instance profile") {
+	if err == nil || !strings.Contains(err.Error(), "instance profile") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -363,7 +365,7 @@ func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on instance create failure")
 	}
-	assertContains(t, err.Error(), "creating EC2 instance")
+	assert.Contains(t, err.Error(), "creating EC2 instance")
 
 	// SG identifier must be recorded even though instance failed
 	if lastWrittenState == nil {
@@ -389,7 +391,7 @@ func TestCreateConfirmationRejectedNoAWSCalls(t *testing.T) {
 	if provider.createCalls != 0 {
 		t.Fatalf("cancelled: made %d create calls, want 0", provider.createCalls)
 	}
-	assertContains(t, out.String(), "Cancelled")
+	assert.Contains(t, out.String(), "Cancelled")
 }
 
 // TestCreateNilProviderReturnsError verifies nil provider returns a clear error.
@@ -408,8 +410,8 @@ func TestCreateNilProviderReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when provider is nil")
 	}
-	assertContains(t, err.Error(), "no provider configured")
-	assertContains(t, err.Error(), "fabrica setup")
+	assert.Contains(t, err.Error(), "no provider configured")
+	assert.Contains(t, err.Error(), "fabrica setup")
 }
 
 // TestCreateVersionFlagInvalidAbortsBeforeAWS verifies bad version errors early.
@@ -445,7 +447,7 @@ func TestCreateReadStateError(t *testing.T) {
 	if provider.createCalls != 0 {
 		t.Fatal("readState failure: create was called")
 	}
-	assertContains(t, err.Error(), "reading state")
+	assert.Contains(t, err.Error(), "reading state")
 }
 
 // TestCreateSGFailureNoStateWritten verifies state is never written when SG creation fails.
@@ -465,7 +467,7 @@ func TestCreateSGFailureNoStateWritten(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on SG create failure")
 	}
-	assertContains(t, err.Error(), "creating security group")
+	assert.Contains(t, err.Error(), "creating security group")
 	if stateWritten {
 		t.Error("state must not be written when SG creation fails")
 	}
@@ -483,7 +485,7 @@ func TestCreateDryRunVersionPinned(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "(pinned)")
+	assert.Contains(t, out.String(), "(pinned)")
 }
 
 // TestCreateDryRunVersionLatestNotPinned verifies "latest" does not get "(pinned)" label.
@@ -499,8 +501,8 @@ func TestCreateDryRunVersionLatestNotPinned(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	got := out.String()
-	assertContains(t, got, "latest")
-	if containsStr(got, "(pinned)") {
+	assert.Contains(t, got, "latest")
+	if strings.Contains(got, "(pinned)") {
 		t.Error("'latest' should not show '(pinned)' label")
 	}
 }
@@ -518,7 +520,7 @@ func TestCreateFlagOverridesConfigInstanceType(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "c5.2xlarge")
+	assert.Contains(t, out.String(), "c5.2xlarge")
 }
 
 // TestCreateFlagOverridesConfigVolumeSize verifies --volume-size flag wins over config.
@@ -534,7 +536,7 @@ func TestCreateFlagOverridesConfigVolumeSize(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "1000 GiB")
+	assert.Contains(t, out.String(), "1000 GiB")
 }
 
 // TestCreateVersionFromConfig verifies version is read from config when flag is empty.
@@ -550,7 +552,7 @@ func TestCreateVersionFromConfig(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assertContains(t, out.String(), "2025.1")
+	assert.Contains(t, out.String(), "2025.1")
 }
 
 // TestCreateWriteStateError verifies that a writeState failure after SG is surfaced.
@@ -568,19 +570,7 @@ func TestCreateWriteStateError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when writeState fails")
 	}
-	assertContains(t, err.Error(), "writing state")
-}
-
-func containsStr(s, sub string) bool {
-	if len(sub) == 0 {
-		return true
-	}
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
+	assert.Contains(t, err.Error(), "writing state")
 }
 
 // ---- fakeProvider ----
@@ -646,23 +636,4 @@ func (r *fakeResourceClient) Update(_ context.Context, _ *cloud.Resource) error 
 func (r *fakeResourceClient) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
 func (r *fakeResourceClient) List(_ context.Context, _ string) ([]cloud.Resource, error) {
 	return nil, nil
-}
-
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	if len(substr) == 0 {
-		return
-	}
-	if !contains(s, substr) {
-		t.Fatalf("%q\ndoes not contain\n%q", s, substr)
-	}
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

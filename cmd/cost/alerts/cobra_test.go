@@ -12,6 +12,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/cost/alerts"
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
@@ -66,12 +67,6 @@ func writeStateFile(t *testing.T, st *fabricastate.State) {
 	}
 }
 
-// assertContains checks that s contains substr.
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	testutil.AssertContains(t, s, substr)
-}
-
 // assertNotContains checks that s does not contain substr.
 func assertNotContains(t *testing.T, s, substr string) {
 	t.Helper()
@@ -88,7 +83,7 @@ func TestAlertsListEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "No budget thresholds configured")
+	assert.Contains(t, got, "No budget thresholds configured")
 }
 
 // TestAlertsListWithBudgets verifies "alerts list" displays configured budgets.
@@ -103,11 +98,11 @@ func TestAlertsListWithBudgets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "Configured budget thresholds:")
-	assertContains(t, got, "total")
-	assertContains(t, got, "500")
-	assertContains(t, got, "perforce")
-	assertContains(t, got, "200")
+	assert.Contains(t, got, "Configured budget thresholds:")
+	assert.Contains(t, got, "total")
+	assert.Contains(t, got, "500")
+	assert.Contains(t, got, "perforce")
+	assert.Contains(t, got, "200")
 }
 
 // TestAlertsListJSON verifies "alerts list --json" outputs JSON.
@@ -140,9 +135,9 @@ func TestAlertsSetDryRunDoesNotWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "Would set budget")
-	assertContains(t, got, "500")
-	assertContains(t, got, "Dry run — fabrica.yaml not modified")
+	assert.Contains(t, got, "Would set budget")
+	assert.Contains(t, got, "500")
+	assert.Contains(t, got, "Dry run — fabrica.yaml not modified")
 	// Verify config file was not written
 	_, err = os.Stat(cfgPath)
 	if err == nil {
@@ -167,9 +162,9 @@ func TestAlertsSetWritesAndSaves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "Set budget: perforce = $250.00")
-	assertContains(t, got, "Next steps:")
-	assertContains(t, got, "fabrica cost alerts check")
+	assert.Contains(t, got, "Set budget: perforce = $250.00")
+	assert.Contains(t, got, "Next steps:")
+	assert.Contains(t, got, "fabrica cost alerts check")
 	// Verify config file exists and is readable
 	reloaded, err := config.Load(cfgPath)
 	if err != nil {
@@ -196,7 +191,7 @@ func TestAlertsSetWithWarnPct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "Set budget: horde = $300.00")
+	assert.Contains(t, got, "Set budget: horde = $300.00")
 	reloaded, err := config.Load(cfgPath)
 	if err != nil {
 		t.Fatalf("failed to reload config: %v", err)
@@ -238,7 +233,7 @@ func TestAlertsCheckEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "No budget thresholds configured")
+	assert.Contains(t, got, "No budget thresholds configured")
 }
 
 // TestAlertsCheckWithBudgets verifies "check" evaluates budgets against estimated cost.
@@ -255,7 +250,7 @@ func TestAlertsCheckWithBudgets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertContains(t, got, "perforce")
+	assert.Contains(t, got, "perforce")
 }
 
 // TestAlertsCheckJSON verifies "check --json" outputs structured JSON.
@@ -351,7 +346,7 @@ func TestAlertsCobraParentCommand(t *testing.T) {
 		t.Fatalf("help invocation unexpected error: %v", err)
 	}
 	output := out.String()
-	assertContains(t, output, "Manage local budget thresholds")
+	assert.Contains(t, output, "Manage local budget thresholds")
 }
 
 // TestAlertsListJSONEmpty verifies "alerts list --json" with no budgets is valid JSON.

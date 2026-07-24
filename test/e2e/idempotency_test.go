@@ -3,6 +3,8 @@ package e2e
 import (
 	"os"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/assert"
 )
 
 // TestPerforceCreate_AlreadyExists verifies that when a Perforce resource
@@ -21,8 +23,8 @@ func TestPerforceCreate_AlreadyExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("perforce create should succeed recovering existing resource: %v\noutput: %s", err, out)
 	}
-	assertContains(t, out, "Security group created")
-	assertContains(t, out, "sg-existing-from-previous-run")
+	assert.Contains(t, out, "Security group created")
+	assert.Contains(t, out, "sg-existing-from-previous-run")
 
 	// Verify state was written with the recovered identifier.
 	st := readState(t)
@@ -67,5 +69,5 @@ deploy:
 	if err != nil {
 		t.Fatalf("deploy setup should succeed recovering existing role: %v\noutput: %s", err, out)
 	}
-	assertContains(t, out, "created IAM role")
+	assert.Contains(t, out, "created IAM role")
 }

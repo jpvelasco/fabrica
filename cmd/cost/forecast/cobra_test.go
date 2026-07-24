@@ -10,6 +10,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/cost/forecast"
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -49,11 +50,6 @@ func perforceStateJSON() string {
 		]}]}`
 }
 
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	testutil.AssertContains(t, s, substr)
-}
-
 func TestForecastCobraDefaultHorizon(t *testing.T) {
 	t.Chdir(t.TempDir())
 	testutil.WriteStateFile(t, ".", perforceStateJSON())
@@ -61,9 +57,9 @@ func TestForecastCobraDefaultHorizon(t *testing.T) {
 	if err != nil {
 		t.Fatalf("forecast: %v", err)
 	}
-	assertContains(t, got, "Cost forecast")
-	assertContains(t, got, "30") // default horizon
-	assertContains(t, got, "Confidence")
+	assert.Contains(t, got, "Cost forecast")
+	assert.Contains(t, got, "30") // default horizon
+	assert.Contains(t, got, "Confidence")
 }
 
 func TestForecastCobraCustomDays(t *testing.T) {
@@ -73,7 +69,7 @@ func TestForecastCobraCustomDays(t *testing.T) {
 	if err != nil {
 		t.Fatalf("forecast: %v", err)
 	}
-	assertContains(t, got, "90")
+	assert.Contains(t, got, "90")
 }
 
 func TestForecastCobraJSON(t *testing.T) {

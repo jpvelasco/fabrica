@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
@@ -14,8 +15,8 @@ func TestNewCreatePlanMissingAmiID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when AmiID is empty")
 	}
-	assertContains(t, err.Error(), "horde.amiId is required")
-	assertContains(t, err.Error(), "docs/horde-ami.md")
+	assert.Contains(t, err.Error(), "horde.amiId is required")
+	assert.Contains(t, err.Error(), "docs/horde-ami.md")
 }
 
 func TestNewCreatePlanDefaults(t *testing.T) {
@@ -116,7 +117,7 @@ func TestNewCreatePlanVPCResolverError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when resolver fails")
 	}
-	assertContains(t, err.Error(), "resolving default VPC")
+	assert.Contains(t, err.Error(), "resolving default VPC")
 }
 
 func TestNewCreatePlanExplicitVPCSkipsResolver(t *testing.T) {
@@ -175,14 +176,4 @@ func (f *fakeVPCResolver) ResolveDefaultVPC(_ context.Context) (string, string, 
 		*f.callTracker = true
 	}
 	return f.vpcID, f.subnetID, f.err
-}
-
-func assertContains(t *testing.T, s, sub string) {
-	t.Helper()
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return
-		}
-	}
-	t.Fatalf("%q does not contain %q", s, sub)
 }

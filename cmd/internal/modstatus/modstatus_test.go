@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -203,7 +204,7 @@ func TestRunGetResourceError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when GetResource fails")
 	}
-	assertContains(t, err.Error(), "querying instance")
+	assert.Contains(t, err.Error(), "querying instance")
 }
 
 func TestRunOnlySGNoInstance(t *testing.T) {
@@ -236,7 +237,7 @@ func TestRunReadStateError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when ReadState fails")
 	}
-	assertContains(t, err.Error(), "reading state")
+	assert.Contains(t, err.Error(), "reading state")
 }
 
 func TestRunWriteStateErrorSurfacedAsWarning(t *testing.T) {
@@ -251,8 +252,8 @@ func TestRunWriteStateErrorSurfacedAsWarning(t *testing.T) {
 	if err := c.Run(context.Background()); err != nil {
 		t.Fatalf("must not return error on WriteState failure: %v", err)
 	}
-	assertContains(t, out.String(), "Warning")
-	assertContains(t, out.String(), "disk full")
+	assert.Contains(t, out.String(), "Warning")
+	assert.Contains(t, out.String(), "disk full")
 }
 
 func TestRunProbeAddressUsesSpecPort(t *testing.T) {
@@ -348,8 +349,8 @@ func TestRunWaitTimeout(t *testing.T) {
 	if err := c.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	assertContains(t, out.String(), "Timed out")
-	assertContains(t, out.String(), "Perforce") // DisplayName in the timeout message
+	assert.Contains(t, out.String(), "Timed out")
+	assert.Contains(t, out.String(), "Perforce") // DisplayName in the timeout message
 }
 
 func TestRunWaitGetResourceError(t *testing.T) {
@@ -365,7 +366,7 @@ func TestRunWaitGetResourceError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when GetResource fails during wait")
 	}
-	assertContains(t, err.Error(), "querying instance")
+	assert.Contains(t, err.Error(), "querying instance")
 }
 
 func TestParseInstanceActualStateIgnoresEmpty(t *testing.T) {
@@ -388,19 +389,6 @@ func mustMarshal(v any) json.RawMessage {
 		panic(err)
 	}
 	return data
-}
-
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	if len(substr) == 0 {
-		return
-	}
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return
-		}
-	}
-	t.Fatalf("%q\ndoes not contain\n%q", s, substr)
 }
 
 // ---- tests for shared helpers ----
