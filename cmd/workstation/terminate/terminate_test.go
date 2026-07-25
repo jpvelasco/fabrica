@@ -1,0 +1,108 @@
+package terminate
+
+import (
+	"context"
+	"io"
+	"testing"
+
+	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
+	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/config"
+)
+
+func TestNewTeardownWiring(t *testing.T) {
+	rt := globals.Runtime{Config: config.Defaults()}
+	tc := NewTeardown(rt, io.Discard)
+
+	if tc.Spec.ModuleName != "workstation" {
+		t.Errorf("ModuleName = %q, want workstation", tc.Spec.ModuleName)
+	}
+	if tc.Spec.Verb != "terminate" {
+		t.Errorf("Verb = %q, want terminate", tc.Spec.Verb)
+	}
+	if !tc.SkipConfirm {
+		t.Error("SkipConfirm must be true (set by shared NewTeardown)")
+	}
+	if !tc.AssumeYes {
+		t.Error("AssumeYes must be true (set by shared NewTeardown)")
+	}
+	if tc.ReadState == nil {
+		t.Error("ReadState must be wired")
+	}
+	if tc.WriteState == nil {
+		t.Error("WriteState must be wired")
+	}
+	if tc.Confirm == nil {
+		t.Error("Confirm must be wired")
+	}
+	// Without a provider, delete seams are nil.
+	if tc.DeleteResource != nil {
+		t.Error("DeleteResource must be nil when provider is nil")
+	}
+	if tc.GetResource != nil {
+		t.Error("GetResource must be nil when provider is nil")
+	}
+}
+
+func TestNewTeardownWithProvider(t *testing.T) {
+	rt := globals.Runtime{
+		Config:   config.Defaults(),
+		Provider: &fakeProvider{},
+	}
+	tc := NewTeardown(rt, io.Discard)
+
+	if tc.DeleteResource == nil {
+		t.Error("DeleteResource must be wired when provider is non-nil")
+	}
+	if tc.GetResource == nil {
+		t.Error("GetResource must be wired when provider is non-nil")
+	}
+}
+
+func TestNewTeardownSpecStrings(t *testing.T) {
+	tc := teardown.Command{Spec: spec}
+
+	if tc.Spec.ModuleName != "workstation" {
+		t.Errorf("ModuleName = %q, want workstation", tc.Spec.ModuleName)
+	}
+	if tc.Spec.Verb != "terminate" {
+		t.Errorf("Verb = %q, want terminate", tc.Spec.Verb)
+	}
+	if tc.Spec.VersionLabel != "AMI ID" {
+		t.Errorf("VersionLabel = %q, want AMI ID", tc.Spec.VersionLabel)
+	}
+	if tc.Spec.Title != "Cloud Workstation" {
+		t.Errorf("Title = %q, want Cloud Workstation", tc.Spec.Title)
+	}
+	for _, field := range []struct{ name, value string }{
+		{"NotProvisioned", tc.Spec.NotProvisioned},
+		{"PlanHeader", tc.Spec.PlanHeader},
+		{"DryRunHeader", tc.Spec.DryRunHeader},
+		{"Irreversible", tc.Spec.Irreversible},
+		{"SuccessMessage", tc.Spec.SuccessMessage},
+	} {
+		if field.value == "" {
+			t.Errorf("%s must not be empty", field.name)
+		}
+	}
+}
+
+// fakeProvider satisfies cloud.Provider for seam wiring tests.
+type fakeProvider struct{}
+
+func (p *fakeProvider) Name() string { return "fake" }
+func (p *fakeProvider) Identity(_ context.Context) (string, string, string, error) {
+	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
+}
+func (p *fakeProvider) Resources() cloud.ResourceClient { return &fakeRC{} }
+
+type fakeRC struct{}
+
+func (r *fakeRC) Create(_ context.Context, _ *cloud.Resource) error { return nil }
+func (r *fakeRC) Get(_ context.Context, _ *cloud.Resource) error    { return nil }
+func (r *fakeRC) Update(_ context.Context, _ *cloud.Resource) error { return nil }
+func (r *fakeRC) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
+func (r *fakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
+	return nil, nil
+}
