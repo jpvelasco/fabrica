@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,6 +23,11 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
+
+// dirPermOwner is the least-privilege permission for a directory — owner-only
+// rwx. The execute bit is required for directory traversal; this is not
+// analogous to file permissions (which use 0o600).
+const dirPermOwner = 0o700
 
 // BuildTestRoot creates a minimal root cobra command with the standard
 // persistent flags (--dry-run, --yes, --json). It returns the root command
@@ -70,13 +76,16 @@ func NewNilProviderRuntime() globals.RuntimeSource {
 
 // WriteStateFile writes JSON content to .fabrica/state.json in the given directory.
 // Creates the .fabrica directory if needed.
+//
+// Directories require the execute bit for traversal (dirPermOwner), which is the
+// least-privilege permission for a directory. File writes use 0o600.
 func WriteStateFile(t *testing.T, dir, content string) {
 	t.Helper()
-	// #nosec G301 -- directory needs execute for traversal
-	if err := os.MkdirAll(dir+"/.fabrica", 0700); err != nil {
+	stateDir := filepath.Join(dir, ".fabrica")
+	if err := os.MkdirAll(stateDir, dirPermOwner); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(dir+"/.fabrica/state.json", []byte(content), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(stateDir, "state.json"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
