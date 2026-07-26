@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
@@ -70,16 +71,76 @@ func TestNewNilProviderRuntime(t *testing.T) {
 }
 
 func TestWriteStateFile(t *testing.T) {
-	dir := t.TempDir()
-	WriteStateFile(t, dir, `{"test":true}`)
+	t.Run("happy_path", func(t *testing.T) {
+		dir := t.TempDir()
+		expected := `{"test":true}`
+		WriteStateFile(t, dir, expected)
 
-	path := dir + "/.fabrica/state.json"
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	if string(data) != `{"test":true}` {
-		t.Errorf("content = %q, want {\"test\":true}", string(data))
+		// Verify the file exists at the expected location with correct size and
+		// content. The path is constructed from our own TempDir — trusted input.
+		path := filepath.Join(dir, ".fabrica", "state.json")
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("state file not created: %v", err)
+		}
+		if info.Size() != int64(len(expected)) {
+			t.Fatalf("unexpected file size: got %d, want %d", info.Size(), len(expected))
+		}
+		// nosemgrep: go.lang.security.audit.fileio.file-read.file-read -- trusted test path
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		if string(data) != expected {
+			t.Fatalf("content = %q, want %q", string(data), expected)
+		}
+	})
+
+	t.Run("mkdir_error", func(t *testing.T) {
+		dir := t.TempDir()
+		blocker := filepath.Join(dir, "is_a_file")
+		if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		var gotFatal bool
+		fake := &fatalerFake{call: func(...any) { gotFatal = true }}
+		writeStateFileAt(fake, blocker, `{}`)
+		if !gotFatal {
+			t.Error("expected Fatal to be called on MkdirAll error")
+		}
+	})
+
+	t.Run("write_error", func(t *testing.T) {
+		dir := t.TempDir()
+		stateDir := filepath.Join(dir, ".fabrica")
+		// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- directory requires execute bit for traversal
+		if err := os.MkdirAll(stateDir, dirPermOwner); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- directory requires execute bit for traversal
+		if err := os.Mkdir(filepath.Join(stateDir, "state.json"), dirPermOwner); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		var gotFatal bool
+		fake := &fatalerFake{call: func(...any) { gotFatal = true }}
+		writeStateFileAt(fake, dir, `{}`)
+		if !gotFatal {
+			t.Error("expected Fatal to be called on WriteFile error")
+		}
+	})
+}
+
+// fatalerFake implements fataler for testing writeStateFileAt error branches
+// without *testing.T.Fatal exiting the process.
+type fatalerFake struct {
+	call func(...any)
+}
+
+func (f *fatalerFake) Helper() {}
+
+func (f *fatalerFake) Fatal(args ...any) {
+	if f.call != nil {
+		f.call(args...)
 	}
 }
 
