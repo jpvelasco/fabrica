@@ -88,7 +88,7 @@ func NewNilProviderRuntime() globals.RuntimeSource {
 // without process exit.
 func writeStateFileAt(t fataler, dir, content string) {
 	stateDir := filepath.Join(dir, ".fabrica")
-	// nosemgrep: incorrect-default-permission -- directory requires execute bit for traversal
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- directory requires execute bit for traversal
 	if err := os.MkdirAll(stateDir, dirPermOwner); err != nil {
 		t.Fatal(err)
 	}
