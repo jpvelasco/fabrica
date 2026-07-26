@@ -1,0 +1,31 @@
+name: Codacy Coverage
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  upload:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      # Do not check out or execute the PR revision in this trusted job.
+      - name: Download coverage report
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806  # v4.1.9
+        with:
+          name: codacy-coverage-${{ github.event.workflow_run.id }}
+          path: coverage
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Upload coverage to Codacy
+        uses: codacy/codacy-coverage-reporter-action@89d6c85cfafaec52c72b6c5e8b2878d33104c699  # v1.3.0
+        with:
+          project-token: ${{ secrets.CODACY_REPOSITORY_API_TOKEN }}
+          coverage-reports: coverage/coverage.out
+          force-coverage-parser: go
+          language: Go
