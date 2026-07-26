@@ -74,6 +74,17 @@ func NewNilProviderRuntime() globals.RuntimeSource {
 	return func() (globals.Runtime, error) { return rt, nil }
 }
 
+// writeStateFileAt creates the .fabrica directory under dir and writes content
+// to state.json. Returns an error on failure instead of calling t.Fatal,
+// allowing error-branch coverage in tests.
+func writeStateFileAt(dir, content string) error {
+	stateDir := filepath.Join(dir, ".fabrica")
+	if err := os.MkdirAll(stateDir, dirPermOwner); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(stateDir, "state.json"), []byte(content), 0o600)
+}
+
 // WriteStateFile writes JSON content to .fabrica/state.json in the given directory.
 // Creates the .fabrica directory if needed.
 //
@@ -81,11 +92,7 @@ func NewNilProviderRuntime() globals.RuntimeSource {
 // least-privilege permission for a directory. File writes use 0o600.
 func WriteStateFile(t *testing.T, dir, content string) {
 	t.Helper()
-	stateDir := filepath.Join(dir, ".fabrica")
-	if err := os.MkdirAll(stateDir, dirPermOwner); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, "state.json"), []byte(content), 0o600); err != nil {
+	if err := writeStateFileAt(dir, content); err != nil {
 		t.Fatal(err)
 	}
 }

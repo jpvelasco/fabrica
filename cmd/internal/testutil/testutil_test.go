@@ -71,21 +71,53 @@ func TestNewNilProviderRuntime(t *testing.T) {
 }
 
 func TestWriteStateFile(t *testing.T) {
-	dir := t.TempDir()
-	expected := `{"test":true}`
-	WriteStateFile(t, dir, expected)
+	t.Run("happy_path", func(t *testing.T) {
+		dir := t.TempDir()
+		expected := `{"test":true}`
+		WriteStateFile(t, dir, expected)
 
-	// Verify the file exists at the expected location with the correct
-	// size. Using Stat avoids reading from a dynamically-constructed
-	// path (Semgrep fileread rule).
-	path := filepath.Join(dir, ".fabrica", "state.json")
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("state file not created: %v", err)
-	}
-	if info.Size() != int64(len(expected)) {
-		t.Fatalf("unexpected file size: got %d, want %d", info.Size(), len(expected))
-	}
+		// Verify the file exists at the expected location with the correct
+		// size. Using Stat avoids reading from a dynamically-constructed
+		// path (Semgrep fileread rule).
+		path := filepath.Join(dir, ".fabrica", "state.json")
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("state file not created: %v", err)
+		}
+		if info.Size() != int64(len(expected)) {
+			t.Fatalf("unexpected file size: got %d, want %d", info.Size(), len(expected))
+		}
+	})
+
+	t.Run("mkdir_error", func(t *testing.T) {
+		// Create a file at the path we'll use as "dir" — MkdirAll under a
+		// file path fails, exercising the first error branch.
+		dir := t.TempDir()
+		blocker := filepath.Join(dir, "is_a_file")
+		if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		err := writeStateFileAt(blocker, `{}`)
+		if err == nil {
+			t.Error("expected error writing state under a file path")
+		}
+	})
+
+	t.Run("write_error", func(t *testing.T) {
+		// Create state.json as a directory — WriteFile to a directory fails.
+		dir := t.TempDir()
+		stateDir := filepath.Join(dir, ".fabrica")
+		if err := os.MkdirAll(stateDir, 0o700); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if err := os.Mkdir(filepath.Join(stateDir, "state.json"), 0o700); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		err := writeStateFileAt(dir, `{}`)
+		if err == nil {
+			t.Error("expected error when state.json is a directory")
+		}
+	})
 }
 
 func TestAssertContains(t *testing.T) {
