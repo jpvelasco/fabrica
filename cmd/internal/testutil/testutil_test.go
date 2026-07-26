@@ -113,9 +113,11 @@ func TestWriteStateFile(t *testing.T) {
 	t.Run("write_error", func(t *testing.T) {
 		dir := t.TempDir()
 		stateDir := filepath.Join(dir, ".fabrica")
+		// nosemgrep: incorrect-default-permission -- directory requires execute bit for traversal
 		if err := os.MkdirAll(stateDir, dirPermOwner); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
+		// nosemgrep: incorrect-default-permission -- directory requires execute bit for traversal
 		if err := os.Mkdir(filepath.Join(stateDir, "state.json"), dirPermOwner); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
