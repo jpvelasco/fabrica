@@ -99,7 +99,7 @@ func TestWriteStateFile(t *testing.T) {
 	t.Run("mkdir_error", func(t *testing.T) {
 		dir := t.TempDir()
 		blocker := filepath.Join(dir, "is_a_file")
-		if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		if err := os.WriteFile(blocker, nil, 0o600); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
 		var gotFatal bool
