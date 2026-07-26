@@ -27,7 +27,16 @@ import (
 // dirPermOwner is the least-privilege permission for a directory — owner-only
 // rwx. The execute bit is required for directory traversal; this is not
 // analogous to file permissions (which use 0o600).
+//
+//nolint:gomnd // directory permission constant
 const dirPermOwner = 0o700
+
+// fataler is the minimal subset of testing.T needed for WriteStateFile.
+// *testing.T satisfies this interface implicitly.
+type fataler interface {
+	Helper()
+	Fatal(...any)
+}
 
 // BuildTestRoot creates a minimal root cobra command with the standard
 // persistent flags (--dry-run, --yes, --json). It returns the root command
@@ -74,15 +83,17 @@ func NewNilProviderRuntime() globals.RuntimeSource {
 	return func() (globals.Runtime, error) { return rt, nil }
 }
 
-// writeStateFileAt creates the .fabrica directory under dir and writes content
-// to state.json. Returns an error on failure instead of calling t.Fatal,
-// allowing error-branch coverage in tests.
-func writeStateFileAt(dir, content string) error {
+// writeStateFileAt is the internal implementation of WriteStateFile that
+// accepts a fataler interface, enabling error-branch coverage in tests
+// without process exit.
+func writeStateFileAt(t fataler, dir, content string) {
 	stateDir := filepath.Join(dir, ".fabrica")
 	if err := os.MkdirAll(stateDir, dirPermOwner); err != nil {
-		return err
+		t.Fatal(err)
 	}
-	return os.WriteFile(filepath.Join(stateDir, "state.json"), []byte(content), 0o600)
+	if err := os.WriteFile(filepath.Join(stateDir, "state.json"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // WriteStateFile writes JSON content to .fabrica/state.json in the given directory.
@@ -92,9 +103,7 @@ func writeStateFileAt(dir, content string) error {
 // least-privilege permission for a directory. File writes use 0o600.
 func WriteStateFile(t *testing.T, dir, content string) {
 	t.Helper()
-	if err := writeStateFileAt(dir, content); err != nil {
-		t.Fatal(err)
-	}
+	writeStateFileAt(t, dir, content)
 }
 
 // AssertContains checks that s contains substr and fails the test if not.

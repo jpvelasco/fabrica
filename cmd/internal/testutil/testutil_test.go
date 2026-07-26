@@ -76,9 +76,8 @@ func TestWriteStateFile(t *testing.T) {
 		expected := `{"test":true}`
 		WriteStateFile(t, dir, expected)
 
-		// Verify the file exists at the expected location with the correct
-		// size. Using Stat avoids reading from a dynamically-constructed
-		// path (Semgrep fileread rule).
+		// Verify the file exists at the expected location with correct size and
+		// content. The path is constructed from our own TempDir — trusted input.
 		path := filepath.Join(dir, ".fabrica", "state.json")
 		info, err := os.Stat(path)
 		if err != nil {
@@ -87,37 +86,60 @@ func TestWriteStateFile(t *testing.T) {
 		if info.Size() != int64(len(expected)) {
 			t.Fatalf("unexpected file size: got %d, want %d", info.Size(), len(expected))
 		}
+		// nosemgrep: go.lang.security.audit.fileio.file-read.file-read -- trusted test path
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		if string(data) != expected {
+			t.Fatalf("content = %q, want %q", string(data), expected)
+		}
 	})
 
 	t.Run("mkdir_error", func(t *testing.T) {
-		// Create a file at the path we'll use as "dir" — MkdirAll under a
-		// file path fails, exercising the first error branch.
 		dir := t.TempDir()
 		blocker := filepath.Join(dir, "is_a_file")
 		if err := os.WriteFile(blocker, nil, 0o644); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
-		err := writeStateFileAt(blocker, `{}`)
-		if err == nil {
-			t.Error("expected error writing state under a file path")
+		var gotFatal bool
+		fake := &fatalerFake{call: func(...any) { gotFatal = true }}
+		writeStateFileAt(fake, blocker, `{}`)
+		if !gotFatal {
+			t.Error("expected Fatal to be called on MkdirAll error")
 		}
 	})
 
 	t.Run("write_error", func(t *testing.T) {
-		// Create state.json as a directory — WriteFile to a directory fails.
 		dir := t.TempDir()
 		stateDir := filepath.Join(dir, ".fabrica")
-		if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		if err := os.MkdirAll(stateDir, dirPermOwner); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
-		if err := os.Mkdir(filepath.Join(stateDir, "state.json"), 0o700); err != nil {
+		if err := os.Mkdir(filepath.Join(stateDir, "state.json"), dirPermOwner); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
-		err := writeStateFileAt(dir, `{}`)
-		if err == nil {
-			t.Error("expected error when state.json is a directory")
+		var gotFatal bool
+		fake := &fatalerFake{call: func(...any) { gotFatal = true }}
+		writeStateFileAt(fake, dir, `{}`)
+		if !gotFatal {
+			t.Error("expected Fatal to be called on WriteFile error")
 		}
 	})
+}
+
+// fatalerFake implements fataler for testing writeStateFileAt error branches
+// without *testing.T.Fatal exiting the process.
+type fatalerFake struct {
+	call func(...any)
+}
+
+func (f *fatalerFake) Helper() {}
+
+func (f *fatalerFake) Fatal(args ...any) {
+	if f.call != nil {
+		f.call(args...)
+	}
 }
 
 func TestAssertContains(t *testing.T) {
