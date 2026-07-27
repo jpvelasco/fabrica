@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
@@ -86,7 +87,10 @@ func TestWriteStateFile(t *testing.T) {
 		if info.Size() != int64(len(expected)) {
 			t.Fatalf("unexpected file size: got %d, want %d", info.Size(), len(expected))
 		}
-		// nosemgrep: Semgrep_go_filesystem_rule-fileread -- trusted t.TempDir path
+		// Validate the resolved path stays within the trusted temp directory.
+		if abs, e := filepath.Abs(path); e != nil || !strings.HasPrefix(abs, dir) {
+			t.Fatalf("path %q escapes temp dir %q", path, dir)
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile: %v", err)
