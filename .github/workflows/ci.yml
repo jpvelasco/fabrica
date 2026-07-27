@@ -222,3 +222,22 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: "1"
           ignore-unfixed: true
+
+  # Codacy Static Analysis — runs on push to main to keep the dashboard in sync.
+  # PR-level checks come from the GitHub integration webhook; main-level
+  # analysis does not fire automatically after squash-merge, so we run the
+  # Codacy Analysis CLI here and upload results. Uses the existing project
+  # token (CODACY_REPOSITORY_API_TOKEN) — no new secrets needed.
+  codacy-analysis:
+    name: Codacy Analysis
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Run Codacy Analysis CLI
+        uses: codacy/codacy-analysis-cli-action@5e3d2cbdb637bd9cda8e8d6e77e6af0f9e4ad076  # v1.3.0
+        with:
+          project-token: ${{ secrets.CODACY_REPOSITORY_API_TOKEN }}
+          upload: true
+          # Informational — do not block the pipeline.
+          max-allowed-issues: 2147483647
