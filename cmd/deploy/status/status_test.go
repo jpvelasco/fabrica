@@ -3,6 +3,7 @@ package status
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -110,6 +111,88 @@ func TestStatusJSON(t *testing.T) {
 	s := out.String()
 	if !strings.Contains(s, "\"activeFleet\"") || !strings.Contains(s, "fleet-new") {
 		t.Errorf("expected JSON with activeFleet:\n%s", s)
+	}
+}
+
+func TestOrDash(t *testing.T) {
+	if got := orDash(""); got != "(none)" {
+		t.Errorf("orDash(\"\") = %q, want \"(none)\"", got)
+	}
+	if got := orDash("fleet-123"); got != "fleet-123" {
+		t.Errorf("orDash(\"fleet-123\") = %q, want \"fleet-123\"", got)
+	}
+}
+
+func TestLiveStatusNoProvider(t *testing.T) {
+	var out bytes.Buffer
+	c := &command{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		out:       &out,
+		readState: func() (*fabricastate.State, error) { return fabricastate.NewState("123456789012", "us-east-1"), nil },
+	}
+	if got := c.liveStatus(context.Background(), "fleet-1"); got != "unknown (no provider)" {
+		t.Errorf("liveStatus with nil seam = %q, want \"unknown (no provider)\"", got)
+	}
+}
+
+func TestLiveStatusError(t *testing.T) {
+	var out bytes.Buffer
+	c := &command{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		out:       &out,
+		readState: func() (*fabricastate.State, error) { return fabricastate.NewState("123456789012", "us-east-1"), nil },
+		fleetStatus: func(context.Context, string) (cloud.FleetInfo, error) {
+			return cloud.FleetInfo{}, fmt.Errorf("connection refused")
+		},
+	}
+	if got := c.liveStatus(context.Background(), "fleet-1"); got != "unknown" {
+		t.Errorf("liveStatus with error = %q, want \"unknown\"", got)
+	}
+}
+
+func TestLiveStatusActive(t *testing.T) {
+	var out bytes.Buffer
+	c := &command{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		out:       &out,
+		readState: func() (*fabricastate.State, error) { return fabricastate.NewState("123456789012", "us-east-1"), nil },
+		fleetStatus: func(context.Context, string) (cloud.FleetInfo, error) {
+			return cloud.FleetInfo{FleetID: "fleet-1", Status: "ACTIVE"}, nil
+		},
+	}
+	if got := c.liveStatus(context.Background(), "fleet-1"); got != "ACTIVE" {
+		t.Errorf("liveStatus = %q, want \"ACTIVE\"", got)
+	}
+}
+
+func TestSummaryLineNotSetUp(t *testing.T) {
+	got := summaryLine("", nil, nil)
+	if got != "deploy not fully set up — run 'fabrica deploy setup'" {
+		t.Errorf("summaryLine empty alias = %q", got)
+	}
+}
+
+func TestSummaryLineNoFleet(t *testing.T) {
+	got := summaryLine("alias-1", nil, nil)
+	if got != "alias ready • no fleet deployed yet" {
+		t.Errorf("summaryLine no fleet = %q", got)
+	}
+}
+
+func TestSummaryLineWithFleet(t *testing.T) {
+	active := &fleetJSON{FleetID: "fleet-1", LiveStatus: "ACTIVE"}
+	got := summaryLine("alias-1", active, nil)
+	if got != "alias ready • active fleet fleet-1 (ACTIVE)" {
+		t.Errorf("summaryLine with fleet = %q", got)
+	}
+}
+
+func TestSummaryLineWithRollback(t *testing.T) {
+	active := &fleetJSON{FleetID: "fleet-2", LiveStatus: "ACTIVE"}
+	candidates := []fleetJSON{{FleetID: "fleet-1", LiveStatus: "ACTIVE"}}
+	got := summaryLine("alias-1", active, candidates)
+	if got != "alias ready • active fleet fleet-2 (ACTIVE) • 1 rollback candidate(s)" {
+		t.Errorf("summaryLine with rollback = %q", got)
 	}
 }
 
