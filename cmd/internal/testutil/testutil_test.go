@@ -86,7 +86,7 @@ func TestWriteStateFile(t *testing.T) {
 		if info.Size() != int64(len(expected)) {
 			t.Fatalf("unexpected file size: got %d, want %d", info.Size(), len(expected))
 		}
-		// nosemgrep: go.lang.security.audit.fileio.file-read.file-read -- trusted test path
+		// nosemgrep: Semgrep_go_filesystem_rule-fileread -- trusted t.TempDir path
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile: %v", err)
