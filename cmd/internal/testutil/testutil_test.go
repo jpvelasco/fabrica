@@ -88,7 +88,15 @@ func TestWriteStateFile(t *testing.T) {
 			t.Fatalf("unexpected file size: got %d, want %d", info.Size(), len(expected))
 		}
 		// Validate the resolved path stays within the trusted temp directory.
-		if abs, e := filepath.Abs(path); e != nil || !strings.HasPrefix(abs, dir) {
+		absDir, err := filepath.Abs(dir)
+		if err != nil {
+			t.Fatalf("Abs(dir): %v", err)
+		}
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			t.Fatalf("Abs(path): %v", err)
+		}
+		if !strings.HasPrefix(absPath, absDir) {
 			t.Fatalf("path %q escapes temp dir %q", path, dir)
 		}
 		data, err := os.ReadFile(path)
