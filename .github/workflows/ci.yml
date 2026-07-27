@@ -223,21 +223,22 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
 
-  # Codacy Static Analysis — runs on push to main to keep the dashboard in sync.
-  # PR-level checks come from the GitHub integration webhook; main-level
-  # analysis does not fire automatically after squash-merge, so we run the
-  # Codacy Analysis CLI here and upload results. Uses the existing project
-  # token (CODACY_REPOSITORY_API_TOKEN) — no new secrets needed.
+  # Codacy Static Analysis — runs on push to main as a post-merge safety net.
+  # PR-level checks come from the GitHub integration webhook; this job runs
+  # the Codacy Analysis CLI locally (no upload — "Repository Analysis" is not
+  # enabled for this project) and prints results to the console. Informational
+  # only (max-allowed-issues set high) — the PR-level Codacy check is the gate.
   codacy-analysis:
     name: Codacy Analysis
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
       - name: Run Codacy Analysis CLI
         uses: codacy/codacy-analysis-cli-action@562ee3e92b8e92df8b67e0a5ff8aa8e261919c08  # v4.4.7
         with:
-          project-token: ${{ secrets.CODACY_REPOSITORY_API_TOKEN }}
-          upload: true
           # Informational — do not block the pipeline.
           max-allowed-issues: 2147483647
