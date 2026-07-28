@@ -18,8 +18,8 @@ import (
 )
 
 func buildRoot(rt globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	root, opts := testutil.BuildTestRoot(out)
-	root.AddCommand(backup.New(rt, func() globals.Options { return *opts }, out))
+	root, optionsSource := testutil.BuildTestSubcommand(out)
+	root.AddCommand(backup.New(rt, optionsSource, out))
 	return root
 }
 

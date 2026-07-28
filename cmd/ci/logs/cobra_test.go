@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/ci/logs"
-	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 )
 
@@ -14,8 +13,7 @@ import (
 // produce a clean error (not a panic) through the full Cobra execution path.
 func TestLogsCobraWiring(t *testing.T) {
 	var out bytes.Buffer
-	root, opts := testutil.BuildTestRoot(&out)
-	optionsSource := func() globals.Options { return *opts }
+	root, optionsSource := testutil.BuildTestSubcommand(&out)
 	src := testutil.NewTestRuntime(&testutil.CobraFakeProvider{})
 	root.AddCommand(logs.New(src, optionsSource, &out))
 	root.SetArgs([]string{"logs", "build-1"})
@@ -28,8 +26,7 @@ func TestLogsCobraWiring(t *testing.T) {
 // TestLogsRequiresBuildID verifies the ExactArgs(1) constraint.
 func TestLogsRequiresBuildID(t *testing.T) {
 	var out bytes.Buffer
-	root, opts := testutil.BuildTestRoot(&out)
-	optionsSource := func() globals.Options { return *opts }
+	root, optionsSource := testutil.BuildTestSubcommand(&out)
 	src := testutil.NewNilProviderRuntime()
 	root.AddCommand(logs.New(src, optionsSource, &out))
 	root.SetArgs([]string{"logs"})

@@ -2,7 +2,6 @@ package destroy_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -18,8 +17,7 @@ import (
 )
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	root, opts := testutil.BuildTestRoot(out)
-	optionsSource := func() globals.Options { return *opts }
+	root, optionsSource := testutil.BuildTestSubcommand(out)
 	root.AddCommand(destroy.New(runtimeSource, optionsSource, out))
 	return root
 }
@@ -28,23 +26,13 @@ func runDestroy(t *testing.T, runtimeSource globals.RuntimeSource, args ...strin
 	t.Helper()
 	var out bytes.Buffer
 	root := buildTestRoot(runtimeSource, &out)
-	root.SetArgs(append([]string{"destroy"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
-}
-
-func newRuntime(provider cloud.Provider) globals.RuntimeSource {
-	return testutil.NewTestRuntime(provider)
-}
-
-func newNilProviderRuntime() globals.RuntimeSource {
-	return testutil.NewNilProviderRuntime()
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"destroy"}, args...)...)
 }
 
 // TestDestroyCobraNotProvisioned verifies clean message when no state on disk.
 func TestDestroyCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runDestroy(t, newRuntime(&testutil.CobraFakeProvider{}))
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.CobraFakeProvider{}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,7 +46,7 @@ func TestDestroyCobraDryRunNoDeleteCalls(t *testing.T) {
 	testutil.WriteStateFile(t, dir, provisionedStateJSON())
 
 	provider := &testutil.CobraFakeProvider{}
-	got, err := runDestroy(t, newRuntime(provider), "--dry-run")
+	got, err := runDestroy(t, testutil.NewTestRuntime(provider), "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,7 +62,7 @@ func TestDestroyCobraDryRunShowsResources(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, provisionedStateJSON())
 
-	got, err := runDestroy(t, newRuntime(&testutil.CobraFakeProvider{}), "--dry-run")
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -89,7 +77,7 @@ func TestDestroyCobraYesFlagDestroysResources(t *testing.T) {
 	testutil.WriteStateFile(t, dir, provisionedStateJSON())
 
 	provider := &testutil.CobraFakeProvider{}
-	got, err := runDestroy(t, newRuntime(provider), "--yes")
+	got, err := runDestroy(t, testutil.NewTestRuntime(provider), "--yes")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -103,7 +91,7 @@ func TestDestroyCobraYesFlagDestroysResources(t *testing.T) {
 // TestDestroyCobraJSONNotProvisioned verifies --json output when not provisioned.
 func TestDestroyCobraJSONNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runDestroy(t, newRuntime(&testutil.CobraFakeProvider{}), "--json")
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), "--json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -122,7 +110,7 @@ func TestDestroyCobraJSONDryRun(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, provisionedStateJSON())
 
-	got, err := runDestroy(t, newRuntime(&testutil.CobraFakeProvider{}), "--json", "--dry-run")
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), "--json", "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -144,7 +132,7 @@ func TestDestroyCobraJSONYes(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, provisionedStateJSON())
 
-	got, err := runDestroy(t, newRuntime(&testutil.CobraFakeProvider{}), "--json", "--yes")
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), "--json", "--yes")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -163,7 +151,7 @@ func TestDestroyCobraJSONYes(t *testing.T) {
 // TestDestroyCobraNilProviderNoState verifies nil provider with no state exits cleanly.
 func TestDestroyCobraNilProvider(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runDestroy(t, newNilProviderRuntime())
+	got, err := runDestroy(t, testutil.NewNilProviderRuntime())
 	if err != nil {
 		t.Fatalf("nil provider: unexpected error: %v", err)
 	}

@@ -5,18 +5,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/assert"
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 )
-
-type fakeVPCResolver struct {
-	vpcID    string
-	subnetID string
-	err      error
-}
-
-func (f *fakeVPCResolver) ResolveDefaultVPC(_ context.Context) (string, string, error) {
-	return f.vpcID, f.subnetID, f.err
-}
 
 func TestNewCreatePlanRequiresAmiID(t *testing.T) {
 	cfg := config.WorkstationConfig{}
@@ -24,14 +16,12 @@ func TestNewCreatePlanRequiresAmiID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when AmiID is empty")
 	}
-	if !containsStr(err.Error(), "workstation.amiId") {
-		t.Errorf("error %q should mention workstation.amiId", err.Error())
-	}
+	assert.Contains(t, err.Error(), "workstation.amiId")
 }
 
 func TestNewCreatePlanDefaults(t *testing.T) {
 	cfg := config.WorkstationConfig{AmiID: "ami-abc123"}
-	resolver := &fakeVPCResolver{vpcID: "vpc-default", subnetID: "subnet-default"}
+	resolver := &cloud.TestVPCResolver{VPCID: "vpc-default", SubnetID: "subnet-default"}
 
 	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, "", "")
 	if err != nil {
@@ -86,14 +76,12 @@ func TestNewCreatePlanExplicitVPC(t *testing.T) {
 
 func TestNewCreatePlanVPCResolverError(t *testing.T) {
 	cfg := config.WorkstationConfig{AmiID: "ami-abc123"}
-	resolver := &fakeVPCResolver{err: errors.New("no default VPC")}
+	resolver := &cloud.TestVPCResolver{Err: errors.New("no default VPC")}
 	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, "", "")
 	if err == nil {
 		t.Fatal("expected error when resolver fails")
 	}
-	if !containsStr(err.Error(), "resolving default VPC") {
-		t.Errorf("error %q should mention resolving default VPC", err.Error())
-	}
+	assert.Contains(t, err.Error(), "resolving default VPC")
 }
 
 func TestNewCreatePlanConfigOverrides(t *testing.T) {
@@ -166,9 +154,7 @@ func TestNewCreatePlanTemplateUnknownErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown template")
 	}
-	if !containsStr(err.Error(), "unknown template") {
-		t.Errorf("error %q should mention unknown template", err.Error())
-	}
+	assert.Contains(t, err.Error(), "unknown template")
 }
 
 func TestNewCreatePlanMountPerforce(t *testing.T) {
@@ -187,13 +173,4 @@ func TestNewCreatePlanMountPerforce(t *testing.T) {
 	if plan.PerforceServerAddr != "10.0.1.5:1666" {
 		t.Errorf("PerforceServerAddr = %q, want 10.0.1.5:1666", plan.PerforceServerAddr)
 	}
-}
-
-func containsStr(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

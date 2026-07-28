@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/jpvelasco/fabrica/internal/assert"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 )
 
@@ -63,9 +64,7 @@ func TestResolveUbuntuAMI_NoImages(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when no images found")
 	}
-	if !containsString(err.Error(), "no Ubuntu 22.04 AMI found") {
-		t.Fatalf("error %q does not mention missing AMI", err.Error())
-	}
+	assert.Contains(t, err.Error(), "no Ubuntu 22.04 AMI found")
 }
 
 func TestResolveUbuntuAMI_DescribeError(t *testing.T) {
@@ -76,9 +75,7 @@ func TestResolveUbuntuAMI_DescribeError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on describe failure")
 	}
-	if !containsString(err.Error(), "describing Ubuntu AMIs") {
-		t.Fatalf("error %q does not mention describing AMIs", err.Error())
-	}
+	assert.Contains(t, err.Error(), "describing Ubuntu AMIs")
 }
 
 func TestResolveUbuntuAMI_InterfaceCheck(t *testing.T) {
@@ -97,9 +94,7 @@ func TestAMIResolverEnsureClient_LoadError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on config load failure")
 	}
-	if !containsString(err.Error(), "loading AWS config for AMI resolver") {
-		t.Fatalf("error %q does not mention config load", err.Error())
-	}
+	assert.Contains(t, err.Error(), "loading AWS config for AMI resolver")
 }
 
 func TestNewAMIResolver(t *testing.T) {
@@ -137,13 +132,4 @@ func TestAMIResolverEnsureClient_Caches(t *testing.T) {
 	if loadCalls != 1 {
 		t.Errorf("loadCfg called %d times, want 1 (client should be cached)", loadCalls)
 	}
-}
-
-func containsString(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

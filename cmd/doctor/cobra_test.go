@@ -33,8 +33,7 @@ func (f *cobraFakeProvider) Resources() cloud.ResourceClient { return nil }
 
 // buildTestRoot replicates the persistent-flag hierarchy (--json lives on root).
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	root, opts := testutil.BuildTestRoot(out)
-	optionsSource := func() globals.Options { return *opts }
+	root, optionsSource := testutil.BuildTestSubcommand(out)
 	root.AddCommand(doctor.New(runtimeSource, optionsSource, out))
 	return root
 }

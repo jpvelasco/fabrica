@@ -2,7 +2,6 @@ package destroy_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,24 +15,30 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func TestDestroyCobraNotProvisioned(t *testing.T) {
-	t.Chdir(t.TempDir())
-	var out bytes.Buffer
-	root, opts := testutil.BuildTestRoot(&out)
-	rt := globals.Runtime{Config: config.Defaults(), Provider: nil}
-	optionsSource := func() globals.Options { return *opts }
-	root.AddCommand(destroy.New(
-		func() (globals.Runtime, error) { return rt, nil },
-		optionsSource,
-		&out,
-	))
-	root.SetArgs([]string{"destroy", "--yes"})
-	if err := root.ExecuteContext(context.Background()); err != nil {
-		t.Fatalf("destroy: %v", err)
-	}
-	testutil.AssertContains(t, out.String(), "not provisioned")
+func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
+	root, optionsSource := testutil.BuildTestSubcommand(out)
+	root.AddCommand(destroy.New(runtimeSource, optionsSource, out))
+	return root
 }
 
+func runDestroy(t *testing.T, runtimeSource globals.RuntimeSource, args ...string) (string, error) {
+	t.Helper()
+	var out bytes.Buffer
+	root := buildTestRoot(runtimeSource, &out)
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"destroy"}, args...)...)
+}
+
+// TestDestroyCobraNotProvisioned verifies clean message when no state on disk.
+func TestDestroyCobraNotProvisioned(t *testing.T) {
+	t.Chdir(t.TempDir())
+	got, err := runDestroy(t, testutil.NewNilProviderRuntime())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	testutil.AssertContains(t, got, "not provisioned")
+}
+
+// TestNewTeardownWiring verifies NewTeardown returns a Command with correct wiring (nil provider).
 func TestNewTeardownWiring(t *testing.T) {
 	cfg := config.Defaults()
 	rt := globals.Runtime{Config: cfg, Provider: nil}
@@ -46,14 +51,7 @@ func TestNewTeardownWiring(t *testing.T) {
 	}
 }
 
-// ---- Helper builders ----
-
-func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	root, opts := testutil.BuildTestRoot(out)
-	optionsSource := func() globals.Options { return *opts }
-	root.AddCommand(destroy.New(runtimeSource, optionsSource, out))
-	return root
-}
+// ---- helpers ----
 
 func loreStateJSON() string {
 	return `{"account":"123456789012","region":"us-east-1","modules":[
@@ -65,30 +63,27 @@ func loreStateJSON() string {
 
 // ---- Cobra tests with provider ----
 
+// TestDestroyCobraDryRunWithProvider verifies --dry-run produces output without calling delete.
 func TestDestroyCobraDryRunWithProvider(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, loreStateJSON())
-	var out bytes.Buffer
-	root := buildTestRoot(testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), &out)
-	root.SetArgs([]string{"destroy", "--dry-run"})
-	if err := root.ExecuteContext(context.Background()); err != nil {
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), "--dry-run")
+	if err != nil {
 		t.Fatalf("dry-run: %v", err)
 	}
-	got := out.String()
 	testutil.AssertContains(t, got, "dry run")
 	testutil.AssertContains(t, got, "i-lore123")
 }
 
+// TestDestroyCobraYesWithProvider verifies --yes destroys without prompt.
 func TestDestroyCobraYesWithProvider(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, loreStateJSON())
 	provider := &testutil.CobraFakeProvider{}
-	var out bytes.Buffer
-	root := buildTestRoot(testutil.NewTestRuntime(provider), &out)
-	root.SetArgs([]string{"destroy", "--yes"})
-	if err := root.ExecuteContext(context.Background()); err != nil {
+	_, err := runDestroy(t, testutil.NewTestRuntime(provider), "--yes")
+	if err != nil {
 		t.Fatalf("destroy --yes: %v", err)
 	}
 	if provider.DeleteCalls != 2 {
@@ -96,19 +91,18 @@ func TestDestroyCobraYesWithProvider(t *testing.T) {
 	}
 }
 
+// TestDestroyCobraJSONDryRunWithProvider verifies --json --dry-run outputs valid JSON with dryRun=true.
 func TestDestroyCobraJSONDryRunWithProvider(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, loreStateJSON())
-	var out bytes.Buffer
-	root := buildTestRoot(testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), &out)
-	root.SetArgs([]string{"destroy", "--json", "--dry-run"})
-	if err := root.ExecuteContext(context.Background()); err != nil {
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), "--json", "--dry-run")
+	if err != nil {
 		t.Fatalf("json dry-run: %v", err)
 	}
 	var result teardown.Output
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
-		t.Fatalf("invalid JSON: %v\noutput: %s", err, out.String())
+	if err := json.Unmarshal([]byte(got), &result); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, got)
 	}
 	if !result.DryRun {
 		t.Error("dryRun must be true")
@@ -118,39 +112,38 @@ func TestDestroyCobraJSONDryRunWithProvider(t *testing.T) {
 	}
 }
 
+// TestDestroyCobraJSONYesWithProvider verifies --json --yes output after successful destroy.
 func TestDestroyCobraJSONYesWithProvider(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, loreStateJSON())
-	var out bytes.Buffer
-	root := buildTestRoot(testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), &out)
-	root.SetArgs([]string{"destroy", "--json", "--yes"})
-	if err := root.ExecuteContext(context.Background()); err != nil {
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), "--json", "--yes")
+	if err != nil {
 		t.Fatalf("json yes: %v", err)
 	}
 	var result teardown.Output
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
-		t.Fatalf("invalid JSON: %v\noutput: %s", err, out.String())
+	if err := json.Unmarshal([]byte(got), &result); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, got)
 	}
 	if result.DryRun {
 		t.Error("dryRun must be false")
 	}
 }
 
+// TestDestroyCobraRuntimeError verifies runtimeSource errors surface as command errors.
 func TestDestroyCobraRuntimeError(t *testing.T) {
 	src := func() (globals.Runtime, error) {
 		return globals.Runtime{}, errors.New("config not loaded")
 	}
-	var out bytes.Buffer
-	root := buildTestRoot(src, &out)
-	root.SetArgs([]string{"destroy", "--yes"})
-	if err := root.ExecuteContext(context.Background()); err == nil {
+	_, err := runDestroy(t, src, "--yes")
+	if err == nil {
 		t.Fatal("expected error when runtimeSource fails")
 	}
 }
 
 // ---- NewTeardown with provider ----
 
+// TestNewTeardownWiringWithProvider verifies NewTeardown returns a Command with correct wiring (non-nil provider).
 func TestNewTeardownWiringWithProvider(t *testing.T) {
 	cfg := config.Defaults()
 	rt := globals.Runtime{Config: cfg, Provider: &testutil.CobraFakeProvider{}}

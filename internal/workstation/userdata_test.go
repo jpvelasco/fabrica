@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/assert"
 )
 
 func TestGenerateRawRequiresSessionPassword(t *testing.T) {
@@ -11,9 +13,7 @@ func TestGenerateRawRequiresSessionPassword(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when SessionPassword is empty")
 	}
-	if !containsStr(err.Error(), "SessionPassword") {
-		t.Errorf("error %q should mention SessionPassword", err.Error())
-	}
+	assert.Contains(t, err.Error(), "SessionPassword")
 }
 
 func TestGenerateRawContainsDCVInstall(t *testing.T) {
@@ -25,9 +25,7 @@ func TestGenerateRawContainsDCVInstall(t *testing.T) {
 		"dcv",
 		"hunter2",
 	} {
-		if !containsStr(strings.ToLower(got), strings.ToLower(want)) {
-			t.Errorf("userdata does not contain %q", want)
-		}
+		assert.Contains(t, strings.ToLower(got), strings.ToLower(want))
 	}
 }
 
@@ -39,9 +37,7 @@ func TestGenerateRawIdleTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
 	}
-	if !containsStr(got, "30") {
-		t.Error("idle timeout 30 should appear in userdata")
-	}
+	assert.Contains(t, got, "30")
 }
 
 func TestGenerateProducesValidBase64(t *testing.T) {
@@ -63,9 +59,7 @@ func TestGenerateRawDefaultIdleTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
 	}
-	if !containsStr(got, "60") {
-		t.Error("default idle timeout 60 should appear in userdata")
-	}
+	assert.Contains(t, got, "60")
 }
 
 func TestGenerateRawMountPerforceRequiresAddr(t *testing.T) {
@@ -77,9 +71,7 @@ func TestGenerateRawMountPerforceRequiresAddr(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when MountPerforce=true and PerforceServerAddr is empty")
 	}
-	if !containsStr(err.Error(), "PerforceServerAddr") {
-		t.Errorf("error %q should mention PerforceServerAddr", err.Error())
-	}
+	assert.Contains(t, err.Error(), "PerforceServerAddr")
 }
 
 func TestGenerateRawMountPerforceInjectsP4Config(t *testing.T) {
@@ -97,9 +89,7 @@ func TestGenerateRawMountPerforceInjectsP4Config(t *testing.T) {
 		"10.0.1.5:1666",
 		"P4PORT",
 	} {
-		if !containsStr(got, want) {
-			t.Errorf("mount-perforce userdata does not contain %q", want)
-		}
+		assert.Contains(t, got, want)
 	}
 }
 
@@ -108,7 +98,7 @@ func TestGenerateRawNoMountPerforceNoP4Block(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
 	}
-	if containsStr(got, "helix-cli") {
+	if strings.Contains(got, "helix-cli") {
 		t.Error("without --mount-perforce, userdata must not contain helix-cli")
 	}
 }
@@ -137,9 +127,7 @@ func TestValidate(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for empty SessionPassword")
 		}
-		if !containsStr(err.Error(), "SessionPassword") {
-			t.Errorf("error %q should mention SessionPassword", err.Error())
-		}
+		assert.Contains(t, err.Error(), "SessionPassword")
 	})
 	t.Run("mount perforce without addr", func(t *testing.T) {
 		cfg := UserDataConfig{SessionPassword: "pw", MountPerforce: true}
@@ -147,9 +135,7 @@ func TestValidate(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for MountPerforce without PerforceServerAddr")
 		}
-		if !containsStr(err.Error(), "PerforceServerAddr") {
-			t.Errorf("error %q should mention PerforceServerAddr", err.Error())
-		}
+		assert.Contains(t, err.Error(), "PerforceServerAddr")
 	})
 	t.Run("valid config", func(t *testing.T) {
 		cfg := UserDataConfig{SessionPassword: "pw"}

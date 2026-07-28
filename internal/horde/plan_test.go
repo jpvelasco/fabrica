@@ -95,7 +95,7 @@ func TestNewCreatePlanExplicitValues(t *testing.T) {
 
 func TestNewCreatePlanVPCResolver(t *testing.T) {
 	cfg := config.HordeConfig{AmiID: "ami-abc123"}
-	resolver := &fakeVPCResolver{vpcID: "vpc-fake", subnetID: "subnet-fake"}
+	resolver := &cloud.TestVPCResolver{VPCID: "vpc-fake", SubnetID: "subnet-fake"}
 	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -113,7 +113,7 @@ func TestNewCreatePlanVPCResolver(t *testing.T) {
 
 func TestNewCreatePlanVPCResolverError(t *testing.T) {
 	cfg := config.HordeConfig{AmiID: "ami-abc123"}
-	resolver := &fakeVPCResolver{err: errors.New("no default VPC")}
+	resolver := &cloud.TestVPCResolver{Err: errors.New("no default VPC")}
 	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver)
 	if err == nil {
 		t.Fatal("expected error when resolver fails")
@@ -127,13 +127,12 @@ func TestNewCreatePlanExplicitVPCSkipsResolver(t *testing.T) {
 		VPCId:    "vpc-explicit",
 		SubnetId: "subnet-explicit",
 	}
-	called := false
-	resolver := &fakeVPCResolver{vpcID: "vpc-should-not-be-used", callTracker: &called}
+	resolver := &cloud.TestVPCResolver{VPCID: "vpc-should-not-be-used", SubnetID: "subnet-should-not-be-used"}
 	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if called {
+	if resolver.Calls > 0 {
 		t.Error("resolver should not be called when VPC is explicitly configured")
 	}
 	if plan.VPCID != "vpc-explicit" {
@@ -162,19 +161,4 @@ func TestNewCreatePlanCostResources(t *testing.T) {
 	if plan.CostResources[1].Name != "gp3-100GiB" {
 		t.Errorf("CostResources[1].Name = %q, want gp3-100GiB", plan.CostResources[1].Name)
 	}
-}
-
-// fakeVPCResolver is a test double for VPCResolver.
-type fakeVPCResolver struct {
-	vpcID       string
-	subnetID    string
-	err         error
-	callTracker *bool
-}
-
-func (f *fakeVPCResolver) ResolveDefaultVPC(_ context.Context) (string, string, error) {
-	if f.callTracker != nil {
-		*f.callTracker = true
-	}
-	return f.vpcID, f.subnetID, f.err
 }
