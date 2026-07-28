@@ -114,6 +114,51 @@ func TestRunCommandWithOutError(t *testing.T) {
 	}
 }
 
+func TestTestVPCResolver(t *testing.T) {
+	r := &TestVPCResolver{VPCID: "vpc-123", SubnetID: "subnet-456"}
+	vpc, subnet, err := r.ResolveDefaultVPC(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if vpc != "vpc-123" {
+		t.Errorf("VPCID = %q, want vpc-123", vpc)
+	}
+	if subnet != "subnet-456" {
+		t.Errorf("SubnetID = %q, want subnet-456", subnet)
+	}
+	if r.Calls != 1 {
+		t.Errorf("Calls = %d, want 1", r.Calls)
+	}
+}
+
+func TestTestVPCResolverHappyPath(t *testing.T) {
+	r := &TestVPCResolver{VPCID: "vpc-123", SubnetID: "subnet-456"}
+	vpc, subnet, err := r.ResolveDefaultVPC(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if vpc != "vpc-123" {
+		t.Errorf("VPCID = %q, want vpc-123", vpc)
+	}
+	if subnet != "subnet-456" {
+		t.Errorf("SubnetID = %q, want subnet-456", subnet)
+	}
+	if r.Calls != 1 {
+		t.Errorf("Calls = %d, want 1", r.Calls)
+	}
+}
+
+func TestTestVPCResolverError(t *testing.T) {
+	r := &TestVPCResolver{Err: cloud.ErrResourceNotFound}
+	_, _, err := r.ResolveDefaultVPC(context.Background())
+	if err != cloud.ErrResourceNotFound {
+		t.Fatalf("expected ErrResourceNotFound, got: %v", err)
+	}
+	if r.Calls != 1 {
+		t.Errorf("Calls = %d, want 1", r.Calls)
+	}
+}
+
 func TestNewTestRuntime(t *testing.T) {
 	fake := &CobraFakeProvider{}
 	src := NewTestRuntime(fake)
