@@ -115,6 +115,39 @@ func AssertContains(t *testing.T, s, substr string) {
 	}
 }
 
+// BuildTestSubcommand wires a subcommand into a minimal root command. It is
+// designed for use with subcommands that accept a pre-built optionsSource.
+// The caller constructs the subcommand using the returned optionsSource closure.
+//
+// Usage:
+//
+//	root, optionsSource := testutil.BuildTestSubcommand(&out)
+//	sub := mycmd.New(runtimeSource, optionsSource, &out)
+//	root.AddCommand(sub)
+//	root.SetArgs([]string{"sub", "--yes"})
+//	err := root.ExecuteContext(ctx)
+func BuildTestSubcommand(out *bytes.Buffer) (*cobra.Command, globals.OptionsSource) {
+	root, opts := BuildTestRoot(out)
+	return root, func() globals.Options { return *opts }
+}
+
+// RunCommandWithOut executes a root cobra command with the given args and
+// returns (output, error). The caller provides the output buffer (shared with
+// the subcommand via buildTestRoot). Replaces the ~5-line runDestroy/
+// runTerminate helpers scattered across destroy cobra_test.go files.
+//
+// Usage:
+//
+//	var out bytes.Buffer
+//	root := buildTestRoot(runtimeSource, &out)
+//	got, err := testutil.RunCommandWithOut(t, root, &out, "--yes")
+func RunCommandWithOut(t *testing.T, root *cobra.Command, out *bytes.Buffer, args ...string) (string, error) {
+	t.Helper()
+	root.SetArgs(args)
+	err := root.ExecuteContext(context.Background())
+	return out.String(), err
+}
+
 // CobraFakeProvider is a minimal fake provider that tracks delete calls.
 // It satisfies cloud.Provider and provides a CobraFakeRC as its ResourceClient.
 type CobraFakeProvider struct {
@@ -187,3 +220,21 @@ func (r *CobraFakeRC) Delete(_ context.Context, _ *cloud.Resource) error {
 func (r *CobraFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
 	return nil, nil
 }
+
+// TestVPCResolver is a shared fake VPC resolver for plan-layer tests.
+// It implements the VPCResolver interface used by perforce, horde, lore,
+// and workstation plan tests. The Calls field tracks how many times
+// ResolveDefaultVPC was invoked (replaces ad-hoc callTracker fields).
+type TestVPCResolver struct {
+	VPCID    string
+	SubnetID string
+	Err      error
+	Calls    int
+}
+
+func (f *TestVPCResolver) ResolveDefaultVPC(_ context.Context) (string, string, error) {
+	f.Calls++
+	return f.VPCID, f.SubnetID, f.Err
+}
+
+// (TestVPCResolver defined above — do not duplicate.)

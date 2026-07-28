@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 )
@@ -134,7 +135,7 @@ func TestResolveVersion(t *testing.T) {
 }
 
 func TestNewCreatePlan_VPCResolver(t *testing.T) {
-	resolver := &fakeVPCResolver{vpcID: "vpc-abc", subnetID: "subnet-abc"}
+	resolver := &cloud.TestVPCResolver{VPCID: "vpc-abc", SubnetID: "subnet-abc"}
 	cfg := config.PerforceConfig{}
 	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, resolver)
 	if err != nil {
@@ -190,26 +191,23 @@ func TestNewCreatePlan_VolumeSize(t *testing.T) {
 }
 
 func TestNewCreatePlan_VPCResolverError(t *testing.T) {
-	resolver := &fakeVPCResolver{err: fmt.Errorf("no default VPC")}
+	resolver := &cloud.TestVPCResolver{Err: fmt.Errorf("no default VPC")}
 	cfg := config.PerforceConfig{}
 	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, resolver)
 	if err == nil {
 		t.Fatal("expected error when VPC resolver fails")
 	}
-	if !containsString(err.Error(), "resolving default VPC") {
-		t.Errorf("error %q should mention resolving default VPC", err.Error())
-	}
+	assert.Contains(t, err.Error(), "resolving default VPC")
 }
 
 func TestNewCreatePlan_ExplicitVPCSkipsResolver(t *testing.T) {
-	called := false
-	resolver := &callTrackingResolver{onCall: func() { called = true }, vpcID: "vpc-skip", subnetID: "subnet-skip"}
+	resolver := &cloud.TestVPCResolver{VPCID: "vpc-skip", SubnetID: "subnet-skip"}
 	cfg := config.PerforceConfig{VPCId: "vpc-explicit", SubnetId: "subnet-explicit"}
 	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if called {
+	if resolver.Calls > 0 {
 		t.Error("resolver was called despite explicit VPC config — should be skipped")
 	}
 	if plan.VPCID != "vpc-explicit" {
@@ -252,36 +250,4 @@ func TestNewCreatePlan_CostResourceNamesReflectInputs(t *testing.T) {
 	if !foundVolume {
 		t.Error("CostResources missing AWS::EC2::Volume with name gp3-1000GiB")
 	}
-}
-
-func containsString(s, sub string) bool {
-	return len(sub) == 0 || len(s) >= len(sub) && func() bool {
-		for i := 0; i <= len(s)-len(sub); i++ {
-			if s[i:i+len(sub)] == sub {
-				return true
-			}
-		}
-		return false
-	}()
-}
-
-type fakeVPCResolver struct {
-	vpcID    string
-	subnetID string
-	err      error
-}
-
-func (f *fakeVPCResolver) ResolveDefaultVPC(_ context.Context) (string, string, error) {
-	return f.vpcID, f.subnetID, f.err
-}
-
-type callTrackingResolver struct {
-	onCall   func()
-	vpcID    string
-	subnetID string
-}
-
-func (r *callTrackingResolver) ResolveDefaultVPC(_ context.Context) (string, string, error) {
-	r.onCall()
-	return r.vpcID, r.subnetID, nil
 }

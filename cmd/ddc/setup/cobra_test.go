@@ -31,14 +31,12 @@ func (fp) List(ctx context.Context, typeName string) ([]cloud.Resource, error) {
 
 func TestCobraDryRun(t *testing.T) {
 	var buf bytes.Buffer
-	root, opts := testutil.BuildTestRoot(&buf)
+	root, optionsSource := testutil.BuildTestSubcommand(&buf)
 	rt := globals.Runtime{
 		Config:   &config.Config{DDC: config.DDCConfig{AmiID: "ami-x", VPCId: "v", SubnetId: "s"}},
 		Provider: fp{},
 	}
-	root.AddCommand(setup.New(func() (globals.Runtime, error) { return rt, nil }, func() globals.Options {
-		return *opts
-	}, &buf))
+	root.AddCommand(setup.New(func() (globals.Runtime, error) { return rt, nil }, optionsSource, &buf))
 	root.SetArgs([]string{"setup", "--dry-run"})
 	root.SetOut(io.Discard)
 	if err := root.Execute(); err != nil {

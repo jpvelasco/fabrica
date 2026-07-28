@@ -15,8 +15,7 @@ import (
 )
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	root, opts := testutil.BuildTestRoot(out)
-	optionsSource := func() globals.Options { return *opts }
+	root, optionsSource := testutil.BuildTestSubcommand(out)
 	root.AddCommand(setup.New(runtimeSource, optionsSource, out))
 	return root
 }

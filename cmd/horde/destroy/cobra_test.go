@@ -2,7 +2,6 @@ package destroy_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -16,8 +15,7 @@ import (
 )
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	root, opts := testutil.BuildTestRoot(out)
-	optionsSource := func() globals.Options { return *opts }
+	root, optionsSource := testutil.BuildTestSubcommand(out)
 	root.AddCommand(destroy.New(runtimeSource, optionsSource, out))
 	return root
 }
@@ -26,9 +24,7 @@ func runDestroy(t *testing.T, runtimeSource globals.RuntimeSource, args ...strin
 	t.Helper()
 	var out bytes.Buffer
 	root := buildTestRoot(runtimeSource, &out)
-	root.SetArgs(append([]string{"destroy"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"destroy"}, args...)...)
 }
 
 // TestDestroyCobraNotProvisioned verifies clean message when no state on disk.

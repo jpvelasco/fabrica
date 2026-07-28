@@ -18,8 +18,8 @@ import (
 func runRestore(t *testing.T, rt globals.RuntimeSource, args ...string) (string, error) {
 	t.Helper()
 	var out bytes.Buffer
-	root, opts := testutil.BuildTestRoot(&out)
-	root.AddCommand(restore.New(rt, func() globals.Options { return *opts }, &out))
+	root, optionsSource := testutil.BuildTestSubcommand(&out)
+	root.AddCommand(restore.New(rt, optionsSource, &out))
 	root.SetArgs(append([]string{"restore"}, args...))
 	err := root.ExecuteContext(context.Background())
 	return out.String(), err

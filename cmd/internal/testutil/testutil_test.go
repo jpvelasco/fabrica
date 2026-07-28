@@ -3,6 +3,7 @@ package testutil
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,6 +43,119 @@ func TestBuildTestRoot(t *testing.T) {
 	root.AddCommand(&cobra.Command{Use: "test"})
 	if len(root.Commands()) != 1 {
 		t.Error("subcommand not added")
+	}
+}
+
+func TestBuildTestSubcommand(t *testing.T) {
+	var out bytes.Buffer
+	root, optionsSource := BuildTestSubcommand(&out)
+
+	if root.Use != "fabrica" {
+		t.Errorf("root.Use = %q, want fabrica", root.Use)
+	}
+	if optionsSource == nil {
+		t.Fatal("optionsSource should not be nil")
+	}
+	// Verify the returned optionsSource closure works.
+	opts := optionsSource()
+	if opts.DryRun {
+		t.Error("DryRun should default to false")
+	}
+	// Verify flags are on the root.
+	if root.PersistentFlags().Lookup("dry-run") == nil {
+		t.Error("--dry-run flag missing")
+	}
+	if root.PersistentFlags().Lookup("yes") == nil {
+		t.Error("--yes flag missing")
+	}
+	if root.PersistentFlags().Lookup("json") == nil {
+		t.Error("--json flag missing")
+	}
+	// Verify we can add a subcommand.
+	root.AddCommand(&cobra.Command{Use: "test"})
+	if len(root.Commands()) != 1 {
+		t.Error("subcommand not added")
+	}
+}
+
+func TestRunCommandWithOut(t *testing.T) {
+	var out bytes.Buffer
+	root := &cobra.Command{
+		Use:           "test",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			fmt.Fprintln(&out, "hello from command")
+			return nil
+		},
+	}
+	got, err := RunCommandWithOut(t, root, &out, "arg1", "arg2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(got, "hello from command") {
+		t.Errorf("output %q does not contain expected text", got)
+	}
+}
+
+func TestRunCommandWithOutError(t *testing.T) {
+	var out bytes.Buffer
+	root := &cobra.Command{
+		Use:           "test",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return fmt.Errorf("simulated failure")
+		},
+	}
+	_, err := RunCommandWithOut(t, root, &out)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestTestVPCResolver(t *testing.T) {
+	r := &TestVPCResolver{VPCID: "vpc-123", SubnetID: "subnet-456"}
+	vpc, subnet, err := r.ResolveDefaultVPC(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if vpc != "vpc-123" {
+		t.Errorf("VPCID = %q, want vpc-123", vpc)
+	}
+	if subnet != "subnet-456" {
+		t.Errorf("SubnetID = %q, want subnet-456", subnet)
+	}
+	if r.Calls != 1 {
+		t.Errorf("Calls = %d, want 1", r.Calls)
+	}
+}
+
+func TestTestVPCResolverHappyPath(t *testing.T) {
+	r := &TestVPCResolver{VPCID: "vpc-123", SubnetID: "subnet-456"}
+	vpc, subnet, err := r.ResolveDefaultVPC(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if vpc != "vpc-123" {
+		t.Errorf("VPCID = %q, want vpc-123", vpc)
+	}
+	if subnet != "subnet-456" {
+		t.Errorf("SubnetID = %q, want subnet-456", subnet)
+	}
+	if r.Calls != 1 {
+		t.Errorf("Calls = %d, want 1", r.Calls)
+	}
+}
+
+func TestTestVPCResolverError(t *testing.T) {
+	r := &TestVPCResolver{Err: cloud.ErrResourceNotFound}
+	_, _, err := r.ResolveDefaultVPC(context.Background())
+	if err != cloud.ErrResourceNotFound {
+		t.Fatalf("expected ErrResourceNotFound, got: %v", err)
+	}
+	if r.Calls != 1 {
+		t.Errorf("Calls = %d, want 1", r.Calls)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
@@ -53,9 +54,7 @@ func TestSGDesiredStateManagedByTag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SGDesiredState: %v", err)
 	}
-	if !containsStr(string(raw), "fabrica") {
-		t.Error("SG desired state must contain ManagedBy=fabrica tag")
-	}
+	assert.Contains(t, string(raw), "fabrica")
 }
 
 func TestInstanceDesiredStateFields(t *testing.T) {

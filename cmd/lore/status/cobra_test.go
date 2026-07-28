@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/cmd/lore/status"
 )
@@ -14,10 +13,10 @@ import (
 func TestStatusCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var out bytes.Buffer
-	root, opts := testutil.BuildTestRoot(&out)
+	root, optionsSource := testutil.BuildTestSubcommand(&out)
 	root.AddCommand(status.New(
 		testutil.NewNilProviderRuntime(),
-		func() globals.Options { return *opts },
+		optionsSource,
 		&out,
 	))
 	root.SetArgs([]string{"status"})

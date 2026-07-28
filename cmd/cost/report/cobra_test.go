@@ -17,8 +17,7 @@ import (
 // buildTestRoot constructs a minimal root command that mirrors the production
 // flag hierarchy: --dry-run, --yes, and --json are persistent flags on root.
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	root, opts := testutil.BuildTestRoot(out)
-	optionsSource := func() globals.Options { return *opts }
+	root, optionsSource := testutil.BuildTestSubcommand(out)
 	root.AddCommand(report.New(runtimeSource, optionsSource, out))
 	return root
 }

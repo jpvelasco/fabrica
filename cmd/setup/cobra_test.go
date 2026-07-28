@@ -16,16 +16,16 @@ import (
 
 // buildTestRoot wires a minimal root replicating the persistent-flag hierarchy
 // (--dry-run and --yes live on root, not on the subcommand).
-func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) (*cobra.Command, *globals.Options) {
-	root, opts := testutil.BuildTestRoot(out)
-	root.AddCommand(setup.New(runtimeSource, func() globals.Options { return *opts }, out))
-	return root, opts
+func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
+	root, optionsSource := testutil.BuildTestSubcommand(out)
+	root.AddCommand(setup.New(runtimeSource, optionsSource, out))
+	return root
 }
 
 func runSetup(t *testing.T, runtimeSource globals.RuntimeSource, args ...string) (string, error) {
 	t.Helper()
 	var out bytes.Buffer
-	root, _ := buildTestRoot(runtimeSource, &out)
+	root := buildTestRoot(runtimeSource, &out)
 	root.SetArgs(append([]string{"setup"}, args...))
 	err := root.ExecuteContext(context.Background())
 	return out.String(), err

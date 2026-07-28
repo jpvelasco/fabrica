@@ -2,9 +2,10 @@ package lore
 
 import (
 	"context"
-	"strings"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/assert"
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
@@ -14,12 +15,8 @@ func TestNewCreatePlanMissingAmiID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when AmiID is empty")
 	}
-	if !strings.Contains(err.Error(), "lore.amiId is required") {
-		t.Errorf("error = %q, want lore.amiId is required", err.Error())
-	}
-	if !strings.Contains(err.Error(), "docs/lore-ami.md") {
-		t.Errorf("error = %q, want docs/lore-ami.md", err.Error())
-	}
+	assert.Contains(t, err.Error(), "lore.amiId is required")
+	assert.Contains(t, err.Error(), "docs/lore-ami.md")
 }
 
 func TestNewCreatePlanDefaults(t *testing.T) {
@@ -86,7 +83,7 @@ func TestNewCreatePlanExplicitValues(t *testing.T) {
 
 func TestNewCreatePlanVPCResolver(t *testing.T) {
 	cfg := config.LoreConfig{AmiID: "ami-abc123"}
-	resolver := &fakeVPCResolver{vpcID: "vpc-fake", subnetID: "subnet-fake"}
+	resolver := &cloud.TestVPCResolver{VPCID: "vpc-fake", SubnetID: "subnet-fake"}
 	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -101,26 +98,12 @@ func TestNewCreatePlanVPCResolver(t *testing.T) {
 
 func TestNewCreatePlanVPCResolverError(t *testing.T) {
 	cfg := config.LoreConfig{AmiID: "ami-abc123"}
-	resolver := &fakeVPCResolver{err: errFakeVPC}
+	resolver := &cloud.TestVPCResolver{Err: errFakeVPC}
 	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver)
 	if err == nil {
 		t.Fatal("expected error from resolver")
 	}
-	if !strings.Contains(err.Error(), "resolving default VPC") {
-		t.Errorf("error = %q", err.Error())
-	}
-}
-
-type fakeVPCResolver struct {
-	vpcID, subnetID string
-	err             error
-}
-
-func (f *fakeVPCResolver) ResolveDefaultVPC(context.Context) (string, string, error) {
-	if f.err != nil {
-		return "", "", f.err
-	}
-	return f.vpcID, f.subnetID, nil
+	assert.Contains(t, err.Error(), "resolving default VPC")
 }
 
 var errFakeVPC = errString("no default VPC")
