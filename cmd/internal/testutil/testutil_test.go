@@ -257,32 +257,51 @@ func (f *fatalerFake) Fatal(args ...any) {
 }
 
 func TestAssertContains(t *testing.T) {
-	AssertContains(t, "hello world", "world")
+	tests := []struct {
+		name   string
+		text   string
+		substr string
+	}{
+		{name: "substring", text: "hello world", substr: "world"},
+		{name: "exact", text: "hello", substr: "hello"},
+		{name: "prefix", text: "hello world", substr: "hello"},
+		{name: "empty substring", text: "hello", substr: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			AssertContains(t, tt.text, tt.substr)
+		})
+	}
 }
 
 func TestAssertContainsFails(t *testing.T) {
-	// Verify AssertContains correctly detects missing substring.
-	// We test this by checking the function's behavior indirectly:
-	// AssertContains uses strings.Contains internally, so we verify
-	// the positive case above. The negative case is verified by the
-	// fact that t.Fatal is called when substr is not found.
-	// A direct test would trigger t.Fatal and fail the test, so we
-	// skip this as it's a negative-path assertion.
+	fake := &assertionTFake{}
+	AssertContains(fake, "hello", "goodbye")
+	if fake.failure != `"hello" does not contain "goodbye"` {
+		t.Fatalf("failure = %q", fake.failure)
+	}
 }
 
-// TestAssertContainsExact verifies AssertContains finds exact match.
-func TestAssertContainsExact(t *testing.T) {
-	AssertContains(t, "hello", "hello")
+func TestAssertNotContains(t *testing.T) {
+	AssertNotContains(t, "hello world", "goodbye")
 }
 
-// TestAssertContainsPrefix verifies AssertContains finds prefix.
-func TestAssertContainsPrefix(t *testing.T) {
-	AssertContains(t, "hello world", "hello")
+func TestAssertNotContainsFails(t *testing.T) {
+	fake := &assertionTFake{}
+	AssertNotContains(fake, "hello world", "world")
+	if fake.failure != `"hello world" contains "world"` {
+		t.Fatalf("failure = %q", fake.failure)
+	}
 }
 
-// TestAssertContainsEmpty verifies AssertContains handles empty string.
-func TestAssertContainsEmpty(t *testing.T) {
-	AssertContains(t, "hello", "")
+type assertionTFake struct {
+	failure string
+}
+
+func (f *assertionTFake) Helper() {}
+
+func (f *assertionTFake) Fatalf(format string, args ...any) {
+	f.failure = fmt.Sprintf(format, args...)
 }
 
 func TestNewProvisionedStateJSON(t *testing.T) {

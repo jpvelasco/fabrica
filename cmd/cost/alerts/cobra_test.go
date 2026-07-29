@@ -64,14 +64,6 @@ func writeStateFile(t *testing.T, st *fabricastate.State) {
 	}
 }
 
-// assertNotContains checks that s does not contain substr.
-func assertNotContains(t *testing.T, s, substr string) {
-	t.Helper()
-	if strings.Contains(s, substr) {
-		t.Fatalf("%q should not contain %q", s, substr)
-	}
-}
-
 // TestAlertsListEmpty verifies "alerts list" with no budgets.
 func TestAlertsListEmpty(t *testing.T) {
 	t.Chdir(t.TempDir())
@@ -379,5 +371,5 @@ func TestAlertsCheckNilProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error with nil provider: %v", err)
 	}
-	assertNotContains(t, got, "error")
+	testutil.AssertNotContains(t, got, "error")
 }

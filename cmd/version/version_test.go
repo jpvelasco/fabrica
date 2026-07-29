@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	fabricav "github.com/jpvelasco/fabrica/internal/version"
 )
 
@@ -34,9 +35,7 @@ func TestVersionWithCommit(t *testing.T) {
 			t.Fatalf("version output missing %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "Commit:") {
-		t.Fatalf("commit should be inlined via String(), not a Commit: line:\n%s", out)
-	}
+	testutil.AssertNotContains(t, out, "Commit:")
 }
 
 func TestVersionWithoutCommit(t *testing.T) {
@@ -48,9 +47,8 @@ func TestVersionWithoutCommit(t *testing.T) {
 	fabricav.Commit = "unknown"
 
 	out := runVersion(t)
-	if strings.Contains(out, "Commit:") || strings.Contains(out, "(unknown)") {
-		t.Fatalf("unknown commit should not appear as a suffix or Commit line:\n%s", out)
-	}
+	testutil.AssertNotContains(t, out, "Commit:")
+	testutil.AssertNotContains(t, out, "(unknown)")
 	if !strings.Contains(out, "Fabrica") || !strings.Contains(out, "OS/Arch:") {
 		t.Fatalf("version output missing expected lines:\n%s", out)
 	}
