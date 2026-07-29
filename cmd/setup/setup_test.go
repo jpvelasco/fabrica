@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
@@ -61,7 +62,7 @@ func testApplyRuntime() globals.Runtime {
 	// touches the filesystem.
 	cfg.Cloud.AWS.AccountID = "123456789012"
 	return globals.Runtime{
-		Provider: &fakeSetupProvider{},
+		Provider: &testutil.NilResourceProvider{},
 		Config:   cfg,
 	}
 }
@@ -352,11 +353,3 @@ func TestSaveBackendConfigPartialFill(t *testing.T) {
 		t.Errorf("Bucket = %q, want fabrica-state-new-account", cfg.State.Bucket)
 	}
 }
-
-type fakeSetupProvider struct{}
-
-func (f *fakeSetupProvider) Name() string { return "fake" }
-func (f *fakeSetupProvider) Identity(_ context.Context) (account, arn, region string, err error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-func (f *fakeSetupProvider) Resources() fabricac.ResourceClient { return nil }

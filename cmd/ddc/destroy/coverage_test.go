@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/ddc"
@@ -135,8 +136,8 @@ func TestNewRuntimeError(t *testing.T) {
 }
 
 func TestNewTeardownWiresDelete(t *testing.T) {
-	fp := &delFake{}
-	rt := globals.Runtime{Config: &config.Config{}, Provider: fp}
+	provider := &testutil.TestProvider{}
+	rt := globals.Runtime{Config: &config.Config{}, Provider: provider}
 	var buf bytes.Buffer
 	tc := NewTeardown(rt, &buf)
 	if tc.DeleteResource == nil {
@@ -146,6 +147,9 @@ func TestNewTeardownWiresDelete(t *testing.T) {
 		TypeName: ddc.TypeAWSS3Bucket, Identifier: "b",
 	}); err != nil {
 		t.Fatal(err)
+	}
+	if provider.DeleteCalls != 1 {
+		t.Fatalf("DeleteCalls = %d, want 1", provider.DeleteCalls)
 	}
 }
 
@@ -166,11 +170,11 @@ func TestNewExecuteDestroyYes(t *testing.T) {
 	if err := fabricastate.WriteState(st); err != nil {
 		t.Fatal(err)
 	}
-	fp := &delFake{}
+	provider := &testutil.TestProvider{}
 	var buf bytes.Buffer
 	cmd := New(
 		func() (globals.Runtime, error) {
-			return globals.Runtime{Config: config.Defaults(), Provider: fp}, nil
+			return globals.Runtime{Config: config.Defaults(), Provider: provider}, nil
 		},
 		func() globals.Options { return globals.Options{AssumeYes: true} },
 		&buf,
@@ -178,7 +182,7 @@ func TestNewExecuteDestroyYes(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if len(fp.deleted) == 0 {
+	if provider.DeleteCalls == 0 {
 		t.Fatal("expected deletes via New()")
 	}
 	if !strings.Contains(buf.String(), "destroyed") && !strings.Contains(buf.String(), "Deleted") {

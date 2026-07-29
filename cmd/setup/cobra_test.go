@@ -71,13 +71,10 @@ func TestSetupCobraRuntimeError(t *testing.T) {
 
 // ---- cobraFakeProvider implements cloud.Provider + StateBackendBootstrapper ----
 
-type cobraFakeProvider struct{}
-
-func (f *cobraFakeProvider) Name() string { return "fake" }
-func (f *cobraFakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
+type cobraFakeProvider struct {
+	testutil.NilResourceProvider
 }
-func (f *cobraFakeProvider) Resources() cloud.ResourceClient { return nil }
+
 func (f *cobraFakeProvider) EnsureStateBucket(_ context.Context, bucket, _ string) (cloud.StateBackendCreateResult, error) {
 	return cloud.StateBackendCreateResult{Identifier: bucket, Created: true}, nil
 }
