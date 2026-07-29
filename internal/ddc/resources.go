@@ -105,14 +105,14 @@ func ScyllaInstanceDesiredState(plan *SetupPlan, sgID, userData, instanceProfile
 }
 
 func ec2DesiredState(amiID, instanceType, subnetID, sgID, userData, profileName string, volumeSize int, name string) (json.RawMessage, error) {
-	opts := []ec2state.InstanceOption{
-		ec2state.WithAMI(amiID),
-		ec2state.WithInstanceType(instanceType),
-		ec2state.WithSubnet(subnetID),
-		ec2state.WithSecurityGroup(sgID),
-		ec2state.WithUserData(userData),
-		ec2state.WithVolumeSize(volumeSize),
-		ec2state.WithInstanceName(name),
+	spec := ec2state.InstanceSpec{
+		ImageID:         amiID,
+		InstanceType:    instanceType,
+		SubnetID:        subnetID,
+		SecurityGroupID: sgID,
+		UserData:        userData,
+		VolumeSize:      volumeSize,
+		InstanceName:    name,
 	}
 	dsOpts := []ec2state.DesiredStateOption{
 		ec2state.WithExtraTags("FabricaModule", "ddc"),
@@ -120,5 +120,5 @@ func ec2DesiredState(amiID, instanceType, subnetID, sgID, userData, profileName 
 	if profileName != "" {
 		dsOpts = append(dsOpts, ec2state.WithIAMProfile(profileName))
 	}
-	return ec2state.Build(opts, dsOpts...)
+	return ec2state.Build(spec, dsOpts...)
 }
