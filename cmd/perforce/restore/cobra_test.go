@@ -20,9 +20,7 @@ func runRestore(t *testing.T, rt globals.RuntimeSource, args ...string) (string,
 	var out bytes.Buffer
 	root, optionsSource := testutil.BuildTestSubcommand(&out)
 	root.AddCommand(restore.New(rt, optionsSource, &out))
-	root.SetArgs(append([]string{"restore"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"restore"}, args...)...)
 }
 
 type fakeProvider struct{}

@@ -2,7 +2,6 @@ package status_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -24,9 +23,7 @@ func runStatus(t *testing.T, runtimeSource globals.RuntimeSource, args ...string
 	t.Helper()
 	var out bytes.Buffer
 	root := buildTestRoot(runtimeSource, &out)
-	root.SetArgs(append([]string{"status"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"status"}, args...)...)
 }
 
 func newCobraRuntime(provider cloud.Provider) globals.RuntimeSource {

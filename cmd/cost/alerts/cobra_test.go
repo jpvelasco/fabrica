@@ -31,9 +31,7 @@ func runAlertsCmd(t *testing.T, runtimeSource globals.RuntimeSource, args ...str
 	t.Helper()
 	var out bytes.Buffer
 	root := buildTestRoot(runtimeSource, &out)
-	root.SetArgs(append([]string{"alerts"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"alerts"}, args...)...)
 }
 
 // newTestRuntime returns a RuntimeSource with a given config and nil provider

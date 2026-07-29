@@ -26,18 +26,18 @@ func runCIDestroy(t *testing.T, runtimeSource globals.RuntimeSource, args ...str
 	t.Helper()
 	var out bytes.Buffer
 	root := buildTestRoot(runtimeSource, &out)
-	root.SetArgs(append([]string{"destroy"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"destroy"}, args...)...)
 }
 
 // ciStateJSON returns a JSON string with CI module provisioned.
 func ciStateJSON() string {
-	return `{"account":"123456789012","region":"us-east-1","modules":[
-		{"name":"ci","version":"fabrica-ci","status":"ready","resources":[
-			{"typeName":"AWS::CodeBuild::Project","identifier":"fabrica-ci"},
-			{"typeName":"AWS::IAM::Role","identifier":"fabrica-ci-codebuild"}
-		]}]}`
+	return testutil.NewProvisionedStateJSON(testutil.StateModule{
+		Name: "ci", Version: "fabrica-ci", Status: "ready",
+		Resources: []testutil.StateResource{
+			{TypeName: "AWS::CodeBuild::Project", Identifier: "fabrica-ci"},
+			{TypeName: "AWS::IAM::Role", Identifier: "fabrica-ci-codebuild"},
+		},
+	})
 }
 
 // TestCIDestroyCobraNotProvisioned verifies clean message when no CI state exists.

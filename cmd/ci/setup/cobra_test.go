@@ -24,9 +24,7 @@ func runCISetup(t *testing.T, runtimeSource globals.RuntimeSource, args ...strin
 	t.Helper()
 	var out bytes.Buffer
 	root := buildTestRoot(runtimeSource, &out)
-	root.SetArgs(append([]string{"setup"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"setup"}, args...)...)
 }
 
 // TestSetupCobraDryRunShowsPlan exercises the real Cobra entry with --dry-run.

@@ -2,7 +2,6 @@ package forecast_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -27,9 +26,7 @@ func runForecast(t *testing.T, runtimeSource globals.RuntimeSource, args ...stri
 	t.Helper()
 	var out bytes.Buffer
 	root := buildTestRoot(runtimeSource, &out)
-	root.SetArgs(append([]string{"forecast"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"forecast"}, args...)...)
 }
 
 // newTestRuntime returns a RuntimeSource with default config (cost is offline —
@@ -43,10 +40,15 @@ func newTestRuntime() globals.RuntimeSource {
 // perforceStateJSON seeds a provisioned perforce module so the forecast has a
 // non-zero base estimate to project.
 func perforceStateJSON() string {
-	return `{"account":"123456789012","region":"us-east-1","modules":[
-		{"name":"perforce","version":"2024.2","status":"ready","resources":[
-			{"typeName":"AWS::EC2::Instance","identifier":"i-1","properties":{"instanceType":"m5.xlarge","volumeSize":"500"}}
-		]}]}`
+	return testutil.NewProvisionedStateJSON(testutil.StateModule{
+		Name: "perforce", Version: "2024.2", Status: "ready",
+		Resources: []testutil.StateResource{
+			{
+				TypeName: "AWS::EC2::Instance", Identifier: "i-1",
+				Properties: map[string]any{"instanceType": "m5.xlarge", "volumeSize": "500"},
+			},
+		},
+	})
 }
 
 func TestForecastCobraDefaultHorizon(t *testing.T) {

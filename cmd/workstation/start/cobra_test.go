@@ -25,9 +25,7 @@ func runStart(t *testing.T, runtimeSource globals.RuntimeSource, args ...string)
 	t.Helper()
 	var out bytes.Buffer
 	root := buildTestRoot(runtimeSource, &out)
-	root.SetArgs(append([]string{"start"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"start"}, args...)...)
 }
 
 func newRuntime(provider fabricac.Provider) globals.RuntimeSource {
@@ -128,11 +126,10 @@ func TestStartCobraRuntimeError(t *testing.T) {
 // ---- helpers ----
 
 func provisionedStateJSON(status string) string {
-	return `{"account":"123456789012","region":"us-east-1","modules":[
-		{"name":"workstation","version":"ami-test","status":"` + status + `","resources":[
-			{"typeName":"AWS::EC2::SecurityGroup","identifier":"sg-cobrawstest"},
-			{"typeName":"AWS::EC2::Instance","identifier":"i-cobrawstest"}
-		]}]}`
+	return testutil.NewProvisionedStateJSON(testutil.StateModule{
+		Name: "workstation", Version: "ami-test", Status: status,
+		Resources: testutil.EC2Pair("sg-cobrawstest", "i-cobrawstest"),
+	})
 }
 
 // cobraFakeProvider implements both cloud.Provider and cloud.EC2InstanceManager.

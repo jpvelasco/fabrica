@@ -26,9 +26,7 @@ func runPromote(t *testing.T, runtimeSource globals.RuntimeSource, args ...strin
 	t.Helper()
 	var out bytes.Buffer
 	root := buildTestRoot(runtimeSource, &out)
-	root.SetArgs(append([]string{"promote"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"promote"}, args...)...)
 }
 
 // newTestRuntime returns a RuntimeSource with a given provider.
@@ -42,11 +40,13 @@ func newTestRuntime(provider cloud.Provider) globals.RuntimeSource {
 
 // deployStateJSON returns a JSON string with deploy module provisioned (role + alias).
 func deployStateJSON() string {
-	return `{"account":"123456789012","region":"us-east-1","modules":[
-		{"name":"deploy","version":"fabrica-deploy","status":"ready","resources":[
-			{"typeName":"AWS::IAM::Role","identifier":"fabrica-deploy-gamelift"},
-			{"typeName":"AWS::GameLift::Alias","identifier":"alias-1"}
-		]}]}`
+	return testutil.NewProvisionedStateJSON(testutil.StateModule{
+		Name: "deploy", Version: "fabrica-deploy", Status: "ready",
+		Resources: []testutil.StateResource{
+			{TypeName: "AWS::IAM::Role", Identifier: "fabrica-deploy-gamelift"},
+			{TypeName: "AWS::GameLift::Alias", Identifier: "alias-1"},
+		},
+	})
 }
 
 // TestPromoteCobraNotProvisioned verifies clean message when deploy is not set up.

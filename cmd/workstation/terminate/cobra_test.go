@@ -158,9 +158,8 @@ func TestNewTeardownNilProvider(t *testing.T) {
 // ---- helpers ----
 
 func provisionedStateJSON() string {
-	return `{"account":"123456789012","region":"us-east-1","modules":[
-		{"name":"workstation","version":"ami-test","status":"ready","resources":[
-			{"typeName":"AWS::EC2::SecurityGroup","identifier":"sg-cobrawstest"},
-			{"typeName":"AWS::EC2::Instance","identifier":"i-cobrawstest"}
-		]}]}`
+	return testutil.NewProvisionedStateJSON(testutil.StateModule{
+		Name: "workstation", Version: "ami-test", Status: "ready",
+		Resources: testutil.EC2Pair("sg-cobrawstest", "i-cobrawstest"),
+	})
 }

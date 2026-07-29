@@ -24,9 +24,7 @@ func run(t *testing.T, src globals.RuntimeSource, args ...string) (string, error
 	t.Helper()
 	var out bytes.Buffer
 	root := buildTestRoot(src, &out)
-	root.SetArgs(args)
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, args...)
 }
 
 // cobraFakeProvider implements Provider + GameLiftManager so subcommand wiring
