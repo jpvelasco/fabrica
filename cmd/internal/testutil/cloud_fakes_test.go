@@ -9,6 +9,31 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 )
 
+func TestUbuntuAMIProvider(t *testing.T) {
+	if _, ok := any(&TestProvider{}).(cloud.AMIResolver); ok {
+		t.Fatal("TestProvider unexpectedly implements cloud.AMIResolver")
+	}
+
+	provider := &UbuntuAMIProvider{}
+	amiID, err := provider.ResolveUbuntuAMI(context.Background(), "us-east-1")
+	if err != nil || amiID != "ami-fake-ubuntu" {
+		t.Fatalf("default ResolveUbuntuAMI() = (%q, %v)", amiID, err)
+	}
+
+	provider.AMIID = "ami-ubuntu-42"
+	amiID, err = provider.ResolveUbuntuAMI(context.Background(), "us-west-2")
+	if err != nil || amiID != "ami-ubuntu-42" {
+		t.Fatalf("configured ResolveUbuntuAMI() = (%q, %v)", amiID, err)
+	}
+
+	wantErr := errors.New("AMI lookup failed")
+	provider.AMIErr = wantErr
+	amiID, err = provider.ResolveUbuntuAMI(context.Background(), "us-west-2")
+	if amiID != "" || !errors.Is(err, wantErr) {
+		t.Fatalf("failed ResolveUbuntuAMI() = (%q, %v)", amiID, err)
+	}
+}
+
 func TestCodeBuildProvider(t *testing.T) {
 	t.Run("project lifecycle", func(t *testing.T) {
 		wantErr := errors.New("codebuild unavailable")

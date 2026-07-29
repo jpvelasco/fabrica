@@ -2,8 +2,6 @@ package create_test
 
 import (
 	"bytes"
-	"context"
-	"fmt"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -38,19 +36,19 @@ func newCobraRuntime(provider cloud.Provider) globals.RuntimeSource {
 }
 
 func TestCreateCobraDryRunNoAWSCalls(t *testing.T) {
-	provider := &cobraFakeProvider{}
+	provider := &testutil.TestProvider{}
 	got, err := runCreate(t, newCobraRuntime(provider), "--dry-run")
 	if err != nil {
 		t.Fatalf("dry-run failed: %v", err)
 	}
-	if provider.createCalls != 0 {
-		t.Fatalf("dry-run made %d create calls, want 0", provider.createCalls)
+	if provider.CreateCalls != 0 {
+		t.Fatalf("dry-run made %d create calls, want 0", provider.CreateCalls)
 	}
 	testutil.AssertContains(t, got, "dry run")
 }
 
 func TestCreateCobraDryRunOutputFields(t *testing.T) {
-	provider := &cobraFakeProvider{}
+	provider := &testutil.TestProvider{}
 	got, err := runCreate(t, newCobraRuntime(provider), "--dry-run")
 	if err != nil {
 		t.Fatalf("dry-run failed: %v", err)
@@ -62,13 +60,13 @@ func TestCreateCobraDryRunOutputFields(t *testing.T) {
 
 func TestCreateCobraYesFlagSkipsConfirmation(t *testing.T) {
 	t.Chdir(t.TempDir())
-	provider := &cobraFakeProvider{}
+	provider := &testutil.TestProvider{}
 	_, err := runCreate(t, newCobraRuntime(provider), "--yes")
 	if err != nil {
 		t.Fatalf("--yes run failed: %v", err)
 	}
-	if provider.createCalls != 2 {
-		t.Fatalf("--yes: expected 2 create calls, got %d", provider.createCalls)
+	if provider.CreateCalls != 2 {
+		t.Fatalf("--yes: expected 2 create calls, got %d", provider.CreateCalls)
 	}
 }
 
@@ -84,7 +82,7 @@ func TestCreateCobraNilProvider(t *testing.T) {
 }
 
 func TestCreateCobraInstanceTypeFlag(t *testing.T) {
-	provider := &cobraFakeProvider{}
+	provider := &testutil.TestProvider{}
 	got, err := runCreate(t, newCobraRuntime(provider), "--dry-run", "--instance-type", "g5.2xlarge")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -93,7 +91,7 @@ func TestCreateCobraInstanceTypeFlag(t *testing.T) {
 }
 
 func TestCreateCobraVolumeSizeFlag(t *testing.T) {
-	provider := &cobraFakeProvider{}
+	provider := &testutil.TestProvider{}
 	got, err := runCreate(t, newCobraRuntime(provider), "--dry-run", "--volume-size", "200")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -106,7 +104,7 @@ func TestCreateCobraAmiIDMissing(t *testing.T) {
 	cfg.Workstation.AmiID = ""
 	cfg.Workstation.VPCId = "vpc-test"
 	cfg.Workstation.SubnetId = "subnet-test"
-	provider := &cobraFakeProvider{}
+	provider := &testutil.TestProvider{}
 	rt := globals.Runtime{Config: cfg, Provider: provider}
 	runtimeSource := func() (globals.Runtime, error) { return rt, nil }
 
@@ -115,35 +113,4 @@ func TestCreateCobraAmiIDMissing(t *testing.T) {
 		t.Fatal("expected error when AmiID is missing")
 	}
 	testutil.AssertContains(t, err.Error(), "workstation.amiId")
-}
-
-type cobraFakeProvider struct {
-	createCalls int
-}
-
-func (f *cobraFakeProvider) Name() string { return "fake" }
-func (f *cobraFakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-func (f *cobraFakeProvider) Resources() cloud.ResourceClient {
-	return &cobraFakeRC{provider: f}
-}
-
-type cobraFakeRC struct{ provider *cobraFakeProvider }
-
-func (r *cobraFakeRC) Create(_ context.Context, res *cloud.Resource) error {
-	r.provider.createCalls++
-	switch res.TypeName {
-	case "AWS::EC2::SecurityGroup":
-		res.Identifier = fmt.Sprintf("sg-cobra%04d", r.provider.createCalls)
-	case "AWS::EC2::Instance":
-		res.Identifier = fmt.Sprintf("i-cobra%04d", r.provider.createCalls)
-	}
-	return nil
-}
-func (r *cobraFakeRC) Get(_ context.Context, _ *cloud.Resource) error    { return nil }
-func (r *cobraFakeRC) Update(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *cobraFakeRC) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *cobraFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
-	return nil, nil
 }
