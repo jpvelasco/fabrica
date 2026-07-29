@@ -130,15 +130,3 @@ func TestNewRuntimeError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
-
-func TestReadState(t *testing.T) {
-	t.Chdir(t.TempDir())
-	st, err := readState(globals.Runtime{Config: config.Defaults()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st == nil {
-		t.Fatal("nil state")
-		return
-	}
-}

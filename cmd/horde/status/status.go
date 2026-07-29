@@ -4,12 +4,9 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
-	"github.com/jpvelasco/fabrica/cmd/internal/provision"
-	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
 )
 
@@ -39,9 +36,7 @@ type renderer struct {
 // New returns the "horde status" subcommand. Global flags (--json) are
 // resolved at execution time via the source closures.
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
-	var wait bool
-	cmd := &cobra.Command{
-		Use:   "status",
+	return modstatus.NewCobraCommand(modstatus.CobraSpec{
 		Short: "Show Horde coordinator status",
 		Long: `Show the current status of the Horde build coordinator.
 
@@ -54,39 +49,16 @@ status automatically updates the local state file.
 
 Use --wait / -w to poll every 15 seconds until Horde is reachable
 (times out after 10 minutes).`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			rt, err := runtimeSource()
-			if err != nil {
-				return err
-			}
-			opts := optionsSource()
-
+		ModuleName:  moduleName,
+		DisplayName: "Horde",
+		Resolve: func(rt globals.Runtime) modstatus.RuntimeSpec {
 			port, grpcPort := resolvePorts(rt)
-			c := modstatus.Command{
-				Spec: modstatus.Spec{
-					ModuleName:  moduleName,
-					ProbePort:   port,
-					DisplayName: "Horde",
-				},
-				Renderer:   renderer{port: port, grpcPort: grpcPort},
-				Runtime:    rt,
-				JSONOut:    opts.JSONOutput,
-				Wait:       wait,
-				Out:        out,
-				ReadState:  func() (*fabricastate.State, error) { return readState(rt) },
-				WriteState: fabricastate.WriteState,
-				ProbeTCP:   modstatus.DefaultProbeTCP,
-				Sleep:      time.Sleep,
-				Now:        time.Now,
+			return modstatus.RuntimeSpec{
+				ProbePort: port,
+				Renderer:  renderer{port: port, grpcPort: grpcPort},
 			}
-			if rt.Provider != nil {
-				c.GetResource = rt.Provider.Resources().Get
-			}
-			return c.Run(cmd.Context())
 		},
-	}
-	cmd.Flags().BoolVarP(&wait, "wait", "w", false, "Poll until ready or 10 minutes elapsed")
-	return cmd
+	}, runtimeSource, optionsSource, out)
 }
 
 // resolvePorts returns the configured Horde HTTP and gRPC ports, falling back
@@ -143,8 +115,4 @@ func (r renderer) printJSON(out io.Writer, info modstatus.Info) {
 	}
 	o.HordeStatus = modstatus.ProbeStatus(info)
 	modstatus.WriteJSON(out, o)
-}
-
-func readState(rt globals.Runtime) (*fabricastate.State, error) {
-	return provision.ReadState(rt)
 }
