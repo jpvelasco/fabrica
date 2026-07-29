@@ -58,6 +58,43 @@ type Renderer interface {
 	Result(out io.Writer, info Info, jsonOut bool)
 }
 
+// NewRenderer creates a StandardRenderer with the standard not-provisioned
+// output and JSON/text dispatch. Module status packages supply only their
+// distinct views.
+func NewRenderer(moduleName, createCommand string, renderText, renderJSON func(io.Writer, Info)) *StandardRenderer {
+	return &StandardRenderer{
+		moduleName:    moduleName,
+		createCommand: createCommand,
+		renderText:    renderText,
+		renderJSON:    renderJSON,
+	}
+}
+
+// StandardRenderer provides the lifecycle output shared by module status
+// commands while delegating their distinct populated views.
+type StandardRenderer struct {
+	moduleName    string
+	createCommand string
+	renderText    func(io.Writer, Info)
+	renderJSON    func(io.Writer, Info)
+}
+
+func (r *StandardRenderer) NotProvisioned(out io.Writer, jsonOut bool) {
+	if jsonOut {
+		writeNotProvisionedJSON(out)
+		return
+	}
+	writeNotProvisionedText(out, r.moduleName, r.createCommand)
+}
+
+func (r *StandardRenderer) Result(out io.Writer, info Info, jsonOut bool) {
+	if jsonOut {
+		r.renderJSON(out, info)
+		return
+	}
+	r.renderText(out, info)
+}
+
 // Spec carries the per-module knobs that vary between status commands.
 type Spec struct {
 	ModuleName string
@@ -285,17 +322,21 @@ func DefaultProbeTCP(address string) bool {
 	return true
 }
 
-// ProbeHTTP performs a GET request against the given address+path with a 3s timeout.
-// Returns true when the response status is 200.
-func ProbeHTTP(address, path string) bool {
-	url := "http://" + address + path
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return false
+// HTTPProbe returns a readiness probe that performs a GET against path with the
+// standard timeout. The probe reports ready only for an HTTP 200 response.
+func HTTPProbe(path string) func(address string) bool {
+	return httpProbeWithClient(&http.Client{Timeout: probeTimeout}, path)
+}
+
+func httpProbeWithClient(client *http.Client, path string) func(address string) bool {
+	return func(address string) bool {
+		resp, err := client.Get("http://" + address + path)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
 	}
-	defer resp.Body.Close()
-	return resp.StatusCode == 200
 }
 
 // WriteCommonFields writes the shared InstanceID, InstanceType, and PrivateIP
@@ -316,9 +357,7 @@ func WriteCommonFields(out io.Writer, info Info) {
 	}
 }
 
-// WriteNotProvisionedJSON writes the standard not-provisioned JSON output.
-// Call this from the NotProvisioned renderer when jsonOut is true.
-func WriteNotProvisionedJSON(out io.Writer) {
+func writeNotProvisionedJSON(out io.Writer) {
 	data, _ := json.Marshal(map[string]interface{}{
 		"provisioned": false,
 		"status":      "not_provisioned",
@@ -326,10 +365,7 @@ func WriteNotProvisionedJSON(out io.Writer) {
 	fmt.Fprintln(out, string(data))
 }
 
-// WriteNotProvisionedText writes the standard not-provisioned text output.
-// moduleName is the display name (e.g. "Perforce", "Horde"),
-// createCmd is the command to run (e.g. "fabrica perforce create").
-func WriteNotProvisionedText(out io.Writer, moduleName, createCmd string) {
+func writeNotProvisionedText(out io.Writer, moduleName, createCmd string) {
 	fmt.Fprintf(out, "%s is not provisioned. Run '%s' to set it up.\n", moduleName, createCmd)
 }
 

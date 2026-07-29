@@ -52,34 +52,16 @@ V1 is single home-region only — no multi-region edge list.`,
 					backend = rt.Config.DDC.Backend
 				}
 			}
+			r := renderer{publicPort: port, backend: backend}
 			return modstatus.RuntimeSpec{
 				ProbePort: port,
-				Renderer:  renderer{publicPort: port, backend: backend},
-				Probe:     probeReady,
+				Renderer: modstatus.NewRenderer(
+					"DDC", "fabrica ddc setup", r.printText, r.printJSON,
+				),
+				Probe: modstatus.HTTPProbe("/health/ready"),
 			}
 		},
 	}, runtimeSource, optionsSource, out)
-}
-
-// probeReady performs GET http://host:port/health/ready.
-func probeReady(address string) bool {
-	return modstatus.ProbeHTTP(address, "/health/ready")
-}
-
-func (renderer) NotProvisioned(out io.Writer, jsonOut bool) {
-	if jsonOut {
-		modstatus.WriteNotProvisionedJSON(out)
-		return
-	}
-	modstatus.WriteNotProvisionedText(out, "DDC", "fabrica ddc setup")
-}
-
-func (r renderer) Result(out io.Writer, info modstatus.Info, jsonOut bool) {
-	if jsonOut {
-		r.printJSON(out, info)
-		return
-	}
-	r.printText(out, info)
 }
 
 func (r renderer) printText(out io.Writer, info modstatus.Info) {

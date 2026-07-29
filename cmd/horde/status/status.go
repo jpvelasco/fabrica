@@ -53,9 +53,12 @@ Use --wait / -w to poll every 15 seconds until Horde is reachable
 		DisplayName: "Horde",
 		Resolve: func(rt globals.Runtime) modstatus.RuntimeSpec {
 			port, grpcPort := resolvePorts(rt)
+			r := renderer{port: port, grpcPort: grpcPort}
 			return modstatus.RuntimeSpec{
 				ProbePort: port,
-				Renderer:  renderer{port: port, grpcPort: grpcPort},
+				Renderer: modstatus.NewRenderer(
+					"Horde", "fabrica horde create", r.printText, r.printJSON,
+				),
 			}
 		},
 	}, runtimeSource, optionsSource, out)
@@ -74,22 +77,6 @@ func resolvePorts(rt globals.Runtime) (port, grpcPort int) {
 		}
 	}
 	return port, grpcPort
-}
-
-func (renderer) NotProvisioned(out io.Writer, jsonOut bool) {
-	if jsonOut {
-		modstatus.WriteNotProvisionedJSON(out)
-		return
-	}
-	modstatus.WriteNotProvisionedText(out, "Horde", "fabrica horde create")
-}
-
-func (r renderer) Result(out io.Writer, info modstatus.Info, jsonOut bool) {
-	if jsonOut {
-		r.printJSON(out, info)
-		return
-	}
-	r.printText(out, info)
 }
 
 func (r renderer) printText(out io.Writer, info modstatus.Info) {

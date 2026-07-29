@@ -24,6 +24,72 @@ type recordingRenderer struct {
 	results             []Info
 }
 
+func TestNewRendererNotProvisioned(t *testing.T) {
+	r := NewRenderer(
+		"Lore",
+		"fabrica lore create",
+		func(io.Writer, Info) {},
+		func(io.Writer, Info) {},
+	)
+
+	tests := []struct {
+		name    string
+		jsonOut bool
+		want    string
+	}{
+		{name: "text", want: "Lore is not provisioned. Run 'fabrica lore create' to set it up.\n"},
+		{name: "json", jsonOut: true, want: "{\"provisioned\":false,\"status\":\"not_provisioned\"}\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			r.NotProvisioned(&out, tt.jsonOut)
+			if got := out.String(); got != tt.want {
+				t.Fatalf("NotProvisioned() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewRendererResultDispatch(t *testing.T) {
+	info := Info{ModuleStatus: "ready", InstanceID: "i-123"}
+	tests := []struct {
+		name    string
+		jsonOut bool
+		want    string
+	}{
+		{name: "text", want: "text"},
+		{name: "json", jsonOut: true, want: "json"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			var got Info
+			r := NewRenderer(
+				"module",
+				"fabrica module create",
+				func(out io.Writer, info Info) {
+					got = info
+					fmt.Fprint(out, "text")
+				},
+				func(out io.Writer, info Info) {
+					got = info
+					fmt.Fprint(out, "json")
+				},
+			)
+
+			r.Result(&out, info, tt.jsonOut)
+
+			if out.String() != tt.want {
+				t.Fatalf("output = %q, want %q", out.String(), tt.want)
+			}
+			if got != info {
+				t.Fatalf("Info = %#v, want %#v", got, info)
+			}
+		})
+	}
+}
+
 func (r *recordingRenderer) NotProvisioned(out io.Writer, jsonOut bool) {
 	r.notProvisionedCalls++
 	fmt.Fprintln(out, "not provisioned")
@@ -423,7 +489,7 @@ func TestWriteCommonFields_Empty(t *testing.T) {
 
 func TestWriteNotProvisionedJSON(t *testing.T) {
 	var buf bytes.Buffer
-	WriteNotProvisionedJSON(&buf)
+	writeNotProvisionedJSON(&buf)
 	var result map[string]interface{}
 	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &result); err != nil {
 		t.Fatalf("unexpected error unmarshaling JSON: %v", err)
@@ -438,7 +504,7 @@ func TestWriteNotProvisionedJSON(t *testing.T) {
 
 func TestWriteNotProvisionedText(t *testing.T) {
 	var buf bytes.Buffer
-	WriteNotProvisionedText(&buf, "Perforce", "fabrica perforce create")
+	writeNotProvisionedText(&buf, "Perforce", "fabrica perforce create")
 	out := buf.String()
 	if !strings.Contains(out, "Perforce is not provisioned") {
 		t.Errorf("missing module name: %q", out)
