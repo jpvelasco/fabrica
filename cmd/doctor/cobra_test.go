@@ -2,7 +2,6 @@ package doctor_test
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -10,26 +9,9 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/doctor"
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
-	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
-
-// cobraFakeProvider implements cloud.Provider for black-box doctor tests.
-type cobraFakeProvider struct {
-	identityErr error
-}
-
-func (f *cobraFakeProvider) Name() string { return "fake" }
-
-func (f *cobraFakeProvider) Identity(context.Context) (string, string, string, error) {
-	if f.identityErr != nil {
-		return "", "", "", f.identityErr
-	}
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-
-func (f *cobraFakeProvider) Resources() cloud.ResourceClient { return nil }
 
 // buildTestRoot replicates the persistent-flag hierarchy (--json lives on root).
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
@@ -48,7 +30,7 @@ func runDoctor(t *testing.T, runtimeSource globals.RuntimeSource, args ...string
 func okRuntime() globals.RuntimeSource {
 	cfg := config.Defaults()
 	cfg.Cloud.AWS.Region = "us-east-1"
-	rt := globals.Runtime{Config: cfg, Provider: &cobraFakeProvider{}}
+	rt := globals.Runtime{Config: cfg, Provider: &testutil.TestProvider{}}
 	return func() (globals.Runtime, error) { return rt, nil }
 }
 

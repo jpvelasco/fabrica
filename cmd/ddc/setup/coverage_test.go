@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/ddc"
@@ -42,17 +43,11 @@ func TestRunNoProvider(t *testing.T) {
 
 func TestRunIdentityError(t *testing.T) {
 	rt := testRuntime()
-	rt.Provider = &identityErrProvider{}
+	rt.Provider = &testutil.TestProvider{IdentityErr: fmt.Errorf("no credentials")}
 	c := command{runtime: rt, dryRun: true, out: &bytes.Buffer{}, costs: fabricacost.Global}
 	if err := c.run(context.Background()); err == nil || !strings.Contains(err.Error(), "identity") {
 		t.Fatalf("err = %v", err)
 	}
-}
-
-type identityErrProvider struct{ fakeProvider }
-
-func (identityErrProvider) Identity(ctx context.Context) (string, string, string, error) {
-	return "", "", "", fmt.Errorf("no credentials")
 }
 
 func TestRunReadStateError(t *testing.T) {
@@ -106,7 +101,7 @@ func TestRunOpenCIDRWarning(t *testing.T) {
 func TestRunApplyScylla(t *testing.T) {
 	var buf bytes.Buffer
 	st := &fabricastate.State{Account: "123", Region: "us-east-1"}
-	fp := &fakeProvider{}
+	fp := &testutil.TestProvider{}
 	rt := testRuntime()
 	rt.Config.DDC.Backend = ddc.BackendScylla
 	rt.Config.DDC.ScyllaAmiID = "ami-scylla"
@@ -116,15 +111,15 @@ func TestRunApplyScylla(t *testing.T) {
 		runtime: rt, assumeYes: true, out: &buf, costs: fabricacost.Global,
 		readState:      func() (*fabricastate.State, error) { return st, nil },
 		writeState:     func(s *fabricastate.State) error { st = s; return nil },
-		createResource: fp.Create,
+		createResource: fp.Resources().Create,
 		writeEndpoints: func(path, content string) error { return nil },
 	}
 	if err := c.run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	// role, profile, bucket, sg, ddc instance, scylla = 6
-	if fp.n != 6 {
-		t.Fatalf("creates = %d, want 6", fp.n)
+	if fp.CreateCalls != 6 {
+		t.Fatalf("creates = %d, want 6", fp.CreateCalls)
 	}
 	m := st.GetModule("ddc")
 	if m == nil {

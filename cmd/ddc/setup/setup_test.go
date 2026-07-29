@@ -3,11 +3,11 @@ package setup
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
@@ -23,29 +23,8 @@ func testRuntime() globals.Runtime {
 				SubnetId: "subnet-1",
 			},
 		},
-		Provider: &fakeProvider{},
+		Provider: &testutil.TestProvider{},
 	}
-}
-
-type fakeProvider struct {
-	n int
-}
-
-func (f *fakeProvider) Name() string { return "fake" }
-func (f *fakeProvider) Identity(ctx context.Context) (string, string, string, error) {
-	return "123456789012", "arn", "us-east-1", nil
-}
-func (f *fakeProvider) Resources() cloud.ResourceClient { return f }
-func (f *fakeProvider) Create(ctx context.Context, r *cloud.Resource) error {
-	f.n++
-	r.Identifier = fmt.Sprintf("%s-%d", r.TypeName, f.n)
-	return nil
-}
-func (f *fakeProvider) Get(ctx context.Context, r *cloud.Resource) error    { return nil }
-func (f *fakeProvider) Update(ctx context.Context, r *cloud.Resource) error { return nil }
-func (f *fakeProvider) Delete(ctx context.Context, r *cloud.Resource) error { return nil }
-func (f *fakeProvider) List(ctx context.Context, typeName string) ([]cloud.Resource, error) {
-	return nil, nil
 }
 
 func TestRunDryRun(t *testing.T) {
@@ -87,7 +66,7 @@ func TestRunAlreadyProvisioned(t *testing.T) {
 func TestRunApplyZen(t *testing.T) {
 	var buf bytes.Buffer
 	st := &fabricastate.State{Account: "123456789012", Region: "us-east-1"}
-	fp := &fakeProvider{}
+	fp := &testutil.TestProvider{}
 	rt := testRuntime()
 	rt.Provider = fp
 	var wrote string
@@ -95,7 +74,7 @@ func TestRunApplyZen(t *testing.T) {
 		runtime: rt, assumeYes: true, out: &buf, costs: fabricacost.Global,
 		readState:      func() (*fabricastate.State, error) { return st, nil },
 		writeState:     func(s *fabricastate.State) error { st = s; return nil },
-		createResource: fp.Create,
+		createResource: fp.Resources().Create,
 		writeEndpoints: func(path, content string) error { wrote = content; return nil },
 	}
 	if err := c.run(context.Background()); err != nil {
@@ -108,8 +87,8 @@ func TestRunApplyZen(t *testing.T) {
 		t.Fatalf("endpoints: %s", wrote)
 	}
 	// role, profile, bucket, sg, instance = 5
-	if fp.n != 5 {
-		t.Fatalf("creates = %d, want 5", fp.n)
+	if fp.CreateCalls != 5 {
+		t.Fatalf("creates = %d, want 5", fp.CreateCalls)
 	}
 }
 
