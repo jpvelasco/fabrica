@@ -8,11 +8,11 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
+	perforceprovisioning "github.com/jpvelasco/fabrica/cmd/perforce/internal/provisioning"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
-	"github.com/jpvelasco/fabrica/internal/stateutil"
 	"github.com/spf13/cobra"
 )
 
@@ -61,10 +61,12 @@ type deleteCommand struct {
 }
 
 func (c deleteCommand) run(ctx context.Context) error {
-	st, instID, backupRoot, err := c.resolveTarget()
+	target, err := perforceprovisioning.Resolve(c.readState)
 	if err != nil {
 		return err
 	}
+	cfg := perforceBackupCfg(c.runtime.Config)
+	backupRoot := perforce.ResolveBackupPath(cfg.Path)
 
 	if c.dryRun {
 		fmt.Fprintf(c.out, "Would delete backup %s under %s (and S3 copy if metadata has s3Uri)\n", c.backupID, backupRoot)
@@ -79,31 +81,13 @@ func (c deleteCommand) run(ctx context.Context) error {
 		return fmt.Errorf("provider does not support remote commands (SSM)")
 	}
 
-	if err := c.executeDelete(ctx, instID, backupRoot); err != nil {
+	if err := c.executeDelete(ctx, target.Instance.Identifier, backupRoot); err != nil {
 		return err
 	}
 
-	c.clearLastBackup(st)
+	c.clearLastBackup(target.State)
 	fmt.Fprintf(c.out, "Deleted backup %s\n", c.backupID)
 	return nil
-}
-
-func (c deleteCommand) resolveTarget() (*fabricastate.State, string, string, error) {
-	st, err := c.readState()
-	if err != nil {
-		return nil, "", "", fmt.Errorf("reading state: %w", err)
-	}
-	m := st.GetModule(moduleName)
-	if m == nil {
-		return nil, "", "", fmt.Errorf("Perforce is not provisioned. Run 'fabrica perforce create' first")
-	}
-	inst, ok := stateutil.ResourceByType(m, "AWS::EC2::Instance")
-	if !ok || inst.Identifier == "" {
-		return nil, "", "", fmt.Errorf("Perforce instance not found in state")
-	}
-	cfg := perforceBackupCfg(c.runtime.Config)
-	backupRoot := perforce.ResolveBackupPath(cfg.Path)
-	return st, inst.Identifier, backupRoot, nil
 }
 
 func (c deleteCommand) confirmDelete() bool {

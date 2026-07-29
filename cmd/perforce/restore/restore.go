@@ -12,12 +12,12 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
+	perforceprovisioning "github.com/jpvelasco/fabrica/cmd/perforce/internal/provisioning"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/credentials"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
-	"github.com/jpvelasco/fabrica/internal/stateutil"
 	"github.com/spf13/cobra"
 )
 
@@ -97,11 +97,11 @@ type command struct {
 }
 
 func (c command) run(ctx context.Context) error {
-	st, m, inst, err := c.validateProvisioning()
+	target, err := perforceprovisioning.Resolve(c.readState)
 	if err != nil {
 		return err
 	}
-	if m.Status == "ready" && !c.force {
+	if target.Module.Status == "ready" && !c.force {
 		return fmt.Errorf("Perforce is ready and may have connected clients. Re-run with --force to stop Helix Core, restore from the backup, and restart (clients will disconnect). Example: fabrica perforce restore %s --force", c.backupID)
 	}
 
@@ -115,13 +115,13 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 
-	meta, err := c.readBackupMetadata(ctx, inst.Identifier, backupRoot)
+	meta, err := c.readBackupMetadata(ctx, target.Instance.Identifier, backupRoot)
 	if err != nil {
 		return err
 	}
 
 	c.printRestorePlan(meta)
-	if cancelled := c.confirmRestore(st); cancelled != nil {
+	if cancelled := c.confirmRestore(target.State); cancelled != nil {
 		return nil // user cancelled; not an error
 	}
 
@@ -130,36 +130,20 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 
-	if err := c.executeRestore(ctx, inst.Identifier, script); err != nil {
+	if err := c.executeRestore(ctx, target.Instance.Identifier, script); err != nil {
 		return err
 	}
 
-	status, reachable := c.probeAndDetermineStatus(ctx, inst.Identifier, m.Status)
+	status, reachable := c.probeAndDetermineStatus(ctx, target.Instance.Identifier, target.Module.Status)
 	if !reachable {
 		fmt.Fprintln(c.out, "Warning: could not confirm Helix Core is reachable from this machine (check VPN/network).")
 	}
-	c.updateState(st, m, status)
+	c.updateState(target.State, target.Module, status)
 
 	fmt.Fprintln(c.out)
 	fmt.Fprintf(c.out, "Restore complete from %s\n", c.backupID)
 	fmt.Fprintln(c.out, "Next: fabrica perforce status")
 	return nil
-}
-
-func (c command) validateProvisioning() (*fabricastate.State, *fabricastate.ModuleState, *fabricastate.ModuleResource, error) {
-	st, err := c.readState()
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("reading state: %w", err)
-	}
-	m := st.GetModule(moduleName)
-	if m == nil {
-		return nil, nil, nil, fmt.Errorf("Perforce is not provisioned. Run 'fabrica perforce create' first")
-	}
-	inst, ok := stateutil.ResourceByType(m, "AWS::EC2::Instance")
-	if !ok || inst.Identifier == "" {
-		return nil, nil, nil, fmt.Errorf("Perforce instance not found in state")
-	}
-	return st, m, &inst, nil
 }
 
 func (c command) resolveBackupRoot() string {

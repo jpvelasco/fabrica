@@ -9,10 +9,10 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
+	perforceprovisioning "github.com/jpvelasco/fabrica/cmd/perforce/internal/provisioning"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
-	"github.com/jpvelasco/fabrica/internal/stateutil"
 	"github.com/spf13/cobra"
 )
 
@@ -51,17 +51,9 @@ type listCommand struct {
 }
 
 func (c listCommand) run(ctx context.Context) error {
-	st, err := c.readState()
+	target, err := perforceprovisioning.Resolve(c.readState)
 	if err != nil {
-		return fmt.Errorf("reading state: %w", err)
-	}
-	m := st.GetModule(moduleName)
-	if m == nil {
-		return fmt.Errorf("Perforce is not provisioned. Run 'fabrica perforce create' first")
-	}
-	inst, ok := stateutil.ResourceByType(m, "AWS::EC2::Instance")
-	if !ok || inst.Identifier == "" {
-		return fmt.Errorf("Perforce instance not found in state")
+		return err
 	}
 	if c.runRemote == nil {
 		return fmt.Errorf("provider does not support remote commands (SSM)")
@@ -69,7 +61,7 @@ func (c listCommand) run(ctx context.Context) error {
 
 	cfg := perforceBackupCfg(c.runtime.Config)
 	script := perforce.GenerateListScript(cfg.Path)
-	res, err := c.runRemote(ctx, inst.Identifier, []string{script})
+	res, err := c.runRemote(ctx, target.Instance.Identifier, []string{script})
 	if err != nil {
 		return fmt.Errorf("list remote command failed: %w", err)
 	}
