@@ -284,7 +284,7 @@ func TestCreateIdentityFailureAbortsEarly(t *testing.T) {
 	if provider.CreateCalls != 0 {
 		t.Fatal("identity failure: create was called")
 	}
-	assert.Contains(t, err.Error(), "resolving identity")
+	assert.Contains(t, err.Error(), "could not resolve AWS identity")
 }
 
 // TestCreateSGFailureNoStateWritten verifies state is never written when SG creation fails.

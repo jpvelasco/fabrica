@@ -139,8 +139,8 @@ func TestCreateCobraIdentityFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when identity fails")
 	}
-	if !cobraContainsString(err.Error(), "resolving identity") {
-		t.Fatalf("error %q does not mention resolving identity", err.Error())
+	if !cobraContainsString(err.Error(), "could not resolve AWS identity") {
+		t.Fatalf("error %q does not mention AWS identity", err.Error())
 	}
 }
 

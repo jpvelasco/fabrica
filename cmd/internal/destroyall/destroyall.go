@@ -8,11 +8,11 @@ package destroyall
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
 
+	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 )
 
@@ -67,7 +67,7 @@ type Engine struct {
 func (e Engine) Run(ctx context.Context) error {
 	if len(e.Modules) == 0 && e.Bucket == "" && e.Table == "" {
 		if e.JSONOut {
-			e.printJSON(Result{Modules: []ModuleResult{}, DryRun: e.DryRun})
+			modstatus.WriteJSON(e.Out, Result{Modules: []ModuleResult{}, DryRun: e.DryRun})
 			return nil
 		}
 		fmt.Fprintln(e.Out, "No provisioned modules or state backend found. Nothing to destroy.")
@@ -91,7 +91,7 @@ func (e Engine) runDryRun() error {
 		for _, m := range e.Modules {
 			mods = append(mods, ModuleResult{Module: m.Name})
 		}
-		e.printJSON(Result{Modules: mods, DryRun: true})
+		modstatus.WriteJSON(e.Out, Result{Modules: mods, DryRun: true})
 		return nil
 	}
 	fmt.Fprintln(e.Out, "Destroy --all dry run")
@@ -167,13 +167,13 @@ func (e Engine) execute(ctx context.Context) error {
 
 	if err := e.deleteBackend(ctx, &res); err != nil {
 		if e.JSONOut {
-			e.printJSON(res)
+			modstatus.WriteJSON(e.Out, res)
 		}
 		return err
 	}
 
 	if e.JSONOut {
-		e.printJSON(res)
+		modstatus.WriteJSON(e.Out, res)
 		return nil
 	}
 	fmt.Fprintln(e.Out, "\nDestroy --all complete. All modules and the state backend were removed.")
@@ -188,7 +188,7 @@ func (e Engine) finishWithFailure(res Result) error {
 		}
 	}
 	if e.JSONOut {
-		e.printJSON(res)
+		modstatus.WriteJSON(e.Out, res)
 	} else {
 		fmt.Fprintln(e.Out, "\nDestroy --all did not complete: the following module(s) failed:")
 		for _, m := range res.Modules {
@@ -252,9 +252,4 @@ func (e Engine) printBackendFailure(label, id string, err error) {
 	}
 	fmt.Fprintf(e.Out, "  failed to delete %s: %s\n", label, id)
 	fmt.Fprintf(e.Out, "  Error: %v\n", err)
-}
-
-func (e Engine) printJSON(res Result) {
-	data, _ := json.MarshalIndent(res, "", "  ")
-	fmt.Fprintln(e.Out, string(data))
 }

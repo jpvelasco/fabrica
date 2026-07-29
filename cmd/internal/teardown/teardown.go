@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/prompt"
@@ -120,7 +121,7 @@ func (c Command) Run(ctx context.Context) error {
 			account := c.resolveAccount(st)
 			fmt.Fprintln(c.Out)
 			phrase := c.confirmPhrase(account)
-			c.printConfirmInstructions(phrase)
+			provision.PrintConfirmInstructions(c.Out, phrase)
 			if !c.Confirm("Enter confirmation phrase", phrase) {
 				fmt.Fprintln(c.Out, "Cancelled. No AWS calls were made.")
 				return nil
@@ -156,7 +157,7 @@ func (c Command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 	}
 
 	if c.JSONOut {
-		c.printJSON(Output{Destroyed: destroyed, DryRun: false})
+		modstatus.WriteJSON(c.Out, Output{Destroyed: destroyed, DryRun: false})
 		return nil
 	}
 
@@ -322,7 +323,7 @@ func (c Command) resolveAccount(st *fabricastate.State) string {
 
 func (c Command) printNotProvisioned() {
 	if c.JSONOut {
-		c.printJSON(Output{Destroyed: []string{}, DryRun: c.DryRun})
+		modstatus.WriteJSON(c.Out, Output{Destroyed: []string{}, DryRun: c.DryRun})
 		return
 	}
 	fmt.Fprintln(c.Out, c.Spec.NotProvisioned)
@@ -334,7 +335,7 @@ func (c Command) printDryRun(m *fabricastate.ModuleState, resources []cloud.Reso
 		for i, r := range resources {
 			ids[i] = r.Identifier
 		}
-		c.printJSON(Output{Destroyed: ids, DryRun: true})
+		modstatus.WriteJSON(c.Out, Output{Destroyed: ids, DryRun: true})
 		return
 	}
 	fmt.Fprintln(c.Out, c.Spec.DryRunHeader)
@@ -362,20 +363,6 @@ func (c Command) printPlan(m *fabricastate.ModuleState, resources []cloud.Resour
 	}
 	fmt.Fprintln(c.Out)
 	fmt.Fprintln(c.Out, c.Spec.Irreversible)
-}
-
-func (c Command) printConfirmInstructions(phrase string) {
-	fmt.Fprintln(c.Out, "Confirmation required.")
-	fmt.Fprintln(c.Out, "Type this exact phrase to continue:")
-	fmt.Fprintln(c.Out)
-	fmt.Fprintf(c.Out, "  %s\n", phrase)
-	fmt.Fprintln(c.Out)
-	fmt.Fprintln(c.Out, "Any other input cancels.")
-}
-
-func (c Command) printJSON(out Output) {
-	data, _ := json.MarshalIndent(out, "", "  ")
-	fmt.Fprintln(c.Out, string(data))
 }
 
 // resourcesToDelete returns resources in reverse-creation order: Instance → SG.
@@ -446,20 +433,30 @@ func WireProvider(tc *Command, rt globals.Runtime) {
 	}
 }
 
+// NewStandalone builds a teardown.Command for standalone use (e.g. `fabrica
+// perforce destroy`). The caller provides dry-run, assume-yes, and JSON flags.
+// Confirmation is handled interactively unless AssumeYes is true.
+func NewStandalone(spec Spec, rt globals.Runtime, out io.Writer, dryRun, assumeYes, jsonOut bool) Command {
+	tc := Command{
+		Spec:       spec,
+		Runtime:    rt,
+		DryRun:     dryRun,
+		AssumeYes:  assumeYes,
+		JSONOut:    jsonOut,
+		Out:        out,
+		Confirm:    prompt.ConfirmExact,
+		ReadState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+		WriteState: fabricastate.WriteState,
+	}
+	WireProvider(&tc, rt)
+	return tc
+}
+
 // NewTeardown builds a teardown.Command for orchestrated use (e.g. `fabrica
 // destroy --all`). Confirmation is skipped since the orchestrator handles the
 // aggregate confirmation. The module-specific Spec is passed by the caller.
 func NewTeardown(spec Spec, rt globals.Runtime, out io.Writer) Command {
-	tc := Command{
-		Spec:        spec,
-		Runtime:     rt,
-		SkipConfirm: true,
-		AssumeYes:   true,
-		Out:         out,
-		Confirm:     prompt.ConfirmExact,
-		ReadState:   func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-		WriteState:  fabricastate.WriteState,
-	}
-	WireProvider(&tc, rt)
+	tc := NewStandalone(spec, rt, out, false, true, false)
+	tc.SkipConfirm = true
 	return tc
 }

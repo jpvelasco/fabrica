@@ -953,3 +953,61 @@ func TestSDKDeleteFuncErrNotHandledFallsBackToCloudControl(t *testing.T) {
 		t.Fatalf("Cloud Control deleted = %v, want [cc-res]", ccDeleted)
 	}
 }
+
+func TestNewStandalone(t *testing.T) {
+	var out bytes.Buffer
+	rt := globals.Runtime{}
+	tc := NewStandalone(testSpec, rt, &out, true, false, true)
+	if tc.Spec.ModuleName != "perforce" {
+		t.Errorf("Spec.ModuleName = %q, want %q", tc.Spec.ModuleName, "perforce")
+	}
+	if !tc.DryRun {
+		t.Error("DryRun should be true")
+	}
+	if tc.AssumeYes {
+		t.Error("AssumeYes should be false")
+	}
+	if !tc.JSONOut {
+		t.Error("JSONOut should be true")
+	}
+	if tc.SkipConfirm {
+		t.Error("SkipConfirm should be false")
+	}
+	if tc.Confirm == nil {
+		t.Error("Confirm should be non-nil")
+	}
+	if tc.ReadState == nil {
+		t.Error("ReadState should be non-nil")
+	}
+	if tc.WriteState == nil {
+		t.Error("WriteState should be non-nil")
+	}
+	if tc.DeleteResource != nil {
+		t.Error("DeleteResource should be nil when provider is nil")
+	}
+	if tc.GetResource != nil {
+		t.Error("GetResource should be nil when provider is nil")
+	}
+}
+
+func TestNewStandaloneWithProvider(t *testing.T) {
+	var out bytes.Buffer
+	fakeRC := &fakeResourceClient{}
+	rt := globals.Runtime{Provider: &fakeProviderWithRC{rc: fakeRC}}
+	tc := NewStandalone(testSpec, rt, &out, false, true, false)
+	if tc.DeleteResource == nil {
+		t.Error("DeleteResource should be wired when provider is set")
+	}
+	if tc.GetResource == nil {
+		t.Error("GetResource should be wired when provider is set")
+	}
+	if tc.DryRun {
+		t.Error("DryRun should be false")
+	}
+	if !tc.AssumeYes {
+		t.Error("AssumeYes should be true")
+	}
+	if tc.JSONOut {
+		t.Error("JSONOut should be false")
+	}
+}

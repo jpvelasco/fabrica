@@ -5,12 +5,13 @@ package action
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
@@ -144,7 +145,7 @@ func (c *Command) validatePreAction() (*fabricastate.State, string, error) {
 // printNotProvisioned handles the "not provisioned" output path (text + JSON).
 func (c *Command) printNotProvisioned() {
 	if c.jsonOut {
-		c.printJSON(ActionOutput{Status: "not_provisioned", DryRun: c.dryRun})
+		modstatus.WriteJSON(c.out, ActionOutput{Status: "not_provisioned", DryRun: c.dryRun})
 		return
 	}
 	fmt.Fprintln(c.out, "Workstation is not provisioned. Nothing to "+c.spec.ActionVerb+".")
@@ -153,7 +154,7 @@ func (c *Command) printNotProvisioned() {
 // printAlreadyActive prints the already-active message and returns.
 func (c *Command) printAlreadyActive(instanceID, status string) {
 	if c.jsonOut {
-		c.printJSON(ActionOutput{InstanceID: instanceID, Status: c.spec.AlreadyActiveStatus, DryRun: c.dryRun})
+		modstatus.WriteJSON(c.out, ActionOutput{InstanceID: instanceID, Status: c.spec.AlreadyActiveStatus, DryRun: c.dryRun})
 		return
 	}
 	if strings.Contains(c.spec.AlreadyActiveText, "%s") {
@@ -174,7 +175,7 @@ func (c *Command) confirmAction(instanceID string) bool {
 	}
 	fmt.Fprintln(c.out)
 	phrase := c.confirmPhrase(instanceID)
-	c.printConfirmInstructions(phrase)
+	provision.PrintConfirmInstructions(c.out, phrase)
 	if !c.confirm("Enter confirmation phrase", phrase) {
 		fmt.Fprintln(c.out, "Cancelled. No AWS calls were made.")
 		return false
@@ -202,7 +203,7 @@ func (c *Command) apply(ctx context.Context, st *fabricastate.State, m *fabricas
 	}
 
 	if c.jsonOut {
-		c.printJSON(ActionOutput{InstanceID: instanceID, Status: c.spec.TargetStatus, DryRun: false})
+		modstatus.WriteJSON(c.out, ActionOutput{InstanceID: instanceID, Status: c.spec.TargetStatus, DryRun: false})
 		return nil
 	}
 
@@ -214,7 +215,7 @@ func (c *Command) apply(ctx context.Context, st *fabricastate.State, m *fabricas
 
 func (c *Command) printDryRun(m *fabricastate.ModuleState, instanceID string) {
 	if c.jsonOut {
-		c.printJSON(ActionOutput{InstanceID: instanceID, Status: c.spec.DryRunStatus, DryRun: true})
+		modstatus.WriteJSON(c.out, ActionOutput{InstanceID: instanceID, Status: c.spec.DryRunStatus, DryRun: true})
 		return
 	}
 	fmt.Fprintln(c.out, "Cloud Workstation ("+c.spec.ActionLabel+" dry run)")
@@ -234,52 +235,8 @@ func (c *Command) printPlan(m *fabricastate.ModuleState, instanceID string) {
 	fmt.Fprintln(c.out)
 }
 
-func (c *Command) printJSON(out ActionOutput) {
-	data, _ := json.MarshalIndent(out, "", "  ")
-	fmt.Fprintln(c.out, string(data))
-}
-
 func (c *Command) confirmPhrase(instanceID string) string {
 	return fmt.Sprintf("%s workstation %s", c.spec.ActionVerb, instanceID)
-}
-
-func (c *Command) printConfirmInstructions(phrase string) {
-	fmt.Fprintln(c.out, "Confirmation required.")
-	fmt.Fprintln(c.out, "Type this exact phrase to continue:")
-	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "  %s\n", phrase)
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Any other input cancels.")
-}
-
-// DefaultReadState returns the default readState implementation.
-func (c *Command) DefaultReadState() (*fabricastate.State, error) {
-	account, region := "", ""
-	if c.runtime.Config != nil {
-		account = c.runtime.Config.Cloud.AWS.AccountID
-		region = c.runtime.Config.Cloud.AWS.Region
-	}
-	return fabricastate.ReadStateOrNew(account, region)
-}
-
-// DefaultWriteState returns the default writeState implementation.
-func (c *Command) DefaultWriteState(st *fabricastate.State) error {
-	return fabricastate.WriteState(st)
-}
-
-// DefaultReadStateForRuntime returns the default readState implementation for a Runtime.
-func DefaultReadStateForRuntime(rt globals.Runtime) (*fabricastate.State, error) {
-	account, region := "", ""
-	if rt.Config != nil {
-		account = rt.Config.Cloud.AWS.AccountID
-		region = rt.Config.Cloud.AWS.Region
-	}
-	return fabricastate.ReadStateOrNew(account, region)
-}
-
-// DefaultWriteState returns the default writeState implementation.
-func DefaultWriteState(st *fabricastate.State) error {
-	return fabricastate.WriteState(st)
 }
 
 // StartSpec is the Spec for the start command.

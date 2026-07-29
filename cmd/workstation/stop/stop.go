@@ -4,6 +4,7 @@ import (
 	"io"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/cmd/workstation/action"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -41,9 +42,9 @@ With --dry-run, shows what would happen without calling the EC2 API.`,
 				action.DefaultExecuteAction(rt, action.StopVerb),
 			)
 			ac.SetReadState(func() (*fabricastate.State, error) {
-				return action.DefaultReadStateForRuntime(rt)
+				return provision.ReadState(rt)
 			})
-			ac.SetWriteState(action.DefaultWriteState)
+			ac.SetWriteState(fabricastate.WriteState)
 			return ac.Run(cmd.Context())
 		},
 	}

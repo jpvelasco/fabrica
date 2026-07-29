@@ -97,9 +97,9 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("cloud provider %q does not support CodeBuild project creation — only AWS is supported in V1", c.runtime.Provider.Name())
 	}
 
-	account, _, region, err := c.runtime.Provider.Identity(ctx)
+	account, region, err := provision.ResolveIdentity(ctx, c.runtime.Provider)
 	if err != nil {
-		return fmt.Errorf("could not resolve AWS identity (run 'fabrica doctor'): %w", err)
+		return err
 	}
 
 	// Resolve the Horde URL from state if Horde is provisioned, so the project's

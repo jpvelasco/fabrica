@@ -95,9 +95,9 @@ func (c command) run(ctx context.Context) error {
 	if c.runtime.Config.Deploy.BuildBucket == "" {
 		return fmt.Errorf("deploy.buildBucket is not set in fabrica.yaml — set it to the S3 bucket where CI/Horde uploads server builds, then re-run")
 	}
-	account, _, region, err := c.runtime.Provider.Identity(ctx)
+	account, region, err := provision.ResolveIdentity(ctx, c.runtime.Provider)
 	if err != nil {
-		return fmt.Errorf("could not resolve AWS identity (run 'fabrica doctor'): %w", err)
+		return err
 	}
 
 	plan := deploy.NewSetupPlan(c.runtime.Config.Deploy, account, region)

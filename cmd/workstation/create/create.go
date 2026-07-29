@@ -113,9 +113,9 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("no provider configured; run 'fabrica setup' first")
 	}
 
-	account, _, region, err := c.runtime.Provider.Identity(ctx)
+	account, region, err := provision.ResolveIdentity(ctx, c.runtime.Provider)
 	if err != nil {
-		return fmt.Errorf("resolving identity: %w", err)
+		return err
 	}
 
 	wsCfg := c.runtime.Config.Workstation
@@ -157,18 +157,8 @@ func (c command) run(ctx context.Context) error {
 
 	c.printApplyPlan(plan)
 
-	if !c.assumeYes {
-		fmt.Fprintln(c.out)
-		phrase := provision.ConfirmPhrase(moduleName, account)
-		provision.PrintConfirmInstructions(c.out, phrase)
-		if !c.confirm("Enter confirmation phrase", phrase) {
-			fmt.Fprintln(c.out, "Cancelled. No AWS calls were made.")
-			return nil
-		}
-		fmt.Fprintln(c.out, "Confirmation accepted.")
-	} else {
-		fmt.Fprintln(c.out)
-		fmt.Fprintln(c.out, "Proceeding without interactive confirmation (--yes flag set).")
+	if !provision.ConfirmCreate(c.out, moduleName, account, c.assumeYes, c.confirm) {
+		return nil
 	}
 
 	return c.applyCreate(ctx, st, plan)
