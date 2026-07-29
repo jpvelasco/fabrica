@@ -4,12 +4,9 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
-	"github.com/jpvelasco/fabrica/cmd/internal/provision"
-	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
 )
 
@@ -35,9 +32,7 @@ type renderer struct{}
 // New returns the "perforce status" subcommand. Global flags (--json) are
 // resolved at execution time via the source closures.
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
-	var wait bool
-	cmd := &cobra.Command{
-		Use:   "status",
+	return modstatus.NewCobraCommand(modstatus.CobraSpec{
 		Short: "Show Perforce Helix Core status",
 		Long: `Show the current status of the Perforce Helix Core server.
 
@@ -50,37 +45,12 @@ status automatically updates the local state file.
 
 Use --wait / -w to poll every 15 seconds until Helix Core is reachable
 (times out after 10 minutes).`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			rt, err := runtimeSource()
-			if err != nil {
-				return err
-			}
-			opts := optionsSource()
-			c := modstatus.Command{
-				Spec: modstatus.Spec{
-					ModuleName:  moduleName,
-					ProbePort:   p4Port,
-					DisplayName: "Perforce",
-				},
-				Renderer:   renderer{},
-				Runtime:    rt,
-				JSONOut:    opts.JSONOutput,
-				Wait:       wait,
-				Out:        out,
-				ReadState:  func() (*fabricastate.State, error) { return readState(rt) },
-				WriteState: fabricastate.WriteState,
-				ProbeTCP:   modstatus.DefaultProbeTCP,
-				Sleep:      time.Sleep,
-				Now:        time.Now,
-			}
-			if rt.Provider != nil {
-				c.GetResource = rt.Provider.Resources().Get
-			}
-			return c.Run(cmd.Context())
+		ModuleName:  moduleName,
+		DisplayName: "Perforce",
+		Resolve: func(globals.Runtime) modstatus.RuntimeSpec {
+			return modstatus.RuntimeSpec{ProbePort: p4Port, Renderer: renderer{}}
 		},
-	}
-	cmd.Flags().BoolVarP(&wait, "wait", "w", false, "Poll until ready or 10 minutes elapsed")
-	return cmd
+	}, runtimeSource, optionsSource, out)
 }
 
 func (renderer) NotProvisioned(out io.Writer, jsonOut bool) {
@@ -140,8 +110,4 @@ func printJSON(out io.Writer, info modstatus.Info) {
 	}
 	o.HelixCore = modstatus.ProbeStatus(info)
 	modstatus.WriteJSON(out, o)
-}
-
-func readState(rt globals.Runtime) (*fabricastate.State, error) {
-	return provision.ReadState(rt)
 }

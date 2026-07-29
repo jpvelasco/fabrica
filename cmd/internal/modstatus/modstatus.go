@@ -1,9 +1,8 @@
-// Package modstatus is the shared engine behind the module status commands
-// (perforce status, horde status). The orchestration — read state, query the
-// EC2 instance via Cloud Control, TCP-probe for readiness, transition
-// provisioning→ready, and optionally poll — is identical across modules. Only
-// the rendering (which fields, labels, and JSON schema) differs, so each
-// command supplies a Renderer.
+// Package modstatus is the shared engine behind the EC2 module status commands.
+// The orchestration — read state, query the EC2 instance via Cloud Control,
+// probe service readiness, transition provisioning→ready, and optionally poll —
+// is identical across modules. Only the rendering (which fields, labels, and
+// JSON schema) differs, so each command supplies a Renderer.
 package modstatus
 
 import (
@@ -16,9 +15,11 @@ import (
 	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
+	"github.com/spf13/cobra"
 )
 
 const (
@@ -66,12 +67,75 @@ type Spec struct {
 	DisplayName string
 }
 
+// CobraSpec describes the standard Cobra surface and runtime-dependent pieces
+// of an EC2-backed module status command.
+type CobraSpec struct {
+	Short       string
+	Long        string
+	ModuleName  string
+	DisplayName string
+	Resolve     func(globals.Runtime) RuntimeSpec
+}
+
+// RuntimeSpec contains the status behavior that may depend on loaded config.
+type RuntimeSpec struct {
+	ProbePort int
+	Renderer  Renderer
+	Probe     func(address string) bool
+}
+
+// NewCobraCommand builds the shared Cobra/runtime/state/provider wiring for a
+// module status command. Modules supply only their metadata and resolved
+// renderer/probe behavior.
+func NewCobraCommand(spec CobraSpec, runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
+	var wait bool
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: spec.Short,
+		Long:  spec.Long,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			rt, err := runtimeSource()
+			if err != nil {
+				return err
+			}
+
+			resolved := spec.Resolve(rt)
+			probe := resolved.Probe
+			if probe == nil {
+				probe = DefaultProbeTCP
+			}
+
+			c := Command{
+				Spec: Spec{
+					ModuleName:  spec.ModuleName,
+					ProbePort:   resolved.ProbePort,
+					DisplayName: spec.DisplayName,
+				},
+				Renderer:   resolved.Renderer,
+				JSONOut:    optionsSource().JSONOutput,
+				Wait:       wait,
+				Out:        out,
+				ReadState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				WriteState: fabricastate.WriteState,
+				ProbeTCP:   probe,
+				Sleep:      time.Sleep,
+				Now:        time.Now,
+			}
+			if rt.Provider != nil {
+				c.GetResource = rt.Provider.Resources().Get
+			}
+			return c.Run(cmd.Context())
+		},
+	}
+	cmd.Flags().BoolVarP(&wait, "wait", "w", false, "Poll until ready or 10 minutes elapsed")
+	return cmd
+}
+
 // Command runs a module status query. Func fields are seams the cmd layer wires
 // to real implementations and tests replace with fakes.
 type Command struct {
 	Spec     Spec
 	Renderer Renderer
-	Runtime  globals.Runtime
 
 	JSONOut bool
 	Wait    bool

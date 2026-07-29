@@ -11,10 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/cloud"
-	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -43,11 +41,9 @@ func (r *recordingRenderer) last() Info {
 // newTestCommand builds an engine command with injected state and seams,
 // using a recording renderer and probe port 1666.
 func newTestCommand(out *bytes.Buffer, st *fabricastate.State, rr *recordingRenderer, getResource func(context.Context, *cloud.Resource) error, probe func(string) bool) Command {
-	cfg := config.Defaults()
 	c := Command{
 		Spec:     Spec{ModuleName: "perforce", ProbePort: 1666, DisplayName: "Perforce"},
 		Renderer: rr,
-		Runtime:  globals.Runtime{Config: cfg},
 		Out:      out,
 		Sleep:    func(time.Duration) {},
 		Now:      time.Now,

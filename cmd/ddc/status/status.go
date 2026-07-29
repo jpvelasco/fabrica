@@ -4,13 +4,10 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
-	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/ddc"
-	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
 )
 
@@ -34,9 +31,7 @@ type renderer struct {
 
 // New returns the "ddc status" subcommand.
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
-	var wait bool
-	cmd := &cobra.Command{
-		Use:   "status",
+	return modstatus.NewCobraCommand(modstatus.CobraSpec{
 		Short: "Show DDC status and endpoints",
 		Long: `Show the status of the home-region Unreal Cloud DDC deployment.
 
@@ -44,12 +39,9 @@ Reads local module state, queries the DDC EC2 instance, and optionally probes
 HTTP GET /health/ready on the public API port.
 
 V1 is single home-region only — no multi-region edge list.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			rt, err := runtimeSource()
-			if err != nil {
-				return err
-			}
-			opts := optionsSource()
+		ModuleName:  moduleName,
+		DisplayName: "DDC",
+		Resolve: func(rt globals.Runtime) modstatus.RuntimeSpec {
 			port := ddc.DefaultPublicPort
 			backend := ddc.BackendZen
 			if rt.Config != nil {
@@ -60,37 +52,13 @@ V1 is single home-region only — no multi-region edge list.`,
 					backend = rt.Config.DDC.Backend
 				}
 			}
-			c := modstatus.Command{
-				Spec: modstatus.Spec{
-					ModuleName:  moduleName,
-					ProbePort:   port,
-					DisplayName: "DDC",
-				},
-				Renderer: renderer{publicPort: port, backend: backend},
-				Runtime:  rt,
-				JSONOut:  opts.JSONOutput,
-				Wait:     wait,
-				Out:      out,
-				ReadState: func() (*fabricastate.State, error) {
-					return readState(rt)
-				},
-				WriteState: fabricastate.WriteState,
-				ProbeTCP:   probeReady,
-				Sleep:      time.Sleep,
-				Now:        time.Now,
+			return modstatus.RuntimeSpec{
+				ProbePort: port,
+				Renderer:  renderer{publicPort: port, backend: backend},
+				Probe:     probeReady,
 			}
-			if rt.Provider != nil {
-				c.GetResource = rt.Provider.Resources().Get
-			}
-			return c.Run(cmd.Context())
 		},
-	}
-	cmd.Flags().BoolVarP(&wait, "wait", "w", false, "Poll until ready or 10 minutes elapsed")
-	return cmd
-}
-
-func readState(rt globals.Runtime) (*fabricastate.State, error) {
-	return provision.ReadState(rt)
+	}, runtimeSource, optionsSource, out)
 }
 
 // probeReady performs GET http://host:port/health/ready.
