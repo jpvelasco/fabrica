@@ -29,7 +29,7 @@ func NewTeardown(rt globals.Runtime, out io.Writer) teardown.Command {
 
 // New returns the "lore destroy" subcommand.
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
-	return &cobra.Command{
+	return teardown.NewStandaloneCommand(&cobra.Command{
 		Use:   "destroy",
 		Short: "Permanently delete the Lore server",
 		Long: `Permanently delete the Lore loreserver and all its AWS resources.
@@ -42,15 +42,5 @@ State is updated after each deletion so a partial failure leaves a recoverable
 record. Re-running destroy will skip resources that are already gone.
 
 With --dry-run, shows the destroy plan without making any AWS calls.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			rt, err := runtimeSource()
-			if err != nil {
-				return err
-			}
-			opts := optionsSource()
-
-			c := teardown.NewStandalone(spec, rt, out, opts.DryRun, opts.AssumeYes, opts.JSONOutput)
-			return c.Run(cmd.Context())
-		},
-	}
+	}, spec, runtimeSource, optionsSource, out)
 }

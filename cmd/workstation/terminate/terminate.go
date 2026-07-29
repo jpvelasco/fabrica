@@ -30,7 +30,7 @@ func NewTeardown(rt globals.Runtime, out io.Writer) teardown.Command {
 // New returns the "workstation terminate" subcommand. Global flags (--dry-run,
 // --yes, --json) are resolved at execution time via the source closures.
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
-	return &cobra.Command{
+	return teardown.NewStandaloneCommand(&cobra.Command{
 		Use:   "terminate",
 		Short: "Permanently terminate the cloud workstation",
 		Long: `Permanently terminate the cloud workstation and all its AWS resources.
@@ -47,15 +47,5 @@ Before deleting the instance, the current EC2 state is checked:
   - terminated / not found: treated as already deleted; state is cleaned up.
 
 With --dry-run, shows the terminate plan without making any AWS calls.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			rt, err := runtimeSource()
-			if err != nil {
-				return err
-			}
-			opts := optionsSource()
-
-			c := teardown.NewStandalone(spec, rt, out, opts.DryRun, opts.AssumeYes, opts.JSONOutput)
-			return c.Run(cmd.Context())
-		},
-	}
+	}, spec, runtimeSource, optionsSource, out)
 }

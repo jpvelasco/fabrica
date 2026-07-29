@@ -18,6 +18,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
+	"github.com/spf13/cobra"
 )
 
 const lineWidth = 58
@@ -151,7 +152,7 @@ func (c Command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 	}
 
 	// All resources gone — remove the module from state entirely.
-	removeModule(st, c.Spec.ModuleName)
+	RemoveModule(st, c.Spec.ModuleName)
 	if err := c.WriteState(st); err != nil {
 		fmt.Fprintf(c.Out, "Warning: could not update local state: %v\n", err)
 	}
@@ -338,31 +339,27 @@ func (c Command) printDryRun(m *fabricastate.ModuleState, resources []cloud.Reso
 		modstatus.WriteJSON(c.Out, Output{Destroyed: ids, DryRun: true})
 		return
 	}
-	fmt.Fprintln(c.Out, c.Spec.DryRunHeader)
-	fmt.Fprintln(c.Out, strings.Repeat("-", lineWidth))
-	fmt.Fprintf(c.Out, "  %-8s  %s\n", c.Spec.VersionLabel+":", m.Version)
-	fmt.Fprintf(c.Out, "  Status:   %s\n", m.Status)
-	fmt.Fprintln(c.Out)
-	fmt.Fprintln(c.Out, "Resources that would be deleted (in order):")
-	for i, r := range resources {
-		fmt.Fprintf(c.Out, "  %d. %s: %s\n", i+1, r.TypeName, r.Identifier)
-	}
+	c.printResourceSummary(c.Spec.DryRunHeader, "Resources that would be deleted (in order):", m, resources)
 	fmt.Fprintln(c.Out)
 	fmt.Fprintln(c.Out, "Run without --dry-run to proceed.")
 }
 
 func (c Command) printPlan(m *fabricastate.ModuleState, resources []cloud.Resource) {
-	fmt.Fprintln(c.Out, c.Spec.PlanHeader)
+	c.printResourceSummary(c.Spec.PlanHeader, "Resources to delete (in order):", m, resources)
+	fmt.Fprintln(c.Out)
+	fmt.Fprintln(c.Out, c.Spec.Irreversible)
+}
+
+func (c Command) printResourceSummary(header, resourceLead string, m *fabricastate.ModuleState, resources []cloud.Resource) {
+	fmt.Fprintln(c.Out, header)
 	fmt.Fprintln(c.Out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.Out, "  %-8s  %s\n", c.Spec.VersionLabel+":", m.Version)
 	fmt.Fprintf(c.Out, "  Status:   %s\n", m.Status)
 	fmt.Fprintln(c.Out)
-	fmt.Fprintln(c.Out, "Resources to delete (in order):")
+	fmt.Fprintln(c.Out, resourceLead)
 	for i, r := range resources {
 		fmt.Fprintf(c.Out, "  %d. %s: %s\n", i+1, r.TypeName, r.Identifier)
 	}
-	fmt.Fprintln(c.Out)
-	fmt.Fprintln(c.Out, c.Spec.Irreversible)
 }
 
 // resourcesToDelete returns resources in reverse-creation order: Instance → SG.
@@ -407,10 +404,6 @@ func removeResource(m *fabricastate.ModuleState, typeName string) {
 	m.Resources = filtered
 }
 
-func removeModule(st *fabricastate.State, name string) {
-	RemoveModule(st, name)
-}
-
 // RemoveModule removes the module with the given name from state.
 func RemoveModule(st *fabricastate.State, name string) {
 	filtered := st.Modules[:0]
@@ -450,6 +443,23 @@ func NewStandalone(spec Spec, rt globals.Runtime, out io.Writer, dryRun, assumeY
 	}
 	WireProvider(&tc, rt)
 	return tc
+}
+
+// NewStandaloneCommand attaches the shared standalone teardown behavior to a
+// declarative Cobra command. Runtime and root options are resolved at execution
+// time so callers do not duplicate the adapter closure.
+func NewStandaloneCommand(cmd *cobra.Command, spec Spec, runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
+	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		rt, err := runtimeSource()
+		if err != nil {
+			return err
+		}
+		opts := optionsSource()
+
+		tc := NewStandalone(spec, rt, out, opts.DryRun, opts.AssumeYes, opts.JSONOutput)
+		return tc.Run(cmd.Context())
+	}
+	return cmd
 }
 
 // NewTeardown builds a teardown.Command for orchestrated use (e.g. `fabrica
