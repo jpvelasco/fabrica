@@ -94,7 +94,7 @@ func TestStatusCobraSingleFleetNoRollback(t *testing.T) {
 	testutil.AssertContains(t, got, "Next steps:")
 	testutil.AssertContains(t, got, "fabrica deploy promote")
 	// Rollback line should NOT appear when no candidates exist.
-	assertNotContains(t, got, "fabrica deploy rollback")
+	testutil.AssertNotContains(t, got, "fabrica deploy rollback")
 }
 
 // TestStatusCobraDryRunNoProviderCall verifies --dry-run does not call provider.
@@ -238,13 +238,4 @@ type fleetJSONType struct {
 	BuildVersion string `json:"buildVersion"`
 	Role         string `json:"role"`
 	LiveStatus   string `json:"liveStatus"`
-}
-
-func assertNotContains(t *testing.T, s, substr string) {
-	t.Helper()
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			t.Fatalf("%q should not contain %q", s, substr)
-		}
-	}
 }

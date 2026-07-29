@@ -50,9 +50,7 @@ func TestDoctorCobra_JSON(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// JSON output must not contain the human-readable header.
-	if strings.Contains(got, "Fabrica environment diagnostics") {
-		t.Errorf("JSON output should not contain text header:\n%s", got)
-	}
+	testutil.AssertNotContains(t, got, "Fabrica environment diagnostics")
 	if !strings.Contains(got, `"status"`) {
 		t.Errorf("JSON output missing status field:\n%s", got)
 	}

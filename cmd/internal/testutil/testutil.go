@@ -39,6 +39,13 @@ type fataler interface {
 	Fatal(...any)
 }
 
+// assertionT is the minimal subset of testing.T needed by string assertions.
+// Keeping the boundary small lets the failure paths be tested directly.
+type assertionT interface {
+	Helper()
+	Fatalf(string, ...any)
+}
+
 // BuildTestRoot creates a minimal root cobra command with the standard
 // persistent flags (--dry-run, --yes, --json). It returns the root command
 // and a pointer to the shared Options struct so the caller can wire
@@ -109,10 +116,18 @@ func WriteStateFile(t *testing.T, dir, content string) {
 }
 
 // AssertContains checks that s contains substr and fails the test if not.
-func AssertContains(t *testing.T, s, substr string) {
+func AssertContains(t assertionT, s, substr string) {
 	t.Helper()
 	if !strings.Contains(s, substr) {
 		t.Fatalf("%q does not contain %q", s, substr)
+	}
+}
+
+// AssertNotContains checks that s does not contain substr and fails the test if it does.
+func AssertNotContains(t assertionT, s, substr string) {
+	t.Helper()
+	if strings.Contains(s, substr) {
+		t.Fatalf("%q contains %q", s, substr)
 	}
 }
 

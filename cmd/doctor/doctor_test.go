@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -78,7 +79,7 @@ func TestFormatDiagnosticSummary(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
-				} else if tt.wantErrSubstr != "" && !contains(err.Error(), tt.wantErrSubstr) {
+				} else if tt.wantErrSubstr != "" && !strings.Contains(err.Error(), tt.wantErrSubstr) {
 					t.Errorf("error %q does not contain %q", err, tt.wantErrSubstr)
 				}
 			} else if err != nil {
@@ -208,7 +209,7 @@ func TestCheckBucketReportsBackendCheckerErrors(t *testing.T) {
 	if d.status != "fail" {
 		t.Fatalf("status = %q, want fail", d.status)
 	}
-	if !contains(d.message, "boom") {
+	if !strings.Contains(d.message, "boom") {
 		t.Fatalf("message = %q, want boom", d.message)
 	}
 }
@@ -230,15 +231,6 @@ func (f *fakeStateBackendChecker) StateBucketExists(ctx context.Context, bucket 
 func (f *fakeStateBackendChecker) StateLockTableExists(ctx context.Context, table string) (bool, error) {
 	f.table = table
 	return f.tableExists, f.tableErr
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 func TestPrintDiagnostics(t *testing.T) {

@@ -48,7 +48,7 @@ func TestCheckCreds(t *testing.T) {
 			if d.status != tt.wantStatus {
 				t.Errorf("status = %q, want %q", d.status, tt.wantStatus)
 			}
-			if !contains(d.message, tt.wantMsg) {
+			if !strings.Contains(d.message, tt.wantMsg) {
 				t.Errorf("message = %q, want substring %q", d.message, tt.wantMsg)
 			}
 		})
@@ -100,7 +100,7 @@ func TestCheckBucketWarnings(t *testing.T) {
 			if d.status != "warning" {
 				t.Errorf("status = %q, want warning", d.status)
 			}
-			if !contains(d.message, tt.wantMsg) {
+			if !strings.Contains(d.message, tt.wantMsg) {
 				t.Errorf("message = %q, want substring %q", d.message, tt.wantMsg)
 			}
 		})
@@ -135,7 +135,7 @@ func TestCheckTableWarningsAndErrors(t *testing.T) {
 			if d.status != tt.wantStatus {
 				t.Errorf("status = %q, want %q", d.status, tt.wantStatus)
 			}
-			if !contains(d.message, tt.wantMsg) {
+			if !strings.Contains(d.message, tt.wantMsg) {
 				t.Errorf("message = %q, want substring %q", d.message, tt.wantMsg)
 			}
 		})
@@ -150,7 +150,7 @@ func TestStateBackendWarning(t *testing.T) {
 	if d.status != "warning" {
 		t.Errorf("status = %q, want warning", d.status)
 	}
-	if !contains(d.message, "run fabrica setup") {
+	if !strings.Contains(d.message, "run fabrica setup") {
 		t.Errorf("message = %q, want setup hint", d.message)
 	}
 }
