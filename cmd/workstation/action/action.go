@@ -5,12 +5,12 @@ package action
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -145,7 +145,7 @@ func (c *Command) validatePreAction() (*fabricastate.State, string, error) {
 // printNotProvisioned handles the "not provisioned" output path (text + JSON).
 func (c *Command) printNotProvisioned() {
 	if c.jsonOut {
-		c.printJSON(ActionOutput{Status: "not_provisioned", DryRun: c.dryRun})
+		modstatus.WriteJSON(c.out, ActionOutput{Status: "not_provisioned", DryRun: c.dryRun})
 		return
 	}
 	fmt.Fprintln(c.out, "Workstation is not provisioned. Nothing to "+c.spec.ActionVerb+".")
@@ -154,7 +154,7 @@ func (c *Command) printNotProvisioned() {
 // printAlreadyActive prints the already-active message and returns.
 func (c *Command) printAlreadyActive(instanceID, status string) {
 	if c.jsonOut {
-		c.printJSON(ActionOutput{InstanceID: instanceID, Status: c.spec.AlreadyActiveStatus, DryRun: c.dryRun})
+		modstatus.WriteJSON(c.out, ActionOutput{InstanceID: instanceID, Status: c.spec.AlreadyActiveStatus, DryRun: c.dryRun})
 		return
 	}
 	if strings.Contains(c.spec.AlreadyActiveText, "%s") {
@@ -203,7 +203,7 @@ func (c *Command) apply(ctx context.Context, st *fabricastate.State, m *fabricas
 	}
 
 	if c.jsonOut {
-		c.printJSON(ActionOutput{InstanceID: instanceID, Status: c.spec.TargetStatus, DryRun: false})
+		modstatus.WriteJSON(c.out, ActionOutput{InstanceID: instanceID, Status: c.spec.TargetStatus, DryRun: false})
 		return nil
 	}
 
@@ -215,7 +215,7 @@ func (c *Command) apply(ctx context.Context, st *fabricastate.State, m *fabricas
 
 func (c *Command) printDryRun(m *fabricastate.ModuleState, instanceID string) {
 	if c.jsonOut {
-		c.printJSON(ActionOutput{InstanceID: instanceID, Status: c.spec.DryRunStatus, DryRun: true})
+		modstatus.WriteJSON(c.out, ActionOutput{InstanceID: instanceID, Status: c.spec.DryRunStatus, DryRun: true})
 		return
 	}
 	fmt.Fprintln(c.out, "Cloud Workstation ("+c.spec.ActionLabel+" dry run)")
@@ -233,11 +233,6 @@ func (c *Command) printPlan(m *fabricastate.ModuleState, instanceID string) {
 	fmt.Fprintf(c.out, "  Instance ID: %s\n", instanceID)
 	fmt.Fprintf(c.out, "  Status:      %s\n", m.Status)
 	fmt.Fprintln(c.out)
-}
-
-func (c *Command) printJSON(out ActionOutput) {
-	data, _ := json.MarshalIndent(out, "", "  ")
-	fmt.Fprintln(c.out, string(data))
 }
 
 func (c *Command) confirmPhrase(instanceID string) string {

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/prompt"
@@ -156,7 +157,7 @@ func (c Command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 	}
 
 	if c.JSONOut {
-		c.printJSON(Output{Destroyed: destroyed, DryRun: false})
+		modstatus.WriteJSON(c.Out, Output{Destroyed: destroyed, DryRun: false})
 		return nil
 	}
 
@@ -322,7 +323,7 @@ func (c Command) resolveAccount(st *fabricastate.State) string {
 
 func (c Command) printNotProvisioned() {
 	if c.JSONOut {
-		c.printJSON(Output{Destroyed: []string{}, DryRun: c.DryRun})
+		modstatus.WriteJSON(c.Out, Output{Destroyed: []string{}, DryRun: c.DryRun})
 		return
 	}
 	fmt.Fprintln(c.Out, c.Spec.NotProvisioned)
@@ -334,7 +335,7 @@ func (c Command) printDryRun(m *fabricastate.ModuleState, resources []cloud.Reso
 		for i, r := range resources {
 			ids[i] = r.Identifier
 		}
-		c.printJSON(Output{Destroyed: ids, DryRun: true})
+		modstatus.WriteJSON(c.Out, Output{Destroyed: ids, DryRun: true})
 		return
 	}
 	fmt.Fprintln(c.Out, c.Spec.DryRunHeader)
@@ -362,11 +363,6 @@ func (c Command) printPlan(m *fabricastate.ModuleState, resources []cloud.Resour
 	}
 	fmt.Fprintln(c.Out)
 	fmt.Fprintln(c.Out, c.Spec.Irreversible)
-}
-
-func (c Command) printJSON(out Output) {
-	data, _ := json.MarshalIndent(out, "", "  ")
-	fmt.Fprintln(c.Out, string(data))
 }
 
 // resourcesToDelete returns resources in reverse-creation order: Instance → SG.
