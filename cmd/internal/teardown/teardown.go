@@ -433,20 +433,30 @@ func WireProvider(tc *Command, rt globals.Runtime) {
 	}
 }
 
+// NewStandalone builds a teardown.Command for standalone use (e.g. `fabrica
+// perforce destroy`). The caller provides dry-run, assume-yes, and JSON flags.
+// Confirmation is handled interactively unless AssumeYes is true.
+func NewStandalone(spec Spec, rt globals.Runtime, out io.Writer, dryRun, assumeYes, jsonOut bool) Command {
+	tc := Command{
+		Spec:       spec,
+		Runtime:    rt,
+		DryRun:     dryRun,
+		AssumeYes:  assumeYes,
+		JSONOut:    jsonOut,
+		Out:        out,
+		Confirm:    prompt.ConfirmExact,
+		ReadState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+		WriteState: fabricastate.WriteState,
+	}
+	WireProvider(&tc, rt)
+	return tc
+}
+
 // NewTeardown builds a teardown.Command for orchestrated use (e.g. `fabrica
 // destroy --all`). Confirmation is skipped since the orchestrator handles the
 // aggregate confirmation. The module-specific Spec is passed by the caller.
 func NewTeardown(spec Spec, rt globals.Runtime, out io.Writer) Command {
-	tc := Command{
-		Spec:        spec,
-		Runtime:     rt,
-		SkipConfirm: true,
-		AssumeYes:   true,
-		Out:         out,
-		Confirm:     prompt.ConfirmExact,
-		ReadState:   func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-		WriteState:  fabricastate.WriteState,
-	}
-	WireProvider(&tc, rt)
+	tc := NewStandalone(spec, rt, out, false, true, false)
+	tc.SkipConfirm = true
 	return tc
 }

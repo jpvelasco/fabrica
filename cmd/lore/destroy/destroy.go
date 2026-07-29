@@ -4,10 +4,7 @@ import (
 	"io"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
-	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
-	"github.com/jpvelasco/fabrica/internal/prompt"
-	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
 )
 
@@ -52,21 +49,7 @@ With --dry-run, shows the destroy plan without making any AWS calls.`,
 			}
 			opts := optionsSource()
 
-			c := teardown.Command{
-				Spec:       spec,
-				Runtime:    rt,
-				DryRun:     opts.DryRun,
-				AssumeYes:  opts.AssumeYes,
-				JSONOut:    opts.JSONOutput,
-				Out:        out,
-				Confirm:    prompt.ConfirmExact,
-				ReadState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-				WriteState: fabricastate.WriteState,
-			}
-			if rt.Provider != nil {
-				c.DeleteResource = rt.Provider.Resources().Delete
-				c.GetResource = rt.Provider.Resources().Get
-			}
+			c := teardown.NewStandalone(spec, rt, out, opts.DryRun, opts.AssumeYes, opts.JSONOutput)
 			return c.Run(cmd.Context())
 		},
 	}
