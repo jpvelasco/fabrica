@@ -9,25 +9,10 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 )
-
-// fakeProvider implements cloud.Provider for checkCreds tests.
-type fakeProvider struct {
-	identityErr error
-}
-
-func (f *fakeProvider) Name() string { return "fake" }
-
-func (f *fakeProvider) Identity(ctx context.Context) (string, string, string, error) {
-	if f.identityErr != nil {
-		return "", "", "", f.identityErr
-	}
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-
-func (f *fakeProvider) Resources() cloud.ResourceClient { return nil }
 
 func TestCheckCreds(t *testing.T) {
 	tests := []struct {
@@ -44,13 +29,13 @@ func TestCheckCreds(t *testing.T) {
 		},
 		{
 			name:       "authenticated",
-			provider:   &fakeProvider{},
+			provider:   &testutil.TestProvider{},
 			wantStatus: "ok",
 			wantMsg:    "authenticated",
 		},
 		{
 			name:       "auth failure",
-			provider:   &fakeProvider{identityErr: fmt.Errorf("expired token")},
+			provider:   &testutil.TestProvider{IdentityErr: fmt.Errorf("expired token")},
 			wantStatus: "fail",
 			wantMsg:    "could not authenticate",
 		},
@@ -177,7 +162,7 @@ func TestCheckerRun(t *testing.T) {
 	cfg.State.Table = "t"
 
 	checks := checker{
-		runtime: globals.Runtime{Config: cfg, Provider: &fakeProvider{}},
+		runtime: globals.Runtime{Config: cfg, Provider: &testutil.TestProvider{}},
 		backend: &fakeStateBackendChecker{bucketExists: true, tableExists: true},
 	}.run(context.Background())
 
@@ -216,7 +201,7 @@ func TestCommandRunText(t *testing.T) {
 	cfg.State.Table = "t"
 
 	c := command{
-		runtime: globals.Runtime{Config: cfg, Provider: &fakeProvider{}},
+		runtime: globals.Runtime{Config: cfg, Provider: &testutil.TestProvider{}},
 		backend: &fakeStateBackendChecker{bucketExists: true, tableExists: true},
 		out:     &buf,
 	}
@@ -238,7 +223,7 @@ func TestCommandRunTextReturnsErrorOnFailure(t *testing.T) {
 	cfg.State.Bucket = "b"
 
 	c := command{
-		runtime: globals.Runtime{Config: cfg, Provider: &fakeProvider{identityErr: fmt.Errorf("nope")}},
+		runtime: globals.Runtime{Config: cfg, Provider: &testutil.TestProvider{IdentityErr: fmt.Errorf("nope")}},
 		backend: &fakeStateBackendChecker{bucketErr: fmt.Errorf("boom")},
 		out:     &buf,
 	}
@@ -256,7 +241,7 @@ func TestCommandRunJSON(t *testing.T) {
 	cfg.State.Table = "t"
 
 	c := command{
-		runtime: globals.Runtime{Config: cfg, Provider: &fakeProvider{}},
+		runtime: globals.Runtime{Config: cfg, Provider: &testutil.TestProvider{}},
 		backend: &fakeStateBackendChecker{bucketExists: true, tableExists: true},
 		json:    true,
 		out:     &buf,
