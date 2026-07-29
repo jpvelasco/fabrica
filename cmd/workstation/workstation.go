@@ -4,10 +4,9 @@ import (
 	"io"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/workstation/action"
 	"github.com/jpvelasco/fabrica/cmd/workstation/create"
 	"github.com/jpvelasco/fabrica/cmd/workstation/list"
-	"github.com/jpvelasco/fabrica/cmd/workstation/start"
-	"github.com/jpvelasco/fabrica/cmd/workstation/stop"
 	"github.com/jpvelasco/fabrica/cmd/workstation/terminate"
 	"github.com/spf13/cobra"
 )
@@ -28,8 +27,8 @@ Available operations:
 	}
 	cmd.AddCommand(create.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(list.New(runtimeSource, optionsSource, out))
-	cmd.AddCommand(stop.New(runtimeSource, optionsSource, out))
-	cmd.AddCommand(start.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(action.NewStop(runtimeSource, optionsSource, out))
+	cmd.AddCommand(action.NewStart(runtimeSource, optionsSource, out))
 	cmd.AddCommand(terminate.New(runtimeSource, optionsSource, out))
 	return cmd
 }
