@@ -120,6 +120,7 @@ func assertModuleStatus(t *testing.T, st *state.State, name, want string) {
 	m := st.GetModule(name)
 	if m == nil {
 		t.Fatalf("module %q not in state", name)
+		return
 	}
 	if m.Status != want {
 		t.Fatalf("module %q status = %q, want %q", name, m.Status, want)
@@ -131,6 +132,7 @@ func assertResourceType(t *testing.T, st *state.State, module, typeName string) 
 	m := st.GetModule(module)
 	if m == nil {
 		t.Fatalf("module %q not in state", module)
+		return
 	}
 	for _, r := range m.Resources {
 		if r.TypeName == typeName {

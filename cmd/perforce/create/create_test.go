@@ -234,6 +234,7 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	m := final.GetModule("perforce")
 	if m == nil {
 		t.Fatal("perforce module not in final state")
+		return
 	}
 	if len(m.Resources) != 4 {
 		t.Fatalf("final state has %d resources, want 4", len(m.Resources))

@@ -31,6 +31,7 @@ func TestPerforceCreate_AlreadyExists(t *testing.T) {
 	m := st.GetModule("perforce")
 	if m == nil {
 		t.Fatal("perforce module not in state after create")
+		return
 	}
 	if len(m.Resources) == 0 {
 		t.Fatal("perforce module has no resources in state")

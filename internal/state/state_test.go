@@ -308,6 +308,7 @@ func TestGetModuleExisting(t *testing.T) {
 	m := st.GetModule("perforce")
 	if m == nil {
 		t.Fatal("GetModule returned nil for existing module")
+		return
 	}
 	if m.Name != "perforce" {
 		t.Errorf("module name = %q, want perforce", m.Name)

@@ -23,6 +23,7 @@ func TestPerforceBackupRestoreFlow(t *testing.T) {
 	m := st.GetModule("perforce")
 	if m == nil {
 		t.Fatal("perforce module missing after create")
+		return
 	}
 	for i := range st.Modules {
 		if st.Modules[i].Name == "perforce" {

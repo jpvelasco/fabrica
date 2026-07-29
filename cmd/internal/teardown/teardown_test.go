@@ -156,6 +156,7 @@ func TestRunHappyPathModuleRemovedFromState(t *testing.T) {
 	}
 	if lastState == nil {
 		t.Fatal("state was never written")
+		return
 	}
 	if m := lastState.GetModule("perforce"); m != nil {
 		t.Error("module must be removed from state after successful destroy")
@@ -258,10 +259,12 @@ func TestRunSGFailureAfterInstanceSuccess(t *testing.T) {
 
 	if lastState == nil {
 		t.Fatal("state was never written")
+		return
 	}
 	m := lastState.GetModule("perforce")
 	if m == nil {
 		t.Fatal("module must remain in state after partial failure")
+		return
 	}
 	_, hasInstance := getResource(m, "AWS::EC2::Instance")
 	if hasInstance {
