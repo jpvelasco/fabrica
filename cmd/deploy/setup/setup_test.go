@@ -3,6 +3,7 @@ package setup
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -51,6 +52,24 @@ func TestSetupCreatesRoleAndAlias(t *testing.T) {
 	s := out.String()
 	if !strings.Contains(s, "IAM role") || !strings.Contains(s, "alias") {
 		t.Errorf("expected role+alias creation output:\n%s", s)
+	}
+}
+
+func TestSetupRoleCreateErrorPropagates(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCmd(baseRuntime(), &out)
+	c.assumeYes = true
+	c.runtime.Provider = fakeProvider{}
+	c.createResource = func(context.Context, *cloud.Resource) error {
+		return errors.New("AccessDenied")
+	}
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected IAM role creation error")
+	}
+	if !strings.Contains(err.Error(), "IAM role: AccessDenied") {
+		t.Fatalf("error = %q, want IAM role creation context", err)
 	}
 }
 

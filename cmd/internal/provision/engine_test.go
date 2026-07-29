@@ -1,6 +1,7 @@
 package provision
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -43,6 +44,82 @@ func TestExecuteStepHappyPath(t *testing.T) {
 	}
 	if len(writtenStates) != 1 {
 		t.Fatalf("expected 1 state write, got %d", len(writtenStates))
+	}
+}
+
+func TestExecuteStepReusesExistingResource(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	existing := fabricastate.ModuleResource{
+		TypeName:   "AWS::IAM::Role",
+		Identifier: "existing-role",
+		Properties: map[string]string{"owner": "test"},
+	}
+	st.UpsertModule("test-module", "v1", "provisioning", []fabricastate.ModuleResource{existing})
+
+	var out bytes.Buffer
+	step := CreateStep{
+		Label:         "IAM role",
+		TypeName:      "AWS::IAM::Role",
+		ReuseExisting: true,
+		BuildDesiredState: func() ([]byte, error) {
+			t.Fatal("BuildDesiredState called for existing resource")
+			return nil, nil
+		},
+	}
+	resources, err := ExecuteStep(
+		context.Background(), step, "test-module", "v1", "provisioning", nil, st, &out,
+		func(context.Context, *cloud.Resource) error {
+			t.Fatal("createResource called for existing resource")
+			return nil
+		},
+		func(*fabricastate.State) error {
+			t.Fatal("writeState called for existing resource")
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("ExecuteStep: %v", err)
+	}
+	if len(resources) != 1 || resources[0].Identifier != existing.Identifier {
+		t.Fatalf("resources = %+v, want existing resource", resources)
+	}
+	if resources[0].Properties["owner"] != "test" {
+		t.Fatalf("existing properties were not preserved: %+v", resources[0].Properties)
+	}
+	if !strings.Contains(out.String(), "IAM role already exists — skipping: existing-role") {
+		t.Fatalf("missing reuse message: %q", out.String())
+	}
+}
+
+func TestExecuteStepCreatesWhenReusableResourceIsMissing(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	created, written := false, false
+	step := CreateStep{
+		Label:             "IAM role",
+		TypeName:          "AWS::IAM::Role",
+		ReuseExisting:     true,
+		BuildDesiredState: func() ([]byte, error) { return json.Marshal(map[string]any{}) },
+	}
+	resources, err := ExecuteStep(
+		context.Background(), step, "test-module", "v1", "provisioning", nil, st, &testWriter{},
+		func(_ context.Context, r *cloud.Resource) error {
+			created = true
+			r.Identifier = "new-role"
+			return nil
+		},
+		func(*fabricastate.State) error {
+			written = true
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("ExecuteStep: %v", err)
+	}
+	if !created || !written {
+		t.Fatalf("created = %t, written = %t; want both true", created, written)
+	}
+	if len(resources) != 1 || resources[0].Identifier != "new-role" {
+		t.Fatalf("resources = %+v, want newly created role", resources)
 	}
 }
 
