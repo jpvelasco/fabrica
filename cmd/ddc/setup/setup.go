@@ -89,10 +89,6 @@ With --dry-run, shows the plan and monthly cost estimate without AWS writes.`,
 }
 
 func (c command) run(ctx context.Context) error {
-	if c.runtime.Provider == nil {
-		return fmt.Errorf("no provider configured; run 'fabrica setup' first")
-	}
-
 	account, region, err := provision.ResolveIdentity(ctx, c.runtime.Provider)
 	if err != nil {
 		return err

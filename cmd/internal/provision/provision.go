@@ -1,13 +1,7 @@
-// Package provision holds the small, genuinely-shared helpers used by the
-// module create commands (perforce, horde, workstation).
-//
-// Scope note: only substance-free boilerplate that was byte-identical across
-// all three commands lives here — local-state reading, the confirmation phrase,
-// and the confirmation instructions block. The provisioning flow itself
-// (applyCreate: credentials, desired-state builders, plan-specific output) is
-// deliberately NOT shared: those steps look alike but call module-specific code,
-// so a generic engine would add indirection without removing real duplication.
-// See issue #37 for the full rationale.
+// Package provision owns the shared orchestration used by module create
+// commands. It centralizes lifecycle invariants and individual resource steps;
+// module-specific plan construction, rendering, credentials, and desired-state
+// builders remain with their commands. See issue #37 for that boundary.
 package provision
 
 import (

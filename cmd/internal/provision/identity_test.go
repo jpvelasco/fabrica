@@ -47,3 +47,16 @@ func TestResolveIdentity_Error(t *testing.T) {
 		t.Errorf("region = %q, want empty on error", region)
 	}
 }
+
+func TestResolveIdentity_NilProvider(t *testing.T) {
+	account, region, err := ResolveIdentity(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if got := err.Error(); got != "no provider configured; run 'fabrica setup' first" {
+		t.Fatalf("error = %q, want missing-provider guidance", got)
+	}
+	if account != "" || region != "" {
+		t.Fatalf("identity = (%q, %q), want empty values", account, region)
+	}
+}
