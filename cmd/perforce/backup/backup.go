@@ -11,13 +11,13 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
+	perforceprovisioning "github.com/jpvelasco/fabrica/cmd/perforce/internal/provisioning"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/credentials"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
-	"github.com/jpvelasco/fabrica/internal/stateutil"
 	"github.com/spf13/cobra"
 )
 
@@ -116,9 +116,12 @@ type createOutput struct {
 }
 
 func (c createCommand) run(ctx context.Context) error {
-	st, m, inst, err := c.validateProvisioning()
+	target, err := perforceprovisioning.Resolve(c.readState)
 	if err != nil {
 		return err
+	}
+	if target.Module.Status != "ready" {
+		return fmt.Errorf("Perforce status is %q; backups require status ready. Run 'fabrica perforce status' first", target.Module.Status)
 	}
 
 	cfg := perforceBackupCfg(c.runtime.Config)
@@ -143,37 +146,18 @@ func (c createCommand) run(ctx context.Context) error {
 		return err
 	}
 
-	script, err := c.buildBackupScript(id, backupRoot, m.Version, s3Export, cfg)
+	script, err := c.buildBackupScript(id, backupRoot, target.Module.Version, s3Export, cfg)
 	if err != nil {
 		return err
 	}
 
-	if err := c.executeBackup(ctx, inst.Identifier, script); err != nil {
+	if err := c.executeBackup(ctx, target.Instance.Identifier, script); err != nil {
 		return err
 	}
 
-	c.updateStateAfterBackup(st, m, id)
+	c.updateStateAfterBackup(target.State, target.Module, id)
 	c.printBackupComplete(id, dest, s3Export)
 	return nil
-}
-
-func (c createCommand) validateProvisioning() (*fabricastate.State, *fabricastate.ModuleState, fabricastate.ModuleResource, error) {
-	st, err := c.readState()
-	if err != nil {
-		return nil, nil, fabricastate.ModuleResource{}, fmt.Errorf("reading state: %w", err)
-	}
-	m := st.GetModule(moduleName)
-	if m == nil {
-		return nil, nil, fabricastate.ModuleResource{}, fmt.Errorf("Perforce is not provisioned. Run 'fabrica perforce create' first")
-	}
-	if m.Status != "ready" {
-		return nil, nil, fabricastate.ModuleResource{}, fmt.Errorf("Perforce status is %q; backups require status ready. Run 'fabrica perforce status' first", m.Status)
-	}
-	inst, ok := stateutil.ResourceByType(m, "AWS::EC2::Instance")
-	if !ok || inst.Identifier == "" {
-		return nil, nil, fabricastate.ModuleResource{}, fmt.Errorf("Perforce instance not found in state")
-	}
-	return st, m, inst, nil
 }
 
 func (c createCommand) resolveBackupConfig(cfg config.PerforceBackupConfig) (string, bool, error) {
