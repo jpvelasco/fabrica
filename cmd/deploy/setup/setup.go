@@ -131,22 +131,15 @@ func (c command) apply(ctx context.Context, plan *deploy.SetupPlan) error {
 
 	var resources []fabricastate.ModuleResource
 
-	if existing, ok := provision.ExistingResource(st, moduleName, deploy.TypeAWSIAMRole); ok {
-		fmt.Fprintf(c.out, "  IAM role already exists — skipping: %s\n", existing.Identifier)
-		resources = append(resources, existing)
-	} else {
-		roleState, err := deploy.RoleDesiredState(plan)
-		if err != nil {
-			return fmt.Errorf("building IAM role desired state: %w", err)
-		}
-		r := &cloud.Resource{TypeName: deploy.TypeAWSIAMRole, DesiredState: roleState}
-		if err := c.createResource(ctx, r); err != nil {
-			return fmt.Errorf("creating IAM role: %w", err)
-		}
-		fmt.Fprintf(c.out, "  created IAM role: %s\n", r.Identifier)
-		resources = append(resources, fabricastate.ModuleResource{TypeName: deploy.TypeAWSIAMRole, Identifier: r.Identifier})
-		st.UpsertModule(moduleName, plan.AliasName, "provisioning", resources)
-		_ = c.writeState(st)
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:             "IAM role",
+		TypeName:          deploy.TypeAWSIAMRole,
+		BuildDesiredState: func() ([]byte, error) { return deploy.RoleDesiredState(plan) },
+		ReuseExisting:     true,
+		IgnoreWriteError:  true,
+	}, moduleName, plan.AliasName, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return err
 	}
 
 	if existing, ok := provision.ExistingResource(st, moduleName, deploy.TypeGameLiftAlias); ok {

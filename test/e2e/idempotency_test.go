@@ -70,5 +70,5 @@ deploy:
 	if err != nil {
 		t.Fatalf("deploy setup should succeed recovering existing role: %v\noutput: %s", err, out)
 	}
-	assert.Contains(t, out, "created IAM role")
+	assert.Contains(t, out, "IAM role created")
 }

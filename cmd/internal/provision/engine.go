@@ -23,6 +23,9 @@ type CreateStep struct {
 	ResourceIdentifier func(created *cloud.Resource) string
 	// Properties are optional properties to store in the module resource state.
 	Properties map[string]string
+	// ReuseExisting, when true, reuses a resource of the same type already
+	// recorded for the module instead of creating it again.
+	ReuseExisting bool
 	// IgnoreWriteError, when true, causes writeState failures to be silently
 	// ignored after this step. Defaults to false (fail on writeState error).
 	IgnoreWriteError bool
@@ -42,6 +45,13 @@ func ExecuteStep(
 	createResource func(ctx context.Context, r *cloud.Resource) error,
 	writeState func(*fabricastate.State) error,
 ) ([]fabricastate.ModuleResource, error) {
+	if step.ReuseExisting {
+		if existing, ok := ExistingResource(st, moduleName, step.TypeName); ok {
+			fmt.Fprintf(out, "  %s already exists — skipping: %s\n", step.Label, existing.Identifier)
+			return AppendUnique(resources, existing), nil
+		}
+	}
+
 	desiredState, err := step.BuildDesiredState()
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", step.Label, err)

@@ -154,22 +154,15 @@ func (c command) applyResources(ctx context.Context, st *fabricastate.State, pla
 
 	roleARN := fmt.Sprintf("arn:aws:iam::%s:role/%s", plan.Account, plan.RoleName)
 
-	if existing, ok := provision.ExistingResource(st, moduleName, ci.TypeAWSIAMRole); ok {
-		fmt.Fprintf(c.out, "  IAM role already exists — skipping: %s\n", existing.Identifier)
-		resources = append(resources, existing)
-	} else {
-		roleState, err := ci.RoleDesiredState(plan)
-		if err != nil {
-			return nil, fmt.Errorf("building IAM role desired state: %w", err)
-		}
-		r := &cloud.Resource{TypeName: ci.TypeAWSIAMRole, DesiredState: roleState}
-		if err := c.createResource(ctx, r); err != nil {
-			return nil, fmt.Errorf("creating IAM role: %w", err)
-		}
-		fmt.Fprintf(c.out, "  created IAM role: %s\n", r.Identifier)
-		resources = append(resources, fabricastate.ModuleResource{TypeName: ci.TypeAWSIAMRole, Identifier: r.Identifier})
-		st.UpsertModule(moduleName, plan.ProjectName, "provisioning", resources)
-		_ = c.writeState(st)
+	resources, err := provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:             "IAM role",
+		TypeName:          ci.TypeAWSIAMRole,
+		BuildDesiredState: func() ([]byte, error) { return ci.RoleDesiredState(plan) },
+		ReuseExisting:     true,
+		IgnoreWriteError:  true,
+	}, moduleName, plan.ProjectName, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return nil, err
 	}
 
 	// CodeBuild projects are created via the CodeBuildRunner SDK path —
