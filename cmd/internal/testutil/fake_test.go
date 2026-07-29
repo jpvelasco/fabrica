@@ -95,6 +95,25 @@ func TestFakeResourceClientCreateIdentifiers(t *testing.T) {
 	}
 }
 
+func TestFakeResourceClientCreatePreservesIdentifier(t *testing.T) {
+	f := &TestProvider{}
+	rc := f.Resources()
+	res := &cloud.Resource{
+		TypeName:   cloud.TypeAWSEC2Instance,
+		Identifier: "i-existing",
+	}
+
+	if err := rc.Create(context.Background(), res); err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if res.Identifier != "i-existing" {
+		t.Errorf("Identifier = %q, want %q", res.Identifier, "i-existing")
+	}
+	if f.CreateCalls != 1 {
+		t.Errorf("CreateCalls = %d, want 1", f.CreateCalls)
+	}
+}
+
 func TestFakeResourceClientCreateError(t *testing.T) {
 	expectedErr := errors.New("quota exceeded")
 	f := &TestProvider{

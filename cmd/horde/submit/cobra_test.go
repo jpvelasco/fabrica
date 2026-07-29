@@ -46,7 +46,7 @@ func writeTempBuildGraph(t *testing.T) string {
 
 // TestSubmitCobraMissingArg verifies that omitting the positional arg produces a usage error.
 func TestSubmitCobraMissingArg(t *testing.T) {
-	_, err := runSubmit(t, newCobraRuntime(&testutil.CobraFakeProvider{}))
+	_, err := runSubmit(t, newCobraRuntime(&testutil.TestProvider{}))
 	if err == nil {
 		t.Fatal("expected error when buildgraph-file arg is missing")
 	}
@@ -59,7 +59,7 @@ func TestSubmitCobraWaitFlagAccepted(t *testing.T) {
 	path := writeTempBuildGraph(t)
 	for _, flag := range []string{"--wait", "-w"} {
 		t.Run(flag, func(t *testing.T) {
-			_, err := runSubmit(t, newCobraRuntime(&testutil.CobraFakeProvider{}), flag, path)
+			_, err := runSubmit(t, newCobraRuntime(&testutil.TestProvider{}), flag, path)
 			// Error expected (not provisioned), but not a flag-parse error.
 			if err != nil && err.Error() == "unknown flag: "+flag {
 				t.Fatalf("%s flag not recognised", flag)
@@ -72,7 +72,7 @@ func TestSubmitCobraWaitFlagAccepted(t *testing.T) {
 func TestSubmitCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
 	path := writeTempBuildGraph(t)
-	_, err := runSubmit(t, newCobraRuntime(&testutil.CobraFakeProvider{}), path)
+	_, err := runSubmit(t, newCobraRuntime(&testutil.TestProvider{}), path)
 	if err == nil {
 		t.Fatal("expected error when horde not provisioned")
 	}

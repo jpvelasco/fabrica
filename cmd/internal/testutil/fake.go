@@ -11,9 +11,8 @@ import (
 // TestProvider is a configurable fake provider with per-type error injection.
 // It satisfies cloud.Provider and provides a FakeResourceClient as its ResourceClient.
 //
-// Use this for white-box create tests that need to simulate specific resource
-// creation failures (e.g. SG fails, instance fails) while tracking call counts
-// and created types.
+// Use this for command tests that need configurable identity, resource results,
+// per-type creation failures, or resource-operation call counts.
 type TestProvider struct {
 	IdentityErr  error
 	Region       string
@@ -61,6 +60,9 @@ func (r *FakeResourceClient) Create(_ context.Context, res *cloud.Resource) erro
 		if err, ok := r.provider.CreateErr[res.TypeName]; ok {
 			return err
 		}
+	}
+	if res.Identifier != "" {
+		return nil
 	}
 	// Assign fake identifiers based on type
 	switch res.TypeName {

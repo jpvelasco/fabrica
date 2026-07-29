@@ -32,7 +32,7 @@ func newCobraRuntime(provider cloud.Provider) globals.RuntimeSource {
 
 // TestStatusCobraNotProvisioned verifies clean exit and message when no state exists.
 func TestStatusCobraNotProvisioned(t *testing.T) {
-	got, err := runStatus(t, newCobraRuntime(&testutil.CobraFakeProvider{}))
+	got, err := runStatus(t, newCobraRuntime(&testutil.TestProvider{}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestStatusCobraNotProvisioned(t *testing.T) {
 
 // TestStatusCobraJSONFlag verifies --json produces parseable JSON output.
 func TestStatusCobraJSONFlag(t *testing.T) {
-	got, err := runStatus(t, newCobraRuntime(&testutil.CobraFakeProvider{}), "--json")
+	got, err := runStatus(t, newCobraRuntime(&testutil.TestProvider{}), "--json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestStatusCobraWaitFlagAccepted(t *testing.T) {
 		t.Run(flag, func(t *testing.T) {
 			// No state on disk → prints not-provisioned immediately, no real polling.
 			t.Chdir(t.TempDir())
-			_, err := runStatus(t, newCobraRuntime(&testutil.CobraFakeProvider{}), flag)
+			_, err := runStatus(t, newCobraRuntime(&testutil.TestProvider{}), flag)
 			if err != nil {
 				t.Fatalf("%s flag caused error: %v", flag, err)
 			}
@@ -105,7 +105,7 @@ func TestStatusCobraJSONProvisioned(t *testing.T) {
 		]}]}`
 	testutil.WriteStateFile(t, dir, stateJSON)
 
-	got, err := runStatus(t, newCobraRuntime(&testutil.CobraFakeProvider{}), "--json")
+	got, err := runStatus(t, newCobraRuntime(&testutil.TestProvider{}), "--json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
