@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
@@ -181,13 +182,10 @@ func costResources(resources []fabricastate.ResourcePlan) []fabricacost.Resource
 func (c command) runApply(ctx context.Context, plan fabricastate.SetupPlan) error {
 	c.printApplyHeader(plan)
 
-	if !c.assumeYes {
-		if !c.confirm("Create the S3 bucket and DynamoDB table shown above?") {
-			fmt.Fprintln(c.out, "Setup cancelled. No AWS resources were created.")
-			return nil
-		}
-	} else {
-		fmt.Fprintln(c.out, "Proceeding without confirmation (--yes set).")
+	if !provision.ConfirmSetup(c.out, "Create the S3 bucket and DynamoDB table shown above?", c.assumeYes, c.confirm) {
+		return nil
+	}
+	if c.assumeYes {
 		fmt.Fprintln(c.out)
 	}
 
