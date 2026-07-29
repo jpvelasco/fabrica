@@ -302,11 +302,7 @@ func NewProvisionedStateJSON(modules ...StateModule) string {
 			Resources: make([]resJSON, 0, len(m.Resources)),
 		}
 		for _, r := range m.Resources {
-			mj.Resources = append(mj.Resources, resJSON{
-				TypeName:   r.TypeName,
-				Identifier: r.Identifier,
-				Properties: r.Properties,
-			})
+			mj.Resources = append(mj.Resources, resJSON(r))
 		}
 		out.Modules = append(out.Modules, mj)
 	}
