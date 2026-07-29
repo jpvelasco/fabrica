@@ -558,3 +558,42 @@ func TestEC2Pair(t *testing.T) {
 		t.Errorf("instance = %+v", pair[1])
 	}
 }
+
+func TestNewProvisionedStateJSONEmptyModules(t *testing.T) {
+	got := NewProvisionedStateJSON()
+	var parsed struct {
+		Account string `json:"account"`
+		Modules []any  `json:"modules"`
+	}
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if parsed.Account != "123456789012" {
+		t.Errorf("account = %q", parsed.Account)
+	}
+	if len(parsed.Modules) != 0 {
+		t.Errorf("modules = %v, want empty", parsed.Modules)
+	}
+}
+
+// TestNewProvisionedStateJSONMarshalPanic covers the defensive panic when
+// Properties holds a non-JSON-encodable value (channels cannot be marshaled).
+func TestNewProvisionedStateJSONMarshalPanic(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic on unencodable Properties")
+		}
+		msg, ok := r.(string)
+		if !ok || !strings.Contains(msg, "NewProvisionedStateJSON") {
+			t.Fatalf("panic = %v, want NewProvisionedStateJSON message", r)
+		}
+	}()
+	_ = NewProvisionedStateJSON(StateModule{
+		Name: "x", Version: "1", Status: "ready",
+		Resources: []StateResource{{
+			TypeName: "AWS::EC2::Instance", Identifier: "i-1",
+			Properties: map[string]any{"bad": make(chan int)},
+		}},
+	})
+}
