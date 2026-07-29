@@ -112,8 +112,8 @@ or in-VPC session — and is off by default.`,
 				jsonOut:   opts.JSONOutput,
 				probe:     probe,
 				out:       out,
-				readState: func() (*fabricastate.State, error) { return readState(rt) },
-				probeTCP:  defaultProbeTCP,
+				readState: func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				probeTCP:  modstatus.DefaultProbeTCP,
 			}
 			if rt.Provider != nil {
 				c.getResource = rt.Provider.Resources().Get
@@ -417,14 +417,4 @@ func (c command) probeModule(module, privateIP string) string {
 		return "responding"
 	}
 	return "unreachable"
-}
-
-// defaultProbeTCP is the real readiness probe, shared with the per-module
-// status commands.
-func defaultProbeTCP(address string) bool {
-	return modstatus.DefaultProbeTCP(address)
-}
-
-func readState(rt globals.Runtime) (*fabricastate.State, error) {
-	return provision.ReadState(rt)
 }
