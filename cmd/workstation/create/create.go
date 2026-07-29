@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
@@ -21,7 +20,6 @@ import (
 )
 
 const (
-	lineWidth   = 58
 	moduleName  = "workstation"
 	credFile    = ".fabrica/workstation-credentials.yaml"
 	passwordLen = 24
@@ -270,67 +268,61 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 }
 
 func (c command) printDryRun(plan *workstation.CreatePlan) {
-	fmt.Fprintln(c.out, "Cloud Workstation (dry run)")
-	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	fmt.Fprintf(c.out, "  AWS account:      %s\n", plan.Account)
-	fmt.Fprintf(c.out, "  AWS region:       %s\n", plan.Region)
-	fmt.Fprintf(c.out, "  AMI ID:           %s\n", plan.AmiID)
-	fmt.Fprintf(c.out, "  Instance type:    %s\n", plan.InstanceType)
-	fmt.Fprintf(c.out, "  Volume:           %d GiB gp3\n", plan.VolumeSize)
-	fmt.Fprintf(c.out, "  Idle timeout:     %d min\n", plan.IdleTimeoutMinutes)
-	if plan.DefaultVPC {
-		fmt.Fprintf(c.out, "  VPC:              default (%s)\n", plan.VPCID)
-	} else if plan.VPCID != "" {
-		fmt.Fprintf(c.out, "  VPC:              %s\n", plan.VPCID)
+	extraFields := []provision.PlanField{
+		{Key: "AMI ID", Value: plan.AmiID},
+		{Key: "Idle timeout", Value: fmt.Sprintf("%d min", plan.IdleTimeoutMinutes)},
 	}
 	if plan.MountPerforce {
-		fmt.Fprintf(c.out, "  Perforce server:  %s\n", plan.PerforceServerAddr)
+		extraFields = append(extraFields, provision.PlanField{Key: "Perforce server", Value: plan.PerforceServerAddr})
 	}
-	if plan.AllowedCIDR == "0.0.0.0/0" {
-		fmt.Fprintln(c.out)
-		fmt.Fprintln(c.out, "  WARNING: allowedCidr is 0.0.0.0/0 — port 8443 is open to")
-		fmt.Fprintln(c.out, "           the internet. Set workstation.allowedCidr in fabrica.yaml")
-		fmt.Fprintln(c.out, "           before deploying to production.")
-	}
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Resources to create:")
-	fmt.Fprintf(c.out, "  Security Group:   %s\n", plan.SGName)
-	fmt.Fprintf(c.out, "  EC2 Instance:     %s\n", plan.InstanceName)
-	fmt.Fprintln(c.out)
-	c.costs.EstimateAll(plan.CostResources).Render(c.out, lineWidth)
-	fmt.Fprintln(c.out, "Run without --dry-run to proceed.")
+	provision.DryRun(c.out, provision.DryRunSpec{
+		Title: "Cloud Workstation",
+		Info: provision.PlanInfo{
+			Account:      plan.Account,
+			Region:       plan.Region,
+			InstanceType: plan.InstanceType,
+			VolumeSize:   plan.VolumeSize,
+			AllowedCIDR:  plan.AllowedCIDR,
+			VPCID:        plan.VPCID,
+			DefaultVPC:   plan.DefaultVPC,
+		},
+		ExtraFields: extraFields,
+		Resources: []string{
+			"Security Group:   " + plan.SGName,
+			"EC2 Instance:     " + plan.InstanceName,
+		},
+		CostResources: plan.CostResources,
+		Costs:         c.costs,
+		CidrWarning:   "port 8443 is open to the internet. Set workstation.allowedCidr in fabrica.yaml before deploying to production.",
+	})
 }
 
 func (c command) printApplyPlan(plan *workstation.CreatePlan) {
-	fmt.Fprintln(c.out, "Cloud Workstation")
-	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	fmt.Fprintf(c.out, "  AWS account:   %s\n", plan.Account)
-	fmt.Fprintf(c.out, "  AWS region:    %s\n", plan.Region)
-	fmt.Fprintf(c.out, "  Instance type: %s\n", plan.InstanceType)
+	extraFields := []provision.PlanField{}
 	if plan.MountPerforce {
-		fmt.Fprintf(c.out, "  Perforce:      %s\n", plan.PerforceServerAddr)
+		extraFields = append(extraFields, provision.PlanField{Key: "Perforce", Value: plan.PerforceServerAddr})
 	}
-	if plan.AllowedCIDR == "0.0.0.0/0" {
-		fmt.Fprintln(c.out)
-		fmt.Fprintln(c.out, "  WARNING: allowedCidr is 0.0.0.0/0 — port 8443 is open to")
-		fmt.Fprintln(c.out, "           the internet. Set workstation.allowedCidr in fabrica.yaml")
-		fmt.Fprintln(c.out, "           before deploying to production.")
-	}
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Resources to create:")
-	fmt.Fprintf(c.out, "  Security Group: %s\n", plan.SGName)
-	fmt.Fprintf(c.out, "  EC2 Instance:   %s\n", plan.InstanceName)
+	provision.ApplyPlan(c.out, "Cloud Workstation", provision.PlanInfo{
+		Account:      plan.Account,
+		Region:       plan.Region,
+		InstanceType: plan.InstanceType,
+		VolumeSize:   plan.VolumeSize,
+	}, extraFields, []string{
+		"Security Group:   " + plan.SGName,
+		"EC2 Instance:     " + plan.InstanceName,
+	})
 }
 
 func (c command) printPostCreate(_ *workstation.CreatePlan, instanceID string) {
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Cloud Workstation provisioned.")
-	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "  Instance ID:   %s\n", instanceID)
-	fmt.Fprintf(c.out, "  Status:        provisioning (DCV setup in progress)\n")
-	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "  DCV credentials: %s\n", credFile)
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Next steps:")
-	fmt.Fprintln(c.out, "  fabrica workstation list     Show workstation details")
+	provision.PostCreate(c.out, provision.PostCreateSpec{
+		Title:        "Cloud Workstation",
+		InstanceID:   instanceID,
+		StatusDetail: "provisioning (DCV setup in progress)",
+		Details: []provision.PlanField{
+			{Key: "DCV credentials", Value: credFile},
+		},
+		NextSteps: []string{
+			"fabrica workstation list     Show workstation details",
+		},
+	})
 }

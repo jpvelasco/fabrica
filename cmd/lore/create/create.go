@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
@@ -19,7 +18,6 @@ import (
 )
 
 const (
-	lineWidth  = 58
 	moduleName = "lore"
 	credFile   = ".fabrica/lore-credentials.yaml" // #nosec G101 -- file path, not a credential
 )
@@ -204,75 +202,79 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 }
 
 func (c command) printDryRun(plan *lore.CreatePlan) {
-	fmt.Fprintln(c.out, "Lore loreserver (dry run)")
-	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	fmt.Fprintf(c.out, "  AWS account:      %s\n", plan.Account)
-	fmt.Fprintf(c.out, "  AWS region:       %s\n", plan.Region)
-	fmt.Fprintf(c.out, "  AMI ID:           %s\n", plan.AmiID)
-	fmt.Fprintf(c.out, "  Instance type:    %s\n", plan.InstanceType)
-	fmt.Fprintf(c.out, "  Data volume:      %d GiB gp3\n", plan.VolumeSize)
-	fmt.Fprintf(c.out, "  gRPC/QUIC port:   %d (tcp+udp)\n", plan.GRPCPort)
-	fmt.Fprintf(c.out, "  HTTP port:        %d\n", plan.HTTPPort)
-	fmt.Fprintf(c.out, "  Allowed CIDR:     %s\n", plan.AllowedCIDR)
-	if plan.DefaultVPC {
-		fmt.Fprintf(c.out, "  VPC:              default (%s)\n", plan.VPCID)
-		fmt.Fprintln(c.out, "  Note:             Default VPC used. Configure a dedicated VPC for production.")
-	} else if plan.VPCID != "" {
-		fmt.Fprintf(c.out, "  VPC:              %s\n", plan.VPCID)
-	}
-	if plan.AllowedCIDR == "0.0.0.0/0" {
-		fmt.Fprintln(c.out)
-		fmt.Fprintln(c.out, "  WARNING: allowedCidr is 0.0.0.0/0 — Lore ports are open")
-		fmt.Fprintln(c.out, "           to the internet. Restrict this in fabrica.yaml before production use.")
-	}
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Resources to create:")
-	fmt.Fprintf(c.out, "  Security Group:   %s\n", plan.SGName)
-	fmt.Fprintf(c.out, "  EC2 Instance:     %s\n", plan.InstanceName)
-	fmt.Fprintln(c.out)
-	c.costs.EstimateAll(plan.CostResources).Render(c.out, lineWidth)
-	fmt.Fprintln(c.out, "Run without --dry-run to proceed.")
+	provision.DryRun(c.out, provision.DryRunSpec{
+		Title: "Lore loreserver",
+		Info: provision.PlanInfo{
+			Account:      plan.Account,
+			Region:       plan.Region,
+			InstanceType: plan.InstanceType,
+			VolumeSize:   plan.VolumeSize,
+			AllowedCIDR:  plan.AllowedCIDR,
+			VPCID:        plan.VPCID,
+			DefaultVPC:   plan.DefaultVPC,
+		},
+		ExtraFields: []provision.PlanField{
+			{Key: "AMI ID", Value: plan.AmiID},
+			{Key: "gRPC/QUIC port", Value: fmt.Sprintf("%d (tcp+udp)", plan.GRPCPort)},
+			{Key: "HTTP port", Value: fmt.Sprintf("%d", plan.HTTPPort)},
+			{Key: "Allowed CIDR", Value: plan.AllowedCIDR},
+		},
+		Resources: []string{
+			"Security Group:   " + plan.SGName,
+			"EC2 Instance:     " + plan.InstanceName,
+		},
+		CostResources: plan.CostResources,
+		Costs:         c.costs,
+		RawBetween: func(w io.Writer) {
+			if plan.AllowedCIDR == "0.0.0.0/0" {
+				fmt.Fprintln(w, "  Warning: allowedCidr is 0.0.0.0/0 — Lore ports are open")
+				fmt.Fprintln(w, "           to the internet. Restrict this in fabrica.yaml before production use.")
+			}
+		},
+	})
 }
 
 func (c command) printApplyPlan(plan *lore.CreatePlan) {
-	fmt.Fprintln(c.out, "Lore loreserver")
-	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	fmt.Fprintf(c.out, "  AWS account:      %s\n", plan.Account)
-	fmt.Fprintf(c.out, "  AWS region:       %s\n", plan.Region)
-	fmt.Fprintf(c.out, "  AMI ID:           %s\n", plan.AmiID)
-	fmt.Fprintf(c.out, "  Instance type:    %s\n", plan.InstanceType)
-	fmt.Fprintf(c.out, "  Data volume:      %d GiB gp3\n", plan.VolumeSize)
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Resources to create:")
-	fmt.Fprintf(c.out, "  Security Group:   %s\n", plan.SGName)
-	fmt.Fprintf(c.out, "  EC2 Instance:     %s\n", plan.InstanceName)
+	provision.ApplyPlan(c.out, "Lore loreserver", provision.PlanInfo{
+		Account:      plan.Account,
+		Region:       plan.Region,
+		InstanceType: plan.InstanceType,
+		VolumeSize:   plan.VolumeSize,
+	}, []provision.PlanField{
+		{Key: "AMI ID", Value: plan.AmiID},
+	}, []string{
+		"Security Group:   " + plan.SGName,
+		"EC2 Instance:     " + plan.InstanceName,
+	})
 }
 
 func (c command) printPostCreate(plan *lore.CreatePlan, instanceID string) {
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Lore server provisioned.")
-	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "  Instance ID:    %s\n", instanceID)
-	fmt.Fprintln(c.out, "  Status:         provisioning (loreserver starting up, ~3 min)")
-	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "  gRPC/QUIC:      <private-ip>:%d (tcp+udp)\n", plan.GRPCPort)
-	fmt.Fprintf(c.out, "  HTTP health:    http://<private-ip>:%d/health_check\n", plan.HTTPPort)
-	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "  Connection notes: %s\n", credFile)
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "  Note: Lore is accessible via the instance's private IP. Ensure your")
-	fmt.Fprintln(c.out, "        machine can reach it (VPN, VPC peering, or same-VPC access).")
-	fmt.Fprintln(c.out, "        TLS is self-signed in V1; clients must trust the cert.")
-	if plan.AllowedCIDR == "0.0.0.0/0" {
-		fmt.Fprintln(c.out)
-		fmt.Fprintln(c.out, "  WARNING: lore.allowedCidr is 0.0.0.0/0 — ports are open to the internet.")
-		fmt.Fprintln(c.out, "           Restrict this in fabrica.yaml before production use.")
-	}
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Next steps:")
-	fmt.Fprintln(c.out, "  1. fabrica lore status -w       Wait for server to become ready")
-	fmt.Fprintln(c.out, "  2. Point Lore clients at the private IP (see connection notes)")
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "If the server doesn't become ready within 10 minutes, check:")
-	fmt.Fprintln(c.out, "  /var/log/fabrica-lore-init.log  on the instance")
+	provision.PostCreate(c.out, provision.PostCreateSpec{
+		Title:        "Lore server",
+		InstanceID:   instanceID,
+		StatusDetail: "provisioning (loreserver starting up, ~3 min)",
+		Details: []provision.PlanField{
+			{Key: "gRPC/QUIC", Value: fmt.Sprintf("<private-ip>:%d (tcp+udp)", plan.GRPCPort)},
+			{Key: "HTTP health", Value: fmt.Sprintf("http://<private-ip>:%d/health_check", plan.HTTPPort)},
+			{Key: "Connection notes", Value: credFile},
+		},
+		NextSteps: []string{
+			"fabrica lore status -w       Wait for server to become ready",
+			"Point Lore clients at the private IP (see connection notes)",
+		},
+		RawAfter: func(w io.Writer) {
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "  Note: Lore is accessible via the instance's private IP. Ensure your")
+			fmt.Fprintln(w, "        machine can reach it (VPN, VPC peering, or same-VPC access).")
+			fmt.Fprintln(w, "        TLS is self-signed in V1; clients must trust the cert.")
+			if plan.AllowedCIDR == "0.0.0.0/0" {
+				fmt.Fprintln(w)
+				fmt.Fprintln(w, "  Warning: lore.allowedCidr is 0.0.0.0/0 — ports are open to the internet.")
+				fmt.Fprintln(w, "           Restrict this in fabrica.yaml before production use.")
+			}
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "If the server doesn't become ready within 10 minutes, check:")
+			fmt.Fprintln(w, "  /var/log/fabrica-lore-init.log  on the instance")
+		},
+	})
 }

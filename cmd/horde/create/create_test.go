@@ -230,7 +230,7 @@ func TestCreateAllowedCIDRWarning(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assert.Contains(t, out.String(), "WARNING")
+	assert.Contains(t, out.String(), "Warning: allowedCidr is 0.0.0.0/0")
 	assert.Contains(t, out.String(), "0.0.0.0/0")
 }
 

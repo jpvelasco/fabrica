@@ -19,7 +19,6 @@ import (
 )
 
 const (
-	lineWidth   = 58
 	moduleName  = "perforce"
 	credFile    = ".fabrica/perforce-credentials.yaml"
 	passwordLen = 24
@@ -290,68 +289,67 @@ func (c command) resolveImageID(ctx context.Context, region string) (string, err
 }
 
 func (c command) printDryRun(plan *perforce.CreatePlan) {
-	fmt.Fprintln(c.out, "Perforce Helix Core (dry run)")
-	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-
 	versionLabel := plan.HelixVersion
 	if plan.HelixVersion != "latest" {
 		versionLabel += " (pinned)"
 	}
-
-	fmt.Fprintf(c.out, "  AWS account:      %s\n", plan.Account)
-	fmt.Fprintf(c.out, "  AWS region:       %s\n", plan.Region)
-	fmt.Fprintf(c.out, "  Instance type:    %s\n", plan.InstanceType)
-	fmt.Fprintf(c.out, "  Helix Core:       %s\n", versionLabel)
-	fmt.Fprintf(c.out, "  Data volume:      %d GiB gp3\n", plan.VolumeSize)
-	fmt.Fprintf(c.out, "  Allowed CIDR:     %s\n", plan.AllowedCIDR)
-	if plan.AllowedCIDR == "0.0.0.0/0" {
-		fmt.Fprintln(c.out, "  Warning:          P4 port (1666) open to the entire internet. Set perforce.allowedCidr in fabrica.yaml.")
-	}
-	if plan.DefaultVPC {
-		fmt.Fprintf(c.out, "  VPC:              default (%s)\n", plan.VPCID)
-		fmt.Fprintln(c.out, "  Note:             Default VPC used. Configure a dedicated VPC for production.")
-	} else if plan.VPCID != "" {
-		fmt.Fprintf(c.out, "  VPC:              %s\n", plan.VPCID)
-	}
-	fmt.Fprintln(c.out)
-
-	fmt.Fprintln(c.out, "Resources to create:")
-	fmt.Fprintf(c.out, "  Security Group:   %s\n", plan.SGName)
-	fmt.Fprintf(c.out, "  IAM Role:         %s\n", plan.RoleName)
-	fmt.Fprintf(c.out, "  Instance Profile: %s\n", plan.InstanceProfileName)
-	fmt.Fprintf(c.out, "  EC2 Instance:     %s\n", plan.InstanceName)
-	fmt.Fprintln(c.out)
-
-	c.costs.EstimateAll(plan.CostResources).Render(c.out, lineWidth)
-	fmt.Fprintln(c.out, "Run without --dry-run to proceed.")
+	provision.DryRun(c.out, provision.DryRunSpec{
+		Title: "Perforce Helix Core",
+		Info: provision.PlanInfo{
+			Account:      plan.Account,
+			Region:       plan.Region,
+			InstanceType: plan.InstanceType,
+			VolumeSize:   plan.VolumeSize,
+			AllowedCIDR:  plan.AllowedCIDR,
+			VPCID:        plan.VPCID,
+			DefaultVPC:   plan.DefaultVPC,
+		},
+		ExtraFields: []provision.PlanField{
+			{Key: "Helix Core", Value: versionLabel},
+			{Key: "Allowed CIDR", Value: plan.AllowedCIDR},
+		},
+		Resources: []string{
+			"Security Group:   " + plan.SGName,
+			"IAM Role:         " + plan.RoleName,
+			"Instance Profile: " + plan.InstanceProfileName,
+			"EC2 Instance:     " + plan.InstanceName,
+		},
+		CostResources: plan.CostResources,
+		Costs:         c.costs,
+		CidrWarning:   "P4 port (1666) open to the entire internet. Set perforce.allowedCidr in fabrica.yaml.",
+	})
 }
 
 func (c command) printApplyPlan(plan *perforce.CreatePlan) {
-	fmt.Fprintln(c.out, "Perforce Helix Core")
-	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	fmt.Fprintf(c.out, "  AWS account:      %s\n", plan.Account)
-	fmt.Fprintf(c.out, "  AWS region:       %s\n", plan.Region)
-	fmt.Fprintf(c.out, "  Instance type:    %s\n", plan.InstanceType)
-	fmt.Fprintf(c.out, "  Helix Core:       %s\n", plan.HelixVersion)
-	fmt.Fprintf(c.out, "  Data volume:      %d GiB gp3\n", plan.VolumeSize)
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Resources to create:")
-	fmt.Fprintf(c.out, "  Security Group:   %s\n", plan.SGName)
-	fmt.Fprintf(c.out, "  IAM Role:         %s\n", plan.RoleName)
-	fmt.Fprintf(c.out, "  Instance Profile: %s\n", plan.InstanceProfileName)
-	fmt.Fprintf(c.out, "  EC2 Instance:     %s\n", plan.InstanceName)
+	provision.ApplyPlan(c.out, "Perforce Helix Core", provision.PlanInfo{
+		Account:      plan.Account,
+		Region:       plan.Region,
+		InstanceType: plan.InstanceType,
+		VolumeSize:   plan.VolumeSize,
+	}, []provision.PlanField{
+		{Key: "Helix Core", Value: plan.HelixVersion},
+		{Key: "Data volume", Value: fmt.Sprintf("%d GiB gp3", plan.VolumeSize)},
+	}, []string{
+		"Security Group:   " + plan.SGName,
+		"IAM Role:         " + plan.RoleName,
+		"Instance Profile: " + plan.InstanceProfileName,
+		"EC2 Instance:     " + plan.InstanceName,
+	})
 }
 
 func (c command) printPostCreate(_ *perforce.CreatePlan, instanceID string) {
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Perforce Helix Core provisioned.")
-	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "  Instance ID:   %s\n", instanceID)
-	fmt.Fprintf(c.out, "  Status:        provisioning (Helix Core setup in progress, ~3 min)\n")
-	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "  Admin credentials: %s\n", credFile)
-	fmt.Fprintln(c.out, "  Warning: Rotate the admin password after first login.")
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Next steps:")
-	fmt.Fprintln(c.out, "  fabrica perforce status      Check readiness")
+	provision.PostCreate(c.out, provision.PostCreateSpec{
+		Title:        "Perforce Helix Core",
+		InstanceID:   instanceID,
+		StatusDetail: "provisioning (Helix Core setup in progress, ~3 min)",
+		Details: []provision.PlanField{
+			{Key: "Admin credentials", Value: credFile},
+		},
+		NextSteps: []string{
+			"fabrica perforce status      Check readiness",
+		},
+		RawAfter: func(w io.Writer) {
+			fmt.Fprintln(w, "  Warning: Rotate the admin password after first login.")
+		},
+	})
 }
