@@ -87,9 +87,9 @@ func runAll(ctx context.Context, rt globals.Runtime, opts globals.Options, out i
 		fmt.Fprintln(out, "No infrastructure found. Nothing to destroy.")
 		return nil
 	}
-	account, _, region, err := rt.Provider.Identity(ctx)
+	account, region, err := provision.ResolveIdentity(ctx, rt.Provider)
 	if err != nil {
-		return fmt.Errorf("resolving identity: %w", err)
+		return err
 	}
 	st, err := provision.ReadState(rt)
 	if err != nil {

@@ -149,9 +149,9 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("deploy alias not found in state. Run 'fabrica deploy setup' first")
 	}
 
-	account, _, region, err := c.runtime.Provider.Identity(ctx)
+	account, region, err := provision.ResolveIdentity(ctx, c.runtime.Provider)
 	if err != nil {
-		return fmt.Errorf("could not resolve AWS identity (run 'fabrica doctor'): %w", err)
+		return err
 	}
 	roleARN := fmt.Sprintf("arn:aws:iam::%s:role/%s", account, role.Identifier)
 	plan := deploy.NewPromotePlan(c.runtime.Config.Deploy, account, region, c.buildVersion, roleARN, alias.Identifier, c.s3Bucket, c.s3Key)

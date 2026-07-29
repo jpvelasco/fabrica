@@ -113,9 +113,9 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("no provider configured; run 'fabrica setup' first")
 	}
 
-	account, _, region, err := c.runtime.Provider.Identity(ctx)
+	account, region, err := provision.ResolveIdentity(ctx, c.runtime.Provider)
 	if err != nil {
-		return fmt.Errorf("resolving identity: %w", err)
+		return err
 	}
 
 	wsCfg := c.runtime.Config.Workstation
