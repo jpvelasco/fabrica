@@ -2,7 +2,6 @@ package submit_test
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -25,9 +24,7 @@ func runSubmit(t *testing.T, runtimeSource globals.RuntimeSource, args ...string
 	t.Helper()
 	var out bytes.Buffer
 	root := buildTestRoot(runtimeSource, &out)
-	root.SetArgs(append([]string{"submit"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"submit"}, args...)...)
 }
 
 func newCobraRuntime(provider cloud.Provider) globals.RuntimeSource {

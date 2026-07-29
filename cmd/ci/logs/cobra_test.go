@@ -2,7 +2,6 @@ package logs_test
 
 import (
 	"bytes"
-	"context"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/ci/logs"
@@ -16,9 +15,7 @@ func TestLogsCobraWiring(t *testing.T) {
 	root, optionsSource := testutil.BuildTestSubcommand(&out)
 	src := testutil.NewTestRuntime(&testutil.CobraFakeProvider{})
 	root.AddCommand(logs.New(src, optionsSource, &out))
-	root.SetArgs([]string{"logs", "build-1"})
-
-	if err := root.ExecuteContext(context.Background()); err == nil {
+	if _, err := testutil.RunCommandWithOut(t, root, &out, "logs", "build-1"); err == nil {
 		t.Fatal("expected error: provider lacks CodeBuildRunner")
 	}
 }
@@ -29,9 +26,7 @@ func TestLogsRequiresBuildID(t *testing.T) {
 	root, optionsSource := testutil.BuildTestSubcommand(&out)
 	src := testutil.NewNilProviderRuntime()
 	root.AddCommand(logs.New(src, optionsSource, &out))
-	root.SetArgs([]string{"logs"})
-
-	if err := root.ExecuteContext(context.Background()); err == nil {
+	if _, err := testutil.RunCommandWithOut(t, root, &out, "logs"); err == nil {
 		t.Fatal("expected error: build-id argument required")
 	}
 }

@@ -18,9 +18,7 @@ func run(t *testing.T, src globals.RuntimeSource, args ...string) (string, error
 	var out bytes.Buffer
 	root, optionsSource := testutil.BuildTestSubcommand(&out)
 	root.AddCommand(ci.New(src, optionsSource, &out))
-	root.SetArgs(args)
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, args...)
 }
 
 type cobraProvider struct{}

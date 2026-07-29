@@ -2,7 +2,6 @@ package status_test
 
 import (
 	"bytes"
-	"io"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/ddc/status"
@@ -14,9 +13,7 @@ func TestCobraStatusNotProvisioned(t *testing.T) {
 	var buf bytes.Buffer
 	root, optionsSource := testutil.BuildTestSubcommand(&buf)
 	root.AddCommand(status.New(testutil.NewNilProviderRuntime(), optionsSource, &buf))
-	root.SetArgs([]string{"status"})
-	root.SetOut(io.Discard)
-	if err := root.Execute(); err != nil {
+	if _, err := testutil.RunCommandWithOut(t, root, &buf, "status"); err != nil {
 		t.Fatal(err)
 	}
 }

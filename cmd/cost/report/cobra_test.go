@@ -2,7 +2,6 @@ package report_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -27,9 +26,7 @@ func runCostReport(t *testing.T, runtimeSource globals.RuntimeSource, args ...st
 	t.Helper()
 	var out bytes.Buffer
 	root := buildTestRoot(runtimeSource, &out)
-	root.SetArgs(append([]string{"report"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"report"}, args...)...)
 }
 
 // newTestRuntime returns a RuntimeSource with no provider (cost commands are offline).
@@ -43,11 +40,13 @@ func newTestRuntime(cfg *config.Config) globals.RuntimeSource {
 
 // reportStateJSON returns a JSON string with perforce module provisioned.
 func reportStateJSON() string {
-	return `{"account":"123456789012","region":"us-east-1","modules":[
-		{"name":"perforce","version":"ami-123456","status":"ready","resources":[
-			{"typeName":"AWS::EC2::Instance","identifier":"i-1234567890abcdef0"},
-			{"typeName":"AWS::EC2::Volume","identifier":"vol-1234567890abcdef0"}
-		]}]}`
+	return testutil.NewProvisionedStateJSON(testutil.StateModule{
+		Name: "perforce", Version: "ami-123456", Status: "ready",
+		Resources: []testutil.StateResource{
+			{TypeName: "AWS::EC2::Instance", Identifier: "i-1234567890abcdef0"},
+			{TypeName: "AWS::EC2::Volume", Identifier: "vol-1234567890abcdef0"},
+		},
+	})
 }
 
 // TestCostReportCobraText verifies text output with provisioned module.

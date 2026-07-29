@@ -2,8 +2,6 @@ package cost_test
 
 import (
 	"bytes"
-	"context"
-	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/cost"
@@ -26,11 +24,9 @@ func TestCostReportWiring(t *testing.T) {
 	}
 	var out bytes.Buffer
 	root := buildTestRoot(src, &out)
-	root.SetArgs([]string{"cost", "report"})
-	if err := root.ExecuteContext(context.Background()); err != nil {
+	got, err := testutil.RunCommandWithOut(t, root, &out, "cost", "report")
+	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !strings.Contains(out.String(), "Cost estimate") {
-		t.Fatalf("unexpected output:\n%s", out.String())
-	}
+	testutil.AssertContains(t, got, "Cost estimate")
 }

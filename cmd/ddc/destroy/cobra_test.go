@@ -173,15 +173,17 @@ func TestDestroyCobraRuntimeError(t *testing.T) {
 
 // provisionedStateJSON returns a DDC state with coordinator, scylla, bucket, profile, role, SG.
 func provisionedStateJSON() string {
-	return `{"account":"123456789012","region":"us-east-1","modules":[
-		{"name":"ddc","version":"ami-ddc123","status":"ready","resources":[
-			{"typeName":"AWS::EC2::Instance","identifier":"i-coord123","properties":{"role":"coordinator"}},
-			{"typeName":"AWS::EC2::Instance","identifier":"i-scylla123","properties":{"role":"scylla"}},
-			{"typeName":"AWS::S3::Bucket","identifier":"ddc-bucket-123"},
-			{"typeName":"AWS::IAM::InstanceProfile","identifier":"ddc-profile"},
-			{"typeName":"AWS::IAM::Role","identifier":"ddc-role"},
-			{"typeName":"AWS::EC2::SecurityGroup","identifier":"sg-ddc123"}
-		]}]}`
+	return testutil.NewProvisionedStateJSON(testutil.StateModule{
+		Name: "ddc", Version: "ami-ddc123", Status: "ready",
+		Resources: []testutil.StateResource{
+			{TypeName: "AWS::EC2::Instance", Identifier: "i-coord123", Properties: map[string]any{"role": "coordinator"}},
+			{TypeName: "AWS::EC2::Instance", Identifier: "i-scylla123", Properties: map[string]any{"role": "scylla"}},
+			{TypeName: "AWS::S3::Bucket", Identifier: "ddc-bucket-123"},
+			{TypeName: "AWS::IAM::InstanceProfile", Identifier: "ddc-profile"},
+			{TypeName: "AWS::IAM::Role", Identifier: "ddc-role"},
+			{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-ddc123"},
+		},
+	})
 }
 
 // TestNewTeardownWiring verifies NewTeardown returns a Command with correct wiring.

@@ -23,9 +23,7 @@ func runDestroy(t *testing.T, runtimeSource globals.RuntimeSource, args ...strin
 	t.Helper()
 	var out bytes.Buffer
 	root := buildTestRoot(runtimeSource, &out)
-	root.SetArgs(append([]string{"destroy"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"destroy"}, args...)...)
 }
 
 // TestDestroyCobraNotProvisioned verifies clean message when deploy is not provisioned.
@@ -35,9 +33,7 @@ func TestDestroyCobraNotProvisioned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !contains(got, "not provisioned") {
-		t.Fatalf("expected 'not provisioned' in output, got:\n%s", got)
-	}
+	testutil.AssertContains(t, got, "not provisioned")
 }
 
 // TestDestroyCobraDryRun verifies --dry-run shows the plan without deleting.
@@ -51,9 +47,7 @@ func TestDestroyCobraDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !contains(got, "dry run") {
-		t.Fatalf("expected 'dry run' in output, got:\n%s", got)
-	}
+	testutil.AssertContains(t, got, "dry run")
 	if provider.deleteCalls > 0 {
 		t.Errorf("--dry-run should not make delete calls, made %d", provider.deleteCalls)
 	}
@@ -81,22 +75,15 @@ func TestNewTeardownWiring(t *testing.T) {
 // ---- helpers ----
 
 func deployStateJSON() string {
-	return `{"account":"123456789012","region":"us-east-1","modules":[
-		{"name":"deploy","version":"v1.0.0","status":"ready","resources":[
-			{"typeName":"AWS::GameLift::Fleet","identifier":"fleet-1"},
-			{"typeName":"AWS::GameLift::Build","identifier":"build-1"},
-			{"typeName":"AWS::GameLift::Alias","identifier":"alias-1"},
-			{"typeName":"AWS::IAM::Role","identifier":"role-1"}
-		]}]}`
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
+	return testutil.NewProvisionedStateJSON(testutil.StateModule{
+		Name: "deploy", Version: "v1.0.0", Status: "ready",
+		Resources: []testutil.StateResource{
+			{TypeName: "AWS::GameLift::Fleet", Identifier: "fleet-1"},
+			{TypeName: "AWS::GameLift::Build", Identifier: "build-1"},
+			{TypeName: "AWS::GameLift::Alias", Identifier: "alias-1"},
+			{TypeName: "AWS::IAM::Role", Identifier: "role-1"},
+		},
+	})
 }
 
 // ---- cobraFakeProvider ----

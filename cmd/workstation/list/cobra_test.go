@@ -2,7 +2,6 @@ package list_test
 
 import (
 	"bytes"
-	"context"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -21,9 +20,7 @@ func runList(t *testing.T, runtimeSource globals.RuntimeSource, args ...string) 
 	t.Helper()
 	var out bytes.Buffer
 	root := buildTestRoot(runtimeSource, &out)
-	root.SetArgs(append([]string{"list"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"list"}, args...)...)
 }
 
 func newCobraRuntime() globals.RuntimeSource {

@@ -2,25 +2,21 @@ package configcmd_test
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/configcmd"
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
 
 func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobra.Command {
-	root := &cobra.Command{
-		Use:           "fabrica",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.SetOut(out)
-	root.SetErr(out)
+	// configcmd does not take OptionsSource; still use BuildTestSubcommand so
+	// the root matches the production persistent-flag hierarchy.
+	root, _ := testutil.BuildTestSubcommand(out)
 	root.AddCommand(configcmd.New(runtimeSource, out))
 	return root
 }
@@ -29,9 +25,7 @@ func runConfig(t *testing.T, runtimeSource globals.RuntimeSource, args ...string
 	t.Helper()
 	var out bytes.Buffer
 	root := buildTestRoot(runtimeSource, &out)
-	root.SetArgs(append([]string{"config"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"config"}, args...)...)
 }
 
 func newCobraRuntime(accountID string) globals.RuntimeSource {

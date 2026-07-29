@@ -27,9 +27,7 @@ func runBackup(t *testing.T, rt globals.RuntimeSource, args ...string) (string, 
 	t.Helper()
 	var out bytes.Buffer
 	root := buildRoot(rt, &out)
-	root.SetArgs(append([]string{"backup"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"backup"}, args...)...)
 }
 
 type fakeProvider struct {

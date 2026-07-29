@@ -2,8 +2,6 @@ package status_test
 
 import (
 	"bytes"
-	"context"
-	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
@@ -19,11 +17,9 @@ func TestStatusCobraNotProvisioned(t *testing.T) {
 		optionsSource,
 		&out,
 	))
-	root.SetArgs([]string{"status"})
-	if err := root.ExecuteContext(context.Background()); err != nil {
+	got, err := testutil.RunCommandWithOut(t, root, &out, "status")
+	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if !strings.Contains(out.String(), "not provisioned") {
-		t.Fatalf("got %q", out.String())
-	}
+	testutil.AssertContains(t, got, "not provisioned")
 }

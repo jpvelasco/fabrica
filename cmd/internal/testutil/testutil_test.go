@@ -3,6 +3,7 @@ package testutil
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -450,4 +451,110 @@ func TestAssertContainsPrefix(t *testing.T) {
 // TestAssertContainsEmpty verifies AssertContains handles empty string.
 func TestAssertContainsEmpty(t *testing.T) {
 	AssertContains(t, "hello", "")
+}
+
+func TestNewProvisionedStateJSON(t *testing.T) {
+	got := NewProvisionedStateJSON(StateModule{
+		Name: "perforce", Version: "2024.2", Status: "provisioning",
+		Resources: EC2Pair("sg-cobra123", "i-cobra123"),
+	})
+
+	var parsed struct {
+		Account string `json:"account"`
+		Region  string `json:"region"`
+		Modules []struct {
+			Name      string `json:"name"`
+			Version   string `json:"version"`
+			Status    string `json:"status"`
+			Resources []struct {
+				TypeName   string         `json:"typeName"`
+				Identifier string         `json:"identifier"`
+				Properties map[string]any `json:"properties"`
+			} `json:"resources"`
+		} `json:"modules"`
+	}
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, got)
+	}
+	if parsed.Account != "123456789012" {
+		t.Errorf("account = %q", parsed.Account)
+	}
+	if parsed.Region != "us-east-1" {
+		t.Errorf("region = %q", parsed.Region)
+	}
+	if len(parsed.Modules) != 1 {
+		t.Fatalf("modules len = %d, want 1", len(parsed.Modules))
+	}
+	m := parsed.Modules[0]
+	if m.Name != "perforce" || m.Version != "2024.2" || m.Status != "provisioning" {
+		t.Errorf("module = %+v", m)
+	}
+	if len(m.Resources) != 2 {
+		t.Fatalf("resources len = %d, want 2", len(m.Resources))
+	}
+	if m.Resources[0].TypeName != "AWS::EC2::SecurityGroup" || m.Resources[0].Identifier != "sg-cobra123" {
+		t.Errorf("resource[0] = %+v", m.Resources[0])
+	}
+	if m.Resources[1].TypeName != "AWS::EC2::Instance" || m.Resources[1].Identifier != "i-cobra123" {
+		t.Errorf("resource[1] = %+v", m.Resources[1])
+	}
+}
+
+func TestNewProvisionedStateJSONWithProperties(t *testing.T) {
+	got := NewProvisionedStateJSON(StateModule{
+		Name: "ddc", Version: "ami-ddc123", Status: "ready",
+		Resources: []StateResource{
+			{
+				TypeName: "AWS::EC2::Instance", Identifier: "i-coord123",
+				Properties: map[string]any{"role": "coordinator"},
+			},
+		},
+	})
+	var parsed struct {
+		Modules []struct {
+			Resources []struct {
+				Properties map[string]any `json:"properties"`
+			} `json:"resources"`
+		} `json:"modules"`
+	}
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if parsed.Modules[0].Resources[0].Properties["role"] != "coordinator" {
+		t.Errorf("properties = %+v", parsed.Modules[0].Resources[0].Properties)
+	}
+}
+
+func TestNewProvisionedStateJSONMultiModule(t *testing.T) {
+	got := NewProvisionedStateJSON(
+		StateModule{Name: "ci", Version: "fabrica-ci", Status: "ready"},
+		StateModule{Name: "horde", Version: "ami-1", Status: "ready"},
+	)
+	var parsed struct {
+		Modules []struct {
+			Name string `json:"name"`
+		} `json:"modules"`
+	}
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(parsed.Modules) != 2 {
+		t.Fatalf("modules len = %d, want 2", len(parsed.Modules))
+	}
+	if parsed.Modules[0].Name != "ci" || parsed.Modules[1].Name != "horde" {
+		t.Errorf("module names = %q, %q", parsed.Modules[0].Name, parsed.Modules[1].Name)
+	}
+}
+
+func TestEC2Pair(t *testing.T) {
+	pair := EC2Pair("sg-1", "i-1")
+	if len(pair) != 2 {
+		t.Fatalf("len = %d, want 2", len(pair))
+	}
+	if pair[0].TypeName != "AWS::EC2::SecurityGroup" || pair[0].Identifier != "sg-1" {
+		t.Errorf("sg = %+v", pair[0])
+	}
+	if pair[1].TypeName != "AWS::EC2::Instance" || pair[1].Identifier != "i-1" {
+		t.Errorf("instance = %+v", pair[1])
+	}
 }

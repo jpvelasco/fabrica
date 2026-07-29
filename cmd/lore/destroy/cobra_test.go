@@ -54,11 +54,10 @@ func TestNewTeardownWiring(t *testing.T) {
 // ---- helpers ----
 
 func loreStateJSON() string {
-	return `{"account":"123456789012","region":"us-east-1","modules":[
-		{"name":"lore","version":"ami-0abc123","status":"provisioning","resources":[
-			{"typeName":"AWS::EC2::SecurityGroup","identifier":"sg-lore123"},
-			{"typeName":"AWS::EC2::Instance","identifier":"i-lore123"}
-		]}]}`
+	return testutil.NewProvisionedStateJSON(testutil.StateModule{
+		Name: "lore", Version: "ami-0abc123", Status: "provisioning",
+		Resources: testutil.EC2Pair("sg-lore123", "i-lore123"),
+	})
 }
 
 // ---- Cobra tests with provider ----

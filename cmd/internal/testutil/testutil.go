@@ -13,6 +13,7 @@ package testutil
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -237,4 +238,93 @@ func (f *TestVPCResolver) ResolveDefaultVPC(_ context.Context) (string, string, 
 	return f.VPCID, f.SubnetID, f.Err
 }
 
-// (TestVPCResolver defined above — do not duplicate.)
+// StateResource describes one resource entry in a provisioned state fixture.
+type StateResource struct {
+	TypeName   string
+	Identifier string
+	// Properties is optional resource metadata (e.g. role=coordinator for DDC).
+	// When nil, the properties field is omitted from the JSON.
+	Properties map[string]any
+}
+
+// StateModule describes one module entry in a provisioned state fixture.
+type StateModule struct {
+	Name      string
+	Version   string
+	Status    string
+	Resources []StateResource
+}
+
+// NewProvisionedStateJSON builds a `.fabrica/state.json` body for cobra tests.
+// Account is always "123456789012" and region always "us-east-1" (matches
+// NewTestRuntime). Replaces the hand-crafted provisionedStateJSON / *StateJSON
+// helpers that were copy-pasted across cobra_test.go files.
+//
+// Usage:
+//
+//	testutil.WriteStateFile(t, dir, testutil.NewProvisionedStateJSON(
+//	    testutil.StateModule{
+//	        Name: "perforce", Version: "2024.2", Status: "provisioning",
+//	        Resources: []testutil.StateResource{
+//	            {TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-cobra123"},
+//	            {TypeName: "AWS::EC2::Instance", Identifier: "i-cobra123"},
+//	        },
+//	    },
+//	))
+func NewProvisionedStateJSON(modules ...StateModule) string {
+	type resJSON struct {
+		TypeName   string         `json:"typeName"`
+		Identifier string         `json:"identifier"`
+		Properties map[string]any `json:"properties,omitempty"`
+	}
+	type modJSON struct {
+		Name      string    `json:"name"`
+		Version   string    `json:"version"`
+		Status    string    `json:"status"`
+		Resources []resJSON `json:"resources"`
+	}
+	type stateJSON struct {
+		Account string    `json:"account"`
+		Region  string    `json:"region"`
+		Modules []modJSON `json:"modules"`
+	}
+
+	out := stateJSON{
+		Account: "123456789012",
+		Region:  "us-east-1",
+		Modules: make([]modJSON, 0, len(modules)),
+	}
+	for _, m := range modules {
+		mj := modJSON{
+			Name:      m.Name,
+			Version:   m.Version,
+			Status:    m.Status,
+			Resources: make([]resJSON, 0, len(m.Resources)),
+		}
+		for _, r := range m.Resources {
+			mj.Resources = append(mj.Resources, resJSON{
+				TypeName:   r.TypeName,
+				Identifier: r.Identifier,
+				Properties: r.Properties,
+			})
+		}
+		out.Modules = append(out.Modules, mj)
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		// StateResource fields are plain Go values; marshal only fails on
+		// unencodable types which callers must not pass. Panic so tests fail
+		// loudly rather than writing corrupt fixtures.
+		panic("testutil.NewProvisionedStateJSON: " + err.Error())
+	}
+	return string(b)
+}
+
+// EC2Pair is a convenience constructor for the common SecurityGroup + Instance
+// resource pair used by perforce/horde/lore/workstation fixtures.
+func EC2Pair(sgID, instanceID string) []StateResource {
+	return []StateResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: sgID},
+		{TypeName: "AWS::EC2::Instance", Identifier: instanceID},
+	}
+}

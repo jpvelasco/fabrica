@@ -169,11 +169,10 @@ func TestDestroyCobraRuntimeError(t *testing.T) {
 // ---- helpers ----
 
 func provisionedStateJSON() string {
-	return `{"account":"123456789012","region":"us-east-1","modules":[
-		{"name":"perforce","version":"2024.2","status":"provisioning","resources":[
-			{"typeName":"AWS::EC2::SecurityGroup","identifier":"sg-cobra123"},
-			{"typeName":"AWS::EC2::Instance","identifier":"i-cobra123"}
-		]}]}`
+	return testutil.NewProvisionedStateJSON(testutil.StateModule{
+		Name: "perforce", Version: "2024.2", Status: "provisioning",
+		Resources: testutil.EC2Pair("sg-cobra123", "i-cobra123"),
+	})
 }
 
 // TestNewTeardownWiring verifies NewTeardown returns a Command with correct wiring.

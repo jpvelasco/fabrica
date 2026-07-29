@@ -22,9 +22,7 @@ func runRollback(t *testing.T, runtimeSource globals.RuntimeSource, args ...stri
 	t.Helper()
 	var out bytes.Buffer
 	root := buildTestRoot(runtimeSource, &out)
-	root.SetArgs(append([]string{"rollback"}, args...))
-	err := root.ExecuteContext(context.Background())
-	return out.String(), err
+	return testutil.RunCommandWithOut(t, root, &out, append([]string{"rollback"}, args...)...)
 }
 
 // deployStateWithFleets returns a JSON string with deploy module having an alias and two fleets.
