@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/horde/buildgraph"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -64,10 +65,10 @@ Run 'fabrica horde status' to confirm the coordinator is ready.`,
 				buildGraphPath: args[0],
 				wait:           wait,
 				out:            out,
+				readState:      func() (*fabricastate.State, error) { return provision.ReadState(rt) },
 				sleep:          time.Sleep,
 				now:            time.Now,
 			}
-			c.readState = c.defaultReadState
 			return c.run(cmd.Context())
 		},
 	}
@@ -174,13 +175,4 @@ func (c command) resolvePrivateIP(ctx context.Context, instanceID string) (strin
 		return "", nil
 	}
 	return actual.PrivateIPAddress, nil
-}
-
-func (c command) defaultReadState() (*fabricastate.State, error) {
-	account, region := "", ""
-	if c.runtime.Config != nil {
-		account = c.runtime.Config.Cloud.AWS.AccountID
-		region = c.runtime.Config.Cloud.AWS.Region
-	}
-	return fabricastate.ReadStateOrNew(account, region)
 }
