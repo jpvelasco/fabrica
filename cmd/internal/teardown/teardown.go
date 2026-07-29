@@ -120,7 +120,7 @@ func (c Command) Run(ctx context.Context) error {
 			account := c.resolveAccount(st)
 			fmt.Fprintln(c.Out)
 			phrase := c.confirmPhrase(account)
-			c.printConfirmInstructions(phrase)
+			provision.PrintConfirmInstructions(c.Out, phrase)
 			if !c.Confirm("Enter confirmation phrase", phrase) {
 				fmt.Fprintln(c.Out, "Cancelled. No AWS calls were made.")
 				return nil
@@ -362,15 +362,6 @@ func (c Command) printPlan(m *fabricastate.ModuleState, resources []cloud.Resour
 	}
 	fmt.Fprintln(c.Out)
 	fmt.Fprintln(c.Out, c.Spec.Irreversible)
-}
-
-func (c Command) printConfirmInstructions(phrase string) {
-	fmt.Fprintln(c.Out, "Confirmation required.")
-	fmt.Fprintln(c.Out, "Type this exact phrase to continue:")
-	fmt.Fprintln(c.Out)
-	fmt.Fprintf(c.Out, "  %s\n", phrase)
-	fmt.Fprintln(c.Out)
-	fmt.Fprintln(c.Out, "Any other input cancels.")
 }
 
 func (c Command) printJSON(out Output) {

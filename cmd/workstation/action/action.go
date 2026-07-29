@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
@@ -174,7 +175,7 @@ func (c *Command) confirmAction(instanceID string) bool {
 	}
 	fmt.Fprintln(c.out)
 	phrase := c.confirmPhrase(instanceID)
-	c.printConfirmInstructions(phrase)
+	provision.PrintConfirmInstructions(c.out, phrase)
 	if !c.confirm("Enter confirmation phrase", phrase) {
 		fmt.Fprintln(c.out, "Cancelled. No AWS calls were made.")
 		return false
@@ -241,15 +242,6 @@ func (c *Command) printJSON(out ActionOutput) {
 
 func (c *Command) confirmPhrase(instanceID string) string {
 	return fmt.Sprintf("%s workstation %s", c.spec.ActionVerb, instanceID)
-}
-
-func (c *Command) printConfirmInstructions(phrase string) {
-	fmt.Fprintln(c.out, "Confirmation required.")
-	fmt.Fprintln(c.out, "Type this exact phrase to continue:")
-	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "  %s\n", phrase)
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Any other input cancels.")
 }
 
 // DefaultReadState returns the default readState implementation.
