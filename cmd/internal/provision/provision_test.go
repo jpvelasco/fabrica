@@ -117,3 +117,45 @@ func TestAppendUnique_SkipsDuplicate(t *testing.T) {
 		t.Errorf("Identifier = %q, want role", resources[0].Identifier)
 	}
 }
+
+func TestConfirmCreate_AssumeYes(t *testing.T) {
+	var out bytes.Buffer
+	result := ConfirmCreate(&out, "horde", "123456789012", true, nil)
+	if !result {
+		t.Error("expected true when assumeYes is set")
+	}
+	if !strings.Contains(out.String(), "Proceeding without interactive confirmation") {
+		t.Errorf("missing bypass message: %s", out.String())
+	}
+}
+
+func TestConfirmCreate_Confirmed(t *testing.T) {
+	var out bytes.Buffer
+	confirmCalled := false
+	result := ConfirmCreate(&out, "perforce", "123456789012", false, func(_, _ string) bool {
+		confirmCalled = true
+		return true
+	})
+	if !result {
+		t.Error("expected true when user confirms")
+	}
+	if !confirmCalled {
+		t.Error("confirm should have been called")
+	}
+	if !strings.Contains(out.String(), "Confirmation accepted") {
+		t.Errorf("missing accepted message: %s", out.String())
+	}
+}
+
+func TestConfirmCreate_Cancelled(t *testing.T) {
+	var out bytes.Buffer
+	result := ConfirmCreate(&out, "horde", "123456789012", false, func(_, _ string) bool {
+		return false
+	})
+	if result {
+		t.Error("expected false when user cancels")
+	}
+	if !strings.Contains(out.String(), "Cancelled. No AWS calls were made") {
+		t.Errorf("missing cancel message: %s", out.String())
+	}
+}

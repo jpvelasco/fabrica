@@ -46,6 +46,26 @@ func PrintConfirmInstructions(out io.Writer, phrase string) {
 	fmt.Fprintln(out, "Any other input cancels.")
 }
 
+// ConfirmCreate handles the interactive confirmation flow for create commands.
+// If assumeYes is true, skips confirmation and prints a bypass message.
+// Returns true if the operation should proceed, false if the user cancelled.
+func ConfirmCreate(out io.Writer, moduleName, account string, assumeYes bool, confirm func(prompt, response string) bool) bool {
+	if assumeYes {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Proceeding without interactive confirmation (--yes flag set).")
+		return true
+	}
+	fmt.Fprintln(out)
+	phrase := ConfirmPhrase(moduleName, account)
+	PrintConfirmInstructions(out, phrase)
+	if !confirm("Enter confirmation phrase", phrase) {
+		fmt.Fprintln(out, "Cancelled. No AWS calls were made.")
+		return false
+	}
+	fmt.Fprintln(out, "Confirmation accepted.")
+	return true
+}
+
 // ExistingResource returns the module resource of the given type from current
 // state, if present — used to skip already-provisioned resources idempotently.
 // Returns (zero value, false) when the module or resource is not found.
