@@ -174,7 +174,7 @@ func TestDryRunRawBetween(t *testing.T) {
 			AllowedCIDR:  "10.0.0.0/8",
 		},
 		RawBetween: func(w io.Writer) {
-			w.Write([]byte("\n  Custom warning line\n"))
+			_, _ = w.Write([]byte("\n  Custom warning line\n"))
 		},
 		Resources: []string{"EC2 Instance:     fabrica-test"},
 		Costs:     fabricacost.Global,
@@ -302,7 +302,7 @@ func TestPostCreateRawAfter(t *testing.T) {
 		InstanceID: "i-1234567890abcdef0",
 		NextSteps:  []string{"step 1"},
 		RawAfter: func(w io.Writer) {
-			w.Write([]byte("\n  Custom log instruction\n"))
+			_, _ = w.Write([]byte("\n  Custom log instruction\n"))
 		},
 	}
 
