@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
@@ -19,7 +18,6 @@ import (
 )
 
 const (
-	lineWidth   = 58
 	moduleName  = "horde"
 	credFile    = ".fabrica/horde-credentials.yaml" // #nosec G101 -- file path, not a credential
 	passwordLen = 24
@@ -210,82 +208,85 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 }
 
 func (c command) printDryRun(plan *horde.CreatePlan) {
-	fmt.Fprintln(c.out, "Horde build coordinator (dry run)")
-	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	fmt.Fprintf(c.out, "  AWS account:      %s\n", plan.Account)
-	fmt.Fprintf(c.out, "  AWS region:       %s\n", plan.Region)
-	fmt.Fprintf(c.out, "  AMI ID:           %s\n", plan.AmiID)
-	fmt.Fprintf(c.out, "  Instance type:    %s\n", plan.InstanceType)
-	fmt.Fprintf(c.out, "  Data volume:      %d GiB gp3\n", plan.VolumeSize)
-	fmt.Fprintf(c.out, "  HTTP port:        %d\n", plan.Port)
-	fmt.Fprintf(c.out, "  gRPC port:        %d\n", plan.GRPCPort)
-	fmt.Fprintf(c.out, "  Allowed CIDR:     %s\n", plan.AllowedCIDR)
-	if plan.DefaultVPC {
-		fmt.Fprintf(c.out, "  VPC:              default (%s)\n", plan.VPCID)
-		fmt.Fprintln(c.out, "  Note:             Default VPC used. Configure a dedicated VPC for production.")
-	} else if plan.VPCID != "" {
-		fmt.Fprintf(c.out, "  VPC:              %s\n", plan.VPCID)
-	}
-	if plan.AllowedCIDR == "0.0.0.0/0" {
-		fmt.Fprintln(c.out)
-		fmt.Fprintln(c.out, "  WARNING: allowedCidr is 0.0.0.0/0 — ports 5000 and 5002 are open")
-		fmt.Fprintln(c.out, "           to the internet. Restrict this in fabrica.yaml before connecting")
-		fmt.Fprintln(c.out, "           agents or running production workloads.")
-	}
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Resources to create:")
-	fmt.Fprintf(c.out, "  Security Group:   %s\n", plan.SGName)
-	fmt.Fprintf(c.out, "  EC2 Instance:     %s\n", plan.InstanceName)
-	fmt.Fprintln(c.out)
-	if plan.InstanceType == "m7i.xlarge" {
-		fmt.Fprintln(c.out, "  Tip: For studios with >10 concurrent agents, consider m7i.2xlarge.")
-	}
-	fmt.Fprintln(c.out)
-	c.costs.EstimateAll(plan.CostResources).Render(c.out, lineWidth)
-	fmt.Fprintln(c.out, "Run without --dry-run to proceed.")
+	provision.DryRun(c.out, provision.DryRunSpec{
+		Title: "Horde build coordinator",
+		Info: provision.PlanInfo{
+			Account:      plan.Account,
+			Region:       plan.Region,
+			InstanceType: plan.InstanceType,
+			VolumeSize:   plan.VolumeSize,
+			AllowedCIDR:  plan.AllowedCIDR,
+			VPCID:        plan.VPCID,
+			DefaultVPC:   plan.DefaultVPC,
+		},
+		ExtraFields: []provision.PlanField{
+			{Key: "AMI ID", Value: plan.AmiID},
+			{Key: "HTTP port", Value: fmt.Sprintf("%d", plan.Port)},
+			{Key: "gRPC port", Value: fmt.Sprintf("%d", plan.GRPCPort)},
+			{Key: "Allowed CIDR", Value: plan.AllowedCIDR},
+		},
+		Resources: []string{
+			"Security Group:   " + plan.SGName,
+			"EC2 Instance:     " + plan.InstanceName,
+		},
+		CostResources: plan.CostResources,
+		Costs:         c.costs,
+		RawBetween: func(w io.Writer) {
+			if plan.AllowedCIDR == "0.0.0.0/0" {
+				fmt.Fprintln(w, "  Warning: allowedCidr is 0.0.0.0/0 — ports 5000 and 5002 are open")
+				fmt.Fprintln(w, "           to the internet. Restrict this in fabrica.yaml before connecting")
+				fmt.Fprintln(w, "           agents or running production workloads.")
+			}
+			if plan.InstanceType == "m7i.xlarge" {
+				fmt.Fprintln(w, "  Tip: For studios with >10 concurrent agents, consider m7i.2xlarge.")
+			}
+		},
+	})
 }
 
 func (c command) printApplyPlan(plan *horde.CreatePlan) {
-	fmt.Fprintln(c.out, "Horde build coordinator")
-	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	fmt.Fprintf(c.out, "  AWS account:      %s\n", plan.Account)
-	fmt.Fprintf(c.out, "  AWS region:       %s\n", plan.Region)
-	fmt.Fprintf(c.out, "  AMI ID:           %s\n", plan.AmiID)
-	fmt.Fprintf(c.out, "  Instance type:    %s\n", plan.InstanceType)
-	fmt.Fprintf(c.out, "  Data volume:      %d GiB gp3\n", plan.VolumeSize)
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Resources to create:")
-	fmt.Fprintf(c.out, "  Security Group:   %s\n", plan.SGName)
-	fmt.Fprintf(c.out, "  EC2 Instance:     %s\n", plan.InstanceName)
+	provision.ApplyPlan(c.out, "Horde build coordinator", provision.PlanInfo{
+		Account:      plan.Account,
+		Region:       plan.Region,
+		InstanceType: plan.InstanceType,
+		VolumeSize:   plan.VolumeSize,
+	}, []provision.PlanField{
+		{Key: "AMI ID", Value: plan.AmiID},
+	}, []string{
+		"Security Group:   " + plan.SGName,
+		"EC2 Instance:     " + plan.InstanceName,
+	})
 }
 
 func (c command) printPostCreate(plan *horde.CreatePlan, instanceID string) {
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Horde coordinator provisioned.")
-	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "  Instance ID:    %s\n", instanceID)
-	fmt.Fprintf(c.out, "  Status:         provisioning (Horde starting up, ~3 min)\n")
-	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "  Horde HTTP:     http://<private-ip>:%d\n", plan.Port)
-	fmt.Fprintf(c.out, "  Horde gRPC:     <private-ip>:%d\n", plan.GRPCPort)
-	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "  Credentials:    %s\n", credFile)
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "  Note: Horde is accessible via the instance's private IP. Ensure your")
-	fmt.Fprintln(c.out, "        machine can reach it (VPN, VPC peering, or same-VPC access).")
-	fmt.Fprintln(c.out, "        To allow broader access, update horde.allowedCidr in fabrica.yaml.")
-	if plan.AllowedCIDR == "0.0.0.0/0" {
-		fmt.Fprintln(c.out)
-		fmt.Fprintln(c.out, "  WARNING: horde.allowedCidr is 0.0.0.0/0 — ports 5000 and 5002 are open")
-		fmt.Fprintln(c.out, "           to the internet. Restrict this in fabrica.yaml before connecting")
-		fmt.Fprintln(c.out, "           agents or running production workloads.")
-	}
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Next steps:")
-	fmt.Fprintln(c.out, "  1. fabrica horde status -w       Wait for coordinator to become ready")
-	fmt.Fprintf(c.out, "  2. Open http://<private-ip>:%d   Complete admin account setup in the web UI\n", plan.Port)
-	fmt.Fprintln(c.out, "  3. fabrica horde submit <file>   Submit a BuildGraph job")
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "If the coordinator doesn't become ready within 10 minutes, check:")
-	fmt.Fprintln(c.out, "  /var/log/fabrica-horde-init.log  on the instance")
+	provision.PostCreate(c.out, provision.PostCreateSpec{
+		Title:        "Horde coordinator",
+		InstanceID:   instanceID,
+		StatusDetail: "provisioning (Horde starting up, ~3 min)",
+		Details: []provision.PlanField{
+			{Key: "Horde HTTP", Value: fmt.Sprintf("http://<private-ip>:%d", plan.Port)},
+			{Key: "Horde gRPC", Value: fmt.Sprintf("<private-ip>:%d", plan.GRPCPort)},
+			{Key: "Credentials", Value: credFile},
+		},
+		NextSteps: []string{
+			"fabrica horde status -w       Wait for coordinator to become ready",
+			fmt.Sprintf("Open http://<private-ip>:%d   Complete admin account setup in the web UI", plan.Port),
+			"fabrica horde submit <file>   Submit a BuildGraph job",
+		},
+		RawAfter: func(w io.Writer) {
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "  Note: Horde is accessible via the instance's private IP. Ensure your")
+			fmt.Fprintln(w, "        machine can reach it (VPN, VPC peering, or same-VPC access).")
+			fmt.Fprintln(w, "        To allow broader access, update horde.allowedCidr in fabrica.yaml.")
+			if plan.AllowedCIDR == "0.0.0.0/0" {
+				fmt.Fprintln(w)
+				fmt.Fprintln(w, "  Warning: horde.allowedCidr is 0.0.0.0/0 — ports 5000 and 5002 are open")
+				fmt.Fprintln(w, "           to the internet. Restrict this in fabrica.yaml before connecting")
+				fmt.Fprintln(w, "           agents or running production workloads.")
+			}
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "If the coordinator doesn't become ready within 10 minutes, check:")
+			fmt.Fprintln(w, "  /var/log/fabrica-horde-init.log  on the instance")
+		},
+	})
 }
