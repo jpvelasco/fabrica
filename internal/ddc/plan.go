@@ -84,7 +84,7 @@ func NewSetupPlan(ctx context.Context, cfg config.DDCConfig, account, region str
 
 	backend := normalizeBackend(cfg.Backend)
 	def := resolveDefaults(cfg, account, region)
-	vpcID, subnetID, defaultVPC, err := resolveVPC(ctx, cfg.VPCId, cfg.SubnetId, resolver)
+	vpcID, subnetID, defaultVPC, err := topology.ResolveVPC(ctx, cfg.VPCId, cfg.SubnetId, resolver)
 	if err != nil {
 		return nil, err
 	}
@@ -174,10 +174,6 @@ func resolveDefaults(cfg config.DDCConfig, account, region string) ddcDefaults {
 		bucket:       bucketOrDefault(cfg.Bucket, account, region),
 		namespace:    namespaceOrDefault(cfg.Namespace),
 	}
-}
-
-func resolveVPC(ctx context.Context, vpcID, subnetID string, resolver cloud.VPCResolver) (string, string, bool, error) {
-	return topology.ResolveVPC(ctx, vpcID, subnetID, resolver)
 }
 
 func instanceTypeOrDefault(v string) string {
