@@ -244,36 +244,6 @@ func (c *Command) confirmPhrase(instanceID string) string {
 	return fmt.Sprintf("%s workstation %s", c.spec.ActionVerb, instanceID)
 }
 
-// DefaultReadState returns the default readState implementation.
-func (c *Command) DefaultReadState() (*fabricastate.State, error) {
-	account, region := "", ""
-	if c.runtime.Config != nil {
-		account = c.runtime.Config.Cloud.AWS.AccountID
-		region = c.runtime.Config.Cloud.AWS.Region
-	}
-	return fabricastate.ReadStateOrNew(account, region)
-}
-
-// DefaultWriteState returns the default writeState implementation.
-func (c *Command) DefaultWriteState(st *fabricastate.State) error {
-	return fabricastate.WriteState(st)
-}
-
-// DefaultReadStateForRuntime returns the default readState implementation for a Runtime.
-func DefaultReadStateForRuntime(rt globals.Runtime) (*fabricastate.State, error) {
-	account, region := "", ""
-	if rt.Config != nil {
-		account = rt.Config.Cloud.AWS.AccountID
-		region = rt.Config.Cloud.AWS.Region
-	}
-	return fabricastate.ReadStateOrNew(account, region)
-}
-
-// DefaultWriteState returns the default writeState implementation.
-func DefaultWriteState(st *fabricastate.State) error {
-	return fabricastate.WriteState(st)
-}
-
 // StartSpec is the Spec for the start command.
 // DefaultExecuteAction builds the default executeAction function from a Runtime.
 // It type-asserts the provider to EC2InstanceManager and returns the appropriate
