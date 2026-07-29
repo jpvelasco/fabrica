@@ -23,6 +23,7 @@ func TestBuildTestRoot(t *testing.T) {
 	}
 	if opts == nil {
 		t.Fatal("opts should not be nil")
+		return
 	}
 	if len(root.Commands()) != 0 {
 		t.Error("root should have no subcommands initially")
@@ -56,6 +57,7 @@ func TestBuildTestSubcommand(t *testing.T) {
 	}
 	if optionsSource == nil {
 		t.Fatal("optionsSource should not be nil")
+		return
 	}
 	// Verify the returned optionsSource closure works.
 	opts := optionsSource()
