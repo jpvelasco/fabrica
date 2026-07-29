@@ -1,6 +1,4 @@
-// Package action provides the shared implementation for workstation start and stop.
-// The start and stop commands are structurally identical except for the action verb,
-// target status, and the already-active status check.
+// Package action owns the shared workstation start and stop command pattern.
 package action
 
 import (
@@ -13,93 +11,129 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
+	"github.com/spf13/cobra"
 )
 
 const (
 	lineWidth  = 58
 	moduleName = "workstation"
-
-	// StartVerb and StopVerb are the action verbs for start/stop.
-	StartVerb = "start"
-	StopVerb  = "stop"
+	startVerb  = "start"
+	stopVerb   = "stop"
 )
 
-// ActionOutput is the JSON-serialisable result of a start/stop run.
+// ActionOutput is the JSON-serializable result of a workstation start or stop.
 type ActionOutput struct {
 	InstanceID string `json:"instanceId"`
 	Status     string `json:"status"`
 	DryRun     bool   `json:"dryRun"`
 }
 
-// Spec holds the varying parameters for start vs stop.
-type Spec struct {
-	ActionVerb          string
-	ProgressText        string
-	TargetStatus        string
-	AlreadyActiveStatus string
-	AlreadyActiveText   string
-	DryRunStatus        string
-	DryRunText          string
-	SuccessText         string
-	FollowUpText        string
-	IsAlreadyActive     func(status string) bool
-	ActionLabel         string
+type spec struct {
+	verb              string
+	short             string
+	long              string
+	progressText      string
+	targetStatus      string
+	alreadyActiveCode string
+	dryRunStatus      string
+	dryRunText        string
+	successText       string
+	followUpText      string
+	isAlreadyActive   func(status string) bool
+	alreadyActiveText func(instanceID, status string) string
 }
 
-// Command is the shared implementation for workstation start/stop.
-type Command struct {
-	spec      Spec
-	runtime   globals.Runtime
+type command struct {
+	spec      spec
 	dryRun    bool
 	assumeYes bool
 	jsonOut   bool
 	out       io.Writer
 	confirm   func(string, string) bool
 
-	// seams for testing
 	readState     func() (*fabricastate.State, error)
 	writeState    func(*fabricastate.State) error
-	executeAction func(ctx context.Context, instanceID string) error
+	executeAction func(context.Context, string) error
 }
 
-// New creates a new shared start/stop command.
-func New(spec Spec, runtime globals.Runtime, dryRun, assumeYes, jsonOut bool, out io.Writer, confirm func(string, string) bool, executeAction func(context.Context, string) error) *Command {
-	return &Command{
-		spec:          spec,
-		runtime:       runtime,
-		dryRun:        dryRun,
-		assumeYes:     assumeYes,
-		jsonOut:       jsonOut,
-		out:           out,
-		confirm:       confirm,
-		executeAction: executeAction,
+type commandOptions struct {
+	dryRun        bool
+	assumeYes     bool
+	jsonOut       bool
+	out           io.Writer
+	confirm       func(string, string) bool
+	readState     func() (*fabricastate.State, error)
+	writeState    func(*fabricastate.State) error
+	executeAction func(context.Context, string) error
+}
+
+func newCommand(commandSpec spec, opts commandOptions) *command {
+	return &command{
+		spec:          commandSpec,
+		dryRun:        opts.dryRun,
+		assumeYes:     opts.assumeYes,
+		jsonOut:       opts.jsonOut,
+		out:           opts.out,
+		confirm:       opts.confirm,
+		readState:     opts.readState,
+		writeState:    opts.writeState,
+		executeAction: opts.executeAction,
 	}
 }
 
-// SetReadState sets the readState seam (for testing).
-func (c *Command) SetReadState(fn func() (*fabricastate.State, error)) {
-	c.readState = fn
+// NewStart returns the "workstation start" subcommand.
+func NewStart(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
+	return newCobraCommand(startSpec(), runtimeSource, optionsSource, out)
 }
 
-// SetWriteState sets the writeState seam (for testing).
-func (c *Command) SetWriteState(fn func(*fabricastate.State) error) {
-	c.writeState = fn
+// NewStop returns the "workstation stop" subcommand.
+func NewStop(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
+	return newCobraCommand(stopSpec(), runtimeSource, optionsSource, out)
 }
 
-func (c *Command) Run(ctx context.Context) error {
+func newCobraCommand(commandSpec spec, runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   commandSpec.verb,
+		Short: commandSpec.short,
+		Long:  commandSpec.long,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			rt, err := runtimeSource()
+			if err != nil {
+				return err
+			}
+
+			opts := optionsSource()
+			actionCommand := newCommand(commandSpec, commandOptions{
+				dryRun:    opts.DryRun,
+				assumeYes: opts.AssumeYes,
+				jsonOut:   opts.JSONOutput,
+				out:       out,
+				confirm:   prompt.ConfirmExact,
+				readState: func() (*fabricastate.State, error) {
+					return provision.ReadState(rt)
+				},
+				writeState:    fabricastate.WriteState,
+				executeAction: defaultExecuteAction(rt, commandSpec.verb),
+			})
+			return actionCommand.run(cmd.Context())
+		},
+	}
+}
+
+func (c *command) run(ctx context.Context) error {
 	st, instanceID, err := c.validatePreAction()
 	if err != nil {
 		return err
 	}
 	if st == nil {
-		// Not provisioned — validatePreAction already printed the message.
 		return nil
 	}
-	m := st.GetModule(moduleName)
 
-	if c.spec.IsAlreadyActive(m.Status) {
+	m := st.GetModule(moduleName)
+	if c.spec.isAlreadyActive(m.Status) {
 		c.printAlreadyActive(instanceID, m.Status)
 		return nil
 	}
@@ -112,7 +146,6 @@ func (c *Command) Run(ctx context.Context) error {
 	if !c.jsonOut {
 		c.printPlan(m, instanceID)
 	}
-
 	if !c.confirmAction(instanceID) {
 		return nil
 	}
@@ -120,10 +153,7 @@ func (c *Command) Run(ctx context.Context) error {
 	return c.apply(ctx, st, m, instanceID)
 }
 
-// validatePreAction reads state and validates the module is provisioned with an instance.
-// Returns (state, instanceID, error). A "not provisioned" or "no instance" condition
-// is printed and returns nil error (informational).
-func (c *Command) validatePreAction() (*fabricastate.State, string, error) {
+func (c *command) validatePreAction() (*fabricastate.State, string, error) {
 	st, err := c.readState()
 	if err != nil {
 		return nil, "", fmt.Errorf("reading state: %w", err)
@@ -135,44 +165,37 @@ func (c *Command) validatePreAction() (*fabricastate.State, string, error) {
 		return nil, "", nil
 	}
 
-	instRes, ok := stateutil.ResourceByType(m, "AWS::EC2::Instance")
-	if !ok || instRes.Identifier == "" {
+	instance, ok := stateutil.ResourceByType(m, "AWS::EC2::Instance")
+	if !ok || instance.Identifier == "" {
 		return nil, "", fmt.Errorf("workstation has no instance in state; run 'fabrica workstation list' to inspect")
 	}
-	return st, instRes.Identifier, nil
+	return st, instance.Identifier, nil
 }
 
-// printNotProvisioned handles the "not provisioned" output path (text + JSON).
-func (c *Command) printNotProvisioned() {
+func (c *command) printNotProvisioned() {
 	if c.jsonOut {
 		modstatus.WriteJSON(c.out, ActionOutput{Status: "not_provisioned", DryRun: c.dryRun})
 		return
 	}
-	fmt.Fprintln(c.out, "Workstation is not provisioned. Nothing to "+c.spec.ActionVerb+".")
+	fmt.Fprintln(c.out, "Workstation is not provisioned. Nothing to "+c.spec.verb+".")
 }
 
-// printAlreadyActive prints the already-active message and returns.
-func (c *Command) printAlreadyActive(instanceID, status string) {
+func (c *command) printAlreadyActive(instanceID, status string) {
 	if c.jsonOut {
-		modstatus.WriteJSON(c.out, ActionOutput{InstanceID: instanceID, Status: c.spec.AlreadyActiveStatus, DryRun: c.dryRun})
+		modstatus.WriteJSON(c.out, ActionOutput{InstanceID: instanceID, Status: c.spec.alreadyActiveCode, DryRun: c.dryRun})
 		return
 	}
-	if strings.Contains(c.spec.AlreadyActiveText, "%s") {
-		fmt.Fprintf(c.out, "Instance %s "+c.spec.AlreadyActiveText+"\n", instanceID, status)
-	} else {
-		fmt.Fprintf(c.out, "Instance %s "+c.spec.AlreadyActiveText+".\n", instanceID)
-	}
+	fmt.Fprintln(c.out, c.spec.alreadyActiveText(instanceID, status))
 }
 
-// confirmAction handles the interactive confirmation step. Returns true when
-// the user confirmed (or --yes is set), false when the user cancelled.
-func (c *Command) confirmAction(instanceID string) bool {
+func (c *command) confirmAction(instanceID string) bool {
 	if c.assumeYes {
 		if !c.jsonOut {
 			fmt.Fprintln(c.out, "Proceeding without interactive confirmation (--yes flag set).")
 		}
 		return true
 	}
+
 	fmt.Fprintln(c.out)
 	phrase := c.confirmPhrase(instanceID)
 	provision.PrintConfirmInstructions(c.out, phrase)
@@ -184,115 +207,131 @@ func (c *Command) confirmAction(instanceID string) bool {
 	return true
 }
 
-func (c *Command) apply(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, instanceID string) error {
+func (c *command) apply(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, instanceID string) error {
 	if c.executeAction == nil {
 		return fmt.Errorf("no provider configured; run 'fabrica setup' first")
 	}
 
 	if !c.jsonOut {
-		fmt.Fprintf(c.out, c.spec.ProgressText+" instance %s...\n", instanceID)
+		fmt.Fprintf(c.out, c.spec.progressText+" instance %s...\n", instanceID)
 	}
-
 	if err := c.executeAction(ctx, instanceID); err != nil {
-		return fmt.Errorf(strings.ToLower(c.spec.ProgressText)+" instance %s: %w", instanceID, err)
+		return fmt.Errorf("%s instance %s: %w", strings.ToLower(c.spec.progressText), instanceID, err)
 	}
 
-	st.UpsertModule(moduleName, m.Version, c.spec.TargetStatus, m.Resources)
+	st.UpsertModule(moduleName, m.Version, c.spec.targetStatus, m.Resources)
 	if err := c.writeState(st); err != nil {
 		fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
 	}
 
 	if c.jsonOut {
-		modstatus.WriteJSON(c.out, ActionOutput{InstanceID: instanceID, Status: c.spec.TargetStatus, DryRun: false})
+		modstatus.WriteJSON(c.out, ActionOutput{InstanceID: instanceID, Status: c.spec.targetStatus})
 		return nil
 	}
 
-	fmt.Fprintf(c.out, "  Instance %s "+c.spec.SuccessText+".\n", instanceID)
+	fmt.Fprintf(c.out, "  Instance %s "+c.spec.successText+".\n", instanceID)
 	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, c.spec.FollowUpText)
+	fmt.Fprintln(c.out, c.spec.followUpText)
 	return nil
 }
 
-func (c *Command) printDryRun(m *fabricastate.ModuleState, instanceID string) {
+func (c *command) printDryRun(m *fabricastate.ModuleState, instanceID string) {
 	if c.jsonOut {
-		modstatus.WriteJSON(c.out, ActionOutput{InstanceID: instanceID, Status: c.spec.DryRunStatus, DryRun: true})
+		modstatus.WriteJSON(c.out, ActionOutput{InstanceID: instanceID, Status: c.spec.dryRunStatus, DryRun: true})
 		return
 	}
-	fmt.Fprintln(c.out, "Cloud Workstation ("+c.spec.ActionLabel+" dry run)")
+
+	fmt.Fprintln(c.out, "Cloud Workstation ("+c.spec.verb+" dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "  Instance ID: %s\n", instanceID)
 	fmt.Fprintf(c.out, "  Status:      %s\n", m.Status)
 	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, c.spec.DryRunText)
+	fmt.Fprintln(c.out, c.spec.dryRunText)
 	fmt.Fprintln(c.out, "Run without --dry-run to proceed.")
 }
 
-func (c *Command) printPlan(m *fabricastate.ModuleState, instanceID string) {
-	fmt.Fprintln(c.out, "Cloud Workstation — "+c.spec.ActionLabel)
+func (c *command) printPlan(m *fabricastate.ModuleState, instanceID string) {
+	fmt.Fprintln(c.out, "Cloud Workstation — "+c.spec.verb)
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "  Instance ID: %s\n", instanceID)
 	fmt.Fprintf(c.out, "  Status:      %s\n", m.Status)
 	fmt.Fprintln(c.out)
 }
 
-func (c *Command) confirmPhrase(instanceID string) string {
-	return fmt.Sprintf("%s workstation %s", c.spec.ActionVerb, instanceID)
+func (c *command) confirmPhrase(instanceID string) string {
+	return fmt.Sprintf("%s workstation %s", c.spec.verb, instanceID)
 }
 
-// StartSpec is the Spec for the start command.
-// DefaultExecuteAction builds the default executeAction function from a Runtime.
-// It type-asserts the provider to EC2InstanceManager and returns the appropriate
-// StartInstance or StopInstance method based on the verb.
-func DefaultExecuteAction(rt globals.Runtime, verb string) func(context.Context, string) error {
+func defaultExecuteAction(rt globals.Runtime, verb string) func(context.Context, string) error {
 	return func(ctx context.Context, instanceID string) error {
 		if rt.Provider == nil {
 			return fmt.Errorf("no provider configured; run 'fabrica setup' first")
 		}
-		mgr, ok := rt.Provider.(fabricac.EC2InstanceManager)
+
+		manager, ok := rt.Provider.(fabricac.EC2InstanceManager)
 		if !ok {
 			return fmt.Errorf("provider does not support EC2 instance management; run 'fabrica setup' first")
 		}
+
 		switch verb {
-		case StartVerb:
-			return mgr.StartInstance(ctx, instanceID)
-		case StopVerb:
-			return mgr.StopInstance(ctx, instanceID)
+		case startVerb:
+			return manager.StartInstance(ctx, instanceID)
+		case stopVerb:
+			return manager.StopInstance(ctx, instanceID)
 		default:
 			return fmt.Errorf("unknown action verb: %s", verb)
 		}
 	}
 }
 
-// StartSpec is the Spec for the start command.
-var StartSpec = Spec{
-	ActionVerb:          "start",
-	ProgressText:        "Starting",
-	TargetStatus:        "ready",
-	AlreadyActiveStatus: "already_running",
-	AlreadyActiveText:   "is already running (status: %s)",
-	DryRunStatus:        "would_start",
-	DryRunText:          "Would start the EC2 instance.",
-	SuccessText:         "started",
-	FollowUpText:        "Run 'fabrica workstation list' to view connection details.",
-	ActionLabel:         "start",
-	IsAlreadyActive: func(status string) bool {
-		return status == "ready" || status == "provisioning"
-	},
+func startSpec() spec {
+	return spec{
+		verb:         startVerb,
+		short:        "Start a stopped cloud workstation EC2 instance",
+		progressText: "Starting",
+		targetStatus: "ready",
+		long: `Start a previously stopped cloud workstation EC2 instance.
+
+The workstation resumes from its saved state. DCV session setup may take
+a minute or two after the instance comes online.
+
+With --dry-run, shows what would happen without calling the EC2 API.`,
+		alreadyActiveCode: "already_running",
+		dryRunStatus:      "would_start",
+		dryRunText:        "Would start the EC2 instance.",
+		successText:       "started",
+		followUpText:      "Run 'fabrica workstation list' to view connection details.",
+		isAlreadyActive: func(status string) bool {
+			return status == "ready" || status == "provisioning"
+		},
+		alreadyActiveText: func(instanceID, status string) string {
+			return fmt.Sprintf("Instance %s is already running (status: %s)", instanceID, status)
+		},
+	}
 }
 
-// StopSpec is the Spec for the stop command.
-var StopSpec = Spec{
-	ActionVerb:          "stop",
-	ProgressText:        "Stopping",
-	TargetStatus:        "stopped",
-	AlreadyActiveStatus: "already_stopped",
-	AlreadyActiveText:   "is already stopped",
-	DryRunStatus:        "would_stop",
-	DryRunText:          "Would stop the EC2 instance.",
-	SuccessText:         "stopped",
-	FollowUpText:        "Run 'fabrica workstation start' to bring it back online.",
-	ActionLabel:         "stop",
-	IsAlreadyActive: func(status string) bool {
-		return status == "stopped"
-	},
+func stopSpec() spec {
+	return spec{
+		verb:         stopVerb,
+		short:        "Stop the cloud workstation EC2 instance",
+		progressText: "Stopping",
+		targetStatus: "stopped",
+		long: `Stop the cloud workstation EC2 instance to pause billing.
+
+The workstation's data and configuration are preserved. Use
+'fabrica workstation start' to bring it back online.
+
+With --dry-run, shows what would happen without calling the EC2 API.`,
+		alreadyActiveCode: "already_stopped",
+		dryRunStatus:      "would_stop",
+		dryRunText:        "Would stop the EC2 instance.",
+		successText:       "stopped",
+		followUpText:      "Run 'fabrica workstation start' to bring it back online.",
+		isAlreadyActive: func(status string) bool {
+			return status == "stopped"
+		},
+		alreadyActiveText: func(instanceID, _ string) string {
+			return fmt.Sprintf("Instance %s is already stopped.", instanceID)
+		},
+	}
 }
