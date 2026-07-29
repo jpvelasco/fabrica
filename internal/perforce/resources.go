@@ -27,16 +27,14 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 // When imageID is non-empty, it is injected as ImageId; otherwise the field
 // is omitted (useful for dry-runs where the AMI isn't resolved yet).
 func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName, imageID string) (json.RawMessage, error) {
-	opts := []ec2state.InstanceOption{
-		ec2state.WithInstanceType(plan.InstanceType),
-		ec2state.WithSubnet(plan.SubnetID),
-		ec2state.WithSecurityGroup(sgID),
-		ec2state.WithUserData(userData),
-		ec2state.WithVolumeSize(plan.VolumeSize),
-		ec2state.WithInstanceName(plan.InstanceName),
-	}
-	if imageID != "" {
-		opts = append(opts, ec2state.WithAMI(imageID))
+	spec := ec2state.InstanceSpec{
+		ImageID:         imageID,
+		InstanceType:    plan.InstanceType,
+		SubnetID:        plan.SubnetID,
+		SecurityGroupID: sgID,
+		UserData:        userData,
+		VolumeSize:      plan.VolumeSize,
+		InstanceName:    plan.InstanceName,
 	}
 
 	dsOpts := []ec2state.DesiredStateOption{
@@ -46,7 +44,7 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName,
 		dsOpts = append(dsOpts, ec2state.WithIAMProfile(instanceProfileName))
 	}
 
-	return ec2state.Build(opts, dsOpts...)
+	return ec2state.Build(spec, dsOpts...)
 }
 
 // RoleDesiredState returns Cloud Control desired-state for the Perforce EC2

@@ -3,64 +3,18 @@
 // lore, ddc, workstation) use this instead of duplicating the map construction.
 package ec2state
 
-import (
-	"encoding/base64"
-	"encoding/json"
-)
+import "encoding/json"
 
-// InstanceConfig holds the common fields needed to build an EC2 instance's
-// Cloud Control desired-state document.
-type InstanceConfig struct {
-	amiID        string
-	instanceType string
-	subnetID     string
-	sgID         string
-	userData     string
-	volumeSize   int
-	instanceName string
-}
-
-// InstanceOption configures the InstanceConfig via the functional options pattern.
-type InstanceOption func(*InstanceConfig)
-
-// WithAMI sets the AMI ID. Required.
-func WithAMI(id string) InstanceOption {
-	return func(c *InstanceConfig) { c.amiID = id }
-}
-
-// WithInstanceType sets the instance type. Required.
-func WithInstanceType(t string) InstanceOption {
-	return func(c *InstanceConfig) { c.instanceType = t }
-}
-
-// WithSubnet sets the subnet ID. Required.
-func WithSubnet(id string) InstanceOption {
-	return func(c *InstanceConfig) { c.subnetID = id }
-}
-
-// WithSecurityGroup sets the security group ID. Required.
-func WithSecurityGroup(id string) InstanceOption {
-	return func(c *InstanceConfig) { c.sgID = id }
-}
-
-// WithUserData sets the base64-encoded user data. Required.
-func WithUserData(data string) InstanceOption {
-	return func(c *InstanceConfig) { c.userData = data }
-}
-
-// WithUserDataRaw sets the user data from a raw string (auto base64 encodes).
-func WithUserDataRaw(raw string) InstanceOption {
-	return func(c *InstanceConfig) { c.userData = base64.StdEncoding.EncodeToString([]byte(raw)) }
-}
-
-// WithVolumeSize sets the EBS volume size in GiB. Required.
-func WithVolumeSize(size int) InstanceOption {
-	return func(c *InstanceConfig) { c.volumeSize = size }
-}
-
-// WithInstanceName sets the instance Name tag. Required.
-func WithInstanceName(name string) InstanceOption {
-	return func(c *InstanceConfig) { c.instanceName = name }
+// InstanceSpec holds the common fields needed to build an EC2 instance's
+// Cloud Control desired-state document. UserData must already be base64 encoded.
+type InstanceSpec struct {
+	ImageID         string
+	InstanceType    string
+	SubnetID        string
+	SecurityGroupID string
+	UserData        string
+	VolumeSize      int
+	InstanceName    string
 }
 
 // DesiredStateOption configures the generated desired-state document.
@@ -153,25 +107,19 @@ func SGDesiredState(groupName, description, vpcID string, rules []SGIngressRule,
 	return json.Marshal(doc)
 }
 
-// Build generates the Cloud Control desired-state JSON for an EC2 instance.
-// It applies the InstanceConfig options first, then runs each DesiredStateOption
-// over the document before marshaling.
-func Build(opts []InstanceOption, dsOpts ...DesiredStateOption) (json.RawMessage, error) {
-	c := &InstanceConfig{}
-	for _, o := range opts {
-		o(c)
-	}
-
+// Build generates the Cloud Control desired-state JSON for an EC2 instance,
+// then applies any module-specific DesiredStateOption values before marshaling.
+func Build(spec InstanceSpec, dsOpts ...DesiredStateOption) (json.RawMessage, error) {
 	doc := map[string]any{
-		"InstanceType":     c.instanceType,
-		"SubnetId":         c.subnetID,
-		"SecurityGroupIds": []string{c.sgID},
-		"UserData":         c.userData,
+		"InstanceType":     spec.InstanceType,
+		"SubnetId":         spec.SubnetID,
+		"SecurityGroupIds": []string{spec.SecurityGroupID},
+		"UserData":         spec.UserData,
 		"BlockDeviceMappings": []map[string]any{
 			{
 				"DeviceName": "/dev/sdf",
 				"Ebs": map[string]any{
-					"VolumeSize":          c.volumeSize,
+					"VolumeSize":          spec.VolumeSize,
 					"VolumeType":          "gp3",
 					"DeleteOnTermination": true,
 				},
@@ -179,7 +127,7 @@ func Build(opts []InstanceOption, dsOpts ...DesiredStateOption) (json.RawMessage
 		},
 		"Tags": []map[string]string{
 			{"Key": "ManagedBy", "Value": "fabrica"},
-			{"Key": "Name", "Value": c.instanceName},
+			{"Key": "Name", "Value": spec.InstanceName},
 		},
 		"MetadataOptions": map[string]any{
 			"HttpTokens": "required",
@@ -191,8 +139,8 @@ func Build(opts []InstanceOption, dsOpts ...DesiredStateOption) (json.RawMessage
 	}
 
 	// ImageId is optional — only set when non-empty (perforce dry-runs omit it).
-	if c.amiID != "" {
-		doc["ImageId"] = c.amiID
+	if spec.ImageID != "" {
+		doc["ImageId"] = spec.ImageID
 	}
 
 	return json.Marshal(doc)

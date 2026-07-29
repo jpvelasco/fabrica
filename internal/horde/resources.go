@@ -25,14 +25,14 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 // Horde EC2 instance. ImageId is the user-provided AMI ID from HordeConfig.
 func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMessage, error) {
 	return ec2state.Build(
-		[]ec2state.InstanceOption{
-			ec2state.WithAMI(plan.AmiID),
-			ec2state.WithInstanceType(plan.InstanceType),
-			ec2state.WithSubnet(plan.SubnetID),
-			ec2state.WithSecurityGroup(sgID),
-			ec2state.WithUserData(userData),
-			ec2state.WithVolumeSize(plan.VolumeSize),
-			ec2state.WithInstanceName(plan.InstanceName),
+		ec2state.InstanceSpec{
+			ImageID:         plan.AmiID,
+			InstanceType:    plan.InstanceType,
+			SubnetID:        plan.SubnetID,
+			SecurityGroupID: sgID,
+			UserData:        userData,
+			VolumeSize:      plan.VolumeSize,
+			InstanceName:    plan.InstanceName,
 		},
 		ec2state.WithDeleteOnTermination(false),
 	)

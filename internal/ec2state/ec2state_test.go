@@ -5,15 +5,15 @@ import (
 	"testing"
 )
 
-func optsAll() []InstanceOption {
-	return []InstanceOption{
-		WithAMI("ami-123"),
-		WithInstanceType("m7i.xlarge"),
-		WithSubnet("subnet-abc"),
-		WithSecurityGroup("sg-xyz"),
-		WithUserData("dGVzdA=="),
-		WithVolumeSize(100),
-		WithInstanceName("test-instance"),
+func testSpec() InstanceSpec {
+	return InstanceSpec{
+		ImageID:         "ami-123",
+		InstanceType:    "m7i.xlarge",
+		SubnetID:        "subnet-abc",
+		SecurityGroupID: "sg-xyz",
+		UserData:        "dGVzdA==",
+		VolumeSize:      100,
+		InstanceName:    "test-instance",
 	}
 }
 
@@ -27,7 +27,7 @@ func doc(t *testing.T, raw json.RawMessage) map[string]any {
 }
 
 func TestBuildCoreFields(t *testing.T) {
-	raw, err := Build(optsAll())
+	raw, err := Build(testSpec())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func checkStr(t *testing.T, d map[string]any, key, want string) {
 }
 
 func TestIAMProfile(t *testing.T) {
-	raw, err := Build(optsAll(), WithIAMProfile("MyProfile"))
+	raw, err := Build(testSpec(), WithIAMProfile("MyProfile"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestIAMProfile(t *testing.T) {
 }
 
 func TestNoIAMProfile(t *testing.T) {
-	raw, err := Build(optsAll())
+	raw, err := Build(testSpec())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestNoIAMProfile(t *testing.T) {
 }
 
 func TestDeviceName(t *testing.T) {
-	raw, err := Build(optsAll(), WithDeviceName("/dev/sda1"))
+	raw, err := Build(testSpec(), WithDeviceName("/dev/sda1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestDeviceName(t *testing.T) {
 }
 
 func TestDeleteOnTerminationFalse(t *testing.T) {
-	raw, err := Build(optsAll(), WithDeleteOnTermination(false))
+	raw, err := Build(testSpec(), WithDeleteOnTermination(false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestDeleteOnTerminationFalse(t *testing.T) {
 }
 
 func TestExtraTags(t *testing.T) {
-	raw, err := Build(optsAll(), WithExtraTags("FabricaModule", "ddc"))
+	raw, err := Build(testSpec(), WithExtraTags("FabricaModule", "ddc"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestExtraTags(t *testing.T) {
 
 func TestPerforceShape(t *testing.T) {
 	// Perforce: /dev/sdf, DeleteOnTermination=false, IAM profile.
-	raw, err := Build(optsAll(), WithIAMProfile("P4Profile"), WithDeleteOnTermination(false))
+	raw, err := Build(testSpec(), WithIAMProfile("P4Profile"), WithDeleteOnTermination(false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestPerforceShape(t *testing.T) {
 
 func TestWorkstationShape(t *testing.T) {
 	// Workstation: /dev/sda1, DeleteOnTermination=true (default), no IAM.
-	raw, err := Build(optsAll(), WithDeviceName("/dev/sda1"))
+	raw, err := Build(testSpec(), WithDeviceName("/dev/sda1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,22 +254,15 @@ func TestSGDesiredStateExtraTags(t *testing.T) {
 	}
 }
 
-func TestUserDataRaw(t *testing.T) {
-	opts := []InstanceOption{
-		WithAMI("ami-123"),
-		WithInstanceType("m7i.xlarge"),
-		WithSubnet("subnet-abc"),
-		WithSecurityGroup("sg-xyz"),
-		WithUserDataRaw("#!/bin/bash\necho hi"),
-		WithVolumeSize(50),
-		WithInstanceName("test"),
-	}
-	raw, err := Build(opts)
+func TestBuildOmitsEmptyAMI(t *testing.T) {
+	spec := testSpec()
+	spec.ImageID = ""
+	raw, err := Build(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
 	d := doc(t, raw)
-	if d["UserData"].(string) != "IyEvYmluL2Jhc2gKZWNobyBoaQ==" {
-		t.Errorf("raw user data = %v", d["UserData"])
+	if _, ok := d["ImageId"]; ok {
+		t.Error("ImageId should be absent")
 	}
 }
