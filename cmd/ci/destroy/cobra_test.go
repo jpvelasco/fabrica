@@ -2,7 +2,6 @@ package destroy_test
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"testing"
 
@@ -43,7 +42,7 @@ func ciStateJSON() string {
 // TestCIDestroyCobraNotProvisioned verifies clean message when no CI state exists.
 func TestCIDestroyCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runCIDestroy(t, testutil.NewTestRuntime(&ciCobraFakeProvider{}))
+	got, err := runCIDestroy(t, testutil.NewTestRuntime(&testutil.CodeBuildProvider{}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -56,14 +55,14 @@ func TestCIDestroyCobraDryRunNoDeleteCalls(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, ciStateJSON())
 
-	provider := &ciCobraFakeProvider{}
+	provider := &testutil.CodeBuildProvider{}
 	got, err := runCIDestroy(t, testutil.NewTestRuntime(provider), "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	testutil.AssertContains(t, got, "dry run")
-	if provider.projectDeleteCalls != 0 || provider.roleDeleteCalls != 0 {
-		t.Errorf("dry-run made delete calls: project=%d role=%d", provider.projectDeleteCalls, provider.roleDeleteCalls)
+	if provider.DeleteProjectCalls != 0 || provider.DeleteCalls != 0 {
+		t.Errorf("dry-run made delete calls: project=%d role=%d", provider.DeleteProjectCalls, provider.DeleteCalls)
 	}
 }
 
@@ -73,7 +72,7 @@ func TestCIDestroyCobraDryRunShowsResources(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, ciStateJSON())
 
-	got, err := runCIDestroy(t, testutil.NewTestRuntime(&ciCobraFakeProvider{}), "--dry-run")
+	got, err := runCIDestroy(t, testutil.NewTestRuntime(&testutil.CodeBuildProvider{}), "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -87,16 +86,16 @@ func TestCIDestroyCobraYesFlagDestroysResources(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, ciStateJSON())
 
-	provider := &ciCobraFakeProvider{}
+	provider := &testutil.CodeBuildProvider{}
 	got, err := runCIDestroy(t, testutil.NewTestRuntime(provider), "--yes")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if provider.projectDeleteCalls != 1 {
-		t.Errorf("expected 1 project delete call, got %d", provider.projectDeleteCalls)
+	if provider.DeleteProjectCalls != 1 {
+		t.Errorf("expected 1 project delete call, got %d", provider.DeleteProjectCalls)
 	}
-	if provider.roleDeleteCalls != 1 {
-		t.Errorf("expected 1 role delete call, got %d", provider.roleDeleteCalls)
+	if provider.DeleteCalls != 1 {
+		t.Errorf("expected 1 role delete call, got %d", provider.DeleteCalls)
 	}
 	testutil.AssertContains(t, got, "destroyed")
 }
@@ -104,7 +103,7 @@ func TestCIDestroyCobraYesFlagDestroysResources(t *testing.T) {
 // TestCIDestroyCobraJSONNotProvisioned verifies --json output when not provisioned.
 func TestCIDestroyCobraJSONNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	_, err := runCIDestroy(t, testutil.NewTestRuntime(&ciCobraFakeProvider{}), "--json")
+	_, err := runCIDestroy(t, testutil.NewTestRuntime(&testutil.CodeBuildProvider{}), "--json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -116,7 +115,7 @@ func TestCIDestroyCobraJSONDryRun(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, ciStateJSON())
 
-	_, err := runCIDestroy(t, testutil.NewTestRuntime(&ciCobraFakeProvider{}), "--json", "--dry-run")
+	_, err := runCIDestroy(t, testutil.NewTestRuntime(&testutil.CodeBuildProvider{}), "--json", "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -128,13 +127,13 @@ func TestCIDestroyCobraJSONYes(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, ciStateJSON())
 
-	provider := &ciCobraFakeProvider{}
+	provider := &testutil.CodeBuildProvider{}
 	_, err := runCIDestroy(t, testutil.NewTestRuntime(provider), "--json", "--yes")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if provider.projectDeleteCalls != 1 || provider.roleDeleteCalls != 1 {
-		t.Fatalf("expected both deletes, got project=%d role=%d", provider.projectDeleteCalls, provider.roleDeleteCalls)
+	if provider.DeleteProjectCalls != 1 || provider.DeleteCalls != 1 {
+		t.Fatalf("expected both deletes, got project=%d role=%d", provider.DeleteProjectCalls, provider.DeleteCalls)
 	}
 }
 
@@ -161,66 +160,8 @@ func TestCIDestroyCobraRuntimeError(t *testing.T) {
 
 // TestCICobraFakeProviderImplementsInterfaces verifies the fake provider satisfies all required interfaces.
 func TestCICobraFakeProviderImplementsInterfaces(t *testing.T) {
-	var p cloud.Provider = &ciCobraFakeProvider{}
+	var p cloud.Provider = &testutil.CodeBuildProvider{}
 	if _, ok := p.(cloud.CodeBuildRunner); !ok {
-		t.Fatal("ciCobraFakeProvider does not implement cloud.CodeBuildRunner")
+		t.Fatal("CodeBuildProvider does not implement cloud.CodeBuildRunner")
 	}
-}
-
-// ciCobraFakeProvider is a minimal fake satisfying cloud.Provider and
-// cloud.CodeBuildRunner for CI destroy Cobra-layer tests.
-type ciCobraFakeProvider struct {
-	projectDeleteCalls int
-	roleDeleteCalls    int
-}
-
-func (f *ciCobraFakeProvider) Name() string { return "fake" }
-
-func (f *ciCobraFakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-
-func (f *ciCobraFakeProvider) Resources() cloud.ResourceClient {
-	return &ciCobraFakeRC{provider: f}
-}
-
-// EnsureProject implements cloud.CodeBuildRunner.
-func (f *ciCobraFakeProvider) EnsureProject(_ context.Context, _ cloud.CodeBuildProjectSpec) (bool, error) {
-	return true, nil
-}
-
-// DeleteProject implements cloud.CodeBuildRunner.
-func (f *ciCobraFakeProvider) DeleteProject(_ context.Context, name string) error {
-	f.projectDeleteCalls++
-	return nil
-}
-
-// StartBuild implements cloud.CodeBuildRunner.
-func (f *ciCobraFakeProvider) StartBuild(_ context.Context, _ string, _ map[string]string) (string, error) {
-	return "build-123", nil
-}
-
-// BuildStatus implements cloud.CodeBuildRunner.
-func (f *ciCobraFakeProvider) BuildStatus(_ context.Context, _ string) (cloud.BuildInfo, error) {
-	return cloud.BuildInfo{}, nil
-}
-
-// BuildLog implements cloud.CodeBuildRunner.
-func (f *ciCobraFakeProvider) BuildLog(_ context.Context, _ string) (string, error) {
-	return "", nil
-}
-
-type ciCobraFakeRC struct {
-	provider *ciCobraFakeProvider
-}
-
-func (r *ciCobraFakeRC) Create(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *ciCobraFakeRC) Get(_ context.Context, _ *cloud.Resource) error    { return nil }
-func (r *ciCobraFakeRC) Update(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *ciCobraFakeRC) Delete(_ context.Context, res *cloud.Resource) error {
-	r.provider.roleDeleteCalls++
-	return nil
-}
-func (r *ciCobraFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
-	return nil, nil
 }

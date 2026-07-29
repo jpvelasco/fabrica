@@ -2,7 +2,6 @@ package status_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -44,7 +43,7 @@ func ciStateJSON() string {
 // TestCIStatusCobraNotProvisioned verifies clean message when no CI state exists.
 func TestCIStatusCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runCIStatus(t, testutil.NewTestRuntime(&ciCobraFakeProvider{}))
+	got, err := runCIStatus(t, testutil.NewTestRuntime(&testutil.CodeBuildProvider{}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -57,7 +56,7 @@ func TestCIStatusCobraShowsInfrastructure(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, ciStateJSON())
 
-	got, err := runCIStatus(t, testutil.NewTestRuntime(&ciCobraFakeProvider{}))
+	got, err := runCIStatus(t, testutil.NewTestRuntime(&testutil.CodeBuildProvider{}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,7 +73,7 @@ func TestCIStatusCobraShowsNextSteps(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, ciStateJSON())
 
-	got, err := runCIStatus(t, testutil.NewTestRuntime(&ciCobraFakeProvider{}))
+	got, err := runCIStatus(t, testutil.NewTestRuntime(&testutil.CodeBuildProvider{}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,8 +87,8 @@ func TestCIStatusCobraWithBuildID(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, ciStateJSON())
 
-	provider := &ciCobraFakeProvider{
-		buildInfoResponse: cloud.BuildInfo{
+	provider := &testutil.CodeBuildProvider{
+		BuildInfo: cloud.BuildInfo{
 			ID:     "fabrica-ci:1a2b3c4d",
 			Status: "SUCCEEDED",
 			Phase:  "COMPLETED",
@@ -109,8 +108,8 @@ func TestCIStatusCobraWithBuildIDInProgressStatus(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, ciStateJSON())
 
-	provider := &ciCobraFakeProvider{
-		buildInfoResponse: cloud.BuildInfo{
+	provider := &testutil.CodeBuildProvider{
+		BuildInfo: cloud.BuildInfo{
 			ID:     "fabrica-ci:1a2b3c4d",
 			Status: "IN_PROGRESS",
 			Phase:  "BUILD",
@@ -126,7 +125,7 @@ func TestCIStatusCobraWithBuildIDInProgressStatus(t *testing.T) {
 // TestCIStatusCobraJSONNotProvisioned verifies --json output when not provisioned.
 func TestCIStatusCobraJSONNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runCIStatus(t, testutil.NewTestRuntime(&ciCobraFakeProvider{}), "--json")
+	got, err := runCIStatus(t, testutil.NewTestRuntime(&testutil.CodeBuildProvider{}), "--json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -145,7 +144,7 @@ func TestCIStatusCobraJSONProvisioned(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, ciStateJSON())
 
-	got, err := runCIStatus(t, testutil.NewTestRuntime(&ciCobraFakeProvider{}), "--json")
+	got, err := runCIStatus(t, testutil.NewTestRuntime(&testutil.CodeBuildProvider{}), "--json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -170,8 +169,8 @@ func TestCIStatusCobraJSONWithBuildID(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, ciStateJSON())
 
-	provider := &ciCobraFakeProvider{
-		buildInfoResponse: cloud.BuildInfo{
+	provider := &testutil.CodeBuildProvider{
+		BuildInfo: cloud.BuildInfo{
 			ID:     "fabrica-ci:1a2b3c4d",
 			Status: "SUCCEEDED",
 			Phase:  "COMPLETED",
@@ -216,60 +215,8 @@ func TestCIStatusCobraRuntimeError(t *testing.T) {
 
 // TestCIStatusCobraFakeProviderImplementsInterfaces verifies the fake provider satisfies all required interfaces.
 func TestCIStatusCobraFakeProviderImplementsInterfaces(t *testing.T) {
-	var p cloud.Provider = &ciCobraFakeProvider{}
+	var p cloud.Provider = &testutil.CodeBuildProvider{}
 	if _, ok := p.(cloud.CodeBuildRunner); !ok {
-		t.Fatal("ciCobraFakeProvider does not implement cloud.CodeBuildRunner")
+		t.Fatal("CodeBuildProvider does not implement cloud.CodeBuildRunner")
 	}
-}
-
-// ciCobraFakeProvider is a minimal fake satisfying cloud.Provider and
-// cloud.CodeBuildRunner for CI status Cobra-layer tests.
-type ciCobraFakeProvider struct {
-	buildInfoResponse cloud.BuildInfo
-	buildStatusErr    error
-}
-
-func (f *ciCobraFakeProvider) Name() string { return "fake" }
-
-func (f *ciCobraFakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-
-func (f *ciCobraFakeProvider) Resources() cloud.ResourceClient {
-	return &ciCobraFakeRC{}
-}
-
-// EnsureProject implements cloud.CodeBuildRunner.
-func (f *ciCobraFakeProvider) EnsureProject(_ context.Context, _ cloud.CodeBuildProjectSpec) (bool, error) {
-	return true, nil
-}
-
-// DeleteProject implements cloud.CodeBuildRunner.
-func (f *ciCobraFakeProvider) DeleteProject(_ context.Context, _ string) error {
-	return nil
-}
-
-// StartBuild implements cloud.CodeBuildRunner.
-func (f *ciCobraFakeProvider) StartBuild(_ context.Context, _ string, _ map[string]string) (string, error) {
-	return "build-123", nil
-}
-
-// BuildStatus implements cloud.CodeBuildRunner.
-func (f *ciCobraFakeProvider) BuildStatus(_ context.Context, _ string) (cloud.BuildInfo, error) {
-	return f.buildInfoResponse, f.buildStatusErr
-}
-
-// BuildLog implements cloud.CodeBuildRunner.
-func (f *ciCobraFakeProvider) BuildLog(_ context.Context, _ string) (string, error) {
-	return "", nil
-}
-
-type ciCobraFakeRC struct{}
-
-func (r *ciCobraFakeRC) Create(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *ciCobraFakeRC) Get(_ context.Context, _ *cloud.Resource) error    { return nil }
-func (r *ciCobraFakeRC) Update(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *ciCobraFakeRC) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *ciCobraFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
-	return nil, nil
 }

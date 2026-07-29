@@ -2,14 +2,12 @@ package deploy_test
 
 import (
 	"bytes"
-	"context"
 	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/deploy"
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
-	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -27,30 +25,12 @@ func run(t *testing.T, src globals.RuntimeSource, args ...string) (string, error
 	return testutil.RunCommandWithOut(t, root, &out, args...)
 }
 
-// cobraFakeProvider implements Provider + GameLiftManager so subcommand wiring
-// can be exercised without the type assertion failing. Resources() returns a
-// no-op client; individual command tests inject finer fakes via run().
-type cobraFakeProvider struct{}
-
-func (cobraFakeProvider) Name() string { return "fake" }
-func (cobraFakeProvider) Identity(context.Context) (string, string, string, error) {
-	return "123456789012", "arn", "us-east-1", nil
-}
-func (cobraFakeProvider) Resources() cloud.ResourceClient                         { return nil }
-func (cobraFakeProvider) CreateFleetAsync(context.Context, *cloud.Resource) error { return nil }
-func (cobraFakeProvider) FleetStatus(context.Context, string) (cloud.FleetInfo, error) {
-	return cloud.FleetInfo{}, nil
-}
-func (cobraFakeProvider) FleetEvents(context.Context, string) ([]cloud.FleetEvent, error) {
-	return nil, nil
-}
-
 func cobraRuntime() globals.RuntimeSource {
 	cfg := config.Defaults()
 	cfg.Cloud.AWS.AccountID = "123456789012"
 	cfg.Deploy.BuildBucket = "test-bucket"
 	return func() (globals.Runtime, error) {
-		return globals.Runtime{Config: cfg, Provider: cobraFakeProvider{}}, nil
+		return globals.Runtime{Config: cfg, Provider: &testutil.GameLiftProvider{}}, nil
 	}
 }
 

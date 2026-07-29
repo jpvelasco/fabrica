@@ -2,7 +2,6 @@ package setup_test
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"os"
 	"testing"
@@ -39,7 +38,7 @@ func newTestRuntime(provider cloud.Provider) globals.RuntimeSource {
 // TestSetupCobraDryRunShowsPlan exercises the real Cobra entry with --dry-run.
 func TestSetupCobraDryRunShowsPlan(t *testing.T) {
 	t.Chdir(t.TempDir())
-	provider := &deploySetupFakeProvider{}
+	provider := &testutil.TestProvider{}
 	got, err := runDeploySetup(t, newTestRuntime(provider), "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -49,8 +48,8 @@ func TestSetupCobraDryRunShowsPlan(t *testing.T) {
 	testutil.AssertContains(t, got, "GameLift alias")
 	testutil.AssertContains(t, got, "fabrica-builds")
 	testutil.AssertContains(t, got, "Cost estimate")
-	if provider.createCalls != 0 {
-		t.Errorf("dry-run must not create resources, got %d creates", provider.createCalls)
+	if provider.CreateCalls != 0 {
+		t.Errorf("dry-run must not create resources, got %d creates", provider.CreateCalls)
 	}
 }
 
@@ -59,7 +58,7 @@ func TestSetupCobraYesCreatesResources(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	provider := &deploySetupFakeProvider{}
+	provider := &testutil.TestProvider{}
 	got, err := runDeploySetup(t, newTestRuntime(provider), "--yes")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -67,8 +66,8 @@ func TestSetupCobraYesCreatesResources(t *testing.T) {
 	testutil.AssertContains(t, got, "Deploy setup complete")
 	testutil.AssertContains(t, got, "Next steps:")
 	testutil.AssertContains(t, got, "fabrica deploy promote")
-	if provider.createCalls != 2 {
-		t.Errorf("expected 2 creates (role + alias), got %d", provider.createCalls)
+	if provider.CreateCalls != 2 {
+		t.Errorf("expected 2 creates (role + alias), got %d", provider.CreateCalls)
 	}
 	if _, err := os.Stat(dir + "/.fabrica/state.json"); err != nil {
 		t.Errorf("expected state file after setup: %v", err)
@@ -81,7 +80,7 @@ func TestSetupCobraRequiresBuildBucket(t *testing.T) {
 	src := func() (globals.Runtime, error) {
 		cfg := config.Defaults()
 		cfg.Deploy.BuildBucket = ""
-		return globals.Runtime{Config: cfg, Provider: &deploySetupFakeProvider{}}, nil
+		return globals.Runtime{Config: cfg, Provider: &testutil.TestProvider{}}, nil
 	}
 	_, err := runDeploySetup(t, src, "--yes")
 	if err == nil {
@@ -114,36 +113,4 @@ func TestSetupCobraRuntimeError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when runtimeSource fails")
 	}
-}
-
-// ---- fakes ----
-
-type deploySetupFakeProvider struct {
-	createCalls int
-}
-
-func (f *deploySetupFakeProvider) Name() string { return "fake" }
-
-func (f *deploySetupFakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-
-func (f *deploySetupFakeProvider) Resources() cloud.ResourceClient {
-	return &deploySetupFakeRC{provider: f}
-}
-
-type deploySetupFakeRC struct {
-	provider *deploySetupFakeProvider
-}
-
-func (r *deploySetupFakeRC) Create(_ context.Context, res *cloud.Resource) error {
-	r.provider.createCalls++
-	res.Identifier = res.TypeName + "-id"
-	return nil
-}
-func (r *deploySetupFakeRC) Get(_ context.Context, _ *cloud.Resource) error    { return nil }
-func (r *deploySetupFakeRC) Update(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *deploySetupFakeRC) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *deploySetupFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
-	return nil, nil
 }

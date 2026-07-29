@@ -2,7 +2,6 @@ package promote_test
 
 import (
 	"bytes"
-	"context"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/deploy/promote"
@@ -52,7 +51,7 @@ func deployStateJSON() string {
 // TestPromoteCobraNotProvisioned verifies clean message when deploy is not set up.
 func TestPromoteCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	_, err := runPromote(t, newTestRuntime(&promoteCobraFakeProvider{}), "v1.0.0")
+	_, err := runPromote(t, newTestRuntime(&testutil.GameLiftProvider{}), "v1.0.0")
 	if err == nil {
 		t.Fatal("expected error when deploy not provisioned")
 	}
@@ -65,7 +64,7 @@ func TestPromoteCobraDryRunShowsPlan(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, deployStateJSON())
 
-	provider := &promoteCobraFakeProvider{}
+	provider := &testutil.GameLiftProvider{}
 	got, err := runPromote(t, newTestRuntime(provider), "v1.0.0", "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -73,8 +72,8 @@ func TestPromoteCobraDryRunShowsPlan(t *testing.T) {
 	testutil.AssertContains(t, got, "dry run")
 	testutil.AssertContains(t, got, "v1.0.0")
 	testutil.AssertContains(t, got, "Cost estimate")
-	if provider.createFleetAsyncCalls > 0 || provider.createResourceCalls > 0 {
-		t.Errorf("dry-run should not make AWS calls: createResource=%d createFleetAsync=%d", provider.createResourceCalls, provider.createFleetAsyncCalls)
+	if provider.CreateFleetAsyncCalls > 0 || provider.CreateCalls > 0 {
+		t.Errorf("dry-run should not make AWS calls: createResource=%d createFleetAsync=%d", provider.CreateCalls, provider.CreateFleetAsyncCalls)
 	}
 }
 
@@ -84,7 +83,7 @@ func TestPromoteCobraDryRunShowsResources(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, deployStateJSON())
 
-	got, err := runPromote(t, newTestRuntime(&promoteCobraFakeProvider{}), "v1.2.3", "--dry-run")
+	got, err := runPromote(t, newTestRuntime(&testutil.GameLiftProvider{}), "v1.2.3", "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -98,22 +97,22 @@ func TestPromoteCobraYesFlagWithNoWait(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, deployStateJSON())
 
-	provider := &promoteCobraFakeProvider{}
+	provider := &testutil.GameLiftProvider{}
 	got, err := runPromote(t, newTestRuntime(provider), "v1.0.0", "--yes", "--no-wait")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if provider.createResourceCalls != 1 {
-		t.Errorf("expected 1 createResource call for build, got %d", provider.createResourceCalls)
+	if provider.CreateCalls != 1 {
+		t.Errorf("expected 1 createResource call for build, got %d", provider.CreateCalls)
 	}
-	if provider.createFleetAsyncCalls != 1 {
-		t.Errorf("expected 1 createFleetAsync call, got %d", provider.createFleetAsyncCalls)
+	if provider.CreateFleetAsyncCalls != 1 {
+		t.Errorf("expected 1 createFleetAsync call, got %d", provider.CreateFleetAsyncCalls)
 	}
-	if provider.fleetStatusCalls > 0 {
-		t.Errorf("--no-wait should not poll fleet status, but made %d calls", provider.fleetStatusCalls)
+	if provider.FleetStatusCalls > 0 {
+		t.Errorf("--no-wait should not poll fleet status, but made %d calls", provider.FleetStatusCalls)
 	}
-	if provider.updateResourceCalls > 0 {
-		t.Errorf("--no-wait should not flip alias, but made %d update calls", provider.updateResourceCalls)
+	if provider.UpdateCalls > 0 {
+		t.Errorf("--no-wait should not flip alias, but made %d update calls", provider.UpdateCalls)
 	}
 	testutil.AssertContains(t, got, "Fleet creation started")
 }
@@ -124,7 +123,7 @@ func TestPromoteCobraJSONDryRun(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, deployStateJSON())
 
-	_, err := runPromote(t, newTestRuntime(&promoteCobraFakeProvider{}), "v1.0.0", "--json", "--dry-run")
+	_, err := runPromote(t, newTestRuntime(&testutil.GameLiftProvider{}), "v1.0.0", "--json", "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -132,68 +131,8 @@ func TestPromoteCobraJSONDryRun(t *testing.T) {
 
 // TestPromoteCobraFakeProviderImplementsInterfaces verifies the fake satisfies both interfaces.
 func TestPromoteCobraFakeProviderImplementsInterfaces(t *testing.T) {
-	var p cloud.Provider = &promoteCobraFakeProvider{}
+	var p cloud.Provider = &testutil.GameLiftProvider{}
 	if _, ok := p.(cloud.GameLiftManager); !ok {
-		t.Fatal("promoteCobraFakeProvider does not implement cloud.GameLiftManager")
+		t.Fatal("GameLiftProvider does not implement cloud.GameLiftManager")
 	}
-}
-
-// ---- promoteCobraFakeProvider ----
-
-// promoteCobraFakeProvider is a minimal fake satisfying cloud.Provider and
-// cloud.GameLiftManager for promote Cobra-layer tests.
-type promoteCobraFakeProvider struct {
-	createResourceCalls   int
-	updateResourceCalls   int
-	createFleetAsyncCalls int
-	fleetStatusCalls      int
-	fleetEventsCalls      int
-}
-
-func (f *promoteCobraFakeProvider) Name() string { return "fake" }
-
-func (f *promoteCobraFakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-
-func (f *promoteCobraFakeProvider) Resources() cloud.ResourceClient {
-	return &promoteCobraFakeRC{provider: f}
-}
-
-// CreateFleetAsync implements cloud.GameLiftManager.
-func (f *promoteCobraFakeProvider) CreateFleetAsync(_ context.Context, r *cloud.Resource) error {
-	f.createFleetAsyncCalls++
-	r.Identifier = "fleet-new"
-	return nil
-}
-
-// FleetStatus implements cloud.GameLiftManager.
-func (f *promoteCobraFakeProvider) FleetStatus(_ context.Context, _ string) (cloud.FleetInfo, error) {
-	f.fleetStatusCalls++
-	return cloud.FleetInfo{Status: "ACTIVE"}, nil
-}
-
-// FleetEvents implements cloud.GameLiftManager.
-func (f *promoteCobraFakeProvider) FleetEvents(_ context.Context, _ string) ([]cloud.FleetEvent, error) {
-	f.fleetEventsCalls++
-	return nil, nil
-}
-
-type promoteCobraFakeRC struct {
-	provider *promoteCobraFakeProvider
-}
-
-func (r *promoteCobraFakeRC) Create(_ context.Context, res *cloud.Resource) error {
-	r.provider.createResourceCalls++
-	res.Identifier = "build-123"
-	return nil
-}
-func (r *promoteCobraFakeRC) Get(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *promoteCobraFakeRC) Update(_ context.Context, _ *cloud.Resource) error {
-	r.provider.updateResourceCalls++
-	return nil
-}
-func (r *promoteCobraFakeRC) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *promoteCobraFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
-	return nil, nil
 }

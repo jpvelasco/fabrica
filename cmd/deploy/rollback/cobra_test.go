@@ -8,7 +8,6 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/deploy/rollback"
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
-	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/spf13/cobra"
 )
 
@@ -47,8 +46,8 @@ func TestRollbackCobraHappyPath(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
-	provider := &cobraFakeProvider{
-		fleetStatusMap: map[string]string{"fleet-old": "ACTIVE"},
+	provider := &testutil.GameLiftProvider{
+		FleetStatusByID: map[string]string{"fleet-old": "ACTIVE"},
 	}
 	got, err := runRollback(t, testutil.NewTestRuntime(provider), "--yes")
 	if err != nil {
@@ -60,8 +59,8 @@ func TestRollbackCobraHappyPath(t *testing.T) {
 	testutil.AssertContains(t, got, "fabrica deploy status")
 
 	// Verify state was updated: alias flip call made.
-	if provider.updateCalls != 1 {
-		t.Errorf("expected 1 update call (alias flip), got %d", provider.updateCalls)
+	if provider.UpdateCalls != 1 {
+		t.Errorf("expected 1 update call (alias flip), got %d", provider.UpdateCalls)
 	}
 }
 
@@ -71,7 +70,7 @@ func TestRollbackCobraNoCandidate(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", ""))
 
-	_, err := runRollback(t, testutil.NewTestRuntime(&cobraFakeProvider{}))
+	_, err := runRollback(t, testutil.NewTestRuntime(&testutil.GameLiftProvider{}))
 	if err == nil {
 		t.Fatal("expected error when no previous fleet to roll back to")
 	}
@@ -83,7 +82,7 @@ func TestRollbackCobraNoCandidate(t *testing.T) {
 // TestRollbackCobraNotProvisioned verifies error when deploy module doesn't exist.
 func TestRollbackCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	_, err := runRollback(t, testutil.NewTestRuntime(&cobraFakeProvider{}))
+	_, err := runRollback(t, testutil.NewTestRuntime(&testutil.GameLiftProvider{}))
 	if err == nil {
 		t.Fatal("expected error when deploy not set up")
 	}
@@ -111,15 +110,15 @@ func TestRollbackCobraYesFlagBypassesConfirm(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
-	provider := &cobraFakeProvider{
-		fleetStatusMap: map[string]string{"fleet-old": "ACTIVE"},
+	provider := &testutil.GameLiftProvider{
+		FleetStatusByID: map[string]string{"fleet-old": "ACTIVE"},
 	}
 	got, err := runRollback(t, testutil.NewTestRuntime(provider), "--yes")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if provider.updateCalls != 1 {
-		t.Errorf("expected alias flip with --yes, got %d update calls", provider.updateCalls)
+	if provider.UpdateCalls != 1 {
+		t.Errorf("expected alias flip with --yes, got %d update calls", provider.UpdateCalls)
 	}
 	testutil.AssertContains(t, got, "Rolled back")
 }
@@ -130,8 +129,8 @@ func TestRollbackCobraJSONDryRun(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
-	_, err := runRollback(t, testutil.NewTestRuntime(&cobraFakeProvider{
-		fleetStatusMap: map[string]string{"fleet-old": "ACTIVE"},
+	_, err := runRollback(t, testutil.NewTestRuntime(&testutil.GameLiftProvider{
+		FleetStatusByID: map[string]string{"fleet-old": "ACTIVE"},
 	}), "--json", "--dry-run", "--yes")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -147,54 +146,4 @@ func TestRollbackCobraRuntimeError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when runtimeSource fails")
 	}
-}
-
-// cobraFakeProvider implements Provider + GameLiftManager for rollback Cobra-layer tests.
-type cobraFakeProvider struct {
-	updateCalls    int
-	fleetStatusMap map[string]string // fleetID -> status
-}
-
-func (f *cobraFakeProvider) Name() string { return "fake" }
-
-func (f *cobraFakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-
-func (f *cobraFakeProvider) Resources() cloud.ResourceClient {
-	return &cobraFakeRC{provider: f}
-}
-
-// FleetStatus implements cloud.GameLiftManager.
-func (f *cobraFakeProvider) FleetStatus(_ context.Context, fleetID string) (cloud.FleetInfo, error) {
-	status := "ACTIVE"
-	if s, ok := f.fleetStatusMap[fleetID]; ok {
-		status = s
-	}
-	return cloud.FleetInfo{FleetID: fleetID, Status: status}, nil
-}
-
-// FleetEvents implements cloud.GameLiftManager.
-func (f *cobraFakeProvider) FleetEvents(_ context.Context, _ string) ([]cloud.FleetEvent, error) {
-	return nil, nil
-}
-
-// CreateFleetAsync implements cloud.GameLiftManager.
-func (f *cobraFakeProvider) CreateFleetAsync(_ context.Context, _ *cloud.Resource) error {
-	return nil
-}
-
-type cobraFakeRC struct {
-	provider *cobraFakeProvider
-}
-
-func (r *cobraFakeRC) Create(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *cobraFakeRC) Get(_ context.Context, _ *cloud.Resource) error    { return nil }
-func (r *cobraFakeRC) Update(_ context.Context, _ *cloud.Resource) error {
-	r.provider.updateCalls++
-	return nil
-}
-func (r *cobraFakeRC) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *cobraFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
-	return nil, nil
 }

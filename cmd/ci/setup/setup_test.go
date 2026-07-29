@@ -10,24 +10,17 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
-type fakeProvider struct{}
-
-func (fakeProvider) Name() string { return "fake" }
-func (fakeProvider) Identity(context.Context) (string, string, string, error) {
-	return "123456789012", "arn", "us-west-2", nil
-}
-func (fakeProvider) Resources() cloud.ResourceClient { return nil }
-
 func testRuntime() globals.Runtime {
 	cfg := config.Defaults()
 	cfg.Cloud.AWS.AccountID = "123456789012"
-	return globals.Runtime{Provider: fakeProvider{}, Config: cfg}
+	return globals.Runtime{Provider: &testutil.TestProvider{Region: "us-west-2"}, Config: cfg}
 }
 
 // newCmd builds a command with in-memory seams. createdTypes records the

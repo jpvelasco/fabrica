@@ -44,7 +44,7 @@ func deployStateWithFleets(activeFleet, supersededFleet string) string {
 // TestStatusCobraNotProvisioned verifies clean message when no deploy state exists.
 func TestStatusCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runStatus(t, testutil.NewTestRuntime(&cobraFakeProvider{}))
+	got, err := runStatus(t, testutil.NewTestRuntime(&testutil.GameLiftProvider{}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,8 +58,8 @@ func TestStatusCobraHappyPathWithCandidate(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
-	provider := &cobraFakeProvider{
-		fleetStatusMap: map[string]string{
+	provider := &testutil.GameLiftProvider{
+		FleetStatusByID: map[string]string{
 			"fleet-new": "ACTIVE",
 			"fleet-old": "ACTIVE",
 		},
@@ -82,8 +82,8 @@ func TestStatusCobraSingleFleetNoRollback(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", ""))
 
-	provider := &cobraFakeProvider{
-		fleetStatusMap: map[string]string{"fleet-new": "ACTIVE"},
+	provider := &testutil.GameLiftProvider{
+		FleetStatusByID: map[string]string{"fleet-new": "ACTIVE"},
 	}
 	got, err := runStatus(t, testutil.NewTestRuntime(provider))
 	if err != nil {
@@ -103,8 +103,8 @@ func TestStatusCobraDryRunNoProviderCall(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
-	provider := &cobraFakeProvider{
-		fleetStatusMap: map[string]string{"fleet-new": "ACTIVE"},
+	provider := &testutil.GameLiftProvider{
+		FleetStatusByID: map[string]string{"fleet-new": "ACTIVE"},
 	}
 	got, err := runStatus(t, testutil.NewTestRuntime(provider), "--dry-run")
 	if err != nil {
@@ -118,7 +118,7 @@ func TestStatusCobraDryRunNoProviderCall(t *testing.T) {
 // TestStatusCobraJSONNotProvisioned verifies --json output when not provisioned.
 func TestStatusCobraJSONNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runStatus(t, testutil.NewTestRuntime(&cobraFakeProvider{}), "--json")
+	got, err := runStatus(t, testutil.NewTestRuntime(&testutil.GameLiftProvider{}), "--json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -137,8 +137,8 @@ func TestStatusCobraJSONWithFleets(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
-	provider := &cobraFakeProvider{
-		fleetStatusMap: map[string]string{
+	provider := &testutil.GameLiftProvider{
+		FleetStatusByID: map[string]string{
 			"fleet-new": "ACTIVE",
 			"fleet-old": "ACTIVE",
 		},
@@ -174,8 +174,8 @@ func TestStatusCobraJSONDryRun(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
-	_, err := runStatus(t, testutil.NewTestRuntime(&cobraFakeProvider{
-		fleetStatusMap: map[string]string{"fleet-new": "ACTIVE"},
+	_, err := runStatus(t, testutil.NewTestRuntime(&testutil.GameLiftProvider{
+		FleetStatusByID: map[string]string{"fleet-new": "ACTIVE"},
 	}), "--json", "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -188,8 +188,8 @@ func TestStatusCobraYesFlagWithDryRun(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
-	_, err := runStatus(t, testutil.NewTestRuntime(&cobraFakeProvider{
-		fleetStatusMap: map[string]string{"fleet-new": "ACTIVE"},
+	_, err := runStatus(t, testutil.NewTestRuntime(&testutil.GameLiftProvider{
+		FleetStatusByID: map[string]string{"fleet-new": "ACTIVE"},
 	}), "--yes", "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -219,9 +219,9 @@ func TestStatusCobraRuntimeError(t *testing.T) {
 
 // TestStatusCobraFakeProviderImplementsInterfaces verifies the fake provider satisfies all required interfaces.
 func TestStatusCobraFakeProviderImplementsInterfaces(t *testing.T) {
-	var p cloud.Provider = &cobraFakeProvider{}
+	var p cloud.Provider = &testutil.GameLiftProvider{}
 	if _, ok := p.(cloud.GameLiftManager); !ok {
-		t.Fatal("cobraFakeProvider does not implement cloud.GameLiftManager")
+		t.Fatal("GameLiftProvider does not implement cloud.GameLiftManager")
 	}
 }
 
@@ -238,50 +238,6 @@ type fleetJSONType struct {
 	BuildVersion string `json:"buildVersion"`
 	Role         string `json:"role"`
 	LiveStatus   string `json:"liveStatus"`
-}
-
-// cobraFakeProvider implements Provider + GameLiftManager for status Cobra-layer tests.
-type cobraFakeProvider struct {
-	fleetStatusMap map[string]string // fleetID -> status
-}
-
-func (f *cobraFakeProvider) Name() string { return "fake" }
-
-func (f *cobraFakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-
-func (f *cobraFakeProvider) Resources() cloud.ResourceClient {
-	return &cobraFakeRC{}
-}
-
-// FleetStatus implements cloud.GameLiftManager.
-func (f *cobraFakeProvider) FleetStatus(_ context.Context, fleetID string) (cloud.FleetInfo, error) {
-	status := "ACTIVE"
-	if s, ok := f.fleetStatusMap[fleetID]; ok {
-		status = s
-	}
-	return cloud.FleetInfo{FleetID: fleetID, Status: status}, nil
-}
-
-// FleetEvents implements cloud.GameLiftManager.
-func (f *cobraFakeProvider) FleetEvents(_ context.Context, _ string) ([]cloud.FleetEvent, error) {
-	return nil, nil
-}
-
-// CreateFleetAsync implements cloud.GameLiftManager.
-func (f *cobraFakeProvider) CreateFleetAsync(_ context.Context, _ *cloud.Resource) error {
-	return nil
-}
-
-type cobraFakeRC struct{}
-
-func (r *cobraFakeRC) Create(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *cobraFakeRC) Get(_ context.Context, _ *cloud.Resource) error    { return nil }
-func (r *cobraFakeRC) Update(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *cobraFakeRC) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *cobraFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
-	return nil, nil
 }
 
 func assertNotContains(t *testing.T, s, substr string) {

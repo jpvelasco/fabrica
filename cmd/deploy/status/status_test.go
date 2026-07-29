@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -15,7 +16,7 @@ import (
 
 func newTestCmd(out *bytes.Buffer, st *fabricastate.State) *command {
 	return &command{
-		runtime:   globals.Runtime{Config: config.Defaults(), Provider: fakeProvider{}},
+		runtime:   globals.Runtime{Config: config.Defaults(), Provider: &testutil.GameLiftProvider{}},
 		out:       out,
 		readState: func() (*fabricastate.State, error) { return st, nil },
 		fleetStatus: func(_ context.Context, id string) (cloud.FleetInfo, error) {
@@ -194,19 +195,4 @@ func TestSummaryLineWithRollback(t *testing.T) {
 	if got != "alias ready • active fleet fleet-2 (ACTIVE) • 1 rollback candidate(s)" {
 		t.Errorf("summaryLine with rollback = %q", got)
 	}
-}
-
-type fakeProvider struct{}
-
-func (fakeProvider) Name() string { return "fake" }
-func (fakeProvider) Identity(context.Context) (string, string, string, error) {
-	return "123456789012", "arn", "us-east-1", nil
-}
-func (fakeProvider) Resources() cloud.ResourceClient                         { return nil }
-func (fakeProvider) CreateFleetAsync(context.Context, *cloud.Resource) error { return nil }
-func (fakeProvider) FleetStatus(context.Context, string) (cloud.FleetInfo, error) {
-	return cloud.FleetInfo{}, nil
-}
-func (fakeProvider) FleetEvents(context.Context, string) ([]cloud.FleetEvent, error) {
-	return nil, nil
 }
