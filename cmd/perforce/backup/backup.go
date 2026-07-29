@@ -12,6 +12,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	perforceprovisioning "github.com/jpvelasco/fabrica/cmd/perforce/internal/provisioning"
+	"github.com/jpvelasco/fabrica/cmd/perforce/internal/remoteexec"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/credentials"
@@ -66,11 +67,7 @@ With no subcommand, creates a new backup.`,
 			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
 			c.writeState = fabricastate.WriteState
 			c.readCreds = func() (string, error) {
-				raw, err := credentials.ReadFile(credFile)
-				if err != nil {
-					return "", err
-				}
-				return credentials.ParsePerforceAdminPassword(raw)
+				return credentials.ReadPerforceAdminPassword(credFile)
 			}
 			if rt.Provider != nil {
 				if rr, ok := rt.Provider.(cloud.RemoteRunner); ok {
@@ -151,7 +148,7 @@ func (c createCommand) run(ctx context.Context) error {
 		return err
 	}
 
-	if err := c.executeBackup(ctx, target.Instance.Identifier, script); err != nil {
+	if err := remoteexec.RunScript(ctx, c.out, c.runRemote, target.Instance.Identifier, "backup", script); err != nil {
 		return err
 	}
 
@@ -174,15 +171,19 @@ func (c createCommand) printBackupPlan(id, dest string, s3Export bool, cfg confi
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "  Backup ID:  %s\n", id)
 	fmt.Fprintf(c.out, "  Path:       %s\n", dest)
+	c.printS3Destination(id, s3Export, cfg)
+	fmt.Fprintln(c.out)
+	fmt.Fprintln(c.out, "WARNING: Checkpoint briefly quiesces Helix Core; clients may stall.")
+	fmt.Fprintln(c.out)
+}
+
+func (c createCommand) printS3Destination(id string, s3Export bool, cfg config.PerforceBackupConfig) {
 	if s3Export {
 		fmt.Fprintf(c.out, "  S3 export:  s3://%s/%s%s\n", cfg.S3Bucket, perforce.ResolveS3Prefix(cfg.S3Prefix), id)
 		fmt.Fprintln(c.out, "  Note:       S3 storage is billed outside Fabrica cost estimates.")
 	} else {
 		fmt.Fprintln(c.out, "  S3 export:  disabled")
 	}
-	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "WARNING: Checkpoint briefly quiesces Helix Core; clients may stall.")
-	fmt.Fprintln(c.out)
 }
 
 func (c createCommand) confirmBackup() error {
@@ -219,18 +220,6 @@ func (c createCommand) buildBackupScript(id, backupRoot, helixVersion string, s3
 		S3Bucket:      cfg.S3Bucket,
 		S3Prefix:      cfg.S3Prefix,
 	})
-}
-
-func (c createCommand) executeBackup(ctx context.Context, instanceID string, script string) error {
-	fmt.Fprintln(c.out, "Running backup via SSM...")
-	res, err := c.runRemote(ctx, instanceID, []string{script})
-	if err != nil {
-		return fmt.Errorf("backup remote command failed: %w\nIf the instance has no SSM profile, recreate Perforce with a current Fabrica or attach AmazonSSMManagedInstanceCore and retry.\nstderr: %s", err, res.Stderr)
-	}
-	if res.ExitCode != 0 {
-		return fmt.Errorf("backup script exit %d: %s", res.ExitCode, res.Stderr)
-	}
-	return nil
 }
 
 func (c createCommand) updateStateAfterBackup(st *fabricastate.State, m *fabricastate.ModuleState, id string) {
@@ -275,10 +264,7 @@ func (c createCommand) printDryRun(id, dest string, s3Export bool, cfg config.Pe
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "  Backup ID:  %s\n", id)
 	fmt.Fprintf(c.out, "  Path:       %s\n", dest)
-	if s3Export {
-		fmt.Fprintf(c.out, "  S3 export:  s3://%s/%s%s\n", cfg.S3Bucket, perforce.ResolveS3Prefix(cfg.S3Prefix), id)
-		fmt.Fprintln(c.out, "  Note:       S3 storage is billed outside Fabrica cost estimates.")
-	}
+	c.printS3Destination(id, s3Export, cfg)
 	fmt.Fprintln(c.out)
 	fmt.Fprintln(c.out, "WARNING: Checkpoint briefly quiesces Helix Core; clients may stall.")
 	fmt.Fprintln(c.out, "Run without --dry-run to proceed.")

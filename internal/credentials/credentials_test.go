@@ -78,35 +78,41 @@ func TestFormatPerforce(t *testing.T) {
 	}
 }
 
-func TestParsePerforceAdminPassword(t *testing.T) {
-	content := credentials.FormatPerforce("s3cret")
-	got, err := credentials.ParsePerforceAdminPassword(content)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "s3cret" {
-		t.Errorf("got %q", got)
-	}
-	if _, err := credentials.ParsePerforceAdminPassword("# only comment\n"); err == nil {
-		t.Fatal("expected missing key error")
-	}
-}
-
-func TestReadFile(t *testing.T) {
+func TestReadPerforceAdminPassword(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "creds.yaml")
-	if err := credentials.WriteCredentials(path, credentials.FormatPerforce("pw")); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name    string
+		content string
+		want    string
+		wantErr bool
+	}{
+		{name: "formatted", content: credentials.FormatPerforce("s3cret"), want: "s3cret"},
+		{name: "single quoted", content: "admin_password: 'single'\n", want: "single"},
+		{name: "empty", content: "# comment\n\nother: x\nadmin_password: \"\"\n", wantErr: true},
+		{name: "missing", content: "# comment\nother: x\n", wantErr: true},
 	}
-	got, err := credentials.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(dir, tt.name+".yaml")
+			if err := credentials.WriteCredentials(path, tt.content); err != nil {
+				t.Fatal(err)
+			}
+			got, err := credentials.ReadPerforceAdminPassword(path)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
 	}
-	pass, err := credentials.ParsePerforceAdminPassword(got)
-	if err != nil || pass != "pw" {
-		t.Fatalf("pass=%q err=%v", pass, err)
-	}
-	if _, err := credentials.ReadFile(filepath.Join(dir, "missing.yaml")); err == nil {
+	if _, err := credentials.ReadPerforceAdminPassword(filepath.Join(dir, "missing.yaml")); err == nil {
 		t.Fatal("expected missing file error")
 	}
 }

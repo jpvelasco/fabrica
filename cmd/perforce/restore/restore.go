@@ -13,6 +13,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	perforceprovisioning "github.com/jpvelasco/fabrica/cmd/perforce/internal/provisioning"
+	"github.com/jpvelasco/fabrica/cmd/perforce/internal/remoteexec"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/credentials"
 	"github.com/jpvelasco/fabrica/internal/perforce"
@@ -60,11 +61,7 @@ Confirmation phrase: restore perforce <account-id>`,
 			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
 			c.writeState = fabricastate.WriteState
 			c.readCreds = func() (string, error) {
-				raw, err := credentials.ReadFile(credFile)
-				if err != nil {
-					return "", err
-				}
-				return credentials.ParsePerforceAdminPassword(raw)
+				return credentials.ReadPerforceAdminPassword(credFile)
 			}
 			if rt.Provider != nil {
 				if rr, ok := rt.Provider.(cloud.RemoteRunner); ok {
@@ -130,7 +127,7 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 
-	if err := c.executeRestore(ctx, target.Instance.Identifier, script); err != nil {
+	if err := remoteexec.RunScript(ctx, c.out, c.runRemote, target.Instance.Identifier, "restore", script); err != nil {
 		return err
 	}
 
@@ -230,18 +227,6 @@ func (c command) buildRestoreScript(backupRoot string, meta perforce.BackupMeta)
 		ServerRoot:    meta.ServerRoot,
 		AdminPassword: adminPass,
 	})
-}
-
-func (c command) executeRestore(ctx context.Context, instanceID string, script string) error {
-	fmt.Fprintln(c.out, "Running restore via SSM...")
-	res, err := c.runRemote(ctx, instanceID, []string{script})
-	if err != nil {
-		return fmt.Errorf("restore remote command failed: %w\nstderr: %s", err, res.Stderr)
-	}
-	if res.ExitCode != 0 {
-		return fmt.Errorf("restore script exit %d: %s", res.ExitCode, res.Stderr)
-	}
-	return nil
 }
 
 func (c command) probeAndDetermineStatus(ctx context.Context, instanceID string, currentStatus string) (string, bool) {

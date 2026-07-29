@@ -8,22 +8,6 @@ import (
 	"github.com/jpvelasco/fabrica/internal/credentials"
 )
 
-func TestParsePerforceAdminPassword_SkipNonKeyAndEmpty(t *testing.T) {
-	content := "# comment\n\nother: x\nadmin_password: \"\"\n"
-	if _, err := credentials.ParsePerforceAdminPassword(content); err == nil {
-		t.Fatal("expected empty password error")
-	}
-	content2 := "admin_password: 'single'\n"
-	got, err := credentials.ParsePerforceAdminPassword(content2)
-	if err != nil || got != "single" {
-		t.Fatalf("got %q err=%v", got, err)
-	}
-	// line without admin_password key is skipped until missing
-	if _, err := credentials.ParsePerforceAdminPassword("foo: bar\n"); err == nil {
-		t.Fatal("expected not found")
-	}
-}
-
 func TestWriteCredentials_InvalidDir(t *testing.T) {
 	// Create a file where a directory is needed so MkdirAll fails when
 	// parent path component is a file.
