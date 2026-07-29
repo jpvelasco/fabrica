@@ -16,6 +16,7 @@ func TestReadStateOrNew_FileMissing_ReturnsNew(t *testing.T) {
 	}
 	if st == nil {
 		t.Fatal("expected non-nil state")
+		return
 	}
 	if st.Account != "123456789012" || st.Region != "us-east-1" {
 		t.Errorf("expected account/region from args, got %q/%q", st.Account, st.Region)
