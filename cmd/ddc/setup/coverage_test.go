@@ -129,6 +129,7 @@ func TestRunApplyScylla(t *testing.T) {
 	m := st.GetModule("ddc")
 	if m == nil {
 		t.Fatal("missing module")
+		return
 	}
 	var roles []string
 	for _, r := range m.Resources {
