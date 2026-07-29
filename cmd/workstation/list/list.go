@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
 	"github.com/spf13/cobra"
@@ -31,7 +32,6 @@ type ListOutput struct {
 }
 
 type command struct {
-	runtime globals.Runtime
 	jsonOut bool
 	out     io.Writer
 
@@ -51,11 +51,10 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 			}
 			opts := optionsSource()
 			c := command{
-				runtime: rt,
-				jsonOut: opts.JSONOutput,
-				out:     out,
+				jsonOut:   opts.JSONOutput,
+				out:       out,
+				readState: func() (*fabricastate.State, error) { return provision.ReadState(rt) },
 			}
-			c.readState = c.defaultReadState
 			return c.run(cmd.Context())
 		},
 	}
@@ -113,13 +112,4 @@ func (c command) printJSON(m *fabricastate.ModuleState) error {
 	}
 	fmt.Fprintln(c.out, string(data))
 	return nil
-}
-
-func (c command) defaultReadState() (*fabricastate.State, error) {
-	account, region := "", ""
-	if c.runtime.Config != nil {
-		account = c.runtime.Config.Cloud.AWS.AccountID
-		region = c.runtime.Config.Cloud.AWS.Region
-	}
-	return fabricastate.ReadStateOrNew(account, region)
 }

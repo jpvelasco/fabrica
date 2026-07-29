@@ -6,20 +6,15 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/assert"
-	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
 func newTestCommand(out *bytes.Buffer, st *fabricastate.State) command {
-	cfg := config.Defaults()
-	c := command{
-		runtime: globals.Runtime{Config: cfg},
-		out:     out,
+	return command{
+		out:       out,
+		readState: func() (*fabricastate.State, error) { return st, nil },
 	}
-	c.readState = func() (*fabricastate.State, error) { return st, nil }
-	return c
 }
 
 func TestListNoneProvisioned(t *testing.T) {
@@ -84,13 +79,11 @@ func TestListJSONShowsWorkstation(t *testing.T) {
 
 func TestListReadStateError(t *testing.T) {
 	var out bytes.Buffer
-	cfg := config.Defaults()
 	c := command{
-		runtime: globals.Runtime{Config: cfg},
-		out:     &out,
-	}
-	c.readState = func() (*fabricastate.State, error) {
-		return nil, errors.New("disk read failure")
+		out: &out,
+		readState: func() (*fabricastate.State, error) {
+			return nil, errors.New("disk read failure")
+		},
 	}
 
 	err := c.run(context.Background())
