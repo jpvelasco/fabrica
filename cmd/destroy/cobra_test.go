@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/destroy"
@@ -135,12 +136,13 @@ func TestDestroyCobraNilProvider(t *testing.T) {
 // TestDestroyCobraIdentityFailurePropagates verifies that an identity
 // resolution error surfaces as a command error.
 func TestDestroyCobraIdentityFailurePropagates(t *testing.T) {
-	provider := &cobraFakeProvider{identityErr: errors.New("credentials unavailable")}
+	provider := &cobraFakeProvider{}
+	provider.IdentityErr = errors.New("credentials unavailable")
 	_, err := runDestroy(t, newCobraTestRuntime(provider), "--all", "--yes")
 	if err == nil {
 		t.Fatal("expected error when identity fails")
 	}
-	if !cobraContainsString(err.Error(), "could not resolve AWS identity") {
+	if !strings.Contains(err.Error(), "could not resolve AWS identity") {
 		t.Fatalf("error %q does not mention AWS identity", err.Error())
 	}
 }
@@ -194,7 +196,7 @@ func TestDestroyCobraReadStateError(t *testing.T) {
 
 	rt := globals.Runtime{
 		Config:   cfg,
-		Provider: &stateErrorProvider{},
+		Provider: &testutil.NilResourceProvider{TestProvider: testutil.TestProvider{IdentityErr: errors.New("identity failed")}},
 	}
 
 	src := func() (globals.Runtime, error) { return rt, nil }
@@ -252,35 +254,16 @@ func (r *cobraFakeRCWithDelete) List(ctx context.Context, typeName string) ([]cl
 	return nil, nil
 }
 
-// stateErrorProvider simulates a provider that exists but fails on Identity.
-type stateErrorProvider struct{}
-
-func (stateErrorProvider) Name() string { return "err" }
-func (stateErrorProvider) Identity(ctx context.Context) (string, string, string, error) {
-	return "", "", "", errors.New("identity failed")
-}
-func (stateErrorProvider) Resources() cloud.ResourceClient { return nil }
-
 // cobraFakeProvider is a minimal fake satisfying cloud.Provider and
 // cloud.StateBackendDestroyer for Cobra-layer tests.
 type cobraFakeProvider struct {
+	testutil.NilResourceProvider
+
 	deletedBucket     bool
 	deletedTable      bool
-	identityErr       error
 	bucketDeleteCalls int
 	tableDeleteCalls  int
 }
-
-func (f *cobraFakeProvider) Name() string { return "fake" }
-
-func (f *cobraFakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	if f.identityErr != nil {
-		return "", "", "", f.identityErr
-	}
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-
-func (f *cobraFakeProvider) Resources() cloud.ResourceClient { return nil }
 
 func (f *cobraFakeProvider) DeleteStateBucket(_ context.Context, bucket string) (cloud.StateBackendDeleteResult, error) {
 	f.bucketDeleteCalls++
@@ -292,16 +275,4 @@ func (f *cobraFakeProvider) DeleteStateLockTable(_ context.Context, table string
 	f.tableDeleteCalls++
 	f.deletedTable = true
 	return cloud.StateBackendDeleteResult{Identifier: table, Deleted: true}, nil
-}
-
-func cobraContainsString(s, substr string) bool {
-	if len(substr) == 0 {
-		return true
-	}
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

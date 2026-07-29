@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/ddc"
@@ -39,44 +40,25 @@ func TestResourceOrder(t *testing.T) {
 	}
 }
 
-type delFake struct {
-	deleted []string
-}
-
-func (d *delFake) Name() string { return "fake" }
-func (d *delFake) Identity(ctx context.Context) (string, string, string, error) {
-	return "1", "a", "us-east-1", nil
-}
-func (d *delFake) Resources() cloud.ResourceClient                     { return d }
-func (d *delFake) Create(ctx context.Context, r *cloud.Resource) error { return nil }
-func (d *delFake) Get(ctx context.Context, r *cloud.Resource) error    { return nil }
-func (d *delFake) Update(ctx context.Context, r *cloud.Resource) error { return nil }
-func (d *delFake) Delete(ctx context.Context, r *cloud.Resource) error {
-	d.deleted = append(d.deleted, r.Identifier)
-	return nil
-}
-func (d *delFake) List(ctx context.Context, typeName string) ([]cloud.Resource, error) {
-	return nil, nil
-}
-
 func TestNewTeardownRun(t *testing.T) {
-	fp := &delFake{}
+	provider := &testutil.TestProvider{}
 	st := &fabricastate.State{Account: "123"}
 	st.UpsertModule("ddc", "ami", "ready", []fabricastate.ModuleResource{
 		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-1", Properties: map[string]string{"role": ddc.RoleCoordinator}},
 		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-1"},
 	})
-	rt := globals.Runtime{Config: &config.Config{}, Provider: fp}
+	rt := globals.Runtime{Config: &config.Config{}, Provider: provider}
 	var buf bytes.Buffer
 	tc := NewTeardown(rt, &buf)
 	tc.ReadState = func() (*fabricastate.State, error) { return st, nil }
 	tc.WriteState = func(*fabricastate.State) error { return nil }
-	tc.DeleteResource = wrapDelete(fp.Delete)
-	tc.GetResource = fp.Get
+	resources := provider.Resources()
+	tc.DeleteResource = wrapDelete(resources.Delete)
+	tc.GetResource = resources.Get
 	if err := tc.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(fp.deleted) == 0 {
+	if provider.DeleteCalls == 0 {
 		t.Fatal("expected deletes")
 	}
 }
