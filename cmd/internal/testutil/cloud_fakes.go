@@ -6,6 +6,17 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 )
 
+// NilResourceProvider is a provider whose resource client is unavailable.
+// Use it to test the boundary between a configured provider and a provider
+// that cannot supply resource operations.
+type NilResourceProvider struct {
+	TestProvider
+}
+
+var _ cloud.Provider = (*NilResourceProvider)(nil)
+
+func (*NilResourceProvider) Resources() cloud.ResourceClient { return nil }
+
 // UbuntuAMIProvider extends TestProvider with configurable Ubuntu AMI
 // resolution. It is intentionally separate so TestProvider continues to
 // exercise providers that do not implement cloud.AMIResolver.

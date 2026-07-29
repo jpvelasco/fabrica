@@ -1,12 +1,11 @@
 package destroy
 
 import (
-	"context"
 	"io"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
-	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
@@ -75,25 +74,9 @@ func TestNewTeardownNilProvider(t *testing.T) {
 	}
 }
 
-type fakeRC struct{}
-
-func (fakeRC) Create(context.Context, *cloud.Resource) error          { return nil }
-func (fakeRC) Get(context.Context, *cloud.Resource) error             { return nil }
-func (fakeRC) Update(context.Context, *cloud.Resource) error          { return nil }
-func (fakeRC) Delete(context.Context, *cloud.Resource) error          { return nil }
-func (fakeRC) List(context.Context, string) ([]cloud.Resource, error) { return nil, nil }
-
-type fakeTeardownProvider struct{}
-
-func (fakeTeardownProvider) Name() string { return "fake" }
-func (fakeTeardownProvider) Identity(context.Context) (string, string, string, error) {
-	return "123456789012", "arn", "us-east-1", nil
-}
-func (fakeTeardownProvider) Resources() cloud.ResourceClient { return fakeRC{} }
-
 func TestNewTeardownWithProvider(t *testing.T) {
 	cfg := config.Defaults()
-	rt := globals.Runtime{Config: cfg, Provider: fakeTeardownProvider{}}
+	rt := globals.Runtime{Config: cfg, Provider: &testutil.TestProvider{}}
 	tc := NewTeardown(rt, io.Discard)
 
 	if tc.Spec.ModuleName != "lore" {
@@ -113,17 +96,9 @@ func TestNewTeardownWithProvider(t *testing.T) {
 	}
 }
 
-type nilRCProvider struct{}
-
-func (nilRCProvider) Name() string { return "fake" }
-func (nilRCProvider) Identity(context.Context) (string, string, string, error) {
-	return "123456789012", "arn", "us-east-1", nil
-}
-func (nilRCProvider) Resources() cloud.ResourceClient { return nil }
-
 func TestNewTeardownWithProviderNilRC(t *testing.T) {
 	cfg := config.Defaults()
-	rt := globals.Runtime{Config: cfg, Provider: nilRCProvider{}}
+	rt := globals.Runtime{Config: cfg, Provider: &testutil.NilResourceProvider{}}
 	tc := NewTeardown(rt, io.Discard)
 
 	if tc.DeleteResource != nil {
@@ -156,7 +131,7 @@ func TestNewCommandUse(t *testing.T) {
 
 func TestNewCommandWithProvider(t *testing.T) {
 	rt := func() (globals.Runtime, error) {
-		return globals.Runtime{Config: config.Defaults(), Provider: fakeTeardownProvider{}}, nil
+		return globals.Runtime{Config: config.Defaults(), Provider: &testutil.TestProvider{}}, nil
 	}
 	opts := func() globals.Options { return globals.Options{} }
 	cmd := New(rt, opts, io.Discard)

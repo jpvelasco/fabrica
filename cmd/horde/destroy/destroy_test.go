@@ -1,13 +1,12 @@
 package destroy
 
 import (
-	"context"
 	"io"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
-	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
@@ -48,7 +47,7 @@ func TestNewTeardownWiring(t *testing.T) {
 func TestNewTeardownWithProvider(t *testing.T) {
 	rt := globals.Runtime{
 		Config:   config.Defaults(),
-		Provider: &fakeProvider{},
+		Provider: &testutil.TestProvider{},
 	}
 	tc := NewTeardown(rt, io.Discard)
 
@@ -86,23 +85,4 @@ func TestNewTeardownSpecStrings(t *testing.T) {
 			t.Errorf("%s must not be empty", field.name)
 		}
 	}
-}
-
-// fakeProvider satisfies cloud.Provider for seam wiring tests.
-type fakeProvider struct{}
-
-func (p *fakeProvider) Name() string { return "fake" }
-func (p *fakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-func (p *fakeProvider) Resources() cloud.ResourceClient { return &fakeRC{} }
-
-type fakeRC struct{}
-
-func (r *fakeRC) Create(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *fakeRC) Get(_ context.Context, _ *cloud.Resource) error    { return nil }
-func (r *fakeRC) Update(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *fakeRC) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *fakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
-	return nil, nil
 }
