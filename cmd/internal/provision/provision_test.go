@@ -44,6 +44,7 @@ func TestReadState_NilConfigDefaultsToEmpty(t *testing.T) {
 	}
 	if st == nil {
 		t.Fatal("expected non-nil state")
+		return
 	}
 	if st.Account != "" || st.Region != "" {
 		t.Errorf("expected empty account/region, got %q/%q", st.Account, st.Region)

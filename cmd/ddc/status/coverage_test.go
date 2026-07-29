@@ -139,5 +139,6 @@ func TestReadState(t *testing.T) {
 	}
 	if st == nil {
 		t.Fatal("nil state")
+		return
 	}
 }

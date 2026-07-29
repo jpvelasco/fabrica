@@ -144,6 +144,7 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	m := final.GetModule("horde")
 	if m == nil {
 		t.Fatal("horde module not in final state")
+		return
 	}
 	if len(m.Resources) != 2 {
 		t.Fatalf("final state has %d resources, want 2", len(m.Resources))

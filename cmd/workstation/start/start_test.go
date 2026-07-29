@@ -144,10 +144,12 @@ func TestStartHappyPathStateUpdated(t *testing.T) {
 	}
 	if lastState == nil {
 		t.Fatal("state was never written")
+		return
 	}
 	m := lastState.GetModule("workstation")
 	if m == nil {
 		t.Fatal("workstation module should still exist after start")
+		return
 	}
 	if m.Status != "ready" {
 		t.Errorf("status = %q, want ready", m.Status)

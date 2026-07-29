@@ -2,6 +2,7 @@ package provision
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -217,11 +218,65 @@ func TestApplyPlan(t *testing.T) {
 	if !strings.Contains(got, "AWS account:      123456789012") {
 		t.Errorf("missing account, got:\n%s", got)
 	}
+	if !strings.Contains(got, "Data volume:      500 GiB gp3") {
+		t.Errorf("default apply should print Data volume, got:\n%s", got)
+	}
 	if !strings.Contains(got, "Helix Core:") || !strings.Contains(got, "2024.2") {
 		t.Errorf("missing extra field, got:\n%s", got)
 	}
 	if !strings.Contains(got, "Resources to create:") {
 		t.Errorf("missing resources header, got:\n%s", got)
+	}
+}
+
+func TestWriteApplyPlanOmitVolumeCompact(t *testing.T) {
+	// Workstation apply layout: no volume, compact labels, warning before resources.
+	var out bytes.Buffer
+	WriteApplyPlan(&out, ApplyPlanSpec{
+		Title: "Cloud Workstation",
+		Info: PlanInfo{
+			Account:      "123456789012",
+			Region:       "us-west-2",
+			InstanceType: "g4dn.xlarge",
+			VolumeSize:   100, // must not appear when OmitVolume
+		},
+		ExtraFields:   []PlanField{{Key: "Perforce", Value: "10.0.0.5:1666"}},
+		OmitVolume:    true,
+		CompactLabels: true,
+		Resources: []string{
+			"Security Group: fabrica-ws-sg",
+			"EC2 Instance:   fabrica-ws",
+		},
+		BeforeResources: func(w io.Writer) {
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "  WARNING: allowedCidr is 0.0.0.0/0")
+		},
+	})
+
+	got := out.String()
+	if strings.Contains(got, "Data volume") {
+		t.Errorf("OmitVolume must suppress Data volume line, got:\n%s", got)
+	}
+	if !strings.Contains(got, "  AWS account:   123456789012") {
+		t.Errorf("expected compact AWS account label, got:\n%s", got)
+	}
+	if !strings.Contains(got, "  AWS region:    us-west-2") {
+		t.Errorf("expected compact AWS region label, got:\n%s", got)
+	}
+	if !strings.Contains(got, "  Instance type: g4dn.xlarge") {
+		t.Errorf("expected compact Instance type label, got:\n%s", got)
+	}
+	if !strings.Contains(got, "  Perforce:     10.0.0.5:1666") {
+		t.Errorf("expected compact Perforce extra field, got:\n%s", got)
+	}
+	// WARNING must appear before Resources to create
+	warnIdx := strings.Index(got, "WARNING:")
+	resIdx := strings.Index(got, "Resources to create:")
+	if warnIdx < 0 || resIdx < 0 || warnIdx > resIdx {
+		t.Errorf("WARNING must precede Resources to create, got:\n%s", got)
+	}
+	if !strings.Contains(got, "  Security Group: fabrica-ws-sg") {
+		t.Errorf("missing compact resource line, got:\n%s", got)
 	}
 }
 
