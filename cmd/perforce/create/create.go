@@ -328,7 +328,6 @@ func (c command) printApplyPlan(plan *perforce.CreatePlan) {
 		VolumeSize:   plan.VolumeSize,
 	}, []provision.PlanField{
 		{Key: "Helix Core", Value: plan.HelixVersion},
-		{Key: "Data volume", Value: fmt.Sprintf("%d GiB gp3", plan.VolumeSize)},
 	}, []string{
 		"Security Group:   " + plan.SGName,
 		"IAM Role:         " + plan.RoleName,

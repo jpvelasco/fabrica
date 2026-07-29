@@ -311,6 +311,12 @@ func (c command) printApplyPlan(plan *workstation.CreatePlan) {
 		"Security Group:   " + plan.SGName,
 		"EC2 Instance:     " + plan.InstanceName,
 	})
+	if plan.AllowedCIDR == "0.0.0.0/0" {
+		fmt.Fprintln(c.out)
+		fmt.Fprintln(c.out, "  Warning: allowedCidr is 0.0.0.0/0 — port 8443 is open to")
+		fmt.Fprintln(c.out, "           the internet. Set workstation.allowedCidr in fabrica.yaml")
+		fmt.Fprintln(c.out, "           before deploying to production.")
+	}
 }
 
 func (c command) printPostCreate(_ *workstation.CreatePlan, instanceID string) {
