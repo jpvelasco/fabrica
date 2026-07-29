@@ -9,6 +9,16 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 )
 
+func TestNilResourceProvider(t *testing.T) {
+	provider := &NilResourceProvider{}
+	if provider.Resources() != nil {
+		t.Fatal("Resources() must return nil")
+	}
+	if provider.Name() != "fake" {
+		t.Fatalf("Name() = %q, want fake", provider.Name())
+	}
+}
+
 func TestUbuntuAMIProvider(t *testing.T) {
 	if _, ok := any(&TestProvider{}).(cloud.AMIResolver); ok {
 		t.Fatal("TestProvider unexpectedly implements cloud.AMIResolver")
