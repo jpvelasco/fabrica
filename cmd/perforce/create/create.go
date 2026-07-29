@@ -105,10 +105,6 @@ making any AWS calls.`,
 }
 
 func (c command) run(ctx context.Context) error {
-	if c.runtime.Provider == nil {
-		return fmt.Errorf("no provider configured; run 'fabrica setup' first")
-	}
-
 	account, region, err := provision.ResolveIdentity(ctx, c.runtime.Provider)
 	if err != nil {
 		return err
@@ -129,29 +125,20 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("building create plan: %w", err)
 	}
 
-	if c.dryRun {
-		c.printDryRun(plan)
-		return nil
-	}
-
-	// Check for existing module state
-	st, err := c.readState()
-	if err != nil {
-		return fmt.Errorf("reading state: %w", err)
-	}
-	if m := st.GetModule(moduleName); m != nil {
-		fmt.Fprintf(c.out, "Perforce is already provisioned. Run 'fabrica perforce status' to check health.\n")
-		fmt.Fprintf(c.out, "Use 'fabrica perforce destroy' to remove it first.\n")
-		return nil
-	}
-
-	c.printApplyPlan(plan)
-
-	if !provision.ConfirmCreate(c.out, moduleName, account, c.assumeYes, c.confirm) {
-		return nil
-	}
-
-	return c.applyCreate(ctx, st, plan)
+	return provision.RunCreate(ctx, provision.CreateSpec[*perforce.CreatePlan]{
+		ModuleName:      moduleName,
+		Account:         account,
+		Plan:            plan,
+		DryRun:          c.dryRun,
+		AssumeYes:       c.assumeYes,
+		Out:             c.out,
+		ExistingMessage: "Perforce is already provisioned. Run 'fabrica perforce status' to check health.\nUse 'fabrica perforce destroy' to remove it first.\n",
+		Confirm:         c.confirm,
+		ReadState:       c.readState,
+		PrintDryRun:     c.printDryRun,
+		PrintApplyPlan:  c.printApplyPlan,
+		Apply:           c.applyCreate,
+	})
 }
 
 // applyCreate executes the provisioning plan: generates credentials, creates the

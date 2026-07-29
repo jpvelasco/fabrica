@@ -92,10 +92,6 @@ making any AWS calls.`,
 }
 
 func (c command) run(ctx context.Context) error {
-	if c.runtime.Provider == nil {
-		return fmt.Errorf("no provider configured; run 'fabrica setup' first")
-	}
-
 	account, region, err := provision.ResolveIdentity(ctx, c.runtime.Provider)
 	if err != nil {
 		return err
@@ -114,28 +110,20 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("building create plan: %w", err)
 	}
 
-	if c.dryRun {
-		c.printDryRun(plan)
-		return nil
-	}
-
-	st, err := c.readState()
-	if err != nil {
-		return fmt.Errorf("reading state: %w", err)
-	}
-	if m := st.GetModule(moduleName); m != nil {
-		fmt.Fprintln(c.out, "Lore is already provisioned. Run 'fabrica lore status' to check health.")
-		fmt.Fprintln(c.out, "Use 'fabrica lore destroy' to remove it first.")
-		return nil
-	}
-
-	c.printApplyPlan(plan)
-
-	if !provision.ConfirmCreate(c.out, moduleName, account, c.assumeYes, c.confirm) {
-		return nil
-	}
-
-	return c.applyCreate(ctx, st, plan)
+	return provision.RunCreate(ctx, provision.CreateSpec[*lore.CreatePlan]{
+		ModuleName:      moduleName,
+		Account:         account,
+		Plan:            plan,
+		DryRun:          c.dryRun,
+		AssumeYes:       c.assumeYes,
+		Out:             c.out,
+		ExistingMessage: "Lore is already provisioned. Run 'fabrica lore status' to check health.\nUse 'fabrica lore destroy' to remove it first.\n",
+		Confirm:         c.confirm,
+		ReadState:       c.readState,
+		PrintDryRun:     c.printDryRun,
+		PrintApplyPlan:  c.printApplyPlan,
+		Apply:           c.applyCreate,
+	})
 }
 
 func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *lore.CreatePlan) error {
