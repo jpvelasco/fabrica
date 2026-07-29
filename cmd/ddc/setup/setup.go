@@ -124,13 +124,8 @@ func (c command) run(ctx context.Context) error {
 	}
 
 	c.printPlan(plan)
-	if !c.assumeYes {
-		if !c.confirm("Create these resources?") {
-			fmt.Fprintln(c.out, "Setup cancelled. No AWS resources were created.")
-			return nil
-		}
-	} else {
-		fmt.Fprintln(c.out, "Proceeding without confirmation (--yes set).")
+	if !provision.ConfirmSetup(c.out, provision.CreateResourcesPrompt, c.assumeYes, c.confirm) {
+		return nil
 	}
 
 	return c.apply(ctx, st, plan)

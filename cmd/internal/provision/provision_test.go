@@ -159,3 +159,50 @@ func TestConfirmCreate_Cancelled(t *testing.T) {
 		t.Errorf("missing cancel message: %s", out.String())
 	}
 }
+
+func TestConfirmSetup_AssumeYesBypassesPrompt(t *testing.T) {
+	var out bytes.Buffer
+	if !ConfirmSetup(&out, "ignored", true, func(string) bool {
+		t.Fatal("confirmation called with assumeYes")
+		return false
+	}) {
+		t.Fatal("ConfirmSetup() = false, want true")
+	}
+	if got, want := out.String(), "Proceeding without confirmation (--yes set).\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestConfirmSetup_Confirmed(t *testing.T) {
+	var out bytes.Buffer
+	var prompt string
+	if !ConfirmSetup(&out, "Create these resources?", false, func(got string) bool {
+		prompt = got
+		return true
+	}) {
+		t.Fatal("ConfirmSetup() = false, want true")
+	}
+	if prompt != "Create these resources?" {
+		t.Fatalf("prompt = %q, want %q", prompt, "Create these resources?")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("output = %q, want none", out.String())
+	}
+}
+
+func TestConfirmSetup_Cancelled(t *testing.T) {
+	var out bytes.Buffer
+	var prompt string
+	if ConfirmSetup(&out, "Create these resources?", false, func(got string) bool {
+		prompt = got
+		return false
+	}) {
+		t.Fatal("ConfirmSetup() = true, want false")
+	}
+	if prompt != "Create these resources?" {
+		t.Fatalf("prompt = %q, want %q", prompt, "Create these resources?")
+	}
+	if got, want := out.String(), "Setup cancelled. No AWS resources were created.\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}

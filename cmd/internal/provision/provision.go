@@ -60,6 +60,24 @@ func ConfirmCreate(out io.Writer, moduleName, account string, assumeYes bool, co
 	return true
 }
 
+// CreateResourcesPrompt is the standard confirmation prompt for module setup.
+const CreateResourcesPrompt = "Create these resources?"
+
+// ConfirmSetup handles the simple yes/no confirmation shared by setup
+// commands. If assumeYes is true, it skips the prompt and reports the bypass.
+// Returns true if setup should proceed, false if the user cancelled.
+func ConfirmSetup(out io.Writer, prompt string, assumeYes bool, confirm func(string) bool) bool {
+	if assumeYes {
+		fmt.Fprintln(out, "Proceeding without confirmation (--yes set).")
+		return true
+	}
+	if confirm(prompt) {
+		return true
+	}
+	fmt.Fprintln(out, "Setup cancelled. No AWS resources were created.")
+	return false
+}
+
 // ExistingResource returns the module resource of the given type from current
 // state, if present — used to skip already-provisioned resources idempotently.
 // Returns (zero value, false) when the module or resource is not found.
