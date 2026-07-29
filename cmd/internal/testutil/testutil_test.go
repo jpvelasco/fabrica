@@ -585,6 +585,7 @@ func TestNewProvisionedStateJSONMarshalPanic(t *testing.T) {
 		r := recover()
 		if r == nil {
 			t.Fatal("expected panic on unencodable Properties")
+			return
 		}
 		msg, ok := r.(string)
 		if !ok || !strings.Contains(msg, "NewProvisionedStateJSON") {
