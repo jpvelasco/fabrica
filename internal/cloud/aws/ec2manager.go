@@ -9,9 +9,11 @@ import (
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 )
 
-var _ fabricac.EC2InstanceManager = (*ec2Manager)(nil)
+var _ fabricac.EC2InstanceManager = (*ec2Service)(nil)
 
-type ec2Manager struct {
+// ec2Service owns the provider's lazily initialized EC2 SDK client. Both
+// instance lifecycle actions and AMI resolution share this single client.
+type ec2Service struct {
 	awsCfg awsConfig
 	client ec2APIClient
 
@@ -20,43 +22,42 @@ type ec2Manager struct {
 	newClient func(aws.Config) ec2APIClient
 }
 
-// ec2APIClient is the subset of the EC2 SDK client surface used by ec2Manager.
+// ec2APIClient is the subset of the EC2 SDK client surface used by ec2Service.
 type ec2APIClient interface {
 	StopInstances(ctx context.Context, params *ec2.StopInstancesInput, optFns ...func(*ec2.Options)) (*ec2.StopInstancesOutput, error)
 	StartInstances(ctx context.Context, params *ec2.StartInstancesInput, optFns ...func(*ec2.Options)) (*ec2.StartInstancesOutput, error)
-	DescribeInstances(ctx context.Context, params *ec2.DescribeInstancesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error)
 	DescribeImages(ctx context.Context, params *ec2.DescribeImagesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error)
 }
 
-func (m *ec2Manager) ensureClient(ctx context.Context) error {
-	if m.client != nil {
+func (s *ec2Service) ensureClient(ctx context.Context) error {
+	if s.client != nil {
 		return nil
 	}
-	loadCfg := m.loadCfg
+	loadCfg := s.loadCfg
 	if loadCfg == nil {
 		loadCfg = loadAWSConfig
 	}
-	cfg, err := loadCfg(ctx, m.awsCfg.region, m.awsCfg.profile)
+	cfg, err := loadCfg(ctx, s.awsCfg.region, s.awsCfg.profile)
 	if err != nil {
-		return fmt.Errorf("loading AWS config for EC2 manager: %w", err)
+		return fmt.Errorf("loading AWS config for EC2 service: %w", err)
 	}
-	newClient := m.newClient
+	newClient := s.newClient
 	if newClient == nil {
 		newClient = func(cfg aws.Config) ec2APIClient {
 			return ec2.NewFromConfig(cfg)
 		}
 	}
-	m.client = newClient(cfg)
+	s.client = newClient(cfg)
 	return nil
 }
 
 // StopInstance stops the EC2 instance with the given ID and returns once the
 // request is accepted (does not wait for the instance to reach stopped state).
-func (m *ec2Manager) StopInstance(ctx context.Context, instanceID string) error {
-	if err := m.ensureClient(ctx); err != nil {
+func (s *ec2Service) StopInstance(ctx context.Context, instanceID string) error {
+	if err := s.ensureClient(ctx); err != nil {
 		return err
 	}
-	_, err := m.client.StopInstances(ctx, &ec2.StopInstancesInput{
+	_, err := s.client.StopInstances(ctx, &ec2.StopInstancesInput{
 		InstanceIds: []string{instanceID},
 	})
 	if err != nil {
@@ -67,11 +68,11 @@ func (m *ec2Manager) StopInstance(ctx context.Context, instanceID string) error 
 
 // StartInstance starts the EC2 instance with the given ID and returns once the
 // request is accepted (does not wait for the instance to reach running state).
-func (m *ec2Manager) StartInstance(ctx context.Context, instanceID string) error {
-	if err := m.ensureClient(ctx); err != nil {
+func (s *ec2Service) StartInstance(ctx context.Context, instanceID string) error {
+	if err := s.ensureClient(ctx); err != nil {
 		return err
 	}
-	_, err := m.client.StartInstances(ctx, &ec2.StartInstancesInput{
+	_, err := s.client.StartInstances(ctx, &ec2.StartInstancesInput{
 		InstanceIds: []string{instanceID},
 	})
 	if err != nil {

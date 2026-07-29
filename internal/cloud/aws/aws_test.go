@@ -47,6 +47,9 @@ func TestNewProviderWithProfile(t *testing.T) {
 	if ap.awsCfg.region != "eu-west-1" {
 		t.Errorf("region = %q, want eu-west-1", ap.awsCfg.region)
 	}
+	if ap.ec2.awsCfg != ap.awsCfg {
+		t.Errorf("EC2 config = %+v, want %+v", ap.ec2.awsCfg, ap.awsCfg)
+	}
 }
 
 func TestProviderInterface(t *testing.T) {
@@ -96,19 +99,15 @@ func (s stubSTS) GetCallerIdentity(context.Context, *sts.GetCallerIdentityInput,
 	}, nil
 }
 
-func TestAwsProviderEC2ManagerStopStart(t *testing.T) {
+func TestAwsProviderStopStart(t *testing.T) {
 	p := &awsProvider{
-		awsCfg: awsConfig{region: "us-east-1"},
-		ec2Mgr: ec2Manager{
+		ec2: ec2Service{
 			awsCfg: awsConfig{region: "us-east-1"},
 			loadCfg: func(context.Context, string, string) (aws.Config, error) {
 				return aws.Config{Region: "us-east-1"}, nil
 			},
 			newClient: func(aws.Config) ec2APIClient { return &stubEC2{} },
 		},
-	}
-	if p.EC2Manager() == nil {
-		t.Fatal("EC2Manager nil")
 	}
 	if err := p.StopInstance(context.Background(), "i-1"); err != nil {
 		t.Fatal(err)
@@ -118,11 +117,10 @@ func TestAwsProviderEC2ManagerStopStart(t *testing.T) {
 	}
 }
 
-func TestAwsProviderAMIResolver(t *testing.T) {
+func TestAwsProviderResolveUbuntuAMI(t *testing.T) {
 	fake := &stubEC2{}
 	p := &awsProvider{
-		awsCfg: awsConfig{region: "us-east-1"},
-		amiRes: &amiResolver{
+		ec2: ec2Service{
 			awsCfg:    awsConfig{region: "us-east-1"},
 			client:    fake,
 			loadCfg:   func(context.Context, string, string) (aws.Config, error) { return aws.Config{}, nil },
@@ -130,13 +128,6 @@ func TestAwsProviderAMIResolver(t *testing.T) {
 		},
 	}
 
-	// AMIResolver getter should return the pre-set resolver
-	resolver := p.AMIResolver()
-	if resolver == nil {
-		t.Fatal("AMIResolver nil")
-	}
-
-	// ResolveUbuntuAMI should delegate to the resolver
 	_, err := p.ResolveUbuntuAMI(context.Background(), "us-east-1")
 	if err == nil {
 		t.Fatal("expected error (stub returns no images)")
@@ -150,9 +141,6 @@ func (stubEC2) StopInstances(context.Context, *ec2.StopInstancesInput, ...func(*
 }
 func (stubEC2) StartInstances(context.Context, *ec2.StartInstancesInput, ...func(*ec2.Options)) (*ec2.StartInstancesOutput, error) {
 	return &ec2.StartInstancesOutput{}, nil
-}
-func (stubEC2) DescribeInstances(context.Context, *ec2.DescribeInstancesInput, ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
-	return &ec2.DescribeInstancesOutput{}, nil
 }
 func (stubEC2) DescribeImages(context.Context, *ec2.DescribeImagesInput, ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error) {
 	return &ec2.DescribeImagesOutput{}, nil

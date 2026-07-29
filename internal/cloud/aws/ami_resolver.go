@@ -11,57 +11,21 @@ import (
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 )
 
-var _ fabricac.AMIResolver = (*amiResolver)(nil)
-
-// amiResolver resolves base AMIs via ec2:DescribeImages.
-type amiResolver struct {
-	awsCfg awsConfig
-	client ec2APIClient
-
-	// seams for testing — nil means use real SDK
-	loadCfg   func(ctx context.Context, region, profile string) (aws.Config, error)
-	newClient func(aws.Config) ec2APIClient
-}
-
-func newAMIResolver(cfg awsConfig) *amiResolver {
-	return &amiResolver{awsCfg: cfg}
-}
-
-func (r *amiResolver) ensureClient(ctx context.Context) error {
-	if r.client != nil {
-		return nil
-	}
-	loadCfg := r.loadCfg
-	if loadCfg == nil {
-		loadCfg = loadAWSConfig
-	}
-	cfg, err := loadCfg(ctx, r.awsCfg.region, r.awsCfg.profile)
-	if err != nil {
-		return fmt.Errorf("loading AWS config for AMI resolver: %w", err)
-	}
-	newClient := r.newClient
-	if newClient == nil {
-		newClient = func(cfg aws.Config) ec2APIClient {
-			return ec2.NewFromConfig(cfg)
-		}
-	}
-	r.client = newClient(cfg)
-	return nil
-}
+var _ fabricac.AMIResolver = (*ec2Service)(nil)
 
 // ResolveUbuntuAMI returns the latest Ubuntu 22.04 (jammy) HVM AMI for the
-// given region. It queries the canonical Canonical owner (099720109477) for
+// given region. It queries the Canonical owner (099720109477) for
 // ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server snapshots, selects the
 // most recent by creation date, and returns its AMI ID.
-func (r *amiResolver) ResolveUbuntuAMI(ctx context.Context, region string) (string, error) {
-	if err := r.ensureClient(ctx); err != nil {
+func (s *ec2Service) ResolveUbuntuAMI(ctx context.Context, region string) (string, error) {
+	if err := s.ensureClient(ctx); err != nil {
 		return "", err
 	}
 
 	// Canonical's official Ubuntu owner ID.
 	const canonicalOwnerID = "099720109477"
 
-	out, err := r.client.DescribeImages(ctx, &ec2.DescribeImagesInput{
+	out, err := s.client.DescribeImages(ctx, &ec2.DescribeImagesInput{
 		Owners: []string{canonicalOwnerID},
 		Filters: []types.Filter{
 			{

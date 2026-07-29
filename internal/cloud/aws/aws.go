@@ -16,8 +16,7 @@ type awsProvider struct {
 	cfg                      *config.Config
 	awsCfg                   awsConfig
 	clients                  resourceClients
-	ec2Mgr                   ec2Manager
-	amiRes                   *amiResolver
+	ec2                      ec2Service
 	loadConfig               stateBackendConfigLoader
 	newS3StateClient         stateBackendS3ClientFactory
 	newDynamoDBStateClient   stateBackendDynamoDBClientFactory
@@ -54,12 +53,14 @@ var _ fabricac.StateBackendBootstrapper = (*awsProvider)(nil)
 var _ fabricac.AMIResolver = (*awsProvider)(nil)
 
 func newProvider(cfg *config.Config) (fabricac.Provider, error) {
+	awsCfg := awsConfig{
+		region:  cfg.Cloud.AWS.Region,
+		profile: cfg.Cloud.AWS.Profile,
+	}
 	return &awsProvider{
-		cfg: cfg,
-		awsCfg: awsConfig{
-			region:  cfg.Cloud.AWS.Region,
-			profile: cfg.Cloud.AWS.Profile,
-		},
+		cfg:    cfg,
+		awsCfg: awsCfg,
+		ec2:    ec2Service{awsCfg: awsCfg},
 	}, nil
 }
 
@@ -79,36 +80,21 @@ func (p *awsProvider) Resources() fabricac.ResourceClient {
 	return &p.clients
 }
 
-func (p *awsProvider) EC2Manager() fabricac.EC2InstanceManager {
-	if p.ec2Mgr.awsCfg == (awsConfig{}) {
-		p.ec2Mgr.awsCfg = p.awsCfg
-	}
-	return &p.ec2Mgr
-}
-
-// StopInstance delegates to the ec2Manager, satisfying the cloud.EC2InstanceManager
+// StopInstance delegates to the EC2 service, satisfying the cloud.EC2InstanceManager
 // interface so that type assertions in workstation commands work correctly.
 func (p *awsProvider) StopInstance(ctx context.Context, instanceID string) error {
-	return p.EC2Manager().StopInstance(ctx, instanceID)
+	return p.ec2.StopInstance(ctx, instanceID)
 }
 
-// StartInstance delegates to the ec2Manager.
+// StartInstance delegates to the EC2 service.
 func (p *awsProvider) StartInstance(ctx context.Context, instanceID string) error {
-	return p.EC2Manager().StartInstance(ctx, instanceID)
-}
-
-// AMIResolver returns the AMI resolver for this provider.
-func (p *awsProvider) AMIResolver() fabricac.AMIResolver {
-	if p.amiRes == nil {
-		p.amiRes = newAMIResolver(p.awsCfg)
-	}
-	return p.amiRes
+	return p.ec2.StartInstance(ctx, instanceID)
 }
 
 // ResolveUbuntuAMI delegates to the AMI resolver, satisfying the
 // cloud.AMIResolver interface so that type assertions in module commands work.
 func (p *awsProvider) ResolveUbuntuAMI(ctx context.Context, region string) (string, error) {
-	return p.AMIResolver().ResolveUbuntuAMI(ctx, region)
+	return p.ec2.ResolveUbuntuAMI(ctx, region)
 }
 
 func init() {

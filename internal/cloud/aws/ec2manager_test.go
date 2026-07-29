@@ -7,10 +7,12 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
 // fakeEC2Client implements ec2APIClient for testing.
 type fakeEC2Client struct {
+	stubEC2
 	stopErr     error
 	startErr    error
 	stopCalls   int
@@ -37,17 +39,9 @@ func (f *fakeEC2Client) StartInstances(_ context.Context, in *ec2.StartInstances
 	return &ec2.StartInstancesOutput{}, nil
 }
 
-func (f *fakeEC2Client) DescribeInstances(_ context.Context, _ *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
-	return &ec2.DescribeInstancesOutput{}, nil
-}
-
-func (f *fakeEC2Client) DescribeImages(_ context.Context, _ *ec2.DescribeImagesInput, _ ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error) {
-	return &ec2.DescribeImagesOutput{}, nil
-}
-
 func TestStopInstance_Success(t *testing.T) {
 	fake := &fakeEC2Client{}
-	m := &ec2Manager{client: fake}
+	m := &ec2Service{client: fake}
 
 	if err := m.StopInstance(context.Background(), "i-abc123"); err != nil {
 		t.Fatalf("StopInstance: %v", err)
@@ -62,7 +56,7 @@ func TestStopInstance_Success(t *testing.T) {
 
 func TestStopInstance_Error(t *testing.T) {
 	fake := &fakeEC2Client{stopErr: errors.New("instance not found")}
-	m := &ec2Manager{client: fake}
+	m := &ec2Service{client: fake}
 
 	err := m.StopInstance(context.Background(), "i-missing")
 	if err == nil {
@@ -74,7 +68,7 @@ func TestStopInstance_Error(t *testing.T) {
 
 func TestStartInstance_Success(t *testing.T) {
 	fake := &fakeEC2Client{}
-	m := &ec2Manager{client: fake}
+	m := &ec2Service{client: fake}
 
 	if err := m.StartInstance(context.Background(), "i-xyz789"); err != nil {
 		t.Fatalf("StartInstance: %v", err)
@@ -89,7 +83,7 @@ func TestStartInstance_Success(t *testing.T) {
 
 func TestStartInstance_Error(t *testing.T) {
 	fake := &fakeEC2Client{startErr: errors.New("throttled")}
-	m := &ec2Manager{client: fake}
+	m := &ec2Service{client: fake}
 
 	err := m.StartInstance(context.Background(), "i-xyz789")
 	if err == nil {
@@ -98,46 +92,86 @@ func TestStartInstance_Error(t *testing.T) {
 	assertStringContains(t, err.Error(), "starting instance i-xyz789")
 }
 
-func TestEC2ManagerEnsureClient_LoadConfigError(t *testing.T) {
-	m := &ec2Manager{
+func TestEC2ServiceCapabilities_ReturnLoadConfigError(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*ec2Service) error
+	}{
+		{name: "stop", run: func(s *ec2Service) error {
+			return s.StopInstance(context.Background(), "i-abc")
+		}},
+		{name: "start", run: func(s *ec2Service) error {
+			return s.StartInstance(context.Background(), "i-abc")
+		}},
+		{name: "resolve AMI", run: func(s *ec2Service) error {
+			_, err := s.ResolveUbuntuAMI(context.Background(), "us-east-1")
+			return err
+		}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &ec2Service{
+				awsCfg: awsConfig{region: "us-east-1"},
+				loadCfg: func(_ context.Context, _, _ string) (aws.Config, error) {
+					return aws.Config{}, errors.New("no credentials")
+				},
+			}
+
+			err := tc.run(s)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			assertStringContains(t, err.Error(), "loading AWS config for EC2 service")
+		})
+	}
+}
+
+func TestEC2ServiceEnsureClient_DefaultFactory(t *testing.T) {
+	s := &ec2Service{
 		awsCfg: awsConfig{region: "us-east-1"},
 		loadCfg: func(_ context.Context, _, _ string) (aws.Config, error) {
-			return aws.Config{}, errors.New("no credentials")
+			return aws.Config{Region: "us-east-1"}, nil
 		},
 	}
 
-	err := m.StopInstance(context.Background(), "i-abc")
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	if err := s.ensureClient(context.Background()); err != nil {
+		t.Fatalf("ensureClient: %v", err)
 	}
-	assertStringContains(t, err.Error(), "loading AWS config for EC2 manager")
+	if s.client == nil {
+		t.Fatal("ensureClient did not create the default EC2 client")
+	}
 }
 
-func TestEC2ManagerEnsureClient_UsesSeamAndCaches(t *testing.T) {
-	fake := &fakeEC2Client{}
+func TestEC2ServiceEnsureClient_SharesClientAcrossCapabilities(t *testing.T) {
+	fake := &fakeEC2ImagesClient{images: []types.Image{
+		{ImageId: aws.String("ami-cached"), CreationDate: aws.String("2025-06-01T00:00:00Z")},
+	}}
 	loadCalls := 0
 	newCalls := 0
-	m := &ec2Manager{
+	s := &ec2Service{
 		awsCfg: awsConfig{region: "us-east-1"},
 		loadCfg: func(_ context.Context, _, _ string) (aws.Config, error) {
 			loadCalls++
 			return aws.Config{}, nil
 		},
-		newClient: func(aws.Config) ec2APIClient {
+		newClient: func(_ aws.Config) ec2APIClient {
 			newCalls++
 			return fake
 		},
 	}
 
-	// Two calls should construct the client exactly once (cached thereafter).
-	if err := m.StartInstance(context.Background(), "i-1"); err != nil {
-		t.Fatalf("first call: %v", err)
+	if _, err := s.ResolveUbuntuAMI(context.Background(), "us-east-1"); err != nil {
+		t.Fatalf("ResolveUbuntuAMI: %v", err)
 	}
-	if err := m.StopInstance(context.Background(), "i-1"); err != nil {
-		t.Fatalf("second call: %v", err)
+	if err := s.StartInstance(context.Background(), "i-1"); err != nil {
+		t.Fatalf("StartInstance: %v", err)
+	}
+	if err := s.StopInstance(context.Background(), "i-1"); err != nil {
+		t.Fatalf("StopInstance: %v", err)
 	}
 	if loadCalls != 1 {
-		t.Errorf("loadCfg called %d times, want 1 (client should be cached)", loadCalls)
+		t.Errorf("loadCfg called %d times, want 1", loadCalls)
 	}
 	if newCalls != 1 {
 		t.Errorf("newClient called %d times, want 1", newCalls)
