@@ -28,6 +28,50 @@ func (p *UbuntuAMIProvider) ResolveUbuntuAMI(context.Context, string) (string, e
 	return p.AMIID, nil
 }
 
+// EC2InstanceProvider extends TestProvider with configurable EC2 instance
+// lifecycle behavior.
+type EC2InstanceProvider struct {
+	TestProvider
+
+	StartErr error
+	StopErr  error
+	StartIDs []string
+	StopIDs  []string
+}
+
+var _ cloud.EC2InstanceManager = (*EC2InstanceProvider)(nil)
+
+func (p *EC2InstanceProvider) StartInstance(_ context.Context, instanceID string) error {
+	p.StartIDs = append(p.StartIDs, instanceID)
+	return p.StartErr
+}
+
+func (p *EC2InstanceProvider) StopInstance(_ context.Context, instanceID string) error {
+	p.StopIDs = append(p.StopIDs, instanceID)
+	return p.StopErr
+}
+
+// RemoteCommandProvider extends TestProvider with configurable remote command
+// execution behavior.
+type RemoteCommandProvider struct {
+	TestProvider
+
+	RemoteResult             cloud.RemoteResult
+	RemoteErr                error
+	RunCommandCalls          int
+	LastRunCommandInstanceID string
+	LastRunCommands          []string
+}
+
+var _ cloud.RemoteRunner = (*RemoteCommandProvider)(nil)
+
+func (p *RemoteCommandProvider) RunCommand(_ context.Context, instanceID string, commands []string) (cloud.RemoteResult, error) {
+	p.RunCommandCalls++
+	p.LastRunCommandInstanceID = instanceID
+	p.LastRunCommands = append([]string(nil), commands...)
+	return p.RemoteResult, p.RemoteErr
+}
+
 // CodeBuildProvider extends TestProvider with configurable CodeBuild behavior.
 // It is intentionally separate so TestProvider continues to exercise providers
 // that do not implement cloud.CodeBuildRunner.

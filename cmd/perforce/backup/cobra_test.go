@@ -2,7 +2,6 @@ package backup_test
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -28,29 +27,6 @@ func runBackup(t *testing.T, rt globals.RuntimeSource, args ...string) (string, 
 	var out bytes.Buffer
 	root := buildRoot(rt, &out)
 	return testutil.RunCommandWithOut(t, root, &out, append([]string{"backup"}, args...)...)
-}
-
-type fakeProvider struct {
-	remote cloud.RemoteResult
-}
-
-func (f *fakeProvider) Name() string { return "fake" }
-func (f *fakeProvider) Identity(context.Context) (string, string, string, error) {
-	return "123456789012", "arn", "us-east-1", nil
-}
-func (f *fakeProvider) Resources() cloud.ResourceClient { return &fakeRC{} }
-func (f *fakeProvider) RunCommand(context.Context, string, []string) (cloud.RemoteResult, error) {
-	return f.remote, nil
-}
-
-type fakeRC struct{}
-
-func (fakeRC) Create(context.Context, *cloud.Resource) error { return nil }
-func (fakeRC) Get(context.Context, *cloud.Resource) error    { return nil }
-func (fakeRC) Update(context.Context, *cloud.Resource) error { return nil }
-func (fakeRC) Delete(context.Context, *cloud.Resource) error { return nil }
-func (fakeRC) List(context.Context, string) ([]cloud.Resource, error) {
-	return nil, nil
 }
 
 func writeReadyState(t *testing.T) {
@@ -107,7 +83,7 @@ func TestCobraDeleteRuntimeError(t *testing.T) {
 
 func TestCobraBackupDryRun(t *testing.T) {
 	writeReadyState(t)
-	p := &fakeProvider{}
+	p := &testutil.RemoteCommandProvider{}
 	rt := func() (globals.Runtime, error) {
 		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
 	}
@@ -120,7 +96,7 @@ func TestCobraBackupDryRun(t *testing.T) {
 
 func TestCobraBackupList(t *testing.T) {
 	writeReadyState(t)
-	p := &fakeProvider{remote: cloud.RemoteResult{Stdout: ""}}
+	p := &testutil.RemoteCommandProvider{}
 	rt := func() (globals.Runtime, error) {
 		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
 	}
@@ -133,7 +109,7 @@ func TestCobraBackupList(t *testing.T) {
 
 func TestCobraBackupDeleteDryRun(t *testing.T) {
 	writeReadyState(t)
-	p := &fakeProvider{}
+	p := &testutil.RemoteCommandProvider{}
 	rt := func() (globals.Runtime, error) {
 		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
 	}
@@ -146,7 +122,7 @@ func TestCobraBackupDeleteDryRun(t *testing.T) {
 
 func TestCobraBackupNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	p := &fakeProvider{}
+	p := &testutil.RemoteCommandProvider{}
 	rt := func() (globals.Runtime, error) {
 		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
 	}
@@ -158,7 +134,7 @@ func TestCobraBackupNotProvisioned(t *testing.T) {
 
 func TestCobraBackupCreateYes(t *testing.T) {
 	writeReadyState(t)
-	p := &fakeProvider{remote: cloud.RemoteResult{ExitCode: 0, Stdout: "BACKUP_OK"}}
+	p := &testutil.RemoteCommandProvider{RemoteResult: cloud.RemoteResult{ExitCode: 0, Stdout: "BACKUP_OK"}}
 	rt := func() (globals.Runtime, error) {
 		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
 	}
@@ -173,7 +149,7 @@ func TestCobraBackupMissingCredentials(t *testing.T) {
 	writeReadyState(t)
 	// remove credentials so New's readCreds closure fails
 	_ = os.Remove(filepath.Join(".fabrica", "perforce-credentials.yaml"))
-	p := &fakeProvider{remote: cloud.RemoteResult{ExitCode: 0}}
+	p := &testutil.RemoteCommandProvider{}
 	rt := func() (globals.Runtime, error) {
 		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
 	}
@@ -184,7 +160,7 @@ func TestCobraBackupMissingCredentials(t *testing.T) {
 
 func TestCobraBackupDeleteYes(t *testing.T) {
 	writeReadyState(t)
-	p := &fakeProvider{remote: cloud.RemoteResult{ExitCode: 0, Stdout: "DELETE_OK"}}
+	p := &testutil.RemoteCommandProvider{RemoteResult: cloud.RemoteResult{ExitCode: 0, Stdout: "DELETE_OK"}}
 	rt := func() (globals.Runtime, error) {
 		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
 	}

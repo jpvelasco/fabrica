@@ -10,7 +10,6 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
-	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -330,20 +329,20 @@ func TestDefaultExecuteAction(t *testing.T) {
 	})
 
 	t.Run("unsupported_provider", func(t *testing.T) {
-		err := defaultExecuteAction(globals.Runtime{Provider: &fakeProvider{}}, startVerb)(context.Background(), "i-abc")
+		err := defaultExecuteAction(globals.Runtime{Provider: &testutil.TestProvider{}}, startVerb)(context.Background(), "i-abc")
 		if err == nil || !strings.Contains(err.Error(), "does not support EC2") {
 			t.Fatalf("error = %v", err)
 		}
 	})
 
 	t.Run("unknown_verb", func(t *testing.T) {
-		err := defaultExecuteAction(globals.Runtime{Provider: &fakeEC2Manager{}}, "reboot")(context.Background(), "i-abc")
+		err := defaultExecuteAction(globals.Runtime{Provider: &testutil.EC2InstanceProvider{}}, "reboot")(context.Background(), "i-abc")
 		if err == nil || !strings.Contains(err.Error(), "unknown action verb: reboot") {
 			t.Fatalf("error = %v", err)
 		}
 	})
 
-	manager := &fakeEC2Manager{}
+	manager := &testutil.EC2InstanceProvider{}
 	rt := globals.Runtime{Provider: manager}
 	for _, verb := range []string{startVerb, stopVerb} {
 		t.Run(verb, func(t *testing.T) {
@@ -352,11 +351,11 @@ func TestDefaultExecuteAction(t *testing.T) {
 			}
 		})
 	}
-	if len(manager.startIDs) != 1 || manager.startIDs[0] != "i-abc" {
-		t.Errorf("start IDs = %v", manager.startIDs)
+	if len(manager.StartIDs) != 1 || manager.StartIDs[0] != "i-abc" {
+		t.Errorf("start IDs = %v", manager.StartIDs)
 	}
-	if len(manager.stopIDs) != 1 || manager.stopIDs[0] != "i-abc" {
-		t.Errorf("stop IDs = %v", manager.stopIDs)
+	if len(manager.StopIDs) != 1 || manager.StopIDs[0] != "i-abc" {
+		t.Errorf("stop IDs = %v", manager.StopIDs)
 	}
 }
 
@@ -398,27 +397,4 @@ func decodeActionOutput(t *testing.T, data []byte) ActionOutput {
 		t.Fatalf("decode output %q: %v", data, err)
 	}
 	return result
-}
-
-type fakeProvider struct{}
-
-func (*fakeProvider) Name() string { return "fake" }
-func (*fakeProvider) Identity(context.Context) (string, string, string, error) {
-	return "123456789012", "arn", "us-east-1", nil
-}
-func (*fakeProvider) Resources() fabricac.ResourceClient { return nil }
-
-type fakeEC2Manager struct {
-	fakeProvider
-	startIDs []string
-	stopIDs  []string
-}
-
-func (f *fakeEC2Manager) StartInstance(_ context.Context, instanceID string) error {
-	f.startIDs = append(f.startIDs, instanceID)
-	return nil
-}
-func (f *fakeEC2Manager) StopInstance(_ context.Context, instanceID string) error {
-	f.stopIDs = append(f.stopIDs, instanceID)
-	return nil
 }
