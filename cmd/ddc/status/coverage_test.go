@@ -3,48 +3,14 @@ package status
 import (
 	"bytes"
 	"fmt"
-	"net"
-	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/ddc"
 )
-
-func startProbeServer(t *testing.T, code int) (addr string, shutdown func()) {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health/ready", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(code)
-	})
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 2 * time.Second}
-	go func() { _ = srv.Serve(ln) }()
-	return ln.Addr().String(), func() { _ = srv.Close() }
-}
-
-func TestProbeReadyOK(t *testing.T) {
-	addr, stop := startProbeServer(t, http.StatusOK)
-	defer stop()
-	if !probeReady(addr) {
-		t.Fatal("expected ready")
-	}
-}
-
-func TestProbeReadyNonOK(t *testing.T) {
-	addr, stop := startProbeServer(t, http.StatusServiceUnavailable)
-	defer stop()
-	if probeReady(addr) {
-		t.Fatal("expected not ready")
-	}
-}
 
 func TestRendererAllBranches(t *testing.T) {
 	r := renderer{publicPort: 8081, backend: "scylla"}
@@ -75,7 +41,11 @@ func TestRendererAllBranches(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			r.Result(&buf, tc.info, tc.json)
+			render := r.printText
+			if tc.json {
+				render = r.printJSON
+			}
+			render(&buf, tc.info)
 			if !strings.Contains(buf.String(), tc.sub) {
 				t.Fatalf("want %q in:\n%s", tc.sub, buf.String())
 			}

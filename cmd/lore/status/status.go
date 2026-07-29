@@ -48,38 +48,19 @@ Use --wait / -w to poll every 15 seconds until Lore is reachable
 		ModuleName:  moduleName,
 		DisplayName: "Lore",
 		Resolve: func(globals.Runtime) modstatus.RuntimeSpec {
+			r := renderer{
+				grpcPort: lore.DefaultGRPCPort,
+				httpPort: lore.DefaultHTTPPort,
+			}
 			return modstatus.RuntimeSpec{
 				ProbePort: lore.DefaultHTTPPort,
-				Renderer: renderer{
-					grpcPort: lore.DefaultGRPCPort,
-					httpPort: lore.DefaultHTTPPort,
-				},
-				Probe: probeHealthCheck,
+				Renderer: modstatus.NewRenderer(
+					"Lore", "fabrica lore create", r.printText, r.printJSON,
+				),
+				Probe: modstatus.HTTPProbe("/health_check"),
 			}
 		},
 	}, runtimeSource, optionsSource, out)
-}
-
-// probeHealthCheck performs GET http://address/health_check (address is host:port
-// from modstatus). Returns true only on HTTP 200.
-func probeHealthCheck(address string) bool {
-	return modstatus.ProbeHTTP(address, "/health_check")
-}
-
-func (renderer) NotProvisioned(out io.Writer, jsonOut bool) {
-	if jsonOut {
-		modstatus.WriteNotProvisionedJSON(out)
-		return
-	}
-	modstatus.WriteNotProvisionedText(out, "Lore", "fabrica lore create")
-}
-
-func (r renderer) Result(out io.Writer, info modstatus.Info, jsonOut bool) {
-	if jsonOut {
-		r.printJSON(out, info)
-		return
-	}
-	r.printText(out, info)
 }
 
 func (r renderer) printText(out io.Writer, info modstatus.Info) {

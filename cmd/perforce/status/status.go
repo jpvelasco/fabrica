@@ -26,9 +26,6 @@ type StatusOutput struct {
 	LastBackupAt string `json:"lastBackupAt,omitempty"`
 }
 
-// renderer implements modstatus.Renderer for Perforce-specific output.
-type renderer struct{}
-
 // New returns the "perforce status" subcommand. Global flags (--json) are
 // resolved at execution time via the source closures.
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
@@ -48,25 +45,14 @@ Use --wait / -w to poll every 15 seconds until Helix Core is reachable
 		ModuleName:  moduleName,
 		DisplayName: "Perforce",
 		Resolve: func(globals.Runtime) modstatus.RuntimeSpec {
-			return modstatus.RuntimeSpec{ProbePort: p4Port, Renderer: renderer{}}
+			return modstatus.RuntimeSpec{
+				ProbePort: p4Port,
+				Renderer: modstatus.NewRenderer(
+					"Perforce", "fabrica perforce create", printText, printJSON,
+				),
+			}
 		},
 	}, runtimeSource, optionsSource, out)
-}
-
-func (renderer) NotProvisioned(out io.Writer, jsonOut bool) {
-	if jsonOut {
-		modstatus.WriteNotProvisionedJSON(out)
-		return
-	}
-	modstatus.WriteNotProvisionedText(out, "Perforce", "fabrica perforce create")
-}
-
-func (renderer) Result(out io.Writer, info modstatus.Info, jsonOut bool) {
-	if jsonOut {
-		printJSON(out, info)
-		return
-	}
-	printText(out, info)
 }
 
 func printText(out io.Writer, info modstatus.Info) {

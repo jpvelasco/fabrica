@@ -95,21 +95,6 @@ func TestRenderJSON_CustomPorts(t *testing.T) {
 	}
 }
 
-func TestRenderNotProvisioned_JSON(t *testing.T) {
-	var out bytes.Buffer
-	renderer{}.NotProvisioned(&out, true)
-	var result StatusOutput
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	if result.Provisioned {
-		t.Error("expected provisioned=false")
-	}
-	if result.Status != "not_provisioned" {
-		t.Errorf("status = %q", result.Status)
-	}
-}
-
 func TestResolvePorts(t *testing.T) {
 	cfg := config.Defaults()
 	rt := globals.Runtime{Config: cfg}
