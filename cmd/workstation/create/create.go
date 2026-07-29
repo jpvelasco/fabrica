@@ -298,25 +298,39 @@ func (c command) printDryRun(plan *workstation.CreatePlan) {
 }
 
 func (c command) printApplyPlan(plan *workstation.CreatePlan) {
+	// Workstation apply is intentionally terser than dry-run and other modules:
+	// no Data volume line, compact labels, CIDR WARNING before the resource list
+	// (pre-#162 layout). Shared WriteApplyPlan owns formatting; opts preserve
+	// that product choice (see PR #162 review discussion_r3670766352).
 	extraFields := []provision.PlanField{}
 	if plan.MountPerforce {
 		extraFields = append(extraFields, provision.PlanField{Key: "Perforce", Value: plan.PerforceServerAddr})
 	}
-	provision.ApplyPlan(c.out, "Cloud Workstation", provision.PlanInfo{
-		Account:      plan.Account,
-		Region:       plan.Region,
-		InstanceType: plan.InstanceType,
-		VolumeSize:   plan.VolumeSize,
-	}, extraFields, []string{
-		"Security Group:   " + plan.SGName,
-		"EC2 Instance:     " + plan.InstanceName,
+	provision.WriteApplyPlan(c.out, provision.ApplyPlanSpec{
+		Title: "Cloud Workstation",
+		Info: provision.PlanInfo{
+			Account:      plan.Account,
+			Region:       plan.Region,
+			InstanceType: plan.InstanceType,
+		},
+		ExtraFields:   extraFields,
+		OmitVolume:    true,
+		CompactLabels: true,
+		Resources: []string{
+			// Compact resource labels match pre-#162 workstation apply.
+			"Security Group: " + plan.SGName,
+			"EC2 Instance:   " + plan.InstanceName,
+		},
+		BeforeResources: func(w io.Writer) {
+			if plan.AllowedCIDR != "0.0.0.0/0" {
+				return
+			}
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "  WARNING: allowedCidr is 0.0.0.0/0 — port 8443 is open to")
+			fmt.Fprintln(w, "           the internet. Set workstation.allowedCidr in fabrica.yaml")
+			fmt.Fprintln(w, "           before deploying to production.")
+		},
 	})
-	if plan.AllowedCIDR == "0.0.0.0/0" {
-		fmt.Fprintln(c.out)
-		fmt.Fprintln(c.out, "  Warning: allowedCidr is 0.0.0.0/0 — port 8443 is open to")
-		fmt.Fprintln(c.out, "           the internet. Set workstation.allowedCidr in fabrica.yaml")
-		fmt.Fprintln(c.out, "           before deploying to production.")
-	}
 }
 
 func (c command) printPostCreate(_ *workstation.CreatePlan, instanceID string) {

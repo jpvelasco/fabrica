@@ -90,22 +90,71 @@ func DryRun(out io.Writer, spec DryRunSpec) {
 	fmt.Fprintln(out, "Run without --dry-run to proceed.")
 }
 
-// ApplyPlan prints the apply plan: title, common fields (account, region,
-// instance type, volume), module-specific extra fields, and resource list.
-// Does not print cost estimate or VPC note.
+// ApplyPlanSpec configures apply-plan printing. Use WriteApplyPlan when a
+// module needs non-default layout options (e.g. omit volume).
+type ApplyPlanSpec struct {
+	Title       string
+	Info        PlanInfo
+	ExtraFields []PlanField
+	Resources   []string
+	// OmitVolume skips the Data volume line. Workstation apply historically
+	// omitted volume (intentionally terser than dry-run and other modules).
+	OmitVolume bool
+	// CompactLabels uses the narrower label padding workstation historically
+	// used on apply ("AWS account:   " vs the default 18-char column).
+	// Extra fields use a 14-char label column to match.
+	CompactLabels bool
+	// BeforeResources is called after fields and before the blank line +
+	// "Resources to create:" block. Workstation uses this for the open-CIDR
+	// WARNING that historically sat above the resource list.
+	BeforeResources func(io.Writer)
+}
+
+// ApplyPlan prints the default apply plan: title, common fields (account,
+// region, instance type, volume), module-specific extra fields, and resource
+// list. Does not print cost estimate or VPC note.
+//
+// Modules that need layout options (omit volume, compact labels) should call
+// WriteApplyPlan with an ApplyPlanSpec instead.
 func ApplyPlan(out io.Writer, title string, info PlanInfo, extraFields []PlanField, resources []string) {
-	fmt.Fprintln(out, title)
+	WriteApplyPlan(out, ApplyPlanSpec{
+		Title:       title,
+		Info:        info,
+		ExtraFields: extraFields,
+		Resources:   resources,
+	})
+}
+
+// WriteApplyPlan prints an apply plan according to spec.
+func WriteApplyPlan(out io.Writer, spec ApplyPlanSpec) {
+	fmt.Fprintln(out, spec.Title)
 	fmt.Fprintln(out, strings.Repeat("-", lineWidth))
-	fmt.Fprintf(out, "  AWS account:      %s\n", info.Account)
-	fmt.Fprintf(out, "  AWS region:       %s\n", info.Region)
-	fmt.Fprintf(out, "  Instance type:    %s\n", info.InstanceType)
-	fmt.Fprintf(out, "  Data volume:      %d GiB gp3\n", info.VolumeSize)
-	for _, f := range extraFields {
-		fmt.Fprintf(out, "  %-18s%s\n", f.Key+":", f.Value)
+	if spec.CompactLabels {
+		fmt.Fprintf(out, "  AWS account:   %s\n", spec.Info.Account)
+		fmt.Fprintf(out, "  AWS region:    %s\n", spec.Info.Region)
+		fmt.Fprintf(out, "  Instance type: %s\n", spec.Info.InstanceType)
+	} else {
+		fmt.Fprintf(out, "  AWS account:      %s\n", spec.Info.Account)
+		fmt.Fprintf(out, "  AWS region:       %s\n", spec.Info.Region)
+		fmt.Fprintf(out, "  Instance type:    %s\n", spec.Info.InstanceType)
+	}
+	if !spec.OmitVolume {
+		fmt.Fprintf(out, "  Data volume:      %d GiB gp3\n", spec.Info.VolumeSize)
+	}
+	labelWidth := 18
+	if spec.CompactLabels {
+		// Matches pre-#162 workstation apply ("Perforce:      ").
+		labelWidth = 14
+	}
+	for _, f := range spec.ExtraFields {
+		fmt.Fprintf(out, "  %-*s%s\n", labelWidth, f.Key+":", f.Value)
+	}
+	if spec.BeforeResources != nil {
+		spec.BeforeResources(out)
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Resources to create:")
-	for _, r := range resources {
+	for _, r := range spec.Resources {
 		fmt.Fprintf(out, "  %s\n", r)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -125,6 +126,36 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	}
 	if len(m.Resources) != 2 {
 		t.Fatalf("final state has %d resources, want 2", len(m.Resources))
+	}
+}
+
+// TestCreateApplyPlanIsTerser verifies workstation apply (non-dry-run) keeps the
+// pre-#162 layout: no Data volume line, compact labels, open-CIDR WARNING before
+// the resource list. Dry-run still shows volume via provision.DryRun.
+func TestCreateApplyPlanIsTerser(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	// Default allowedCidr is 0.0.0.0/0 — should emit WARNING before resources.
+	c.writeState = testutil.StateWriteNever()
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "Data volume") {
+		t.Errorf("apply plan must not print Data volume, got:\n%s", got)
+	}
+	assert.Contains(t, got, "  AWS account:   ")
+	assert.Contains(t, got, "  Instance type: ")
+	assert.Contains(t, got, "  WARNING: allowedCidr is 0.0.0.0/0")
+	assert.Contains(t, got, "  Security Group: ")
+	warnIdx := strings.Index(got, "WARNING:")
+	resIdx := strings.Index(got, "Resources to create:")
+	if warnIdx < 0 || resIdx < 0 || warnIdx > resIdx {
+		t.Errorf("WARNING must precede Resources to create, got:\n%s", got)
 	}
 }
 
