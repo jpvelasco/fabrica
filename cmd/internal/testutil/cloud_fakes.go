@@ -6,6 +6,28 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 )
 
+// UbuntuAMIProvider extends TestProvider with configurable Ubuntu AMI
+// resolution. It is intentionally separate so TestProvider continues to
+// exercise providers that do not implement cloud.AMIResolver.
+type UbuntuAMIProvider struct {
+	TestProvider
+
+	AMIID  string
+	AMIErr error
+}
+
+var _ cloud.AMIResolver = (*UbuntuAMIProvider)(nil)
+
+func (p *UbuntuAMIProvider) ResolveUbuntuAMI(context.Context, string) (string, error) {
+	if p.AMIErr != nil {
+		return "", p.AMIErr
+	}
+	if p.AMIID == "" {
+		return "ami-fake-ubuntu", nil
+	}
+	return p.AMIID, nil
+}
+
 // CodeBuildProvider extends TestProvider with configurable CodeBuild behavior.
 // It is intentionally separate so TestProvider continues to exercise providers
 // that do not implement cloud.CodeBuildRunner.

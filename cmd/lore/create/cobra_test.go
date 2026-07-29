@@ -2,9 +2,6 @@ package create_test
 
 import (
 	"bytes"
-	"context"
-	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -38,28 +35,26 @@ func newCobraTestRuntime(provider cloud.Provider) globals.RuntimeSource {
 }
 
 func TestCreateCobraDryRunNoAWSCalls(t *testing.T) {
-	provider := &cobraFakeProvider{}
+	provider := &testutil.TestProvider{}
 	got, err := runCreate(t, newCobraTestRuntime(provider), "--dry-run")
 	if err != nil {
 		t.Fatalf("dry-run failed: %v", err)
 	}
-	if provider.createCalls != 0 {
-		t.Fatalf("dry-run made %d create calls, want 0", provider.createCalls)
+	if provider.CreateCalls != 0 {
+		t.Fatalf("dry-run made %d create calls, want 0", provider.CreateCalls)
 	}
-	if !strings.Contains(got, "dry run") {
-		t.Fatalf("output missing dry run:\n%s", got)
-	}
+	testutil.AssertContains(t, got, "dry run")
 }
 
 func TestCreateCobraYesFlagSkipsConfirmation(t *testing.T) {
 	t.Chdir(t.TempDir())
-	provider := &cobraFakeProvider{}
+	provider := &testutil.TestProvider{}
 	_, err := runCreate(t, newCobraTestRuntime(provider), "--yes")
 	if err != nil {
 		t.Fatalf("--yes run failed: %v", err)
 	}
-	if provider.createCalls != 2 {
-		t.Fatalf("--yes: expected 2 create calls, got %d", provider.createCalls)
+	if provider.CreateCalls != 2 {
+		t.Fatalf("--yes: expected 2 create calls, got %d", provider.CreateCalls)
 	}
 }
 
@@ -71,39 +66,5 @@ func TestCreateCobraNilProvider(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "no provider configured") {
-		t.Fatalf("error = %v", err)
-	}
+	testutil.AssertContains(t, err.Error(), "no provider configured")
 }
-
-type cobraFakeProvider struct {
-	createCalls int
-}
-
-func (f *cobraFakeProvider) Name() string { return "fake" }
-
-func (f *cobraFakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-
-func (f *cobraFakeProvider) Resources() cloud.ResourceClient {
-	return &cobraFakeRC{provider: f}
-}
-
-type cobraFakeRC struct{ provider *cobraFakeProvider }
-
-func (r *cobraFakeRC) Create(_ context.Context, res *cloud.Resource) error {
-	r.provider.createCalls++
-	switch res.TypeName {
-	case "AWS::EC2::SecurityGroup":
-		res.Identifier = fmt.Sprintf("sg-cobra%04d", r.provider.createCalls)
-	case "AWS::EC2::Instance":
-		res.Identifier = fmt.Sprintf("i-cobra%04d", r.provider.createCalls)
-	}
-	return nil
-}
-
-func (r *cobraFakeRC) Get(_ context.Context, _ *cloud.Resource) error             { return nil }
-func (r *cobraFakeRC) Update(_ context.Context, _ *cloud.Resource) error          { return nil }
-func (r *cobraFakeRC) Delete(_ context.Context, _ *cloud.Resource) error          { return nil }
-func (r *cobraFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
