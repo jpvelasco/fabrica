@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -13,6 +14,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
+	"github.com/spf13/cobra"
 )
 
 // testSpec mirrors the perforce destroy spec — the engine is module-agnostic,
@@ -1009,5 +1011,70 @@ func TestNewStandaloneWithProvider(t *testing.T) {
 	}
 	if tc.JSONOut {
 		t.Error("JSONOut should be false")
+	}
+}
+
+func TestNewStandaloneCommandResolvesDependenciesAtExecution(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	var out bytes.Buffer
+	runtimeCalls := 0
+	optionsCalls := 0
+	cmd := NewStandaloneCommand(
+		&cobra.Command{Use: "destroy", Short: "Destroy test resources"},
+		testSpec,
+		func() (globals.Runtime, error) {
+			runtimeCalls++
+			return globals.Runtime{Config: config.Defaults()}, nil
+		},
+		func() globals.Options {
+			optionsCalls++
+			return globals.Options{DryRun: true, JSONOutput: true}
+		},
+		&out,
+	)
+
+	if cmd.Use != "destroy" || cmd.Short != "Destroy test resources" {
+		t.Fatalf("command metadata changed: Use=%q Short=%q", cmd.Use, cmd.Short)
+	}
+	if runtimeCalls != 0 || optionsCalls != 0 {
+		t.Fatal("sources must not resolve before command execution")
+	}
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if runtimeCalls != 1 || optionsCalls != 1 {
+		t.Fatalf("source calls = runtime %d, options %d; want 1 each", runtimeCalls, optionsCalls)
+	}
+
+	var result Output
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if !result.DryRun {
+		t.Error("dryRun = false, want true from late-bound options")
+	}
+}
+
+func TestNewStandaloneCommandStopsOnRuntimeError(t *testing.T) {
+	wantErr := errors.New("runtime unavailable")
+	optionsCalled := false
+	cmd := NewStandaloneCommand(
+		&cobra.Command{Use: "destroy"},
+		testSpec,
+		func() (globals.Runtime, error) { return globals.Runtime{}, wantErr },
+		func() globals.Options {
+			optionsCalled = true
+			return globals.Options{}
+		},
+		io.Discard,
+	)
+
+	err := cmd.ExecuteContext(context.Background())
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("execute error = %v, want %v", err, wantErr)
+	}
+	if optionsCalled {
+		t.Error("options source called after runtime resolution failed")
 	}
 }
