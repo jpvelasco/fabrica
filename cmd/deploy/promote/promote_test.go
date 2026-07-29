@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
@@ -29,7 +30,7 @@ func baseRuntime() globals.Runtime {
 	cfg := config.Defaults()
 	cfg.Cloud.AWS.AccountID = "123456789012"
 	cfg.Deploy.BuildBucket = "bkt"
-	return globals.Runtime{Config: cfg, Provider: fakeProvider{}}
+	return globals.Runtime{Config: cfg, Provider: &testutil.GameLiftProvider{}}
 }
 
 func newTestCmd(out *bytes.Buffer, st *fabricastate.State) *command {
@@ -466,19 +467,4 @@ func TestPromoteNoWaitSkipsPoll(t *testing.T) {
 	if !strings.Contains(out.String(), "Fleet creation started") {
 		t.Errorf("expected no-wait message:\n%s", out.String())
 	}
-}
-
-type fakeProvider struct{}
-
-func (fakeProvider) Name() string { return "fake" }
-func (fakeProvider) Identity(context.Context) (string, string, string, error) {
-	return "123456789012", "arn", "us-east-1", nil
-}
-func (fakeProvider) Resources() cloud.ResourceClient                         { return nil }
-func (fakeProvider) CreateFleetAsync(context.Context, *cloud.Resource) error { return nil }
-func (fakeProvider) FleetStatus(context.Context, string) (cloud.FleetInfo, error) {
-	return cloud.FleetInfo{}, nil
-}
-func (fakeProvider) FleetEvents(context.Context, string) ([]cloud.FleetEvent, error) {
-	return nil, nil
 }

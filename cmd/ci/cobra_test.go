@@ -2,7 +2,6 @@ package ci_test
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -10,7 +9,6 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/ci"
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
-	"github.com/jpvelasco/fabrica/internal/cloud"
 )
 
 func run(t *testing.T, src globals.RuntimeSource, args ...string) (string, error) {
@@ -21,16 +19,8 @@ func run(t *testing.T, src globals.RuntimeSource, args ...string) (string, error
 	return testutil.RunCommandWithOut(t, root, &out, args...)
 }
 
-type cobraProvider struct{}
-
-func (cobraProvider) Name() string { return "fake" }
-func (cobraProvider) Identity(context.Context) (string, string, string, error) {
-	return "123456789012", "arn", "us-west-2", nil
-}
-func (cobraProvider) Resources() cloud.ResourceClient { return nil }
-
 func cobraRuntime() globals.RuntimeSource {
-	return testutil.NewTestRuntime(cobraProvider{})
+	return testutil.NewTestRuntime(&testutil.TestProvider{Region: "us-west-2"})
 }
 
 func TestCISubcommandsRegistered(t *testing.T) {

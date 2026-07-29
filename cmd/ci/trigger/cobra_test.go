@@ -2,7 +2,6 @@ package trigger_test
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -57,6 +56,19 @@ func provisionedStateJSON() string {
 	)
 }
 
+func newTriggerProvider(startBuildID string) *testutil.CodeBuildProvider {
+	return &testutil.CodeBuildProvider{
+		TestProvider: testutil.TestProvider{
+			GetResources: map[string]cloud.Resource{
+				cloud.TypeAWSEC2Instance: {
+					ActualState: []byte(`{"PrivateIpAddress":"10.0.1.42"}`),
+				},
+			},
+		},
+		StartBuildID: startBuildID,
+	}
+}
+
 // TestTriggerCobraHappyPath starts a build via the real Cobra entry point.
 func TestTriggerCobraHappyPath(t *testing.T) {
 	dir := t.TempDir()
@@ -64,7 +76,7 @@ func TestTriggerCobraHappyPath(t *testing.T) {
 	testutil.WriteStateFile(t, dir, provisionedStateJSON())
 	bg := writeBuildGraph(t, dir)
 
-	provider := &ciTriggerFakeProvider{startID: "fabrica-ci:abc123"}
+	provider := newTriggerProvider("fabrica-ci:abc123")
 	got, err := runCITrigger(t, testutil.NewTestRuntime(provider), bg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -73,14 +85,14 @@ func TestTriggerCobraHappyPath(t *testing.T) {
 	testutil.AssertContains(t, got, "fabrica-ci")
 	testutil.AssertContains(t, got, "Compile")
 	testutil.AssertContains(t, got, "fabrica ci status")
-	if provider.startCalls != 1 {
-		t.Errorf("expected 1 StartBuild call, got %d", provider.startCalls)
+	if provider.StartBuildCalls != 1 {
+		t.Errorf("expected 1 StartBuild call, got %d", provider.StartBuildCalls)
 	}
-	if provider.lastEnv["HORDE_URL"] != "http://10.0.1.42:5000" {
-		t.Errorf("HORDE_URL = %q, want http://10.0.1.42:5000", provider.lastEnv["HORDE_URL"])
+	if provider.LastStartBuildEnv["HORDE_URL"] != "http://10.0.1.42:5000" {
+		t.Errorf("HORDE_URL = %q, want http://10.0.1.42:5000", provider.LastStartBuildEnv["HORDE_URL"])
 	}
-	if provider.lastEnv["TARGET"] != "Compile" {
-		t.Errorf("TARGET = %q, want Compile", provider.lastEnv["TARGET"])
+	if provider.LastStartBuildEnv["TARGET"] != "Compile" {
+		t.Errorf("TARGET = %q, want Compile", provider.LastStartBuildEnv["TARGET"])
 	}
 }
 
@@ -90,7 +102,7 @@ func TestTriggerCobraNotProvisioned(t *testing.T) {
 	t.Chdir(dir)
 	bg := writeBuildGraph(t, dir)
 
-	_, err := runCITrigger(t, testutil.NewTestRuntime(&ciTriggerFakeProvider{startID: "x"}), bg)
+	_, err := runCITrigger(t, testutil.NewTestRuntime(newTriggerProvider("x")), bg)
 	if err == nil {
 		t.Fatal("expected error when CI is not provisioned")
 	}
@@ -100,7 +112,7 @@ func TestTriggerCobraNotProvisioned(t *testing.T) {
 // TestTriggerCobraMissingBuildGraphArg enforces ExactArgs via Cobra.
 func TestTriggerCobraMissingBuildGraphArg(t *testing.T) {
 	t.Chdir(t.TempDir())
-	_, err := runCITrigger(t, testutil.NewTestRuntime(&ciTriggerFakeProvider{}))
+	_, err := runCITrigger(t, testutil.NewTestRuntime(newTriggerProvider("")))
 	if err == nil {
 		t.Fatal("expected error when buildgraph path is omitted")
 	}
@@ -114,13 +126,13 @@ func TestTriggerCobraBadBuildGraph(t *testing.T) {
 	if err := os.WriteFile(path, []byte("not xml"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	provider := &ciTriggerFakeProvider{startID: "x"}
+	provider := newTriggerProvider("x")
 	_, err := runCITrigger(t, testutil.NewTestRuntime(provider), path)
 	if err == nil {
 		t.Fatal("expected parse error for invalid BuildGraph")
 	}
-	if provider.startCalls != 0 {
-		t.Errorf("must not start build on parse failure, got %d calls", provider.startCalls)
+	if provider.StartBuildCalls != 0 {
+		t.Errorf("must not start build on parse failure, got %d calls", provider.StartBuildCalls)
 	}
 }
 
@@ -133,58 +145,4 @@ func TestTriggerCobraRuntimeError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when runtimeSource fails")
 	}
-}
-
-// ---- fakes ----
-
-type ciTriggerFakeProvider struct {
-	startID    string
-	startCalls int
-	lastEnv    map[string]string
-}
-
-func (f *ciTriggerFakeProvider) Name() string { return "fake" }
-
-func (f *ciTriggerFakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-
-func (f *ciTriggerFakeProvider) Resources() cloud.ResourceClient {
-	return &ciTriggerFakeRC{}
-}
-
-func (f *ciTriggerFakeProvider) EnsureProject(_ context.Context, _ cloud.CodeBuildProjectSpec) (bool, error) {
-	return true, nil
-}
-
-func (f *ciTriggerFakeProvider) DeleteProject(_ context.Context, _ string) error { return nil }
-
-func (f *ciTriggerFakeProvider) StartBuild(_ context.Context, _ string, env map[string]string) (string, error) {
-	f.startCalls++
-	f.lastEnv = env
-	if f.startID == "" {
-		return "build-1", nil
-	}
-	return f.startID, nil
-}
-
-func (f *ciTriggerFakeProvider) BuildStatus(_ context.Context, _ string) (cloud.BuildInfo, error) {
-	return cloud.BuildInfo{Status: "SUCCEEDED", Phase: "COMPLETED"}, nil
-}
-
-func (f *ciTriggerFakeProvider) BuildLog(_ context.Context, _ string) (string, error) {
-	return "", nil
-}
-
-type ciTriggerFakeRC struct{}
-
-func (r *ciTriggerFakeRC) Create(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *ciTriggerFakeRC) Get(_ context.Context, res *cloud.Resource) error {
-	res.ActualState = []byte(`{"PrivateIpAddress":"10.0.1.42"}`)
-	return nil
-}
-func (r *ciTriggerFakeRC) Update(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *ciTriggerFakeRC) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *ciTriggerFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
-	return nil, nil
 }

@@ -2,13 +2,11 @@ package destroy_test
 
 import (
 	"bytes"
-	"context"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/deploy/destroy"
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
-	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -29,7 +27,7 @@ func runDestroy(t *testing.T, runtimeSource globals.RuntimeSource, args ...strin
 // TestDestroyCobraNotProvisioned verifies clean message when deploy is not provisioned.
 func TestDestroyCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runDestroy(t, testutil.NewTestRuntime(&cobraFakeProvider{}))
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.TestProvider{}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -42,21 +40,21 @@ func TestDestroyCobraDryRun(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, deployStateJSON())
 
-	provider := &cobraFakeProvider{}
+	provider := &testutil.TestProvider{}
 	got, err := runDestroy(t, testutil.NewTestRuntime(provider), "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	testutil.AssertContains(t, got, "dry run")
-	if provider.deleteCalls > 0 {
-		t.Errorf("--dry-run should not make delete calls, made %d", provider.deleteCalls)
+	if provider.DeleteCalls > 0 {
+		t.Errorf("--dry-run should not make delete calls, made %d", provider.DeleteCalls)
 	}
 }
 
 // TestNewTeardownWiring verifies NewTeardown returns a Command with correct wiring for deploy.
 func TestNewTeardownWiring(t *testing.T) {
 	var out bytes.Buffer
-	rt := globals.Runtime{Config: config.Defaults(), Provider: &cobraFakeProvider{}}
+	rt := globals.Runtime{Config: config.Defaults(), Provider: &testutil.TestProvider{}}
 	tc := destroy.NewTeardown(rt, &out)
 	if !tc.SkipConfirm || !tc.AssumeYes {
 		t.Fatalf("SkipConfirm/AssumeYes must be true; got SkipConfirm=%v, AssumeYes=%v", tc.SkipConfirm, tc.AssumeYes)
@@ -84,35 +82,4 @@ func deployStateJSON() string {
 			{TypeName: "AWS::IAM::Role", Identifier: "role-1"},
 		},
 	})
-}
-
-// ---- cobraFakeProvider ----
-
-type cobraFakeProvider struct {
-	deleteCalls int
-}
-
-func (f *cobraFakeProvider) Name() string { return "fake" }
-
-func (f *cobraFakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-
-func (f *cobraFakeProvider) Resources() cloud.ResourceClient {
-	return &cobraFakeRC{provider: f}
-}
-
-type cobraFakeRC struct {
-	provider *cobraFakeProvider
-}
-
-func (r *cobraFakeRC) Create(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *cobraFakeRC) Get(_ context.Context, _ *cloud.Resource) error    { return nil }
-func (r *cobraFakeRC) Update(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *cobraFakeRC) Delete(_ context.Context, _ *cloud.Resource) error {
-	r.provider.deleteCalls++
-	return nil
-}
-func (r *cobraFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
-	return nil, nil
 }

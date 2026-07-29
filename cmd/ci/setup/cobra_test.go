@@ -2,7 +2,6 @@ package setup_test
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"os"
 	"testing"
@@ -10,7 +9,6 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/ci/setup"
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
-	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/spf13/cobra"
 )
 
@@ -30,7 +28,7 @@ func runCISetup(t *testing.T, runtimeSource globals.RuntimeSource, args ...strin
 // TestSetupCobraDryRunShowsPlan exercises the real Cobra entry with --dry-run.
 func TestSetupCobraDryRunShowsPlan(t *testing.T) {
 	t.Chdir(t.TempDir())
-	provider := &ciSetupFakeProvider{}
+	provider := &testutil.CodeBuildProvider{}
 	got, err := runCISetup(t, testutil.NewTestRuntime(provider), "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -39,8 +37,8 @@ func TestSetupCobraDryRunShowsPlan(t *testing.T) {
 	testutil.AssertContains(t, got, "IAM role")
 	testutil.AssertContains(t, got, "CodeBuild")
 	testutil.AssertContains(t, got, "Cost estimate")
-	if provider.createCalls != 0 || provider.ensureCalls != 0 {
-		t.Errorf("dry-run must not create resources: create=%d ensure=%d", provider.createCalls, provider.ensureCalls)
+	if provider.CreateCalls != 0 || provider.EnsureProjectCalls != 0 {
+		t.Errorf("dry-run must not create resources: create=%d ensure=%d", provider.CreateCalls, provider.EnsureProjectCalls)
 	}
 }
 
@@ -49,7 +47,7 @@ func TestSetupCobraYesCreatesResources(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	provider := &ciSetupFakeProvider{}
+	provider := &testutil.CodeBuildProvider{}
 	got, err := runCISetup(t, testutil.NewTestRuntime(provider), "--yes")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -57,11 +55,11 @@ func TestSetupCobraYesCreatesResources(t *testing.T) {
 	testutil.AssertContains(t, got, "CI setup complete")
 	testutil.AssertContains(t, got, "Next steps:")
 	testutil.AssertContains(t, got, "fabrica ci trigger")
-	if provider.createCalls != 1 {
-		t.Errorf("expected 1 IAM role create, got %d", provider.createCalls)
+	if provider.CreateCalls != 1 {
+		t.Errorf("expected 1 IAM role create, got %d", provider.CreateCalls)
 	}
-	if provider.ensureCalls != 1 {
-		t.Errorf("expected 1 EnsureProject call, got %d", provider.ensureCalls)
+	if provider.EnsureProjectCalls != 1 {
+		t.Errorf("expected 1 EnsureProject call, got %d", provider.EnsureProjectCalls)
 	}
 	// State file written via the real fabricastate.WriteState path.
 	if _, err := os.Stat(dir + "/.fabrica/state.json"); err != nil {
@@ -100,56 +98,4 @@ func TestSetupCobraWithoutCodeBuildRunnerFails(t *testing.T) {
 		t.Fatal("expected error when CodeBuildRunner is missing")
 	}
 	testutil.AssertContains(t, err.Error(), "CodeBuild")
-}
-
-// ---- fakes ----
-
-type ciSetupFakeProvider struct {
-	createCalls int
-	ensureCalls int
-}
-
-func (f *ciSetupFakeProvider) Name() string { return "fake" }
-
-func (f *ciSetupFakeProvider) Identity(_ context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-
-func (f *ciSetupFakeProvider) Resources() cloud.ResourceClient {
-	return &ciSetupFakeRC{provider: f}
-}
-
-func (f *ciSetupFakeProvider) EnsureProject(_ context.Context, _ cloud.CodeBuildProjectSpec) (bool, error) {
-	f.ensureCalls++
-	return true, nil
-}
-
-func (f *ciSetupFakeProvider) DeleteProject(_ context.Context, _ string) error { return nil }
-
-func (f *ciSetupFakeProvider) StartBuild(_ context.Context, _ string, _ map[string]string) (string, error) {
-	return "build-1", nil
-}
-
-func (f *ciSetupFakeProvider) BuildStatus(_ context.Context, _ string) (cloud.BuildInfo, error) {
-	return cloud.BuildInfo{Status: "SUCCEEDED"}, nil
-}
-
-func (f *ciSetupFakeProvider) BuildLog(_ context.Context, _ string) (string, error) {
-	return "", nil
-}
-
-type ciSetupFakeRC struct {
-	provider *ciSetupFakeProvider
-}
-
-func (r *ciSetupFakeRC) Create(_ context.Context, res *cloud.Resource) error {
-	r.provider.createCalls++
-	res.Identifier = res.TypeName + "-id"
-	return nil
-}
-func (r *ciSetupFakeRC) Get(_ context.Context, _ *cloud.Resource) error    { return nil }
-func (r *ciSetupFakeRC) Update(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *ciSetupFakeRC) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
-func (r *ciSetupFakeRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
-	return nil, nil
 }

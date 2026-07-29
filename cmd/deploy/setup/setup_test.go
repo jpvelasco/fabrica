@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
@@ -45,7 +46,7 @@ func TestSetupCreatesRoleAndAlias(t *testing.T) {
 	c := newTestCmd(baseRuntime(), &out)
 	c.assumeYes = true
 	// Provide identity via a fake provider on the runtime.
-	c.runtime.Provider = fakeProvider{}
+	c.runtime.Provider = &testutil.TestProvider{}
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -59,7 +60,7 @@ func TestSetupRoleCreateErrorPropagates(t *testing.T) {
 	var out bytes.Buffer
 	c := newTestCmd(baseRuntime(), &out)
 	c.assumeYes = true
-	c.runtime.Provider = fakeProvider{}
+	c.runtime.Provider = &testutil.TestProvider{}
 	c.createResource = func(context.Context, *cloud.Resource) error {
 		return errors.New("AccessDenied")
 	}
@@ -79,7 +80,7 @@ func TestSetupRequiresBuildBucket(t *testing.T) {
 	rt.Config.Deploy.BuildBucket = ""
 	c := newTestCmd(rt, &out)
 	c.assumeYes = true
-	c.runtime.Provider = fakeProvider{}
+	c.runtime.Provider = &testutil.TestProvider{}
 	if err := c.run(context.Background()); err == nil {
 		t.Fatal("expected error when buildBucket is unset")
 	}
@@ -89,7 +90,7 @@ func TestSetupDryRunNoWrites(t *testing.T) {
 	var out bytes.Buffer
 	c := newTestCmd(baseRuntime(), &out)
 	c.dryRun = true
-	c.runtime.Provider = fakeProvider{}
+	c.runtime.Provider = &testutil.TestProvider{}
 	writes := 0
 	c.createResource = func(context.Context, *cloud.Resource) error { writes++; return nil }
 	if err := c.run(context.Background()); err != nil {
@@ -106,7 +107,7 @@ func TestSetupDryRunNoWrites(t *testing.T) {
 func TestSetupConfirmRejected(t *testing.T) {
 	var out bytes.Buffer
 	c := newTestCmd(baseRuntime(), &out)
-	c.runtime.Provider = fakeProvider{}
+	c.runtime.Provider = &testutil.TestProvider{}
 	c.confirm = func(string) bool { return false }
 	writes := 0
 	c.createResource = func(context.Context, *cloud.Resource) error { writes++; return nil }
@@ -150,7 +151,7 @@ func TestSetupIdempotentExistingResources(t *testing.T) {
 		getResource: func(_ context.Context, _ *cloud.Resource) error { return nil },
 		confirm:     func(string) bool { return true },
 	}
-	c.runtime.Provider = fakeProvider{}
+	c.runtime.Provider = &testutil.TestProvider{}
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -177,17 +178,8 @@ func TestSetupNoCreateResource(t *testing.T) {
 		writeState: func(s *fabricastate.State) error { return nil },
 		confirm:    func(string) bool { return true },
 	}
-	c.runtime.Provider = fakeProvider{}
+	c.runtime.Provider = &testutil.TestProvider{}
 	if err := c.run(context.Background()); err == nil {
 		t.Fatal("expected error when createResource is nil")
 	}
 }
-
-// fakeProvider supplies Identity for the command.
-type fakeProvider struct{}
-
-func (fakeProvider) Name() string { return "fake" }
-func (fakeProvider) Identity(context.Context) (string, string, string, error) {
-	return "123456789012", "arn", "us-east-1", nil
-}
-func (fakeProvider) Resources() cloud.ResourceClient { return nil }

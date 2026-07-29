@@ -7,6 +7,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -179,7 +180,7 @@ func TestRunOrchestratedProvisioned(t *testing.T) {
 	}
 	rt := globals.Runtime{
 		Config:   cfg,
-		Provider: &testCBProvider{},
+		Provider: &testutil.CodeBuildProvider{},
 	}
 
 	if err := RunOrchestrated(context.Background(), rt, &bytes.Buffer{}); err != nil {
@@ -220,23 +221,4 @@ func buildTeardownForTest(st *fabricastate.State, rt *globals.Runtime, sdkDelete
 		tc.DeleteResource = deleteResource
 	}
 	return tc
-}
-
-type testCBProvider struct{}
-
-func (p *testCBProvider) Name() string { return "test-cb" }
-func (p *testCBProvider) Identity(ctx context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-func (p *testCBProvider) Resources() cloud.ResourceClient                      { return &testRC{} }
-func (p *testCBProvider) DeleteProject(ctx context.Context, name string) error { return nil }
-
-type testRC struct{}
-
-func (r *testRC) Create(context.Context, *cloud.Resource) error { return nil }
-func (r *testRC) Get(context.Context, *cloud.Resource) error    { return nil }
-func (r *testRC) Update(context.Context, *cloud.Resource) error { return nil }
-func (r *testRC) Delete(context.Context, *cloud.Resource) error { return nil }
-func (r *testRC) List(context.Context, string) ([]cloud.Resource, error) {
-	return nil, nil
 }
