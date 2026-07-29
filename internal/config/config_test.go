@@ -209,19 +209,10 @@ func TestSaveWritesSchemaNames(t *testing.T) {
 	}
 	text := string(got)
 	for _, want := range []string{"accountId:", "kmsKeyId:", "perforce:", "horde:", "ci:", "cost:"} {
-		if !contains(text, want) {
+		if !strings.Contains(text, want) {
 			t.Fatalf("saved config missing %q:\n%s", want, text)
 		}
 	}
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 func TestWorkstationConfigDefaults(t *testing.T) {

@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -204,21 +205,9 @@ func TestRunCommand_Timeout(t *testing.T) {
 		},
 	}
 	p := testProviderWithSSM(m)
-	if _, err := p.RunCommand(context.Background(), "i-1", []string{"echo"}); err == nil || !stringsContains(err.Error(), "timed out") {
+	if _, err := p.RunCommand(context.Background(), "i-1", []string{"echo"}); err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("err = %v", err)
 	}
-}
-
-func stringsContains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(sub) == 0 ||
-		func() bool {
-			for i := 0; i+len(sub) <= len(s); i++ {
-				if s[i:i+len(sub)] == sub {
-					return true
-				}
-			}
-			return false
-		}())
 }
 
 func TestRunCommand_StateBackendConfigError(t *testing.T) {
