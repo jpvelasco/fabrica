@@ -2,7 +2,6 @@ package restore_test
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -23,27 +22,6 @@ func runRestore(t *testing.T, rt globals.RuntimeSource, args ...string) (string,
 	return testutil.RunCommandWithOut(t, root, &out, append([]string{"restore"}, args...)...)
 }
 
-type fakeProvider struct{}
-
-func (fakeProvider) Name() string { return "fake" }
-func (fakeProvider) Identity(context.Context) (string, string, string, error) {
-	return "123456789012", "arn", "us-east-1", nil
-}
-func (fakeProvider) Resources() cloud.ResourceClient { return fakeRC{} }
-func (fakeProvider) RunCommand(context.Context, string, []string) (cloud.RemoteResult, error) {
-	return cloud.RemoteResult{}, nil
-}
-
-type fakeRC struct{}
-
-func (fakeRC) Create(context.Context, *cloud.Resource) error { return nil }
-func (fakeRC) Get(context.Context, *cloud.Resource) error    { return nil }
-func (fakeRC) Update(context.Context, *cloud.Resource) error { return nil }
-func (fakeRC) Delete(context.Context, *cloud.Resource) error { return nil }
-func (fakeRC) List(context.Context, string) ([]cloud.Resource, error) {
-	return nil, nil
-}
-
 func TestCobraRestoreDryRun(t *testing.T) {
 	t.Chdir(t.TempDir())
 	state := `{"account":"123456789012","region":"us-east-1","modules":[
@@ -58,7 +36,7 @@ func TestCobraRestoreDryRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt := func() (globals.Runtime, error) {
-		return globals.Runtime{Config: config.Defaults(), Provider: fakeProvider{}}, nil
+		return globals.Runtime{Config: config.Defaults(), Provider: &testutil.RemoteCommandProvider{}}, nil
 	}
 	got, err := runRestore(t, rt, "id1", "--force", "--dry-run")
 	if err != nil {
@@ -82,7 +60,7 @@ func TestCobraRestoreMissingCredentials(t *testing.T) {
 	}
 	// no credentials file
 	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
-	p := &restoreFakeProvider{remote: cloud.RemoteResult{Stdout: meta}}
+	p := &testutil.RemoteCommandProvider{RemoteResult: cloud.RemoteResult{Stdout: meta}}
 	rt := func() (globals.Runtime, error) {
 		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
 	}
@@ -109,26 +87,13 @@ func TestCobraRestoreEmptyPasswordInCreds(t *testing.T) {
 		t.Fatal(err)
 	}
 	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
-	p := &restoreFakeProvider{remote: cloud.RemoteResult{Stdout: meta}}
+	p := &testutil.RemoteCommandProvider{RemoteResult: cloud.RemoteResult{Stdout: meta}}
 	rt := func() (globals.Runtime, error) {
 		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
 	}
 	if _, err := runRestore(t, rt, "id1", "--force", "--yes"); err == nil {
 		t.Fatal("expected empty password parse error")
 	}
-}
-
-type restoreFakeProvider struct {
-	remote cloud.RemoteResult
-}
-
-func (f *restoreFakeProvider) Name() string { return "fake" }
-func (f *restoreFakeProvider) Identity(context.Context) (string, string, string, error) {
-	return "123456789012", "arn", "us-east-1", nil
-}
-func (f *restoreFakeProvider) Resources() cloud.ResourceClient { return fakeRC{} }
-func (f *restoreFakeProvider) RunCommand(context.Context, string, []string) (cloud.RemoteResult, error) {
-	return f.remote, nil
 }
 
 func TestCobraRestoreRuntimeError(t *testing.T) {
@@ -155,7 +120,7 @@ func TestCobraRestoreRequiresForce(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt := func() (globals.Runtime, error) {
-		return globals.Runtime{Config: config.Defaults(), Provider: fakeProvider{}}, nil
+		return globals.Runtime{Config: config.Defaults(), Provider: &testutil.RemoteCommandProvider{}}, nil
 	}
 	_, err := runRestore(t, rt, "id1")
 	if err == nil {

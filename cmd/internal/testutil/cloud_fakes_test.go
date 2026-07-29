@@ -34,6 +34,43 @@ func TestUbuntuAMIProvider(t *testing.T) {
 	}
 }
 
+func TestEC2InstanceProvider(t *testing.T) {
+	if _, ok := any(&TestProvider{}).(cloud.EC2InstanceManager); ok {
+		t.Fatal("TestProvider unexpectedly implements cloud.EC2InstanceManager")
+	}
+
+	wantErr := errors.New("EC2 unavailable")
+	provider := &EC2InstanceProvider{StartErr: wantErr, StopErr: wantErr}
+	if err := provider.StartInstance(context.Background(), "i-start"); !errors.Is(err, wantErr) {
+		t.Fatalf("StartInstance() error = %v", err)
+	}
+	if err := provider.StopInstance(context.Background(), "i-stop"); !errors.Is(err, wantErr) {
+		t.Fatalf("StopInstance() error = %v", err)
+	}
+	if !reflect.DeepEqual(provider.StartIDs, []string{"i-start"}) || !reflect.DeepEqual(provider.StopIDs, []string{"i-stop"}) {
+		t.Fatalf("captured start IDs %v, stop IDs %v", provider.StartIDs, provider.StopIDs)
+	}
+}
+
+func TestRemoteCommandProvider(t *testing.T) {
+	if _, ok := any(&TestProvider{}).(cloud.RemoteRunner); ok {
+		t.Fatal("TestProvider unexpectedly implements cloud.RemoteRunner")
+	}
+
+	wantErr := errors.New("SSM unavailable")
+	wantResult := cloud.RemoteResult{ExitCode: 42, Stdout: "output"}
+	commands := []string{"first", "second"}
+	provider := &RemoteCommandProvider{RemoteResult: wantResult, RemoteErr: wantErr}
+	result, err := provider.RunCommand(context.Background(), "i-remote", commands)
+	commands[0] = "changed"
+	if result != wantResult || !errors.Is(err, wantErr) {
+		t.Fatalf("RunCommand() = (%+v, %v)", result, err)
+	}
+	if provider.RunCommandCalls != 1 || provider.LastRunCommandInstanceID != "i-remote" || !reflect.DeepEqual(provider.LastRunCommands, []string{"first", "second"}) {
+		t.Fatalf("captured calls = %d, instance = %q, commands = %v", provider.RunCommandCalls, provider.LastRunCommandInstanceID, provider.LastRunCommands)
+	}
+}
+
 func TestCodeBuildProvider(t *testing.T) {
 	t.Run("project lifecycle", func(t *testing.T) {
 		wantErr := errors.New("codebuild unavailable")

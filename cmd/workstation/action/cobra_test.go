@@ -2,7 +2,6 @@ package action_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,7 +10,6 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/cmd/workstation/action"
-	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/spf13/cobra"
 )
 
@@ -72,7 +70,7 @@ func TestCobraActionContracts(t *testing.T) {
 
 			t.Run("not_provisioned", func(t *testing.T) {
 				t.Chdir(t.TempDir())
-				got, err := runAction(t, contract, testutil.NewTestRuntime(&cobraFakeProvider{}))
+				got, err := runAction(t, contract, testutil.NewTestRuntime(&testutil.EC2InstanceProvider{}))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -92,7 +90,7 @@ func TestCobraActionContracts(t *testing.T) {
 			}
 			for _, testCase := range textCases {
 				t.Run(testCase.name, func(t *testing.T) {
-					provider := &cobraFakeProvider{}
+					provider := &testutil.EC2InstanceProvider{}
 					got, err := runProvisionedAction(t, contract, provider, testCase.status, testCase.args...)
 					if err != nil {
 						t.Fatal(err)
@@ -103,7 +101,7 @@ func TestCobraActionContracts(t *testing.T) {
 			}
 
 			t.Run("json", func(t *testing.T) {
-				provider := &cobraFakeProvider{}
+				provider := &testutil.EC2InstanceProvider{}
 				got, err := runProvisionedAction(t, contract, provider, contract.initialStatus, "--json", "--yes")
 				if err != nil {
 					t.Fatal(err)
@@ -119,9 +117,9 @@ func TestCobraActionContracts(t *testing.T) {
 			})
 
 			t.Run("provider_error", func(t *testing.T) {
-				provider := &cobraFakeProvider{}
+				provider := &testutil.EC2InstanceProvider{}
 				cause := errors.New("EC2 unavailable")
-				provider.setActionError(contract.name, cause)
+				setActionError(contract, provider, cause)
 				_, err := runProvisionedAction(t, contract, provider, contract.initialStatus, "--yes")
 				if !errors.Is(err, cause) {
 					t.Fatalf("error = %v", err)
@@ -140,7 +138,7 @@ func runAction(t *testing.T, contract cobraContract, runtimeSource globals.Runti
 	return testutil.RunCommandWithOut(t, root, &out, append([]string{contract.name}, args...)...)
 }
 
-func runProvisionedAction(t *testing.T, contract cobraContract, provider *cobraFakeProvider, status string, args ...string) (string, error) {
+func runProvisionedAction(t *testing.T, contract cobraContract, provider *testutil.EC2InstanceProvider, status string, args ...string) (string, error) {
 	t.Helper()
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -157,9 +155,12 @@ func provisionedStateJSON(status string) string {
 	})
 }
 
-func assertAPICalls(t *testing.T, contract cobraContract, provider *cobraFakeProvider, want int) {
+func assertAPICalls(t *testing.T, contract cobraContract, provider *testutil.EC2InstanceProvider, want int) {
 	t.Helper()
-	actionCalls, otherCalls := provider.calls(contract.name)
+	actionCalls, otherCalls := len(provider.StopIDs), len(provider.StartIDs)
+	if contract.name == "start" {
+		actionCalls, otherCalls = otherCalls, actionCalls
+	}
 	if actionCalls != want {
 		t.Errorf("%s calls = %d, want %d", contract.name, actionCalls, want)
 	}
@@ -168,38 +169,10 @@ func assertAPICalls(t *testing.T, contract cobraContract, provider *cobraFakePro
 	}
 }
 
-type cobraFakeProvider struct {
-	startCalls int
-	stopCalls  int
-	startErr   error
-	stopErr    error
-}
-
-func (*cobraFakeProvider) Name() string { return "fake" }
-func (*cobraFakeProvider) Identity(context.Context) (string, string, string, error) {
-	return "123456789012", "arn:aws:iam::123456789012:user/test", "us-east-1", nil
-}
-func (*cobraFakeProvider) Resources() fabricac.ResourceClient { return nil }
-func (f *cobraFakeProvider) StartInstance(context.Context, string) error {
-	f.startCalls++
-	return f.startErr
-}
-func (f *cobraFakeProvider) StopInstance(context.Context, string) error {
-	f.stopCalls++
-	return f.stopErr
-}
-
-func (f *cobraFakeProvider) calls(actionName string) (actionCalls, otherCalls int) {
-	if actionName == "start" {
-		return f.startCalls, f.stopCalls
-	}
-	return f.stopCalls, f.startCalls
-}
-
-func (f *cobraFakeProvider) setActionError(actionName string, err error) {
-	if actionName == "start" {
-		f.startErr = err
+func setActionError(contract cobraContract, provider *testutil.EC2InstanceProvider, err error) {
+	if contract.name == "start" {
+		provider.StartErr = err
 		return
 	}
-	f.stopErr = err
+	provider.StopErr = err
 }
