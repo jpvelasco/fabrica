@@ -128,12 +128,12 @@ func PostCreate(out io.Writer, spec PostCreateSpec) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, spec.Title+" provisioned.")
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "  Instance ID:   %s\n", spec.InstanceID)
+	fmt.Fprintf(out, "  %-18s%s\n", "Instance ID:", spec.InstanceID)
 	if spec.StatusDetail != "" {
-		fmt.Fprintf(out, "  Status:        %s\n", spec.StatusDetail)
+		fmt.Fprintf(out, "  %-18s%s\n", "Status:", spec.StatusDetail)
 	}
 	for _, d := range spec.Details {
-		fmt.Fprintf(out, "  %-16s %s\n", d.Key+":", d.Value)
+		fmt.Fprintf(out, "  %-18s%s\n", d.Key+":", d.Value)
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Next steps:")

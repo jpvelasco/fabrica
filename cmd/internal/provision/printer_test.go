@@ -262,10 +262,10 @@ func TestPostCreateBasic(t *testing.T) {
 	if !strings.Contains(got, "Test Module provisioned.") {
 		t.Errorf("missing title, got:\n%s", got)
 	}
-	if !strings.Contains(got, "Instance ID:   i-1234567890abcdef0") {
+	if !strings.Contains(got, "Instance ID:      i-1234567890abcdef0") {
 		t.Errorf("missing instance ID, got:\n%s", got)
 	}
-	if !strings.Contains(got, "Status:        provisioning (setup in progress, ~3 min)") {
+	if !strings.Contains(got, "Status:           provisioning (setup in progress, ~3 min)") {
 		t.Errorf("missing status, got:\n%s", got)
 	}
 	if !strings.Contains(got, "Credentials:") || !strings.Contains(got, ".fabrica/test-credentials.yaml") {
