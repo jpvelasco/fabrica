@@ -93,8 +93,8 @@ func TestSetupCobraRuntimeError(t *testing.T) {
 // TestSetupCobraWithoutCodeBuildRunnerFails when provider lacks CodeBuildRunner.
 func TestSetupCobraWithoutCodeBuildRunnerFails(t *testing.T) {
 	t.Chdir(t.TempDir())
-	// CobraFakeProvider implements Provider but not CodeBuildRunner.
-	src := testutil.NewTestRuntime(&testutil.CobraFakeProvider{})
+	// TestProvider implements Provider but not CodeBuildRunner.
+	src := testutil.NewTestRuntime(&testutil.TestProvider{})
 	_, err := runCISetup(t, src, "--yes")
 	if err == nil {
 		t.Fatal("expected error when CodeBuildRunner is missing")

@@ -850,7 +850,7 @@ func TestWireProviderNilProvider(t *testing.T) {
 // TestNewTeardownWiring verifies NewTeardown returns a Command with correct wiring.
 func TestNewTeardownWiring(t *testing.T) {
 	var out bytes.Buffer
-	rt := globals.Runtime{Config: config.Defaults(), Provider: &testutil.CobraFakeProvider{}}
+	rt := globals.Runtime{Config: config.Defaults(), Provider: &testutil.TestProvider{}}
 	tc := NewTeardown(testSpec, rt, &out)
 
 	if !tc.SkipConfirm || !tc.AssumeYes {

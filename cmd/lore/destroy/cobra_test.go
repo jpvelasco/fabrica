@@ -67,7 +67,7 @@ func TestDestroyCobraDryRunWithProvider(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, loreStateJSON())
-	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), "--dry-run")
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.TestProvider{}), "--dry-run")
 	if err != nil {
 		t.Fatalf("dry-run: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestDestroyCobraYesWithProvider(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, loreStateJSON())
-	provider := &testutil.CobraFakeProvider{}
+	provider := &testutil.TestProvider{}
 	_, err := runDestroy(t, testutil.NewTestRuntime(provider), "--yes")
 	if err != nil {
 		t.Fatalf("destroy --yes: %v", err)
@@ -95,7 +95,7 @@ func TestDestroyCobraJSONDryRunWithProvider(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, loreStateJSON())
-	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), "--json", "--dry-run")
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.TestProvider{}), "--json", "--dry-run")
 	if err != nil {
 		t.Fatalf("json dry-run: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestDestroyCobraJSONYesWithProvider(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, loreStateJSON())
-	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), "--json", "--yes")
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.TestProvider{}), "--json", "--yes")
 	if err != nil {
 		t.Fatalf("json yes: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestDestroyCobraRuntimeError(t *testing.T) {
 // TestNewTeardownWiringWithProvider verifies NewTeardown returns a Command with correct wiring (non-nil provider).
 func TestNewTeardownWiringWithProvider(t *testing.T) {
 	cfg := config.Defaults()
-	rt := globals.Runtime{Config: cfg, Provider: &testutil.CobraFakeProvider{}}
+	rt := globals.Runtime{Config: cfg, Provider: &testutil.TestProvider{}}
 	tc := destroy.NewTeardown(rt, io.Discard)
 	if !tc.SkipConfirm || !tc.AssumeYes {
 		t.Fatalf("SkipConfirm/AssumeYes must be true; got SkipConfirm=%v, AssumeYes=%v", tc.SkipConfirm, tc.AssumeYes)

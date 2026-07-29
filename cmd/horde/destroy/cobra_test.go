@@ -30,7 +30,7 @@ func runDestroy(t *testing.T, runtimeSource globals.RuntimeSource, args ...strin
 // TestDestroyCobraNotProvisioned verifies clean message when no state on disk.
 func TestDestroyCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.CobraFakeProvider{}))
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.TestProvider{}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestDestroyCobraDryRunNoDeleteCalls(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, provisionedStateJSON())
 
-	provider := &testutil.CobraFakeProvider{}
+	provider := &testutil.TestProvider{}
 	got, err := runDestroy(t, testutil.NewTestRuntime(provider), "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -60,7 +60,7 @@ func TestDestroyCobraDryRunShowsResources(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, provisionedStateJSON())
 
-	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), "--dry-run")
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.TestProvider{}), "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestDestroyCobraYesFlagDestroysResources(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, provisionedStateJSON())
 
-	provider := &testutil.CobraFakeProvider{}
+	provider := &testutil.TestProvider{}
 	got, err := runDestroy(t, testutil.NewTestRuntime(provider), "--yes")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -88,7 +88,7 @@ func TestDestroyCobraYesFlagDestroysResources(t *testing.T) {
 // TestDestroyCobraJSONNotProvisioned verifies --json output when not provisioned.
 func TestDestroyCobraJSONNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), "--json")
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.TestProvider{}), "--json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestDestroyCobraJSONDryRun(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, provisionedStateJSON())
 
-	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), "--json", "--dry-run")
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.TestProvider{}), "--json", "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestDestroyCobraJSONYes(t *testing.T) {
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, provisionedStateJSON())
 
-	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.CobraFakeProvider{}), "--json", "--yes")
+	got, err := runDestroy(t, testutil.NewTestRuntime(&testutil.TestProvider{}), "--json", "--yes")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestDestroyCobraRuntimeError(t *testing.T) {
 // TestNewTeardownWiring verifies NewTeardown returns a Command with correct wiring.
 func TestNewTeardownWiring(t *testing.T) {
 	var out bytes.Buffer
-	rt := globals.Runtime{Config: config.Defaults(), Provider: &testutil.CobraFakeProvider{}}
+	rt := globals.Runtime{Config: config.Defaults(), Provider: &testutil.TestProvider{}}
 	tc := destroy.NewTeardown(rt, &out)
 	if !tc.SkipConfirm || !tc.AssumeYes {
 		t.Fatalf("SkipConfirm/AssumeYes must be true; got SkipConfirm=%v, AssumeYes=%v", tc.SkipConfirm, tc.AssumeYes)

@@ -13,7 +13,7 @@ import (
 func TestLogsCobraWiring(t *testing.T) {
 	var out bytes.Buffer
 	root, optionsSource := testutil.BuildTestSubcommand(&out)
-	src := testutil.NewTestRuntime(&testutil.CobraFakeProvider{})
+	src := testutil.NewTestRuntime(&testutil.TestProvider{})
 	root.AddCommand(logs.New(src, optionsSource, &out))
 	if _, err := testutil.RunCommandWithOut(t, root, &out, "logs", "build-1"); err == nil {
 		t.Fatal("expected error: provider lacks CodeBuildRunner")
