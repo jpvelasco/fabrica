@@ -21,8 +21,9 @@ if [ -z "$base" ]; then
   exit 0
 fi
 
-# Changed, non-test Go files in this push.
-changed=$(git diff --name-only "$base"...HEAD -- '*.go' | grep -v '_test\.go$' || true)
+# Changed, non-test Go files that still exist in this push. Deleted files have no
+# functions to cover and their former package directories may no longer exist.
+changed=$(git diff --diff-filter=ACMR --name-only "$base"...HEAD -- '*.go' | grep -v '_test\.go$' || true)
 if [ -z "$changed" ]; then
   exit 0
 fi
