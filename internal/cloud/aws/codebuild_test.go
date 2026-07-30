@@ -243,3 +243,98 @@ func TestBuildLogNoLogsYet(t *testing.T) {
 		t.Fatal("expected error when no logs available")
 	}
 }
+
+func TestStartBuildNilBuild(t *testing.T) {
+	p := &awsProvider{
+		awsCfg:  awsConfig{region: "us-east-1", profile: "unit-test"},
+		clients: resourceClients{version: "v9.9.9"},
+		loadConfig: func(ctx context.Context, region, profile string) (awssdk.Config, error) {
+			return awssdk.Config{Region: region}, nil
+		},
+		newCodeBuildClient: func(awssdk.Config) codeBuildClient {
+			return &codeBuildNilBuildClient{}
+		},
+	}
+	_, err := p.StartBuild(context.Background(), "fabrica-ci", nil)
+	if err == nil {
+		t.Fatal("expected error when Build is nil")
+	}
+	if got := err.Error(); !containsStr(got, "CodeBuild did not return a build ID") {
+		t.Fatalf("error = %q, want substring %q", got, "CodeBuild did not return a build ID")
+	}
+}
+
+// codeBuildNilBuildClient always returns a StartBuildOutput with nil Build.
+type codeBuildNilBuildClient struct{ fakeCodeBuildClient }
+
+func (c *codeBuildNilBuildClient) StartBuild(_ context.Context, _ *codebuild.StartBuildInput, _ ...func(*codebuild.Options)) (*codebuild.StartBuildOutput, error) {
+	return &codebuild.StartBuildOutput{}, nil
+}
+
+func TestStartBuildNilBuildID(t *testing.T) {
+	p := &awsProvider{
+		awsCfg:  awsConfig{region: "us-east-1", profile: "unit-test"},
+		clients: resourceClients{version: "v9.9.9"},
+		loadConfig: func(ctx context.Context, region, profile string) (awssdk.Config, error) {
+			return awssdk.Config{Region: region}, nil
+		},
+		newCodeBuildClient: func(awssdk.Config) codeBuildClient {
+			return &codeBuildNilBuildIDClient{}
+		},
+	}
+	_, err := p.StartBuild(context.Background(), "fabrica-ci", nil)
+	if err == nil {
+		t.Fatal("expected error when Build.Id is nil")
+	}
+	if got := err.Error(); !containsStr(got, "CodeBuild did not return a build ID") {
+		t.Fatalf("error = %q, want substring %q", got, "CodeBuild did not return a build ID")
+	}
+}
+
+// codeBuildNilBuildIDClient returns a Build with nil Id.
+type codeBuildNilBuildIDClient struct{ fakeCodeBuildClient }
+
+func (c *codeBuildNilBuildIDClient) StartBuild(_ context.Context, _ *codebuild.StartBuildInput, _ ...func(*codebuild.Options)) (*codebuild.StartBuildOutput, error) {
+	return &codebuild.StartBuildOutput{Build: &codebuildtypes.Build{}}, nil
+}
+
+func TestBuildStatusSDKError(t *testing.T) {
+	cb := &fakeCodeBuildClient{batchErr: fmt.Errorf("service unavailable")}
+	p := newCodeBuildTestProvider(cb, nil)
+	_, err := p.BuildStatus(context.Background(), "build-123")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := err.Error(); !containsStr(got, "getting CodeBuild build") {
+		t.Fatalf("error = %q, want substring %q", got, "getting CodeBuild build")
+	}
+}
+
+func TestBuildLogSDKError(t *testing.T) {
+	cb := &fakeCodeBuildClient{builds: []codebuildtypes.Build{{
+		Id:          awssdk.String("build-123"),
+		BuildStatus: codebuildtypes.StatusTypeSucceeded,
+		Logs: &codebuildtypes.LogsLocation{
+			GroupName:  awssdk.String("/aws/codebuild/fabrica-ci"),
+			StreamName: awssdk.String("abc"),
+		},
+	}}}
+	logs := &fakeCWLogsClient{err: fmt.Errorf("resource not found")}
+	p := newCodeBuildTestProvider(cb, logs)
+	_, err := p.BuildLog(context.Background(), "build-123")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := err.Error(); !containsStr(got, "fetching logs for build") {
+		t.Fatalf("error = %q, want substring %q", got, "fetching logs for build")
+	}
+}
+
+func containsStr(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

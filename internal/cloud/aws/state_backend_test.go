@@ -522,6 +522,42 @@ func TestEnsureStateLockTableCreateErrorPropagates(t *testing.T) {
 	}
 }
 
+func TestBucketExistsNotFoundErrorCode(t *testing.T) {
+	s3Client := &fakeS3StateBackendClient{headErr: apiErr("NotFound")}
+	p := newStateBackendTestProvider(s3Client, nil, nil, nil)
+
+	got, err := p.bucketExists(context.Background(), s3Client, "state-bucket")
+	if err != nil {
+		t.Fatalf("bucketExists: %v", err)
+	}
+	if got {
+		t.Fatal("exists = true, want false for NotFound error code")
+	}
+}
+
+func TestEnsureStateLockTableNonAPIError(t *testing.T) {
+	ddbClient := &fakeDynamoDBStateBackendClient{describeErr: fmt.Errorf("network error")}
+	waiter := &fakeTableExistsWaiter{}
+	p := newBootstrapTestProvider(nil, ddbClient, waiter, nil)
+
+	_, err := p.EnsureStateLockTable(context.Background(), "t")
+	if err == nil {
+		t.Fatal("expected error for non-API error")
+	}
+	if got := err.Error(); !containsStrSB(got, "checking DynamoDB table") {
+		t.Fatalf("error = %q, want substring %q", got, "checking DynamoDB table")
+	}
+}
+
+func containsStrSB(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 type fakeS3StateBackendClient struct {
 	headCalls    int
 	deleteCalls  int

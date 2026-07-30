@@ -3,6 +3,7 @@ package rollback_test
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/deploy/rollback"
@@ -145,5 +146,22 @@ func TestRollbackCobraRuntimeError(t *testing.T) {
 	_, err := runRollback(t, src)
 	if err == nil {
 		t.Fatal("expected error when runtimeSource fails")
+	}
+}
+
+// TestRollbackCobraNoGameLiftManager verifies error when the provider
+// does not implement cloud.GameLiftManager (no FleetStatus capability).
+func TestRollbackCobraNoGameLiftManager(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
+
+	// TestProvider has Resources() but does NOT implement GameLiftManager.
+	_, err := runRollback(t, testutil.NewTestRuntime(&testutil.TestProvider{}))
+	if err == nil {
+		t.Fatal("expected error when provider does not support GameLift")
+	}
+	if !strings.Contains(err.Error(), "does not support GameLift") {
+		t.Fatalf("expected 'does not support GameLift', got: %v", err)
 	}
 }
