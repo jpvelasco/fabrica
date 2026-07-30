@@ -212,52 +212,45 @@ func (c Command) deleteOneResource(ctx context.Context, st *fabricastate.State, 
 		fmt.Fprintf(c.Out, "Deleting %s %s...\n", r.TypeName, r.Identifier)
 	}
 
-	var delErr error
-	if c.SDKDeleteFunc != nil {
-		delErr = c.SDKDeleteFunc(ctx, r.TypeName, r.Identifier)
-		if errors.Is(delErr, cloud.ErrNotHandled) {
-			// SDK didn't handle this type — fall back to Cloud Control.
-			if err := c.DeleteResource(ctx, &r); err != nil {
-				if err := c.handleDeleteResult(r, st, m, err); err != nil {
-					return err
-				}
-			}
-			if !c.JSONOut {
-				fmt.Fprintf(c.Out, "  Deleted: %s\n", r.Identifier)
-			}
-			c.removeResourceAndPersist(st, m, r.TypeName)
-			return nil
-		}
-	} else {
-		if err := c.DeleteResource(ctx, &r); err != nil {
-			if err := c.handleDeleteResult(r, st, m, err); err != nil {
-				return err
-			}
-		}
+	if err := c.attemptDelete(ctx, &r); err != nil {
+		return err
 	}
-	if delErr != nil {
-		if err := c.handleDeleteResult(r, st, m, delErr); err != nil {
-			return err
-		}
-	} else {
-		if !c.JSONOut {
-			fmt.Fprintf(c.Out, "  Deleted: %s\n", r.Identifier)
-		}
+
+	if !c.JSONOut {
+		fmt.Fprintf(c.Out, "  Deleted: %s\n", r.Identifier)
 	}
 	c.removeResourceAndPersist(st, m, r.TypeName)
 	return nil
 }
 
-// handleDeleteResult classifies a deletion error: ErrResourceNotFound is a no-op
-// (resource already gone), everything else is a hard failure.
-func (c Command) handleDeleteResult(r cloud.Resource, st *fabricastate.State, m *fabricastate.ModuleState, err error) error {
-	if errors.Is(err, cloud.ErrResourceNotFound) {
+// attemptDelete tries SDKDeleteFunc first (if wired), then falls back to
+// Cloud Control DeleteResource. ErrNotHandled from the SDK path is transparently
+// bridged to the Cloud Control fallback. Returns nil on success (either path).
+func (c Command) attemptDelete(ctx context.Context, r *cloud.Resource) error {
+	if c.SDKDeleteFunc != nil {
+		if err := c.SDKDeleteFunc(ctx, r.TypeName, r.Identifier); err != nil {
+			if errors.Is(err, cloud.ErrNotHandled) {
+				return c.deleteViaCloudControl(ctx, r)
+			}
+			return err
+		}
+		return nil
+	}
+	return c.deleteViaCloudControl(ctx, r)
+}
+
+// deleteViaCloudControl calls DeleteResource and classifies the result.
+func (c Command) deleteViaCloudControl(ctx context.Context, r *cloud.Resource) error {
+	if err := c.DeleteResource(ctx, r); err == nil {
+		return nil
+	} else if errors.Is(err, cloud.ErrResourceNotFound) {
 		if !c.JSONOut {
 			fmt.Fprintf(c.Out, "  Already deleted: %s\n", r.Identifier)
 		}
 		return nil
+	} else {
+		return fmt.Errorf("deleting %s %s: %w", r.TypeName, r.Identifier, err)
 	}
-	return fmt.Errorf("deleting %s %s: %w", r.TypeName, r.Identifier, err)
 }
 
 // removeResourceAndPersist drops a resource from the module and writes state,
