@@ -153,36 +153,253 @@ func TestTriggerStartBuildErrorPropagates(t *testing.T) {
 	}
 }
 
-func TestTriggerWaitPollsToTerminal(t *testing.T) {
+func TestTriggerWaitTimeout(t *testing.T) {
 	var out bytes.Buffer
-	runner := &fakeRunner{
-		startID: "build-1",
-		statuses: []cloud.BuildInfo{
-			{Status: "IN_PROGRESS", Phase: "BUILD"},
-			{Status: "SUCCEEDED", Phase: "COMPLETED"},
-		},
-	}
-	c := newCmd(&out, runner, provisionedState())
+	callCount := 0
+	c := newCmd(&out, &alwaysInProgressRunner{startID: "build-1"}, provisionedState())
 	c.buildGraphPath = writeTempBuildGraph(t)
 	c.wait = true
+	c.now = func() time.Time {
+		callCount++
+		if callCount > 2 {
+			return time.Now().Add(waitDeadline + time.Second)
+		}
+		return time.Now()
+	}
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if !strings.Contains(out.String(), "SUCCEEDED") {
-		t.Errorf("expected terminal status in output:\n%s", out.String())
+	if !strings.Contains(out.String(), "Timed out") {
+		t.Errorf("expected timeout message in output:\n%s", out.String())
 	}
 }
 
-func TestTriggerWaitFailedBuildReturnsError(t *testing.T) {
+type alwaysInProgressRunner struct{ startID string }
+
+func (f *alwaysInProgressRunner) StartBuild(_ context.Context, project string, env map[string]string) (string, error) {
+	return f.startID, nil
+}
+func (f *alwaysInProgressRunner) BuildStatus(_ context.Context, _ string) (cloud.BuildInfo, error) {
+	return cloud.BuildInfo{Status: "IN_PROGRESS", Phase: "BUILD"}, nil
+}
+func (f *alwaysInProgressRunner) BuildLog(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+func (f *alwaysInProgressRunner) EnsureProject(_ context.Context, _ cloud.CodeBuildProjectSpec) (bool, error) {
+	return true, nil
+}
+func (f *alwaysInProgressRunner) DeleteProject(_ context.Context, _ string) error { return nil }
+
+func TestTriggerNoRunnerErrors(t *testing.T) {
 	var out bytes.Buffer
-	runner := &fakeRunner{
-		startID:  "build-1",
-		statuses: []cloud.BuildInfo{{Status: "FAILED", Phase: "BUILD"}},
+	st := provisionedState()
+	c := command{
+		runtime:        globals.Runtime{Config: config.Defaults()},
+		buildGraphPath: writeTempBuildGraph(t),
+		out:            &out,
+		readState:      func() (*fabricastate.State, error) { return st, nil },
+		sleep:          func(time.Duration) {},
+		now:            time.Now,
+		runner:         nil,
 	}
-	c := newCmd(&out, runner, provisionedState())
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected error when no runner configured")
+	}
+}
+
+func TestTriggerResolveProjectMissingIdentifier(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("ci", "fabrica-ci", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::CodeBuild::Project", Identifier: ""},
+	})
+	st.UpsertModule("horde", "", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-horde123"},
+	})
+	c := newCmd(&out, &fakeRunner{startID: "x"}, st)
 	c.buildGraphPath = writeTempBuildGraph(t)
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected error when project identifier is empty")
+	}
+}
+
+func TestTriggerResolveHordeNoGetInstance(t *testing.T) {
+	var out bytes.Buffer
+	st := provisionedState()
+	c := command{
+		runtime:        globals.Runtime{Config: config.Defaults()},
+		buildGraphPath: writeTempBuildGraph(t),
+		out:            &out,
+		readState:      func() (*fabricastate.State, error) { return st, nil },
+		getResource:    nil,
+		runner:         &fakeRunner{startID: "x"},
+		sleep:          func(time.Duration) {},
+		now:            time.Now,
+	}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected error when getResource is nil")
+	}
+}
+
+func TestTriggerResolveHordeNoPrivateIP(t *testing.T) {
+	var out bytes.Buffer
+	st := provisionedState()
+	c := command{
+		runtime:        globals.Runtime{Config: config.Defaults()},
+		buildGraphPath: writeTempBuildGraph(t),
+		out:            &out,
+		readState:      func() (*fabricastate.State, error) { return st, nil },
+		getResource: func(_ context.Context, r *cloud.Resource) error {
+			r.ActualState = []byte(`{}`)
+			return nil
+		},
+		runner: &fakeRunner{startID: "x"},
+		sleep:  func(time.Duration) {},
+		now:    time.Now,
+	}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected error when no private IP")
+	}
+}
+
+func TestTriggerResolveHordeGetResourceError(t *testing.T) {
+	var out bytes.Buffer
+	st := provisionedState()
+	c := command{
+		runtime:        globals.Runtime{Config: config.Defaults()},
+		buildGraphPath: writeTempBuildGraph(t),
+		out:            &out,
+		readState:      func() (*fabricastate.State, error) { return st, nil },
+		getResource:    func(_ context.Context, _ *cloud.Resource) error { return errors.New("provider error") },
+		runner:         &fakeRunner{startID: "x"},
+		sleep:          func(time.Duration) {},
+		now:            time.Now,
+	}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected error when Get fails")
+	}
+}
+
+func TestTriggerCustomHordePort(t *testing.T) {
+	var out bytes.Buffer
+	cfg := config.Defaults()
+	cfg.Horde.Port = 5555
+	st := provisionedState()
+	runner := &fakeRunner{startID: "x"}
+	c := command{
+		runtime:        globals.Runtime{Config: cfg},
+		buildGraphPath: writeTempBuildGraph(t),
+		out:            &out,
+		readState:      func() (*fabricastate.State, error) { return st, nil },
+		getResource: func(_ context.Context, r *cloud.Resource) error {
+			r.ActualState = []byte(`{"PrivateIpAddress":"10.0.1.42"}`)
+			return nil
+		},
+		runner: runner,
+		sleep:  func(time.Duration) {},
+		now:    time.Now,
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if runner.startEnv["HORDE_URL"] != "http://10.0.1.42:5555" {
+		t.Errorf("HORDE_URL = %q, want http://10.0.1.42:5555", runner.startEnv["HORDE_URL"])
+	}
+}
+
+func TestTriggerWaitBuildStatusError(t *testing.T) {
+	var out bytes.Buffer
+	st := provisionedState()
+	c := command{
+		runtime:        globals.Runtime{Config: config.Defaults()},
+		buildGraphPath: writeTempBuildGraph(t),
+		out:            &out,
+		readState:      func() (*fabricastate.State, error) { return st, nil },
+		getResource: func(_ context.Context, r *cloud.Resource) error {
+			r.ActualState = []byte(`{"PrivateIpAddress":"10.0.1.42"}`)
+			return nil
+		},
+		runner: &failingStatusRunner{},
+		sleep:  func(time.Duration) {},
+		now:    time.Now,
+	}
 	c.wait = true
 	if err := c.run(context.Background()); err == nil {
-		t.Fatal("expected error for failed build")
+		t.Fatal("expected error when BuildStatus fails")
+	}
+}
+
+type failingStatusRunner struct {
+	fakeRunner
+}
+
+func (f *failingStatusRunner) BuildStatus(_ context.Context, _ string) (cloud.BuildInfo, error) {
+	return cloud.BuildInfo{}, errors.New("status unavailable")
+}
+
+func TestPrivateIPEmptyInput(t *testing.T) {
+	if got := privateIP(nil); got != "" {
+		t.Errorf("expected empty string for nil input, got %q", got)
+	}
+	if got := privateIP([]byte{}); got != "" {
+		t.Errorf("expected empty string for empty input, got %q", got)
+	}
+}
+
+func TestPrivateIPInvalidJSON(t *testing.T) {
+	if got := privateIP([]byte("not json")); got != "" {
+		t.Errorf("expected empty string for invalid JSON, got %q", got)
+	}
+}
+
+func TestPrivateIPValid(t *testing.T) {
+	got := privateIP([]byte(`{"PrivateIpAddress":"10.0.5.99"}`))
+	if got != "10.0.5.99" {
+		t.Errorf("privateIP = %q, want 10.0.5.99", got)
+	}
+}
+
+func TestIsTerminal(t *testing.T) {
+	for _, s := range []string{"SUCCEEDED", "FAILED", "FAULT", "STOPPED", "TIMED_OUT"} {
+		if !isTerminal(s) {
+			t.Errorf("isTerminal(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"IN_PROGRESS", "QUEUED", "SUBMITTED", ""} {
+		if isTerminal(s) {
+			t.Errorf("isTerminal(%q) = true, want false", s)
+		}
+	}
+}
+
+func TestTriggerReadStateError(t *testing.T) {
+	var out bytes.Buffer
+	c := command{
+		runtime:        globals.Runtime{Config: config.Defaults()},
+		buildGraphPath: writeTempBuildGraph(t),
+		out:            &out,
+		readState:      func() (*fabricastate.State, error) { return nil, errors.New("state read error") },
+		runner:         &fakeRunner{startID: "x"},
+		sleep:          func(time.Duration) {},
+		now:            time.Now,
+	}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected error when readState fails")
+	}
+}
+
+func TestTriggerHordeInstanceMissingFromState(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("ci", "fabrica-ci", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::CodeBuild::Project", Identifier: "fabrica-ci"},
+	})
+	st.UpsertModule("horde", "", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-123"},
+	})
+	c := newCmd(&out, &fakeRunner{startID: "x"}, st)
+	c.buildGraphPath = writeTempBuildGraph(t)
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected error when horde instance not in state")
 	}
 }

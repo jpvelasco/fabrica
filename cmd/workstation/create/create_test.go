@@ -356,3 +356,221 @@ func TestResolvePerforceAddrNoIP(t *testing.T) {
 		t.Fatal("expected error when private IP is empty")
 	}
 }
+
+func TestResolvePerforceAddrReadStateError(t *testing.T) {
+	c := command{}
+	c.readState = func() (*fabricastate.State, error) {
+		return nil, errors.New("state corrupted")
+	}
+	_, err := c.resolvePerforceAddr(context.Background())
+	if err == nil {
+		t.Fatal("expected error when readState fails during Perforce address resolution")
+	}
+	assert.Contains(t, err.Error(), "reading state for Perforce address")
+}
+
+func TestResolvePerforceAddrNilGetResource(t *testing.T) {
+	st := stateWithPerforce()
+	c := command{}
+	c.readState = func() (*fabricastate.State, error) { return st, nil }
+	// getResource left nil
+	_, err := c.resolvePerforceAddr(context.Background())
+	if err == nil {
+		t.Fatal("expected error when getResource seam is nil")
+	}
+	assert.Contains(t, err.Error(), "no provider configured")
+}
+
+func TestResolvePerforceAddrEmptyActualState(t *testing.T) {
+	st := stateWithPerforce()
+	c := command{}
+	c.readState = func() (*fabricastate.State, error) { return st, nil }
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		// ActualState left empty/nil
+		return nil
+	}
+	_, err := c.resolvePerforceAddr(context.Background())
+	if err == nil {
+		t.Fatal("expected error when ActualState is empty")
+	}
+	assert.Contains(t, err.Error(), "no state data")
+}
+
+func TestResolvePerforceAddrJSONUnmarshalFailure(t *testing.T) {
+	st := stateWithPerforce()
+	c := command{}
+	c.readState = func() (*fabricastate.State, error) { return st, nil }
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		r.ActualState = []byte("not valid json{")
+		return nil
+	}
+	_, err := c.resolvePerforceAddr(context.Background())
+	if err == nil {
+		t.Fatal("expected error when ActualState JSON is invalid")
+	}
+	assert.Contains(t, err.Error(), "could not determine Perforce private IP")
+}
+
+func TestResolvePerforceAddrGetResourceError(t *testing.T) {
+	st := stateWithPerforce()
+	c := command{}
+	c.readState = func() (*fabricastate.State, error) { return st, nil }
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		return errors.New("service unavailable")
+	}
+	_, err := c.resolvePerforceAddr(context.Background())
+	if err == nil {
+		t.Fatal("expected error when getResource fails")
+	}
+	assert.Contains(t, err.Error(), "querying Perforce instance")
+	assert.Contains(t, err.Error(), "service unavailable")
+}
+
+func TestResolvePerforceAddrNoInstanceInState(t *testing.T) {
+	st := testutil.NewTestState()
+	st.UpsertModule("perforce", "2024.2", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-p4"},
+	})
+	c := command{}
+	c.readState = func() (*fabricastate.State, error) { return st, nil }
+	_, err := c.resolvePerforceAddr(context.Background())
+	if err == nil {
+		t.Fatal("expected error when Perforce instance not found in state")
+	}
+	assert.Contains(t, err.Error(), "Perforce instance not found")
+}
+
+func TestCreateMountPerforceNotProvisioned(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState() // no perforce module
+	c := newTestCommand(&out, provider, st)
+	c.mountPerforce = true
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when --mount-perforce but Perforce not provisioned")
+	}
+	assert.Contains(t, err.Error(), "fabrica perforce create")
+}
+
+func TestCreateMountPerforceSuccessDryRun(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := stateWithPerforce()
+	c := newTestCommand(&out, provider, st)
+	c.dryRun = true
+	c.mountPerforce = true
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		r.ActualState = []byte(`{"PrivateIpAddress":"10.0.4.12"}`)
+		return nil
+	}
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := out.String()
+	assert.Contains(t, got, "Perforce server")
+	assert.Contains(t, got, "10.0.4.12:1666")
+}
+
+func TestCreateMountPerforceSuccessApply(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := stateWithPerforce()
+	capture := &testutil.StateWriteCapture{}
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.mountPerforce = true
+	c.writeState = capture.WriteFunc()
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		r.ActualState = []byte(`{"PrivateIpAddress":"10.0.4.12"}`)
+		return nil
+	}
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := out.String()
+	assert.Contains(t, got, "Perforce")
+	assert.Contains(t, got, "10.0.4.12:1666")
+}
+
+func TestCreateVolumeSizeFlagOverridesConfig(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
+	c := newTestCommand(&out, provider, st)
+	c.dryRun = true
+	c.volumeSize = 200
+	c.runtime.Config.Workstation.VolumeSize = 100
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	assert.Contains(t, out.String(), "200")
+}
+
+func TestCreateSGCreateError(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{CreateErr: map[string]error{cloud.TypeAWSEC2SecurityGroup: errors.New("sg limit")}}
+	st := testutil.NewTestState()
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error on SG creation failure")
+	}
+	assert.Contains(t, err.Error(), "creating security group")
+}
+
+func TestCreateCidrWarningInApplyPlan(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.writeState = testutil.StateWriteNever()
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := out.String()
+	// Default allowedCidr is 0.0.0.0/0 — should emit the CIDR WARNING
+	assert.Contains(t, got, "WARNING: allowedCidr is 0.0.0.0/0")
+}
+
+func TestCreateCidrNoWarningWhenNotDefault(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.writeState = testutil.StateWriteNever()
+	c.runtime.Config.Workstation.AllowedCIDR = "10.0.0.0/8"
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "WARNING: allowedCidr is 0.0.0.0/0") {
+		t.Error("CIDR WARNING must not appear when allowedCidr is not 0.0.0.0/0")
+	}
+}
+
+func TestNewRuntimeSourceError(t *testing.T) {
+	var out bytes.Buffer
+	root, optionsSource := testutil.BuildTestSubcommand(&out)
+	runtimeSource := func() (globals.Runtime, error) {
+		return globals.Runtime{}, errors.New("config load failed")
+	}
+	cmd := New(runtimeSource, optionsSource, &out)
+	root.AddCommand(cmd)
+	root.SetArgs([]string{"create", "--dry-run"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error when runtimeSource fails")
+	}
+	assert.Contains(t, err.Error(), "config load failed")
+}
