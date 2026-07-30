@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
@@ -259,7 +260,7 @@ func TestStartBuildNilBuild(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when Build is nil")
 	}
-	if got := err.Error(); !containsStr(got, "CodeBuild did not return a build ID") {
+	if got := err.Error(); !strings.Contains(got, "CodeBuild did not return a build ID") {
 		t.Fatalf("error = %q, want substring %q", got, "CodeBuild did not return a build ID")
 	}
 }
@@ -286,7 +287,7 @@ func TestStartBuildNilBuildID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when Build.Id is nil")
 	}
-	if got := err.Error(); !containsStr(got, "CodeBuild did not return a build ID") {
+	if got := err.Error(); !strings.Contains(got, "CodeBuild did not return a build ID") {
 		t.Fatalf("error = %q, want substring %q", got, "CodeBuild did not return a build ID")
 	}
 }
@@ -305,7 +306,7 @@ func TestBuildStatusSDKError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if got := err.Error(); !containsStr(got, "getting CodeBuild build") {
+	if got := err.Error(); !strings.Contains(got, "getting CodeBuild build") {
 		t.Fatalf("error = %q, want substring %q", got, "getting CodeBuild build")
 	}
 }
@@ -325,16 +326,7 @@ func TestBuildLogSDKError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if got := err.Error(); !containsStr(got, "fetching logs for build") {
+	if got := err.Error(); !strings.Contains(got, "fetching logs for build") {
 		t.Fatalf("error = %q, want substring %q", got, "fetching logs for build")
 	}
-}
-
-func containsStr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

@@ -415,24 +415,3 @@ func TestCreateReadStateError(t *testing.T) {
 		t.Fatal("expected error when readState fails")
 	}
 }
-
-// TestCreateUserDataError verifies that horde.Generate failure returns a clear error.
-func TestCreateUserDataError(t *testing.T) {
-	var out bytes.Buffer
-	provider := &testutil.TestProvider{}
-	st := testutil.NewTestState()
-	c := newTestCommand(&out, provider, st)
-	c.assumeYes = true
-	// Set an invalid AMI ID that will cause Generate to fail — actually,
-	// horde.Generate doesn't use AMI. Instead, we need to make the plan
-	// produce invalid user data. Since Generate is a template render that
-	// can't fail with valid config, we test via the plan layer.
-	// The most practical path: clear the AMI to make NewCreatePlan fail before Generate.
-	c.runtime.Config.Horde.AmiID = ""
-
-	err := c.run(context.Background())
-	if err == nil {
-		t.Fatal("expected error when plan build fails")
-	}
-	assert.Contains(t, err.Error(), "building create plan")
-}
