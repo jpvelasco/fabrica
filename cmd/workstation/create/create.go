@@ -193,7 +193,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		return fmt.Errorf("generating session password: %w", err)
 	}
 
-	credContent := fmt.Sprintf("# Workstation DCV credentials — keep secret\ndcv_session_password: %q\n", sessionPass)
+	credContent := credentials.FormatWorkstation(sessionPass)
 	if err := credentials.WriteCredentials(credFile, credContent); err != nil {
 		return fmt.Errorf("writing credentials file: %w", err)
 	}
