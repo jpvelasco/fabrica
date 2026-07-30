@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -544,18 +545,9 @@ func TestEnsureStateLockTableNonAPIError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-API error")
 	}
-	if got := err.Error(); !containsStrSB(got, "checking DynamoDB table") {
+	if got := err.Error(); !strings.Contains(got, "checking DynamoDB table") {
 		t.Fatalf("error = %q, want substring %q", got, "checking DynamoDB table")
 	}
-}
-
-func containsStrSB(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 type fakeS3StateBackendClient struct {

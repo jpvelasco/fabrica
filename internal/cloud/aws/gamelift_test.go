@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -109,7 +110,7 @@ func TestFleetStatusSDKError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if got := err.Error(); !containsStrGL(got, "describing fleet") {
+	if got := err.Error(); !strings.Contains(got, "describing fleet") {
 		t.Fatalf("error = %q, want substring %q", got, "describing fleet")
 	}
 }
@@ -137,13 +138,4 @@ func TestFleetEventsWithEventTime(t *testing.T) {
 	if evs[0].Time != "2026-07-15T10:30:00Z" {
 		t.Fatalf("ev.Time = %q, want RFC3339 formatted time", evs[0].Time)
 	}
-}
-
-func containsStrGL(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
