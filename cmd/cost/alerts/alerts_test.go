@@ -2,6 +2,8 @@ package alerts
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -145,5 +147,251 @@ func TestCheckJSON(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("JSON missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestSetConfigWriteError(t *testing.T) {
+	var out bytes.Buffer
+	c := setCommand{
+		cfg:     config.Defaults(),
+		out:     &out,
+		cfgPath: "fabrica.yaml",
+		cfgSave: func(*config.Config, string) error { return errors.New("disk full") },
+	}
+	err := c.run("total", 500, 0)
+	if err == nil {
+		t.Fatal("expected error from config save")
+	}
+	if !strings.Contains(err.Error(), "saving config") {
+		t.Fatalf("expected wrapped save error, got: %v", err)
+	}
+}
+
+func TestCheckEmptyBudgets(t *testing.T) {
+	var out bytes.Buffer
+	c := checkCommand{
+		cfg:       config.Defaults(),
+		costs:     cost.Global,
+		out:       &out,
+		readState: func() (*state.State, error) { return seededState(), nil },
+	}
+	if err := c.run(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "No budget thresholds configured") {
+		t.Fatalf("expected empty-budgets message:\n%s", out.String())
+	}
+}
+
+func TestCheckBudgetStates(t *testing.T) {
+	// Perforce costs ~$180/mo (m5.large instance + EBS).
+	// Set thresholds to test OK, WARN, and OVER.
+	st := seededState()
+	for _, tc := range []struct {
+		name    string
+		monthly float64
+		state   string
+	}{
+		{"over", 10, "OVER"},
+		{"warn", 200, "WARN"},
+		{"ok", 500, "OK"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			cfg := config.Defaults()
+			cfg.Cost.Budgets = []config.BudgetThreshold{{Scope: "perforce", Monthly: tc.monthly}}
+			c := checkCommand{
+				cfg:       cfg,
+				costs:     cost.Global,
+				out:       &out,
+				readState: func() (*state.State, error) { return st, nil },
+			}
+			if err := c.run(); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.String(), tc.state) {
+				t.Fatalf("expected %s in:\n%s", tc.state, out.String())
+			}
+		})
+	}
+}
+
+func TestCheckJSON_AllStates(t *testing.T) {
+	st := seededState()
+	cfg := config.Defaults()
+	cfg.Cost.Budgets = []config.BudgetThreshold{
+		{Scope: "perforce", Monthly: 10}, // OVER
+		{Scope: "horde", Monthly: 10000}, // OK, no matching resources
+	}
+	var out bytes.Buffer
+	c := checkCommand{
+		cfg:       cfg,
+		costs:     cost.Global,
+		jsonOut:   true,
+		out:       &out,
+		readState: func() (*state.State, error) { return st, nil },
+	}
+	if err := c.run(); err != nil {
+		t.Fatal(err)
+	}
+	var statuses []struct {
+		Scope   string `json:"scope"`
+		State   string `json:"state"`
+		NoMatch bool   `json:"noMatch"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &statuses); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out.String())
+	}
+	if len(statuses) != 2 {
+		t.Fatalf("expected 2 statuses, got %d", len(statuses))
+	}
+	// Sorted alphabetically: horde first, perforce second.
+	if statuses[0].Scope != "horde" || statuses[0].State != "OK" || !statuses[0].NoMatch {
+		t.Fatalf("expected horde/OK/NoMatch: %+v", statuses[0])
+	}
+	if statuses[1].Scope != "perforce" || statuses[1].State != "OVER" {
+		t.Fatalf("expected perforce/OVER: %+v", statuses[1])
+	}
+}
+
+func TestListJSON(t *testing.T) {
+	var out bytes.Buffer
+	cfg := config.Defaults()
+	cfg.Cost.Budgets = []config.BudgetThreshold{{Scope: "total", Monthly: 400, WarnPct: 80}}
+	c := listCommand{cfg: cfg, jsonOut: true, out: &out}
+	if err := c.run(); err != nil {
+		t.Fatal(err)
+	}
+	var budgets []struct {
+		Scope   string  `json:"scope"`
+		Monthly float64 `json:"monthly"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &budgets); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out.String())
+	}
+	if len(budgets) != 1 || budgets[0].Scope != "total" {
+		t.Fatalf("unexpected budget: %+v", budgets)
+	}
+}
+
+func TestListJSONEmpty(t *testing.T) {
+	var out bytes.Buffer
+	c := listCommand{cfg: config.Defaults(), jsonOut: true, out: &out}
+	if err := c.run(); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.TrimSpace(out.String())
+	// Empty Budgets slice marshals to "null" (not "[]") since it's nil.
+	if got != "null" {
+		t.Fatalf("expected null for empty budgets, got:\n%s", got)
+	}
+}
+
+func TestCheckReadStateError(t *testing.T) {
+	c := checkCommand{
+		cfg:       config.Defaults(),
+		costs:     cost.Global,
+		out:       &bytes.Buffer{},
+		readState: func() (*state.State, error) { return nil, errors.New("state file missing") },
+	}
+	err := c.run()
+	if err == nil {
+		t.Fatal("expected error from readState")
+	}
+	if !strings.Contains(err.Error(), "reading state") {
+		t.Fatalf("expected wrapped state error, got: %v", err)
+	}
+}
+
+func TestSetInvalidMonthly(t *testing.T) {
+	c := setCommand{cfg: config.Defaults(), out: &bytes.Buffer{}, cfgSave: func(*config.Config, string) error { return nil }}
+	err := c.run("total", 0, 0)
+	if err == nil {
+		t.Fatal("expected error for monthly <= 0")
+	}
+	if !strings.Contains(err.Error(), "must be greater than 0") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSetUnknownScope(t *testing.T) {
+	c := setCommand{cfg: config.Defaults(), out: &bytes.Buffer{}, cfgSave: func(*config.Config, string) error { return nil }}
+	err := c.run("nonsense", 100, 0)
+	if err == nil {
+		t.Fatal("expected error for unknown scope")
+	}
+	if !strings.Contains(err.Error(), "unknown scope") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSetDryRunWithWarnPct(t *testing.T) {
+	var out bytes.Buffer
+	saveCalled := false
+	c := setCommand{
+		cfg:     config.Defaults(),
+		out:     &out,
+		dryRun:  true,
+		cfgPath: "fabrica.yaml",
+		cfgSave: func(*config.Config, string) error { saveCalled = true; return nil },
+	}
+	if err := c.run("horde", 300, 90); err != nil {
+		t.Fatal(err)
+	}
+	if saveCalled {
+		t.Fatal("dry-run must not write config")
+	}
+	s := out.String()
+	if !strings.Contains(s, "300") || !strings.Contains(s, "90%") || !strings.Contains(s, "Dry run") {
+		t.Fatalf("dry-run output missing expected content:\n%s", s)
+	}
+}
+
+func TestListTextWithWarnPct(t *testing.T) {
+	var out bytes.Buffer
+	cfg := config.Defaults()
+	cfg.Cost.Budgets = []config.BudgetThreshold{{Scope: "ci", Monthly: 100, WarnPct: 95}}
+	c := listCommand{cfg: cfg, out: &out}
+	if err := c.run(); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	if !strings.Contains(s, "ci") || !strings.Contains(s, "95%") {
+		t.Fatalf("expected custom warn pct:\n%s", s)
+	}
+}
+
+func TestListTextDefaultWarnPct(t *testing.T) {
+	var out bytes.Buffer
+	cfg := config.Defaults()
+	cfg.Cost.Budgets = []config.BudgetThreshold{{Scope: "deploy", Monthly: 200, WarnPct: 0}}
+	c := listCommand{cfg: cfg, out: &out}
+	if err := c.run(); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	if !strings.Contains(s, "80%") {
+		t.Fatalf("expected default 80%% warn:\n%s", s)
+	}
+}
+
+func TestCheckWithWarnPct(t *testing.T) {
+	st := seededState()
+	cfg := config.Defaults()
+	cfg.Cost.Budgets = []config.BudgetThreshold{{Scope: "perforce", Monthly: 1000, WarnPct: 50}}
+	var out bytes.Buffer
+	c := checkCommand{
+		cfg:       cfg,
+		costs:     cost.Global,
+		out:       &out,
+		readState: func() (*state.State, error) { return st, nil },
+	}
+	if err := c.run(); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	// With perforce ~$180 and threshold $1000 at 50% warn ($500), estimate $180 < $500, so OK.
+	if !strings.Contains(s, "OK") {
+		t.Fatalf("expected OK:\n%s", s)
 	}
 }
