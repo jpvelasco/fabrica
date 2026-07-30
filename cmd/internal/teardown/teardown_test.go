@@ -1056,6 +1056,161 @@ func TestNewStandaloneCommandResolvesDependenciesAtExecution(t *testing.T) {
 	}
 }
 
+// TestAttemptDeleteSDKPath verifies the SDK-only deletion path.
+func TestAttemptDeleteSDKPath(t *testing.T) {
+	var deleted []string
+	c := Command{
+		SDKDeleteFunc: func(_ context.Context, typeName, id string) error {
+			deleted = append(deleted, id)
+			return nil
+		},
+	}
+	r := cloud.Resource{TypeName: "AWS::Custom::Res", Identifier: "res-1"}
+	err := c.attemptDelete(context.Background(), &r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deleted) != 1 || deleted[0] != "res-1" {
+		t.Fatalf("expected [res-1], got %v", deleted)
+	}
+}
+
+// TestAttemptDeleteSDKErrorPropagates verifies a non-ErrNotHandled SDK error
+// is returned as-is without falling back to Cloud Control.
+func TestAttemptDeleteSDKErrorPropagates(t *testing.T) {
+	wantErr := errors.New("project still in use")
+	c := Command{
+		SDKDeleteFunc: func(_ context.Context, _, _ string) error { return wantErr },
+		DeleteResource: func(_ context.Context, _ *cloud.Resource) error {
+			t.Fatal("DeleteResource must not be called when SDK returns a real error")
+			return nil
+		},
+	}
+	r := cloud.Resource{TypeName: "AWS::Custom::Res", Identifier: "res-1"}
+	err := c.attemptDelete(context.Background(), &r)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error = %v, want %v", err, wantErr)
+	}
+}
+
+// TestAttemptDeleteNotHandledFallsBackToCC verifies ErrNotHandled from SDK
+// triggers the Cloud Control fallback path.
+func TestAttemptDeleteNotHandledFallsBackToCC(t *testing.T) {
+	var ccDeleted []string
+	c := Command{
+		SDKDeleteFunc: func(_ context.Context, _, _ string) error { return cloud.ErrNotHandled },
+		DeleteResource: func(_ context.Context, r *cloud.Resource) error {
+			ccDeleted = append(ccDeleted, r.Identifier)
+			return nil
+		},
+	}
+	r := cloud.Resource{TypeName: "AWS::EC2::Instance", Identifier: "i-1"}
+	err := c.attemptDelete(context.Background(), &r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ccDeleted) != 1 || ccDeleted[0] != "i-1" {
+		t.Fatalf("expected CC to delete [i-1], got %v", ccDeleted)
+	}
+}
+
+// TestAttemptDeleteNoSDKUsesCC verifies that without an SDK function wired,
+// the Cloud Control path is used directly.
+func TestAttemptDeleteNoSDKUsesCC(t *testing.T) {
+	var deleted []string
+	c := Command{
+		DeleteResource: func(_ context.Context, r *cloud.Resource) error {
+			deleted = append(deleted, r.Identifier)
+			return nil
+		},
+	}
+	r := cloud.Resource{TypeName: "AWS::EC2::Instance", Identifier: "i-2"}
+	err := c.attemptDelete(context.Background(), &r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deleted) != 1 || deleted[0] != "i-2" {
+		t.Fatalf("expected [i-2], got %v", deleted)
+	}
+}
+
+// TestDeleteViaCloudControlNotFound verifies ErrResourceNotFound is treated as
+// a no-op (resource already gone).
+func TestDeleteViaCloudControlNotFound(t *testing.T) {
+	var out bytes.Buffer
+	c := Command{
+		Out: &out,
+		DeleteResource: func(_ context.Context, _ *cloud.Resource) error {
+			return cloud.ErrResourceNotFound
+		},
+	}
+	r := cloud.Resource{TypeName: "AWS::EC2::Instance", Identifier: "i-gone"}
+	err := c.deleteViaCloudControl(context.Background(), &r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assert.Contains(t, out.String(), "Already deleted")
+}
+
+// TestDeleteViaCloudControlNotFoundJSON verifies ErrResourceNotFound is silent
+// in JSON mode (no "Already deleted" message).
+func TestDeleteViaCloudControlNotFoundJSON(t *testing.T) {
+	var out bytes.Buffer
+	c := Command{
+		Out:     &out,
+		JSONOut: true,
+		DeleteResource: func(_ context.Context, _ *cloud.Resource) error {
+			return cloud.ErrResourceNotFound
+		},
+	}
+	r := cloud.Resource{TypeName: "AWS::EC2::Instance", Identifier: "i-gone"}
+	err := c.deleteViaCloudControl(context.Background(), &r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Len() > 0 {
+		t.Errorf("JSON mode should not print 'Already deleted'; got: %s", out.String())
+	}
+}
+
+// TestDeleteViaCloudControlErrorWraps verifies a real deletion error is wrapped
+// with resource context.
+func TestDeleteViaCloudControlErrorWraps(t *testing.T) {
+	wantErr := errors.New("network timeout")
+	c := Command{
+		DeleteResource: func(_ context.Context, _ *cloud.Resource) error { return wantErr },
+	}
+	r := cloud.Resource{TypeName: "AWS::EC2::Instance", Identifier: "i-fail"}
+	err := c.deleteViaCloudControl(context.Background(), &r)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error not wrapped: %v", err)
+	}
+	assert.Contains(t, err.Error(), "AWS::EC2::Instance")
+	assert.Contains(t, err.Error(), "i-fail")
+}
+
+// TestDeleteViaCloudControlSuccess verifies a successful delete returns nil.
+func TestDeleteViaCloudControlSuccess(t *testing.T) {
+	var deleted []string
+	c := Command{
+		DeleteResource: func(_ context.Context, r *cloud.Resource) error {
+			deleted = append(deleted, r.Identifier)
+			return nil
+		},
+	}
+	r := cloud.Resource{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-ok"}
+	err := c.deleteViaCloudControl(context.Background(), &r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deleted) != 1 || deleted[0] != "sg-ok" {
+		t.Fatalf("expected [sg-ok], got %v", deleted)
+	}
+}
+
 func TestNewStandaloneCommandStopsOnRuntimeError(t *testing.T) {
 	wantErr := errors.New("runtime unavailable")
 	optionsCalled := false
