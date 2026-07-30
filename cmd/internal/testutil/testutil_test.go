@@ -449,3 +449,80 @@ func TestNewProvisionedStateJSONMarshalPanic(t *testing.T) {
 		}},
 	})
 }
+
+// TestParseBaseStatusOutput exercises the shared JSON parser.
+func TestParseBaseStatusOutput(t *testing.T) {
+	t.Run("provisioned", func(t *testing.T) {
+		prov, id, err := ParseBaseStatusOutput(`{"provisioned":true,"instanceId":"i-123"}`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !prov || id != "i-123" {
+			t.Errorf("prov=%v id=%q, want true i-123", prov, id)
+		}
+	})
+
+	t.Run("not-provisioned", func(t *testing.T) {
+		prov, _, err := ParseBaseStatusOutput(`{"provisioned":false}`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if prov {
+			t.Error("expected provisioned=false")
+		}
+	})
+
+	t.Run("invalid-json", func(t *testing.T) {
+		_, _, err := ParseBaseStatusOutput(`not json`)
+		if err == nil {
+			t.Fatal("expected error for invalid JSON")
+		}
+	})
+}
+
+// TestBuildTestRuntime exercises the status test convenience.
+func TestBuildTestRuntime(t *testing.T) {
+	t.Run("with-provider", func(t *testing.T) {
+		p := &TestProvider{}
+		src := BuildTestRuntime(p)
+		rt, err := src()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if rt.Provider == nil {
+			t.Error("expected non-nil provider")
+		}
+	})
+
+	t.Run("nil-provider", func(t *testing.T) {
+		src := BuildTestRuntime(nil)
+		rt, err := src()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if rt.Provider != nil {
+			t.Error("expected nil provider")
+		}
+	})
+}
+
+// TestUbuntuAMIProviderDefault exercises the default AMI fallback.
+func TestUbuntuAMIProviderDefault(t *testing.T) {
+	p := &UbuntuAMIProvider{}
+	ami, err := p.ResolveUbuntuAMI(context.Background(), "22.04")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ami != "ami-fake-ubuntu" {
+		t.Errorf("ami = %q, want %q", ami, "ami-fake-ubuntu")
+	}
+}
+
+// TestUbuntuAMIProviderError exercises the error path.
+func TestUbuntuAMIProviderError(t *testing.T) {
+	p := &UbuntuAMIProvider{AMIErr: fmt.Errorf("not found")}
+	_, err := p.ResolveUbuntuAMI(context.Background(), "22.04")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}

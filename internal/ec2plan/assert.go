@@ -2,12 +2,17 @@
 // module plans, plus assertion helpers for plan-layer tests.
 package ec2plan
 
-import "testing"
+// baseT is the minimal subset of testing.T needed for assertions.
+type baseT interface {
+	Helper()
+	Errorf(format string, args ...any)
+	Error(args ...any)
+}
 
 // AssertBase checks the common Base fields of a CreatePlan against expected
 // values. Only non-zero/empty fields in want are checked, so callers can
 // assert a subset without repeating Account, Region, SGName, etc.
-func AssertBase(t *testing.T, got, want Base) {
+func AssertBase(t baseT, got, want Base) {
 	t.Helper()
 	checkStr(t, got.Account, want.Account, "Account")
 	checkStr(t, got.Region, want.Region, "Region")
@@ -18,14 +23,14 @@ func AssertBase(t *testing.T, got, want Base) {
 	checkStr(t, got.InstanceName, want.InstanceName, "InstanceName")
 }
 
-func checkStr(t *testing.T, got, want, name string) {
+func checkStr(t baseT, got, want, name string) {
 	t.Helper()
 	if want != "" && got != want {
 		t.Errorf("%s = %q, want %q", name, got, want)
 	}
 }
 
-func checkInt(t *testing.T, got, want int, name string) {
+func checkInt(t baseT, got, want int, name string) {
 	t.Helper()
 	if want > 0 && got != want {
 		t.Errorf("%s = %d, want %d", name, got, want)
@@ -33,7 +38,7 @@ func checkInt(t *testing.T, got, want int, name string) {
 }
 
 // AssertVPC checks VPC ID and subnet ID against expected values.
-func AssertVPC(t *testing.T, got Base, wantVPC, wantSubnet string) {
+func AssertVPC(t baseT, got Base, wantVPC, wantSubnet string) {
 	t.Helper()
 	if got.VPCID != wantVPC {
 		t.Errorf("VPCID = %q, want %q", got.VPCID, wantVPC)
@@ -45,7 +50,7 @@ func AssertVPC(t *testing.T, got Base, wantVPC, wantSubnet string) {
 
 // AssertVPCResolved checks that VPC resolution via a resolver produced the
 // expected VPC ID, subnet ID, and DefaultVPC=true.
-func AssertVPCResolved(t *testing.T, got Base, wantVPC, wantSubnet string) {
+func AssertVPCResolved(t baseT, got Base, wantVPC, wantSubnet string) {
 	t.Helper()
 	AssertVPC(t, got, wantVPC, wantSubnet)
 	if !got.DefaultVPC {
@@ -55,7 +60,7 @@ func AssertVPCResolved(t *testing.T, got Base, wantVPC, wantSubnet string) {
 
 // AssertVPCExplicit checks that explicit VPC IDs were preserved and
 // DefaultVPC is false.
-func AssertVPCExplicit(t *testing.T, got Base, wantVPC, wantSubnet string) {
+func AssertVPCExplicit(t baseT, got Base, wantVPC, wantSubnet string) {
 	t.Helper()
 	AssertVPC(t, got, wantVPC, wantSubnet)
 	if got.DefaultVPC {
