@@ -53,3 +53,4 @@ comment:
 # Paths excluded from coverage math.
 ignore:
   - "**/*_test.go"
+  - "cmd/internal/testutil/*.go"  # test-framework generators — coverage attributed to callers
