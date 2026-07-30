@@ -11,13 +11,5 @@ import (
 // Does not register estimators — reuses AWS::EC2::Instance / Volume from
 // internal/perforce/cost.go.
 func CostResources(cfg config.LoreConfig) []cost.Resource {
-	instanceType := cfg.InstanceType
-	if instanceType == "" {
-		instanceType = "m5.xlarge"
-	}
-	volumeSize := cfg.VolumeSize
-	if volumeSize <= 0 {
-		volumeSize = 500
-	}
-	return ec2cost.InstanceAndVolume(instanceType, volumeSize)
+	return ec2cost.ResourcesWithDefaults(cfg.InstanceType, "m5.xlarge", cfg.VolumeSize, 500)
 }

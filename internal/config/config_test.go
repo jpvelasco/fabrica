@@ -9,6 +9,66 @@ import (
 	"github.com/spf13/viper"
 )
 
+// writeConfig creates a temp YAML file with the given content and returns its path.
+func writeConfig(t *testing.T, content string) string {
+	t.Helper()
+	return writeTempFile(t, "fabrica.yaml", content)
+}
+
+// writeTempFile creates a temp file with the given name and content.
+func writeTempFile(t *testing.T, name, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Clean(filepath.Join(dir, name))
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// loadConfig loads a config from a file path, fatalling on error.
+func loadConfig(t *testing.T, path string) *Config {
+	t.Helper()
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load(%s): %v", path, err)
+	}
+	return cfg
+}
+
+// assertStr checks a string field against an expected value.
+func assertStr(t *testing.T, got, want, name string) {
+	t.Helper()
+	if got != want {
+		t.Errorf("%s = %q, want %q", name, got, want)
+	}
+}
+
+// assertInt checks an int field against an expected value.
+func assertInt(t *testing.T, got, want int, name string) {
+	t.Helper()
+	if got != want {
+		t.Errorf("%s = %d, want %d", name, got, want)
+	}
+}
+
+// assertCloud checks cloud provider fields in one call.
+func assertCloud(t *testing.T, cfg *Config, provider, region, profile, accountID string) {
+	t.Helper()
+	assertStr(t, cfg.Cloud.Provider, provider, "provider")
+	assertStr(t, cfg.Cloud.AWS.Region, region, "region")
+	assertStr(t, cfg.Cloud.AWS.Profile, profile, "profile")
+	assertStr(t, cfg.Cloud.AWS.AccountID, accountID, "accountId")
+}
+
+// assertState checks state backend fields in one call.
+func assertState(t *testing.T, cfg *Config, bucket, table, kmsKeyID string) {
+	t.Helper()
+	assertStr(t, cfg.State.Bucket, bucket, "bucket")
+	assertStr(t, cfg.State.Table, table, "table")
+	assertStr(t, cfg.State.KMSKeyID, kmsKeyID, "kmsKeyId")
+}
+
 func TestDefaults(t *testing.T) {
 	cfg := Defaults()
 	if cfg.Cloud.Provider != "aws" {
@@ -73,8 +133,7 @@ func TestLoadMissingFile(t *testing.T) {
 }
 
 func TestLoadValidFile(t *testing.T) {
-	dir := t.TempDir()
-	content := `cloud:
+	path := writeConfig(t, `cloud:
   provider: aws
   aws:
     region: eu-west-1
@@ -87,108 +146,44 @@ state:
   bucket: my-fabrica-state
   table: custom-lock
   kmsKeyId: alias/fabrica-key
-`
-	path := filepath.Clean(filepath.Join(dir, "fabrica.yaml"))
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if cfg.Cloud.Provider != "aws" {
-		t.Errorf("provider = %q, want aws", cfg.Cloud.Provider)
-	}
-	if cfg.Cloud.AWS.Region != "eu-west-1" {
-		t.Errorf("region = %q, want eu-west-1", cfg.Cloud.AWS.Region)
-	}
-	if cfg.Cloud.AWS.Profile != "my-profile" {
-		t.Errorf("profile = %q, want my-profile", cfg.Cloud.AWS.Profile)
-	}
-	if cfg.Cloud.AWS.AccountID != "123456789012" {
-		t.Errorf("accountId = %q, want 123456789012", cfg.Cloud.AWS.AccountID)
-	}
+`)
+	cfg := loadConfig(t, path)
+	assertCloud(t, cfg, "aws", "eu-west-1", "my-profile", "123456789012")
 	if cfg.Cloud.AWS.Tags["env"] != "staging" {
 		t.Errorf("tags.env = %q, want staging", cfg.Cloud.AWS.Tags["env"])
 	}
-	if cfg.State.Bucket != "my-fabrica-state" {
-		t.Errorf("bucket = %q, want my-fabrica-state", cfg.State.Bucket)
-	}
-	if cfg.State.Table != "custom-lock" {
-		t.Errorf("table = %q, want custom-lock", cfg.State.Table)
-	}
-	if cfg.State.KMSKeyID != "alias/fabrica-key" {
-		t.Errorf("kmsKeyId = %q, want alias/fabrica-key", cfg.State.KMSKeyID)
-	}
+	assertState(t, cfg, "my-fabrica-state", "custom-lock", "alias/fabrica-key")
 }
 
 func TestLoadPerforceBackupConfig(t *testing.T) {
-	dir := t.TempDir()
-	content := `perforce:
+	path := writeConfig(t, `perforce:
   version: "2024.2"
   backup:
     path: /custom/backups
     s3Export: true
     s3Bucket: my-backup-bucket
     s3Prefix: studio/p4/
-`
-	path := filepath.Clean(filepath.Join(dir, "fabrica.yaml"))
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cfg.Perforce.Version != "2024.2" {
-		t.Errorf("version = %q, want 2024.2", cfg.Perforce.Version)
-	}
+`)
+	cfg := loadConfig(t, path)
+	assertStr(t, cfg.Perforce.Version, "2024.2", "version")
 	b := cfg.Perforce.Backup
-	if b.Path != "/custom/backups" {
-		t.Errorf("backup.path = %q, want /custom/backups", b.Path)
-	}
+	assertStr(t, b.Path, "/custom/backups", "backup.path")
 	if !b.S3Export {
 		t.Error("backup.s3Export = false, want true")
 	}
-	if b.S3Bucket != "my-backup-bucket" {
-		t.Errorf("backup.s3Bucket = %q, want my-backup-bucket", b.S3Bucket)
-	}
-	if b.S3Prefix != "studio/p4/" {
-		t.Errorf("backup.s3Prefix = %q, want studio/p4/", b.S3Prefix)
-	}
+	assertStr(t, b.S3Bucket, "my-backup-bucket", "backup.s3Bucket")
+	assertStr(t, b.S3Prefix, "studio/p4/", "backup.s3Prefix")
 }
 
 func TestLoadPartialFile(t *testing.T) {
-	dir := t.TempDir()
-	content := `cloud:
+	path := writeConfig(t, `cloud:
   aws:
     region: ap-southeast-1
-`
-	path := filepath.Clean(filepath.Join(dir, "fabrica.yaml"))
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Region overridden from file
-	if cfg.Cloud.AWS.Region != "ap-southeast-1" {
-		t.Errorf("region = %q, want ap-southeast-1", cfg.Cloud.AWS.Region)
-	}
-	// Provider defaults preserved
-	if cfg.Cloud.Provider != "aws" {
-		t.Errorf("provider = %q, want aws", cfg.Cloud.Provider)
-	}
-	// Table defaults preserved
-	if cfg.State.Table != "fabrica-state-lock" {
-		t.Errorf("table = %q, want fabrica-state-lock", cfg.State.Table)
-	}
+`)
+	cfg := loadConfig(t, path)
+	assertStr(t, cfg.Cloud.AWS.Region, "ap-southeast-1", "region")
+	assertStr(t, cfg.Cloud.Provider, "aws", "provider")
+	assertStr(t, cfg.State.Table, "fabrica-state-lock", "table")
 }
 
 func TestSaveWritesSchemaNames(t *testing.T) {
@@ -260,9 +255,7 @@ workstation:
 }
 
 func TestLoadDeployConfig(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Clean(filepath.Join(dir, "fabrica.yaml"))
-	if err := os.WriteFile(path, []byte(`
+	path := writeConfig(t, `
 cloud:
   provider: aws
 deploy:
@@ -272,22 +265,11 @@ deploy:
   buildBucket: my-build-bucket
   desiredInstances: 2
   activationTimeoutMinutes: 30
-`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Deploy.InstanceType != "c5.large" {
-		t.Errorf("InstanceType = %q", cfg.Deploy.InstanceType)
-	}
-	if cfg.Deploy.DesiredInstances != 2 {
-		t.Errorf("DesiredInstances = %d", cfg.Deploy.DesiredInstances)
-	}
-	if cfg.Deploy.ActivationTimeoutMinutes != 30 {
-		t.Errorf("ActivationTimeoutMinutes = %d", cfg.Deploy.ActivationTimeoutMinutes)
-	}
+`)
+	cfg := loadConfig(t, path)
+	assertStr(t, cfg.Deploy.InstanceType, "c5.large", "InstanceType")
+	assertInt(t, cfg.Deploy.DesiredInstances, 2, "DesiredInstances")
+	assertInt(t, cfg.Deploy.ActivationTimeoutMinutes, 30, "ActivationTimeoutMinutes")
 }
 
 func TestCostConfigRoundTrip(t *testing.T) {

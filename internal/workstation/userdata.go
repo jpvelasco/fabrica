@@ -73,8 +73,7 @@ func (cfg *UserDataConfig) validate() error {
 // Generate renders the cloud-init script and returns it base64-encoded
 // (the format EC2 expects for UserData in Cloud Control).
 func Generate(cfg UserDataConfig) (string, error) {
-	cfg.applyDefaults()
-	if err := cfg.validate(); err != nil {
+	if err := userdata.Prepare(cfg.applyDefaults, cfg.validate); err != nil {
 		return "", err
 	}
 	return userDataRenderer.RenderBase64(cfg)
@@ -83,8 +82,7 @@ func Generate(cfg UserDataConfig) (string, error) {
 // GenerateRaw renders the cloud-init script without base64 encoding.
 // Used in tests to inspect script content directly.
 func GenerateRaw(cfg UserDataConfig) (string, error) {
-	cfg.applyDefaults()
-	if err := cfg.validate(); err != nil {
+	if err := userdata.Prepare(cfg.applyDefaults, cfg.validate); err != nil {
 		return "", err
 	}
 	return userDataRenderer.Render(cfg)

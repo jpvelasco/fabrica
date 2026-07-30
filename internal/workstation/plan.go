@@ -51,6 +51,26 @@ type CreatePlan struct {
 	CostResources []cost.Resource
 }
 
+// resolveSizing applies template + config + default precedence for the two
+// sizing fields. tmpl is "", TemplateArtist, or TemplateProgrammer.
+func resolveSizing(cfg config.WorkstationConfig, tmpl string) (instanceType string, volumeSize int) {
+	instanceType = cfg.InstanceType
+	volumeSize = cfg.VolumeSize
+	switch tmpl {
+	case TemplateArtist:
+		instanceType, volumeSize = ArtistInstanceType, ArtistVolumeSize
+	case TemplateProgrammer:
+		instanceType, volumeSize = ProgrammerInstanceType, ProgrammerVolumeSize
+	}
+	if instanceType == "" {
+		instanceType = DefaultInstanceType
+	}
+	if volumeSize <= 0 {
+		volumeSize = DefaultVolumeSize
+	}
+	return instanceType, volumeSize
+}
+
 // NewCreatePlan validates inputs and builds a CreatePlan. VPCResolver is called
 // only when VPCId/SubnetId are absent from cfg; pass nil to skip resolution.
 // template overrides instanceType and volumeSize when non-empty.

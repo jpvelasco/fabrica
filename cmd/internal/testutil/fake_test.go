@@ -273,3 +273,42 @@ func TestStateWriteNever(t *testing.T) {
 		t.Errorf("should always succeed: %v", err)
 	}
 }
+
+// dummyTeardownStruct is a minimal struct for testing teardown reflection helpers.
+type dummyTeardownStruct struct {
+	SkipConfirm    bool
+	AssumeYes      bool
+	ReadState      func() error
+	WriteState     func() error
+	DeleteResource func() error
+	GetResource    func() error
+}
+
+// TestTeardownFieldReflection exercises teardownField with direct struct.
+func TestTeardownFieldReflection(t *testing.T) {
+	dt := &dummyTeardownStruct{SkipConfirm: true, AssumeYes: false}
+	f := teardownField(t, dt, "SkipConfirm")
+	if !f.IsValid() || !f.Bool() {
+		t.Error("expected SkipConfirm=true")
+	}
+}
+
+func TestTeardownFieldBool(t *testing.T) {
+	dt := &dummyTeardownStruct{SkipConfirm: true, AssumeYes: false}
+	if !teardownFieldBool(t, dt, "SkipConfirm") {
+		t.Error("expected SkipConfirm=true")
+	}
+	if teardownFieldBool(t, dt, "AssumeYes") {
+		t.Error("expected AssumeYes=false")
+	}
+}
+
+func TestTeardownFieldNil(t *testing.T) {
+	dt := &dummyTeardownStruct{ReadState: func() error { return nil }}
+	if !teardownFieldNil(t, dt, "DeleteResource") {
+		t.Error("expected DeleteResource=nil")
+	}
+	if teardownFieldNil(t, dt, "ReadState") {
+		t.Error("expected ReadState not nil")
+	}
+}
