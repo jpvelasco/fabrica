@@ -4,18 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-)
 
-// parseTags converts the Tags []map[string]any from Cloud Control JSON into a flat map.
-func parseTags(v any) map[string]string {
-	tags := v.([]any)
-	m := make(map[string]string, len(tags))
-	for _, tag := range tags {
-		entry := tag.(map[string]any)
-		m[entry["Key"].(string)] = entry["Value"].(string)
-	}
-	return m
-}
+	"github.com/jpvelasco/fabrica/internal/ec2state"
+)
 
 func TestSGDesiredState_Port1666(t *testing.T) {
 	plan := &CreatePlan{SGName: "fabrica-perforce-sg", VPCID: "vpc-test"}
@@ -23,10 +14,7 @@ func TestSGDesiredState_Port1666(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
 	ingress := doc["SecurityGroupIngress"].([]any)
 	if len(ingress) != 1 {
 		t.Fatalf("expected 1 ingress rule, got %d", len(ingress))
@@ -49,15 +37,8 @@ func TestSGDesiredState_AllowedCIDR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	ingress := doc["SecurityGroupIngress"].([]any)
-	rule := ingress[0].(map[string]any)
-	if rule["CidrIp"] != "172.16.0.0/12" {
-		t.Errorf("CidrIp = %v, want 172.16.0.0/12", rule["CidrIp"])
-	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+	ec2state.AssertIngressCidr(t, doc, 1, "172.16.0.0/12")
 }
 
 func TestSGDesiredState_VPCAndName(t *testing.T) {
@@ -66,16 +47,9 @@ func TestSGDesiredState_VPCAndName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	if doc["VpcId"] != "vpc-abc123" {
-		t.Errorf("VpcId = %v, want vpc-abc123", doc["VpcId"])
-	}
-	if doc["GroupName"] != "fabrica-perforce-sg" {
-		t.Errorf("GroupName = %v, want fabrica-perforce-sg", doc["GroupName"])
-	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+	ec2state.AssertStringField(t, doc, "VpcId", "vpc-abc123")
+	ec2state.AssertStringField(t, doc, "GroupName", "fabrica-perforce-sg")
 }
 
 func TestSGDesiredState_ManagedByTag(t *testing.T) {
@@ -84,16 +58,11 @@ func TestSGDesiredState_ManagedByTag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	tagMap := parseTags(doc["Tags"])
-	if tagMap["ManagedBy"] != "fabrica" {
-		t.Errorf("ManagedBy tag = %q, want fabrica", tagMap["ManagedBy"])
-	}
-	if tagMap["Name"] != "fabrica-perforce-sg" {
-		t.Errorf("Name tag = %q, want fabrica-perforce-sg", tagMap["Name"])
+	ec2state.AssertManagedByTag(t, raw)
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+	tags := ec2state.ParseTags(t, doc["Tags"].([]any))
+	if tags["Name"] != "fabrica-perforce-sg" {
+		t.Errorf("Name tag = %q, want fabrica-perforce-sg", tags["Name"])
 	}
 }
 
@@ -108,23 +77,11 @@ func TestInstanceDesiredState_CoreFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	if doc["InstanceType"] != "m5.xlarge" {
-		t.Errorf("InstanceType = %v", doc["InstanceType"])
-	}
-	if doc["SubnetId"] != "subnet-abc" {
-		t.Errorf("SubnetId = %v", doc["SubnetId"])
-	}
-	if doc["UserData"] != "userdata-b64" {
-		t.Errorf("UserData = %v", doc["UserData"])
-	}
-	sgIDs := doc["SecurityGroupIds"].([]any)
-	if len(sgIDs) != 1 || sgIDs[0] != "sg-123" {
-		t.Errorf("SecurityGroupIds = %v, want [sg-123]", sgIDs)
-	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+	ec2state.AssertStringField(t, doc, "InstanceType", "m5.xlarge")
+	ec2state.AssertStringField(t, doc, "SubnetId", "subnet-abc")
+	ec2state.AssertStringField(t, doc, "UserData", "userdata-b64")
+	ec2state.AssertSGID(t, doc, "sg-123")
 	if doc["IamInstanceProfile"] != "fabrica-perforce-profile" {
 		t.Errorf("IamInstanceProfile = %v, want fabrica-perforce-profile", doc["IamInstanceProfile"])
 	}
@@ -136,10 +93,7 @@ func TestInstanceDesiredState_EBSNotDeletedOnTermination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
 	bdms := doc["BlockDeviceMappings"].([]any)
 	if len(bdms) != 1 {
 		t.Fatalf("expected 1 BDM, got %d", len(bdms))
@@ -211,10 +165,7 @@ func TestInstanceDesiredState_ARNProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatal(err)
-	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
 	if doc["IamInstanceProfile"] != "arn:aws:iam::123:instance-profile/p" {
 		t.Fatalf("expected arn profile: %v", doc["IamInstanceProfile"])
 	}
@@ -241,14 +192,8 @@ func TestInstanceDesiredState_IMDSv2Required(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	meta := doc["MetadataOptions"].(map[string]any)
-	if meta["HttpTokens"] != "required" {
-		t.Errorf("HttpTokens = %v, want required (IMDSv2 must be enforced)", meta["HttpTokens"])
-	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+	ec2state.AssertIMDSv2(t, doc)
 }
 
 func TestInstanceDesiredState_ManagedByTag(t *testing.T) {
@@ -257,16 +202,11 @@ func TestInstanceDesiredState_ManagedByTag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	tagMap := parseTags(doc["Tags"])
-	if tagMap["ManagedBy"] != "fabrica" {
-		t.Errorf("ManagedBy tag = %q, want fabrica", tagMap["ManagedBy"])
-	}
-	if tagMap["Name"] != "fabrica-perforce" {
-		t.Errorf("Name tag = %q, want fabrica-perforce", tagMap["Name"])
+	ec2state.AssertManagedByTag(t, raw)
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+	tags := ec2state.ParseTags(t, doc["Tags"].([]any))
+	if tags["Name"] != "fabrica-perforce" {
+		t.Errorf("Name tag = %q, want fabrica-perforce", tags["Name"])
 	}
 }
 
@@ -276,13 +216,8 @@ func TestInstanceDesiredState_ImageID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	if doc["ImageId"] != "ami-ubuntu2204" {
-		t.Errorf("ImageId = %v, want ami-ubuntu2204", doc["ImageId"])
-	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+	ec2state.AssertStringField(t, doc, "ImageId", "ami-ubuntu2204")
 }
 
 func TestInstanceDesiredState_EmptyImageID(t *testing.T) {
@@ -291,10 +226,7 @@ func TestInstanceDesiredState_EmptyImageID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
 	if _, ok := doc["ImageId"]; ok {
 		t.Error("ImageId should not be present when empty")
 	}

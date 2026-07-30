@@ -19,3 +19,16 @@ func InstanceAndVolume(instanceType string, volumeSize int) []cost.Resource {
 		{TypeName: cloud.TypeAWSEC2Volume, Name: fmt.Sprintf("gp3-%dGiB", volumeSize)},
 	}
 }
+
+// ResourcesWithDefaults builds cost resources for an EC2 instance + EBS volume,
+// applying default values when the config values are zero. This eliminates the
+// repeated default-resolution boilerplate across module cost.go files.
+func ResourcesWithDefaults(instanceType string, defaultType string, volumeSize int, defaultSize int) []cost.Resource {
+	if instanceType == "" {
+		instanceType = defaultType
+	}
+	if volumeSize <= 0 {
+		volumeSize = defaultSize
+	}
+	return InstanceAndVolume(instanceType, volumeSize)
+}

@@ -2,7 +2,6 @@ package ddc
 
 import (
 	"encoding/json"
-	"fmt"
 
 	"github.com/jpvelasco/fabrica/internal/ec2state"
 	"github.com/jpvelasco/fabrica/internal/iamrole"
@@ -52,35 +51,19 @@ func BucketDesiredState(plan *SetupPlan) (json.RawMessage, error) {
 
 // RoleDesiredState returns the EC2 instance role (S3 RW on DDC bucket + SSM core).
 func RoleDesiredState(plan *SetupPlan) (json.RawMessage, error) {
-	bucketArn := fmt.Sprintf("arn:aws:s3:::%s", plan.Bucket)
-	objectsArn := bucketArn + "/*"
-	doc := map[string]any{
-		"RoleName":                 plan.RoleName,
-		"AssumeRolePolicyDocument": iamrole.AssumeRolePolicyDocument(iamrole.ServiceEC2),
-		"ManagedPolicyArns": []string{
-			"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+	return iamrole.RoleDocument(
+		plan.RoleName,
+		iamrole.ServiceEC2,
+		[]string{"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"},
+		[]map[string]any{
+			iamrole.S3BucketPolicy("fabrica-ddc-s3", plan.Bucket,
+				[]string{"s3:ListBucket", "s3:GetBucketLocation"},
+				[]string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject"},
+				"*",
+			),
 		},
-		"Policies": []map[string]any{{
-			"PolicyName": "fabrica-ddc-s3",
-			"PolicyDocument": map[string]any{
-				"Version": "2012-10-17",
-				"Statement": []map[string]any{
-					{
-						"Effect":   "Allow",
-						"Action":   []string{"s3:ListBucket", "s3:GetBucketLocation"},
-						"Resource": []string{bucketArn},
-					},
-					{
-						"Effect":   "Allow",
-						"Action":   []string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject"},
-						"Resource": []string{objectsArn},
-					},
-				},
-			},
-		}},
-		"Tags": iamrole.RoleTags(plan.RoleName, map[string]string{"FabricaModule": "ddc"}),
-	}
-	return json.Marshal(doc)
+		map[string]string{"FabricaModule": "ddc"},
+	)
 }
 
 // InstanceProfileDesiredState wraps the DDC role for EC2 attachment.

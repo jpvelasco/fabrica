@@ -99,13 +99,17 @@ func (cfg *UserDataConfig) applyDefaults() {
 
 // Generate returns base64-encoded user data for the DDC instance.
 func Generate(cfg UserDataConfig) (string, error) {
-	cfg.applyDefaults()
+	if err := userdata.Prepare(cfg.applyDefaults, nil); err != nil {
+		return "", err
+	}
 	return userDataRenderer.RenderBase64(cfg)
 }
 
 // GenerateRaw returns plain-text cloud-init for tests.
 func GenerateRaw(cfg UserDataConfig) (string, error) {
-	cfg.applyDefaults()
+	if err := userdata.Prepare(cfg.applyDefaults, nil); err != nil {
+		return "", err
+	}
 	return userDataRenderer.Render(cfg)
 }
 
@@ -161,12 +165,16 @@ func (cfg *ScyllaUserDataConfig) applyDefaults() {
 
 // GenerateScylla returns base64 user data for the Scylla bootstrap instance.
 func GenerateScylla(cfg ScyllaUserDataConfig) (string, error) {
-	cfg.applyDefaults()
+	if err := userdata.Prepare(cfg.applyDefaults, nil); err != nil {
+		return "", err
+	}
 	return scyllaUserDataRenderer.RenderBase64(cfg)
 }
 
 // GenerateScyllaRaw returns plain-text Scylla cloud-init for tests.
 func GenerateScyllaRaw(cfg ScyllaUserDataConfig) (string, error) {
-	cfg.applyDefaults()
+	if err := userdata.Prepare(cfg.applyDefaults, nil); err != nil {
+		return "", err
+	}
 	return scyllaUserDataRenderer.Render(cfg)
 }
