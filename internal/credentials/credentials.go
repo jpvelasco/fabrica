@@ -46,18 +46,17 @@ func FormatPerforce(adminPassword string) string {
 	return fmt.Sprintf("# Perforce admin credentials — keep secret\nadmin_password: %q\n", adminPassword)
 }
 
-// ReadFile reads a credential file from disk.
-func ReadFile(path string) (string, error) {
+// ReadPerforceAdminPassword reads a Perforce credential file and returns its
+// admin password.
+func ReadPerforceAdminPassword(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("reading credentials %s: %w", path, err)
 	}
-	return string(data), nil
+	return parsePerforceAdminPassword(string(data))
 }
 
-// ParsePerforceAdminPassword extracts admin_password from a Perforce
-// credentials YAML file written by FormatPerforce.
-func ParsePerforceAdminPassword(content string) (string, error) {
+func parsePerforceAdminPassword(content string) (string, error) {
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {

@@ -82,7 +82,7 @@ func TestCobraRestoreEmptyPasswordInCreds(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(".fabrica", "state.json"), []byte(state), 0600); err != nil {
 		t.Fatal(err)
 	}
-	// valid file shape, empty password → ParsePerforceAdminPassword fails (covers New closure line)
+	// A valid file shape with an empty password exercises the credential-reader seam.
 	if err := os.WriteFile(filepath.Join(".fabrica", "perforce-credentials.yaml"), []byte("admin_password: \"\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}

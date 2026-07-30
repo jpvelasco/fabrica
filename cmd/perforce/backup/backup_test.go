@@ -145,6 +145,9 @@ func TestCreateDryRun(t *testing.T) {
 	if !strings.Contains(out.String(), "20260715-143022") {
 		t.Fatalf("output: %s", out.String())
 	}
+	if !strings.Contains(out.String(), "S3 export:  disabled") {
+		t.Fatalf("missing disabled S3 status: %s", out.String())
+	}
 }
 
 func TestCreateNotProvisioned(t *testing.T) {
