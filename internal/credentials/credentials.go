@@ -78,6 +78,11 @@ func parsePerforceAdminPassword(content string) (string, error) {
 	return "", fmt.Errorf("admin_password not found in credentials file — re-run 'fabrica perforce create' or restore .fabrica/perforce-credentials.yaml")
 }
 
+// FormatWorkstation returns the YAML content for a Workstation DCV credential file.
+func FormatWorkstation(sessionPassword string) string {
+	return fmt.Sprintf("# Workstation DCV credentials — keep secret\ndcv_session_password: %q\n", sessionPassword)
+}
+
 // FormatHorde returns the YAML content for a Horde credential file.
 func FormatHorde(mongoPassword string) string {
 	return fmt.Sprintf("# Horde MongoDB credentials — keep secret\nmongodb_password: %q\nhorde_service_token: \"\"\n", mongoPassword)

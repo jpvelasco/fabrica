@@ -129,3 +129,13 @@ func TestFormatHorde(t *testing.T) {
 		t.Error("FormatHorde output missing password value")
 	}
 }
+
+func TestFormatWorkstation(t *testing.T) {
+	out := credentials.FormatWorkstation("dcvpass")
+	if !strings.Contains(out, "dcv_session_password:") {
+		t.Error("FormatWorkstation output missing dcv_session_password key")
+	}
+	if !strings.Contains(out, "dcvpass") {
+		t.Error("FormatWorkstation output missing password value")
+	}
+}
