@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/gamelift"
@@ -96,4 +97,53 @@ func TestFleetEventsAPIError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error propagated")
 	}
+}
+
+func TestFleetStatusSDKError(t *testing.T) {
+	c := fakeGameLiftClient{
+		describeAttrs: func(_ context.Context, _ *gamelift.DescribeFleetAttributesInput, _ ...func(*gamelift.Options)) (*gamelift.DescribeFleetAttributesOutput, error) {
+			return nil, errors.New("connection refused")
+		},
+	}
+	_, err := newTestProviderGL(c).FleetStatus(context.Background(), "fleet-1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := err.Error(); !containsStrGL(got, "describing fleet") {
+		t.Fatalf("error = %q, want substring %q", got, "describing fleet")
+	}
+}
+
+func TestFleetEventsWithEventTime(t *testing.T) {
+	ts := awssdk.Time(time.Date(2026, 7, 15, 10, 30, 0, 0, time.UTC))
+	c := fakeGameLiftClient{
+		describeEvents: func(_ context.Context, _ *gamelift.DescribeFleetEventsInput, _ ...func(*gamelift.Options)) (*gamelift.DescribeFleetEventsOutput, error) {
+			return &gamelift.DescribeFleetEventsOutput{
+				Events: []gltypes.Event{{
+					EventCode: gltypes.EventCodeFleetStateActive,
+					Message:   awssdk.String("fleet ready"),
+					EventTime: ts,
+				}},
+			}, nil
+		},
+	}
+	evs, err := newTestProviderGL(c).FleetEvents(context.Background(), "fleet-1")
+	if err != nil {
+		t.Fatalf("FleetEvents err: %v", err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("got %d events, want 1", len(evs))
+	}
+	if evs[0].Time != "2026-07-15T10:30:00Z" {
+		t.Fatalf("ev.Time = %q, want RFC3339 formatted time", evs[0].Time)
+	}
+}
+
+func containsStrGL(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

@@ -536,3 +536,39 @@ func TestLoadWithPartialDefaults(t *testing.T) {
 		t.Error("tags should not be nil after Load")
 	}
 }
+
+// TestLoadEmptyPath verifies that Load("") falls back to the default filename
+// when a fabrica.yaml exists in the current working directory.
+func TestLoadEmptyPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	content := `cloud:
+  aws:
+    region: ap-northeast-1
+`
+	if err := os.WriteFile(DefaultFile, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load(\"\") = error: %v", err)
+	}
+	if cfg.Cloud.AWS.Region != "ap-northeast-1" {
+		t.Errorf("region = %q, want ap-northeast-1", cfg.Cloud.AWS.Region)
+	}
+}
+
+// TestLoadPathIsDirectory verifies that Load returns an error when the path
+// points to a directory instead of a file.
+func TestLoadPathIsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	_, err := Load(dir)
+	if err == nil {
+		t.Fatal("expected error when path is a directory, got nil")
+	}
+	if !strings.Contains(err.Error(), "reading config") {
+		t.Errorf("expected reading config error, got: %v", err)
+	}
+}

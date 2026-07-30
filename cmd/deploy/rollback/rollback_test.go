@@ -3,6 +3,7 @@ package rollback
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -106,5 +107,135 @@ func TestRollbackConfirmRejected(t *testing.T) {
 	}
 	if flipped {
 		t.Error("rejected confirm should not flip")
+	}
+}
+
+func TestRollbackReadStateError(t *testing.T) {
+	var out bytes.Buffer
+	st := stateWith("fleet-new", "fleet-old")
+	c := newTestCmd(&out, st)
+	c.readState = func() (*fabricastate.State, error) {
+		return nil, fmt.Errorf("state read failed")
+	}
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "reading state") {
+		t.Fatalf("expected error wrapping 'reading state', got: %v", err)
+	}
+}
+
+func TestRollbackAliasNotFound(t *testing.T) {
+	var out bytes.Buffer
+	// State with deploy module that has only fleet resources, no alias.
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	res := []fabricastate.ModuleResource{
+		{TypeName: "AWS::GameLift::Fleet", Identifier: "fleet-new", Properties: map[string]string{"role": "active"}},
+	}
+	st.UpsertModule("deploy", "v2", "ready", res)
+	c := newTestCmd(&out, st)
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "deploy alias not found") {
+		t.Fatalf("expected 'deploy alias not found', got: %v", err)
+	}
+}
+
+func TestRollbackFleetStatusNil(t *testing.T) {
+	var out bytes.Buffer
+	st := stateWith("fleet-new", "fleet-old")
+	c := newTestCmd(&out, st)
+	c.fleetStatus = nil
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "does not support GameLift") {
+		t.Fatalf("expected 'does not support GameLift', got: %v", err)
+	}
+}
+
+func TestRollbackFleetStatusError(t *testing.T) {
+	var out bytes.Buffer
+	st := stateWith("fleet-new", "fleet-old")
+	c := newTestCmd(&out, st)
+	c.fleetStatus = func(context.Context, string) (cloud.FleetInfo, error) {
+		return cloud.FleetInfo{}, fmt.Errorf("fleet status error")
+	}
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "checking rollback target fleet") {
+		t.Fatalf("expected 'checking rollback target fleet', got: %v", err)
+	}
+}
+
+func TestRollbackUpdateResourceError(t *testing.T) {
+	var out bytes.Buffer
+	st := stateWith("fleet-new", "fleet-old")
+	c := newTestCmd(&out, st)
+	c.updateResource = func(context.Context, *cloud.Resource) error {
+		return fmt.Errorf("alias update failed")
+	}
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "flipping alias") {
+		t.Fatalf("expected 'flipping alias', got: %v", err)
+	}
+}
+
+func TestRollbackWriteStateError(t *testing.T) {
+	var out bytes.Buffer
+	st := stateWith("fleet-new", "fleet-old")
+	c := newTestCmd(&out, st)
+	c.writeState = func(*fabricastate.State) error {
+		return fmt.Errorf("state write failed")
+	}
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "writing state") {
+		t.Fatalf("expected 'writing state', got: %v", err)
+	}
+}
+
+func TestSwapRolesNilProperties(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	res := []fabricastate.ModuleResource{
+		{TypeName: "AWS::GameLift::Alias", Identifier: "alias-1"},
+		{TypeName: "AWS::GameLift::Fleet", Identifier: "fleet-a"},
+		{TypeName: "AWS::GameLift::Fleet", Identifier: "fleet-b", Properties: nil},
+	}
+	st.UpsertModule("deploy", "v2", "ready", res)
+	m := st.GetModule("deploy")
+
+	// fleet-a has no Properties at all; fleet-b has nil Properties.
+	// swapRoles should initialize both and set roles.
+	swapRoles(m, "fleet-b", "fleet-a")
+
+	for _, r := range m.Resources {
+		if r.TypeName != "AWS::GameLift::Fleet" {
+			continue
+		}
+		if r.Properties == nil {
+			t.Fatalf("fleet %s: Properties is nil after swapRoles", r.Identifier)
+		}
+		switch r.Identifier {
+		case "fleet-b":
+			if r.Properties["role"] != "active" {
+				t.Errorf("fleet-b role = %q, want active", r.Properties["role"])
+			}
+		case "fleet-a":
+			if r.Properties["role"] != "superseded" {
+				t.Errorf("fleet-a role = %q, want superseded", r.Properties["role"])
+			}
+		}
 	}
 }
