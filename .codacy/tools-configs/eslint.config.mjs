@@ -4,5 +4,5 @@ const js = { files: ["**/*.js", "**/*.mjs", "**/*.cjs"] };
 
 export default [
   { ignores: ["**/*", "!npm/**/*"] },
-  { files: [js.files] },
+  { files: js.files },
 ];
