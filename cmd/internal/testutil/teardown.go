@@ -53,6 +53,8 @@ func teardownField(t *testing.T, v any, name string) reflect.Value {
 	if rv.Kind() == reflect.Pointer {
 		rv = rv.Elem()
 	}
+	// nosemgrep: go.lang.security.audit.unsafe-reflect-by-name.unsafe-reflect-by-name
+	// Test-only helper; field names are hardcoded in test code, never user-controlled.
 	return rv.FieldByName(name)
 }
 
