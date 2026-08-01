@@ -227,6 +227,12 @@ jobs:
   # analysis does not fire automatically after squash-merge, so we run the
   # Codacy Analysis CLI here and upload results. Uses the existing project
   # token (CODACY_REPOSITORY_API_TOKEN) — no new secrets needed.
+  #
+  # Build-server analysis is ON in Codacy (Settings → Repository analysis).
+  # Client-side tools that must upload for a complete scoreboard:
+  #   - Docker tools (default): Opengrep, Revive, Deadcode, Aligncheck, Trivy, …
+  #   - Standalone: Gosec via run-gosec (Staticcheck/GolangCI stay on the Lint job —
+  #     the action pins Go 1.20 which cannot build this module's go 1.25+).
   codacy-analysis:
     name: Codacy Analysis
     if: github.event_name == 'push'
@@ -238,5 +244,7 @@ jobs:
         with:
           project-token: ${{ secrets.CODACY_REPOSITORY_API_TOKEN }}
           upload: true
+          # Standalone client-side Go security tool → Codacy dashboard.
+          run-gosec: "true"
           # Informational — do not block the pipeline.
           max-allowed-issues: 2147483647
