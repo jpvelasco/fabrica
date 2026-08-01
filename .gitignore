@@ -54,3 +54,8 @@ dist/
 /full.out
 /p.out
 /mcps/
+
+# Codacy local artifacts (configs under .codacy/ are committed)
+.codacy/logs/
+.codacy/*.sarif
+.codacy/server-issues.json
