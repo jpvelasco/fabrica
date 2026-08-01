@@ -6,7 +6,6 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/horde/destroy"
-	"github.com/spf13/cobra"
 )
 
 // TestRunTeardownCobraTests exercises the shared teardown cobra suite against
@@ -20,9 +19,7 @@ func TestRunTeardownCobraTests(t *testing.T) {
 		ExpectedDeletes: 2,
 		Resources:       EC2Pair("sg-cobra123", "i-cobra123"),
 		SuccessVerb:     "destroyed",
-		NewCmd: func(rt globals.RuntimeSource, opts globals.OptionsSource, out io.Writer) *cobra.Command {
-			return destroy.New(rt, opts, out)
-		},
+		NewCmd:          destroy.New,
 		NewTeardown: func(rt globals.Runtime, out io.Writer) any {
 			return destroy.NewTeardown(rt, out)
 		},
