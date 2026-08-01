@@ -222,18 +222,16 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
 
-  # Codacy Static Analysis — runs on push to main to keep the dashboard in sync.
-  # PR-level checks come from the GitHub integration webhook; main-level
-  # analysis does not fire automatically after squash-merge, so we run the
-  # Codacy Analysis CLI here and upload results. Uses the existing project
-  # token (CODACY_REPOSITORY_API_TOKEN) — no new secrets needed.
+  # Codacy Static Analysis — push to main only (dashboard refresh).
+  # PR quality: Codacy GitHub integration. Token: CODACY_REPOSITORY_API_TOKEN.
   #
-  # Build-server analysis is ON in Codacy. Docker tools (Opengrep, Revive,
-  # Deadcode, Aligncheck, Trivy, …) upload via the CLI. Do NOT set run-gosec /
-  # run-staticcheck: codacy-analysis-cli-action@v4.4.7 pins gosec v2.15.0 and
-  # Go 1.20, which panic on this module's Go 1.25+ export data
-  # ("panic: unsupported version: 2"). Gosec/staticcheck stay on the dedicated
-  # gosec + Lint jobs instead.
+  # Locked Fabrica profile (do not freestyle):
+  #   Cloud ON:  Opengrep, Revive, Trivy, Checkov, Lizard, Deadcode
+  #   Cloud OFF: Gosec/Staticcheck/GolangCI client-side, ESLint*, Jackson, PMD, …
+  #   CI owns:   golangci-lint, gosec@v2.27+, govulncheck, tests/Codecov
+  #   NEVER set run-gosec / run-staticcheck — action pins gosec v2.15.0 + Go 1.20
+  #   and panics on this module (Go 1.25+). See .private/guides/CODACY-FABRICA-AGENT-GUIDE.md
+  #   (gitignored) for the full agent contract.
   codacy-analysis:
     name: Codacy Analysis
     if: github.event_name == 'push'
