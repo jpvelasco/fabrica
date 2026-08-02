@@ -37,6 +37,10 @@ func TestStateBucketExistsUsesS3HeadBucket(t *testing.T) {
 			headErr: apiErr("NoSuchBucket"),
 		},
 		{
+			name:    "missing by NotFound code",
+			headErr: apiErr("NotFound"),
+		},
+		{
 			name:      "unexpected error",
 			headErr:   apiErr("AccessDenied"),
 			wantErr:   true,
@@ -547,6 +551,60 @@ func TestEnsureStateLockTableNonAPIError(t *testing.T) {
 	}
 	if got := err.Error(); !strings.Contains(got, "checking DynamoDB table") {
 		t.Fatalf("error = %q, want substring %q", got, "checking DynamoDB table")
+	}
+}
+
+func TestS3StateClientDefaultConstructor(t *testing.T) {
+	p := &awsProvider{
+		awsCfg: awsConfig{region: "us-east-1"},
+		loadConfig: func(ctx context.Context, region, profile string) (awssdk.Config, error) {
+			return awssdk.Config{Region: region}, nil
+		},
+	}
+	cfg := awssdk.Config{Region: "us-east-1"}
+	client := p.s3StateClient(cfg)
+	if client == nil {
+		t.Fatal("s3StateClient returned nil with nil seam")
+	}
+}
+
+func TestDynamoDBStateClientDefaultConstructor(t *testing.T) {
+	p := &awsProvider{
+		awsCfg: awsConfig{region: "us-east-1"},
+		loadConfig: func(ctx context.Context, region, profile string) (awssdk.Config, error) {
+			return awssdk.Config{Region: region}, nil
+		},
+	}
+	cfg := awssdk.Config{Region: "us-east-1"}
+	client := p.dynamoDBStateClient(cfg)
+	if client == nil {
+		t.Fatal("dynamoDBStateClient returned nil with nil seam")
+	}
+}
+
+func TestWaiterDefaultConstructors(t *testing.T) {
+	p := &awsProvider{
+		awsCfg: awsConfig{region: "us-east-1"},
+		loadConfig: func(ctx context.Context, region, profile string) (awssdk.Config, error) {
+			return awssdk.Config{Region: region}, nil
+		},
+	}
+	s3Client := s3.NewFromConfig(awssdk.Config{Region: "us-east-1"})
+	ddbClient := dynamodb.NewFromConfig(awssdk.Config{Region: "us-east-1"})
+
+	bucketWaiter := p.bucketNotExistsWaiter(s3Client)
+	if bucketWaiter == nil {
+		t.Fatal("bucketNotExistsWaiter returned nil with nil seam")
+	}
+
+	tableWaiter := p.tableNotExistsWaiter(ddbClient)
+	if tableWaiter == nil {
+		t.Fatal("tableNotExistsWaiter returned nil with nil seam")
+	}
+
+	tableExistsWaiter := p.tableExistsWaiter(ddbClient)
+	if tableExistsWaiter == nil {
+		t.Fatal("tableExistsWaiter returned nil with nil seam")
 	}
 }
 

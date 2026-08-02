@@ -15,6 +15,9 @@ const gp3PricePerGiB = 0.08
 // ec2InstancePrices is an on-demand price table for common instance types
 // (us-east-1, Linux, on-demand). Source: AWS pricing as of 2024-Q4.
 var ec2InstancePrices = map[string]float64{
+	"t3.large":     0.0832,
+	"t3.xlarge":    0.1664,
+	"t3.2xlarge":   0.3328,
 	"m5.large":     0.096,
 	"m5.xlarge":    0.192,
 	"m5.2xlarge":   0.384,
