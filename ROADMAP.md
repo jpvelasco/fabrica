@@ -4,7 +4,7 @@ This is the single source of truth for where Fabrica is and where it's going.
 The `README.md` describes how to use what exists today; this document tracks
 status and sequencing. When they disagree, this file wins.
 
-Last updated: 2026-07-16.
+Last updated: 2026-08-02.
 
 ## Vision
 
@@ -109,9 +109,11 @@ gaps) are tracked at the end and do not block Phase 1.
 - ✅ Final architecture + consistency review (clean layering; doc/cleanup fixes applied; test-coverage gaps tracked as a follow-up)
 - ✅ Release machinery — GoReleaser + npm shim (ludus-cli pattern); first public cut is **v0.1.0**
 
-**Deferred nice-to-haves** (do not block Phase 1; docs/cleanup fixes already shipped):
-- Test-coverage gaps: cobra black-box tests cover cost report/alerts, deploy setup/promote/rollback/status, and ci setup/trigger/status. 2 packages lack a white-box `_test.go` (horde destroy, workstation terminate); the AWS provider type-assertion seams (`Identity`/`EC2Manager`/`StopInstance`/`StartInstance`/`CreateFleetAsync`) sit at 0% coverage.
-- Cosmetic conventions: output-writer inconsistency (`cmd/version` uses `cmd.OutOrStdout()`; other commands use the `c.out` seam); a few multi-letter anonymous receivers (`(renderer)`).
+**Post-v0.1.1 quality sprint** (complete as of 2026-08-01):
+- Structural deduplication across plan, cost, userdata, IAM, status, teardown, and test layers — shared packages (`internal/ec2plan`, `internal/ec2state`, `internal/ec2cost`, `internal/userdata`, `internal/iamrole`, `cmd/internal/testutil`) and expanded `cmd/internal/provision` / `modstatus` / `teardown`
+- Test coverage raised across the board (most packages mid–high 90%s); previous white-box gaps (horde destroy, workstation terminate) closed
+- Codacy profile locked (cloud + local mirror); CI/gosec split documented
+- Residual cosmetic conventions (output-writer seam in `cmd/version`, multi-letter anonymous receivers) remain low-priority
 
 ### Phase 2 / v0.2 — Lore module ✅ Implemented
 

@@ -26,8 +26,8 @@ status, tear down — with typed-phrase confirmations and recoverable partial st
 
 ## Current Status
 
-**v0.1.0 is the first public release.** Phase 0, Phase 1, Lore (v0.2), and DDC
-V1 are complete: Perforce, Horde, Lore, Distributed DDC (single home-region),
+**Current stable: v0.1.2.** Phase 0, Phase 1, Lore (v0.2), and DDC V1 are
+complete: Perforce, Horde, Lore, Distributed DDC (single home-region),
 Workstation, CI, Deploy, Cost, full-stack `destroy --all`, offline cost
 visibility, and a CLI E2E suite. Install via `npm install -g fabrica-cli` or
 GitHub Releases. See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium
