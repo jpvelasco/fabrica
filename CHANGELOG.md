@@ -13,6 +13,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [0.1.2] - 2026-08-02
+
+Reliability and quality release after the post-v0.1.1 tech-debt / coverage / Codacy sprint.
+
+### Fixed
+
+- **Partial-failure recovery on CREATE** — when Cloud Control reports `AlreadyExists`, recover the existing resource identifier from the progress event and continue instead of erroring. Closes the E2E gap where a resource was created on AWS but `WriteState` failed, causing a CREATE retry on the next run. (#107)
+- **Perforce AMI resolution** — `perforce create` now resolves the latest Ubuntu 22.04 (jammy) HVM AMI in the target region and injects `ImageId` into the instance desired state (previously missing, causing create failure). (#106)
+- **Codacy / Go 1.25** — drop broken `run-gosec` from the Codacy Analysis action (gosec v2.15.0 panics on modern export data); gosec remains gated by the dedicated CI job and golangci-lint. (#197)
+- **npm install hardening** — path boundary checks, URL redirect allowlist, and SSRF protection in the binary install script.
+- **Trivy CVE** — upgrade viper transitive deps (`golang.org/x/text` and related) to clear CRITICAL/HIGH findings.
+
+### Changed
+
+- Large structural deduplication across plan, cost, userdata, IAM, status, teardown, and test layers:
+  - New shared packages: `internal/ec2plan`, `internal/ec2state`, `internal/ec2cost`, `internal/userdata`, `internal/iamrole`, `cmd/internal/testutil`, expanded `cmd/internal/provision` / `modstatus` / `teardown`
+  - Shared create/status/teardown printers and constructors; credential formatting consolidated
+  - Workstation start/stop unified under a single action command
+- Test coverage raised across the board (many packages mid-to-high 90%s); white-box tests added for previously gapped packages (horde destroy, workstation terminate, etc.)
+- Codacy profile locked (cloud + local mirror); CI comments document the split (CI owns golangci/gosec)
+- AWS SDK and GitHub Actions dependency bumps
+
+### Note
+
+No new user-facing modules or commands. Phase 1 + Lore + DDC V1 remain the shipped surface.
+
 ## [0.1.1] - 2026-07-21
 
 Bug fixes discovered during live AWS E2E testing of v0.1.0.
@@ -39,31 +65,6 @@ Bug fixes discovered during live AWS E2E testing of v0.1.0.
   and DynamoDB table names are now written to `fabrica.yaml` after successful
   bootstrap. Fixes `doctor` and `status` showing "not configured" after setup.
   (#103)
-
-## [0.1.1] - 2026-07-21
-
-### Fixed
-
-- **SG `Description` → `GroupDescription`** in all five module security group
-  desired states. Cloud Control rejects `Description` — the EC2 schema field
-  is `GroupDescription`. Affected: perforce, horde, lore, ddc, workstation.
-  (`#99`)
-- **`injectFabricaTags` denylist for `AWS::IAM::InstanceProfile`** — Cloud
-  Control rejects `Tags` on IAM InstanceProfile resources. The tag injector
-  now skips this resource type. (`#100`)
-- **`IamInstanceProfile` as plain string** — the EC2 Instance desired state
-  expects `IamInstanceProfile` to be a string (instance profile name), not a
-  `{"Name": ...}` object. Fixes perforce and ddc instance creation. (`#101`)
-- **Perforce SG `allowedCidr` config** — the Perforce module no longer hardcodes
-  `0.0.0.0/0` on port 1666. New `perforce.allowedCidr` config field defaults
-  to `10.0.0.0/8` (private network). Dry-run shows the CIDR and warns when
-  open to the internet. (`#102`)
-- **Setup persists backend names to config** — `fabrica setup` now writes the
-  resolved `state.bucket` and `state.table` back to `fabrica.yaml` after
-  successful bootstrap. Fixes doctor/status showing "not configured" after
-  setup. (`#103`)
-
-[0.1.1]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.1
 
 ## [0.1.0] - 2026-07-21
 
@@ -113,5 +114,6 @@ backup/restore, and Distributed DDC V1 (single home-region).
   no longer use placeholder Codecov tokens.
 
 [Unreleased]: https://github.com/jpvelasco/fabrica/commits/main
+[0.1.2]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.2
 [0.1.1]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.1
 [0.1.0]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.0
