@@ -67,7 +67,7 @@ func (p *awsProvider) StateBucketExists(ctx context.Context, bucket string) (boo
 	if err != nil {
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) {
-			if apiErr.ErrorCode() == "404" || apiErr.ErrorCode() == "NoSuchBucket" {
+			if apiErr.ErrorCode() == "404" || apiErr.ErrorCode() == "NoSuchBucket" || apiErr.ErrorCode() == "NotFound" {
 				return false, nil
 			}
 		}
@@ -307,21 +307,11 @@ func (p *awsProvider) EnsureStateLockTable(ctx context.Context, table string) (f
 	return result, nil
 }
 
-// resolveSeam returns the value from the seam if set, otherwise calls the
-// default factory. This eliminates the repeated nil-check pattern across
-// client and waiter constructors.
-func resolveSeam[T any](seam func() T, def func() T) T {
-	if seam != nil {
-		return seam()
-	}
-	return def()
-}
-
 func (p *awsProvider) tableExistsWaiter(client dynamodb.DescribeTableAPIClient) stateBackendTableExistsWaiter {
-	return resolveSeam(
-		func() stateBackendTableExistsWaiter { return p.newTableExistsWaiter(client) },
-		func() stateBackendTableExistsWaiter { return dynamodb.NewTableExistsWaiter(client) },
-	)
+	if p.newTableExistsWaiter != nil {
+		return p.newTableExistsWaiter(client)
+	}
+	return dynamodb.NewTableExistsWaiter(client)
 }
 
 func (p *awsProvider) stateBackendConfig(ctx context.Context) (aws.Config, error) {
@@ -333,29 +323,29 @@ func (p *awsProvider) stateBackendConfig(ctx context.Context) (aws.Config, error
 }
 
 func (p *awsProvider) s3StateClient(cfg aws.Config) stateBackendS3Client {
-	return resolveSeam(
-		func() stateBackendS3Client { return p.newS3StateClient(cfg) },
-		func() stateBackendS3Client { return s3.NewFromConfig(cfg) },
-	)
+	if p.newS3StateClient != nil {
+		return p.newS3StateClient(cfg)
+	}
+	return s3.NewFromConfig(cfg)
 }
 
 func (p *awsProvider) dynamoDBStateClient(cfg aws.Config) stateBackendDynamoDBClient {
-	return resolveSeam(
-		func() stateBackendDynamoDBClient { return p.newDynamoDBStateClient(cfg) },
-		func() stateBackendDynamoDBClient { return dynamodb.NewFromConfig(cfg) },
-	)
+	if p.newDynamoDBStateClient != nil {
+		return p.newDynamoDBStateClient(cfg)
+	}
+	return dynamodb.NewFromConfig(cfg)
 }
 
 func (p *awsProvider) bucketNotExistsWaiter(client s3.HeadBucketAPIClient) stateBackendBucketWaiter {
-	return resolveSeam(
-		func() stateBackendBucketWaiter { return p.newBucketNotExistsWaiter(client) },
-		func() stateBackendBucketWaiter { return s3.NewBucketNotExistsWaiter(client) },
-	)
+	if p.newBucketNotExistsWaiter != nil {
+		return p.newBucketNotExistsWaiter(client)
+	}
+	return s3.NewBucketNotExistsWaiter(client)
 }
 
 func (p *awsProvider) tableNotExistsWaiter(client dynamodb.DescribeTableAPIClient) stateBackendTableWaiter {
-	return resolveSeam(
-		func() stateBackendTableWaiter { return p.newTableNotExistsWaiter(client) },
-		func() stateBackendTableWaiter { return dynamodb.NewTableNotExistsWaiter(client) },
-	)
+	if p.newTableNotExistsWaiter != nil {
+		return p.newTableNotExistsWaiter(client)
+	}
+	return dynamodb.NewTableNotExistsWaiter(client)
 }

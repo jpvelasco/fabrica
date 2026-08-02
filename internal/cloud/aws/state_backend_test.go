@@ -37,6 +37,10 @@ func TestStateBucketExistsUsesS3HeadBucket(t *testing.T) {
 			headErr: apiErr("NoSuchBucket"),
 		},
 		{
+			name:    "missing by NotFound code",
+			headErr: apiErr("NotFound"),
+		},
+		{
 			name:      "unexpected error",
 			headErr:   apiErr("AccessDenied"),
 			wantErr:   true,
