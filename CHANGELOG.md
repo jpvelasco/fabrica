@@ -7,11 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [0.1.3] - 2026-08-02
 
-### Changed
+Critical reliability fixes discovered during live AWS road testing of v0.1.2.
 
 ### Fixed
+
+- **`resolveSeam` nil-deref on state backend constructors** — the generic `resolveSeam` helper always took the seam path (closure literal is non-nil) but the inner seam field was nil in production, causing a nil pointer dereference on every state-backend command (`setup`, `doctor`, `destroy --all`). Replaced with direct nil-checks on the actual seam fields across all five client constructors.
+- **`StateBucketExists` missing `NotFound` AWS error code** — `HeadBucket` returns `"NotFound"` in the AWS SDK v2, not `"404"` or `"NoSuchBucket"`. `doctor` and `status` now correctly report a missing bucket instead of failing with an unrecognized error.
+- **t3 instance family missing from cost estimator** — `t3.large`, `t3.xlarge`, and `t3.2xlarge` prices added to the EC2 cost estimator. `cost report` now shows accurate estimates for t3 instances instead of falling back to unknown.
 
 ## [0.1.2] - 2026-08-02
 
@@ -113,7 +117,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/commits/main
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.3
 [0.1.2]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.2
 [0.1.1]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.1
 [0.1.0]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.0
