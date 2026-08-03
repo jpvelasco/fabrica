@@ -117,7 +117,7 @@ fabrica ddc status --probe             # GET /health/ready
 ### 4. Horde build farm + CI
 
 ```bash
-# Horde coordinator AMI must include MongoDB 7, Redis 6.2, Horde — docs/horde-ami.md
+# Horde coordinator — Docker compose AMI (see docs/horde-ami.md)
 fabrica horde create
 fabrica horde status
 fabrica ci setup
@@ -220,7 +220,7 @@ Restores Helix Core from a backup id: stops `helix-p4d`, restores checkpoint/jou
 
 ### Horde
 
-> **AMI requirement:** `fabrica horde create` is AMI-first. Your AMI must already contain MongoDB 7, Redis 6.2, and the Horde server binary. Fabrica does not build or publish this AMI — it only configures and starts services via cloud-init. See [docs/horde-ami.md](docs/horde-ami.md) for what the AMI must contain.
+> **AMI requirement:** `fabrica horde create` is AMI-first. Your AMI must be a Docker-compose-based stack (Ubuntu 22.04 + Docker CE) with MongoDB, Redis, and the Horde server under `/etc/horde/`. Fabrica's cloud-init only runs `docker compose up -d` and probes port 5000. See [docs/horde-ami.md](docs/horde-ami.md) for build instructions.
 
 #### `fabrica horde create`
 
@@ -459,7 +459,7 @@ perforce:
 
 horde:
   instance_type: m7i.2xlarge
-  ami_id: ami-xxxxxxxxxxxxxxxxx   # must contain MongoDB 7, Redis 6.2, Horde binary
+  ami_id: ami-xxxxxxxxxxxxxxxxx   # Docker compose AMI (MongoDB, Redis, Horde)
 
 lore:
   amiId: ami-xxxxxxxxxxxxxxxxx    # must contain loreserver (see docs/lore-ami.md)
