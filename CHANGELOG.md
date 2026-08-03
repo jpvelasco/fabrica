@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-08-02
+
+### Refactored
+
+- **Horde cloud-init to Docker compose** — replaced systemd-based cloud-init (mongosh, systemctl) with Docker compose stack (`docker compose up -d` in `/etc/horde/`). Removes `GRPCPort` from `UserDataConfig` (compose uses fixed ports 5000/5002). MongoDB password is validated but not rendered into cloud-init — the compose stack manages credentials independently. (#207)
+- **Horde AMI documentation** — full rewrite of `docs/horde-ami.md` for Docker compose AMI: requirements (Ubuntu 22.04 + Docker CE), compose stack example, config files, bake instructions, and pitfalls. README Horde section and credentials output updated for honesty about compose-managed passwords. (#208)
+
+### Note
+
+Existing systemd-style Horde AMIs are not compatible with this cloud-init; rebuild per the new guide in `docs/horde-ami.md`.
+
 ## [0.1.3] - 2026-08-02
 
 Critical reliability fixes discovered during live AWS road testing of v0.1.2.
@@ -117,7 +128,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.4
 [0.1.3]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.3
 [0.1.2]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.2
 [0.1.1]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.1
