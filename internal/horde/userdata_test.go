@@ -7,7 +7,7 @@ import (
 )
 
 func TestGenerateRawContainsDockerCompose(t *testing.T) {
-	cfg := UserDataConfig{MongoPassword: "testpass123", Port: 5000, GRPCPort: 5002}
+	cfg := UserDataConfig{MongoPassword: "testpass123", Port: 5000}
 	got, err := GenerateRaw(cfg)
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
@@ -21,7 +21,7 @@ func TestGenerateRawContainsDockerCompose(t *testing.T) {
 }
 
 func TestGenerateRawContainsPipefail(t *testing.T) {
-	cfg := UserDataConfig{MongoPassword: "p", Port: 5000, GRPCPort: 5002}
+	cfg := UserDataConfig{MongoPassword: "p", Port: 5000}
 	got, err := GenerateRaw(cfg)
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
@@ -32,7 +32,7 @@ func TestGenerateRawContainsPipefail(t *testing.T) {
 }
 
 func TestGenerateRawContainsHordeReadySentinel(t *testing.T) {
-	cfg := UserDataConfig{MongoPassword: "p", Port: 5000, GRPCPort: 5002}
+	cfg := UserDataConfig{MongoPassword: "p", Port: 5000}
 	got, err := GenerateRaw(cfg)
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
@@ -43,7 +43,7 @@ func TestGenerateRawContainsHordeReadySentinel(t *testing.T) {
 }
 
 func TestGenerateRawContainsPorts(t *testing.T) {
-	cfg := UserDataConfig{MongoPassword: "p", Port: 5001, GRPCPort: 5003}
+	cfg := UserDataConfig{MongoPassword: "p", Port: 5001}
 	got, err := GenerateRaw(cfg)
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
@@ -51,11 +51,10 @@ func TestGenerateRawContainsPorts(t *testing.T) {
 	if !strings.Contains(got, "5001") {
 		t.Error("HTTP port not found in rendered script")
 	}
-	// GRPCPort is kept in config but Docker compose uses fixed ports; Port is used for health check
 }
 
 func TestGenerateRawEmptyPasswordErrors(t *testing.T) {
-	_, err := GenerateRaw(UserDataConfig{Port: 5000, GRPCPort: 5002})
+	_, err := GenerateRaw(UserDataConfig{Port: 5000})
 	if err == nil {
 		t.Fatal("expected error for empty MongoPassword")
 	}
@@ -65,7 +64,7 @@ func TestGenerateRawEmptyPasswordErrors(t *testing.T) {
 }
 
 func TestGenerateRawPasswordStillValidated(t *testing.T) {
-	cfg := UserDataConfig{MongoPassword: "uniquepass456", Port: 5000, GRPCPort: 5002}
+	cfg := UserDataConfig{MongoPassword: "uniquepass456", Port: 5000}
 	got, err := GenerateRaw(cfg)
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
@@ -77,7 +76,7 @@ func TestGenerateRawPasswordStillValidated(t *testing.T) {
 }
 
 func TestGenerateReturnsBase64(t *testing.T) {
-	cfg := UserDataConfig{MongoPassword: "p", Port: 5000, GRPCPort: 5002}
+	cfg := UserDataConfig{MongoPassword: "p", Port: 5000}
 	got, err := Generate(cfg)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -92,7 +91,7 @@ func TestGenerateReturnsBase64(t *testing.T) {
 }
 
 func TestGenerateEmptyPasswordErrors(t *testing.T) {
-	_, err := Generate(UserDataConfig{Port: 5000, GRPCPort: 5002})
+	_, err := Generate(UserDataConfig{Port: 5000})
 	if err == nil {
 		t.Fatal("expected error for empty MongoPassword")
 	}

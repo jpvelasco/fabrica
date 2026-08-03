@@ -159,7 +159,6 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	userData, err := horde.Generate(horde.UserDataConfig{
 		MongoPassword: mongoPass,
 		Port:          plan.Port,
-		GRPCPort:      plan.GRPCPort,
 	})
 	if err != nil {
 		return fmt.Errorf("generating user data: %w", err)

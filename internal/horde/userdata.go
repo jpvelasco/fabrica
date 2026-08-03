@@ -8,10 +8,11 @@ import (
 )
 
 // UserDataConfig is the input shape for the Horde cloud-init script.
+// MongoPassword is validated (non-empty) but not rendered — the Docker compose
+// stack baked into the AMI handles credentials. Port is used for the health check.
 type UserDataConfig struct {
 	MongoPassword string
 	Port          int
-	GRPCPort      int
 }
 
 var userDataRenderer = userdata.New(template.Must(template.New("horde-userdata").Parse(`#!/bin/bash
