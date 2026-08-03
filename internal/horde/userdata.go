@@ -18,41 +18,27 @@ var userDataRenderer = userdata.New(template.Must(template.New("horde-userdata")
 set -euo pipefail
 exec > >(tee /var/log/fabrica-horde-init.log) 2>&1
 
-# Wait for MongoDB to be healthy (may be starting from AMI service)
+echo "Starting Horde Docker stack..."
+
+# Ensure Docker is running
 for i in $(seq 1 12); do
-  mongosh --eval "db.adminCommand('ping')" --quiet && break
-  [ $i -eq 12 ] && echo "ERROR: MongoDB did not become healthy within 60s" && exit 1
+  docker info > /dev/null 2>&1 && break
+  [ $i -eq 12 ] && echo "ERROR: Docker did not start within 60s" && exit 1
   sleep 5
 done
 
-# Create horde database user (idempotent)
-mongosh admin --eval "
-  if (!db.getUser('horde')) {
-    db.createUser({
-      user: 'horde',
-      pwd: '{{ .MongoPassword }}',
-      roles: [{ role: 'readWrite', db: 'Horde' }]
-    });
-  }
-"
+# Start the Docker compose stack (MongoDB + Redis + Horde)
+cd /etc/horde
+docker compose up -d
 
-# Write Horde Server.json
-mkdir -p /etc/horde
-cat > /etc/horde/Server.json <<'HORDEEOF'
-{
-  "Horde": {
-    "DatabaseConnectionString": "mongodb://horde:{{ .MongoPassword }}@localhost:27017/Horde?authSource=admin&readPreference=primary",
-    "RedisConnectionConfig": "127.0.0.1:6379",
-    "HttpPort": {{ .Port }},
-    "Http2Port": {{ .GRPCPort }}
-  }
-}
-HORDEEOF
+# Wait for Horde to become healthy
+for i in $(seq 1 30); do
+  curl -sf http://localhost:{{ .Port }}/ > /dev/null 2>&1 && break
+  [ $i -eq 30 ] && echo "ERROR: Horde did not become ready within 5m" && exit 1
+  sleep 10
+done
 
-# Start services in dependency order
-systemctl restart redis-server || systemctl restart redis
-systemctl restart horde
-
+echo "Horde stack is ready on port {{ .Port }}"
 touch /var/lib/cloud/instance/horde-ready
 `)))
 
