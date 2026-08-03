@@ -84,8 +84,10 @@ func FormatWorkstation(sessionPassword string) string {
 }
 
 // FormatHorde returns the YAML content for a Horde credential file.
+// With Docker compose AMIs, the MongoDB password is validated but not applied
+// by cloud-init — the compose stack manages credentials independently.
 func FormatHorde(mongoPassword string) string {
-	return fmt.Sprintf("# Horde MongoDB credentials — keep secret\nmongodb_password: %q\nhorde_service_token: \"\"\n", mongoPassword)
+	return fmt.Sprintf("# Horde MongoDB credentials — keep secret\n# Note: with Docker compose AMIs, this password is validated but not applied\n# by cloud-init; the compose stack manages MongoDB credentials independently.\nmongodb_password: %q\nhorde_service_token: \"\"\n", mongoPassword)
 }
 
 // FormatLore returns the YAML content for a Lore connection notes file.

@@ -1,8 +1,8 @@
 # Building a Horde AMI
 
-`fabrica horde create` requires an AMI (`horde.amiId` in `fabrica.yaml`) that already contains
-MongoDB, Redis, and the Horde server. Fabrica's cloud-init script only handles final configuration
-and service startup — it does not install any software.
+`fabrica horde create` requires an AMI (`horde.amiId` in `fabrica.yaml`) that already
+contains Docker CE and a Docker Compose stack for Horde. Fabrica's cloud-init script
+only starts the stack — it does not install any software.
 
 This document explains what the AMI must contain, how to build one, and common pitfalls.
 
@@ -15,155 +15,229 @@ The AMI must meet all of the following:
 | Requirement | Detail |
 |-------------|--------|
 | **OS** | Ubuntu 22.04 LTS (jammy) — cloud-init script targets Ubuntu |
-| **MongoDB** | Version 7.0, installed and enabled as `mongod` systemd unit |
-| **Redis** | Version 6.2 or later, installed and enabled as `redis-server` (or `redis`) systemd unit |
-| **Horde server** | Installed and enabled as `horde` systemd unit |
-| **Horde config path** | The `horde` unit must read `/etc/horde/Server.json` as its config file |
+| **Docker CE** | Installed, enabled (`systemctl enable docker`), and running at boot |
+| **Docker Compose** | `docker compose` (v2 plugin) available on PATH |
+| **Compose stack** | `/etc/horde/docker-compose.yml` baked into the AMI |
+| **Horde config** | `/etc/horde/globals.json` and `/etc/horde/server.json` baked into the AMI |
 | **Architecture** | `x86_64` (required for m7i instances) |
 
 At boot, Fabrica's cloud-init script will:
-1. Wait for `mongod` to become healthy
-2. Create the `horde` MongoDB user with a generated password
-3. Write `/etc/horde/Server.json` with the connection strings and ports
-4. Restart `redis-server` and `horde` in dependency order
+1. Wait for Docker to be running (`docker info`)
+2. Run `cd /etc/horde && docker compose up -d`
+3. HTTP-probe `http://localhost:5000/` until Horde responds
+4. Touch the readiness sentinel (`/var/lib/cloud/instance/horde-ready`)
+
+**Not required:** host `mongod` / `redis-server` / `horde` systemd units, host `mongosh`,
+or a Fabrica-written `Server.json`. The compose stack manages all services and
+configuration.
 
 ---
 
-## Option 1: Docker Compose (recommended for most studios)
+## The Compose Stack
 
-Epic ships an official Docker Compose configuration that bundles MongoDB, Redis, and the Horde
-server together. Access requires a GitHub account linked to an EpicGames organization.
+The AMI must include a `docker-compose.yml` at `/etc/horde/docker-compose.yml` that
+defines three services: MongoDB, Redis, and the Horde server. A minimal working
+example:
 
-**Prerequisites:**
-- GitHub account with EpicGames org access: https://www.unrealengine.com/en-US/ue-on-github
-- GitHub Personal Access Token (classic) with `read:packages` scope
-- Docker CE installed on the build machine
+```yaml
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: horde-mongodb
+    volumes:
+      - mongodb-data:/data/db
+    command: mongod --noauth
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-**Steps:**
+  redis:
+    image: redis:7.2
+    container_name: horde-redis
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-1. Launch an Ubuntu 22.04 EC2 instance (same type you plan to use in production).
+  horde:
+    image: fabrica-horde-server:latest
+    container_name: horde-server
+    ports:
+      - "5000:5000"
+      - "5002:5002"
+    volumes:
+      - /etc/horde/globals.json:/app/Defaults/globals.json:ro
+      - /etc/horde/server.json:/app/Defaults/server.json:ro
+    environment:
+      - HORDE__REDISCONNECTIONSTRING=redis:6379
+      - HORDE__MONGOCONNECTIONSTRING=mongodb://mongodb:27017/horde
+      - ASPNETCORE_URLS=http://+:5000
+      - HORDE__CONFIGPATH=/app/Defaults/globals.json
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
-2. Install Docker CE:
-   ```bash
-   curl -fsSL https://get.docker.com | sh
-   ```
-
-3. Log in to GitHub Container Registry:
-   ```bash
-   echo "<YOUR_GITHUB_PAT>" | docker login ghcr.io -u <YOUR_GITHUB_USERNAME> --password-stdin
-   ```
-
-4. Find the official Docker Compose file in your Unreal Engine source checkout:
-   ```
-   Engine/Source/Programs/Horde/HordeServer/docker-compose.yml
-   ```
-   Copy it to the instance and customize credentials before starting.
-
-5. Start the stack and verify all services are healthy:
-   ```bash
-   docker compose up -d
-   docker compose ps
-   ```
-
-6. Create a `horde.service` systemd unit that wraps the Docker Compose stack, starts
-   after `network-online.target`, and reads `/etc/horde/Server.json` as its config.
-
-7. Stop all services, create an AMI from the instance via the AWS console or CLI:
-   ```bash
-   aws ec2 create-image \
-     --instance-id <instance-id> \
-     --name "fabrica-horde-$(date +%Y%m%d)" \
-     --no-reboot
-   ```
-
-8. Note the resulting AMI ID (e.g. `ami-0abc123def456`) and add it to `fabrica.yaml`:
-   ```yaml
-   horde:
-     amiId: ami-0abc123def456
-   ```
-
----
-
-## Option 2: Native install (no Docker)
-
-If your studio cannot use Docker in production, install Horde natively using the .NET 8 runtime.
-
-1. Install .NET 8 SDK:
-   ```bash
-   wget https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb
-   dpkg -i packages-microsoft-prod.deb
-   apt-get update && apt-get install -y dotnet-sdk-8.0
-   ```
-
-2. Build the Horde server from your UE source checkout:
-   ```bash
-   cd Engine/Source/Programs/Horde
-   dotnet publish HordeServer/HordeServer.csproj -c Release -o /opt/horde
-   ```
-
-3. Install MongoDB 7.0 and Redis from their official apt repositories.
-
-4. Create `/etc/systemd/system/horde.service`:
-   ```ini
-   [Unit]
-   Description=Horde Server
-   After=mongod.service redis-server.service
-   Requires=mongod.service
-
-   [Service]
-   ExecStart=/usr/bin/dotnet /opt/horde/HordeServer.dll
-   WorkingDirectory=/opt/horde
-   EnvironmentFile=/etc/horde/env
-   Restart=on-failure
-
-   [Install]
-   WantedBy=multi-user.target
-   ```
-
-5. Create `/etc/horde/env` pointing at the config file:
-   ```
-   ASPNETCORE_ENVIRONMENT=Production
-   Horde__DataDir=/etc/horde
-   ```
-
-   Fabrica writes `/etc/horde/Server.json` at boot; Horde reads it automatically from `DataDir`.
-
-6. Enable the unit: `systemctl enable horde`
-
-7. Stop all services and create the AMI as in Option 1 step 7.
-
----
-
-## systemd Unit Naming
-
-Fabrica's cloud-init restarts services with:
-```bash
-systemctl restart redis-server || systemctl restart redis
-systemctl restart horde
+volumes:
+  mongodb-data:
 ```
 
-**Ensure your AMI has a unit named exactly `horde`.** The Redis unit name varies by installation
-(`redis-server` on Ubuntu apt, `redis` on some Docker setups) — both are tried.
+### Horde Config Files
+
+Bake these into the AMI at `/etc/horde/`:
+
+**`/etc/horde/globals.json`:**
+```json
+{
+  "Version": 2,
+  "horde": {
+    "httpPort": 5000,
+    "http2Port": 5002,
+    "redisConnectionConfig": "redis:6379",
+    "databaseConnectionString": "mongodb://mongodb:27017/horde"
+  },
+  "enabledPlugins": [
+    "Compute",
+    "Experimental",
+    "Health"
+  ]
+}
+```
+
+**`/etc/horde/server.json`:**
+```json
+{
+  "Horde": {
+    "HttpPort": 5000,
+    "Http2Port": 5002
+  }
+}
+```
+
+> **Note:** Do not include `UseLocalPerforceEnv` in `server.json` — the config
+> remapping logic creates a `Horde:Plugins:Build` section that errors when the
+> Build plugin is not loaded.
+
+---
+
+## Building the AMI
+
+### Step 1: Launch a bake instance
+
+```bash
+# Ubuntu 22.04, x86_64, same instance type as production (m7i.2xlarge recommended)
+aws ec2 run-instances \
+  --image-id ami-0abcdef1234567890 \
+  --instance-type m7i.2xlarge \
+  --count 1 \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=fabrica-horde-bake}]'
+```
+
+### Step 2: Install Docker CE
+
+```bash
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker ubuntu
+sudo systemctl enable docker
+```
+
+### Step 3: Build the Horde server image
+
+If using Epic's official Docker image from GHCR:
+
+```bash
+# Log in to GitHub Container Registry
+echo "<YOUR_GITHUB_PAT>" | docker login ghcr.io -u <YOUR_GITHUB_USERNAME> --password-stdin
+
+# Pull the official image (or build from source)
+docker pull ghcr.io/epicgames/unrealengine/horde-server:5.8.1
+docker tag ghcr.io/epicgames/unrealengine/horde-server:5.8.1 fabrica-horde-server:latest
+```
+
+If building from source (UE 5.8.1+):
+
+```bash
+# The Dockerfile lives at Engine/Source/Programs/Horde/HordeServer/Dockerfile
+docker build -f Engine/Source/Programs/Horde/HordeServer/Dockerfile \
+  --build-arg UE_ENGINE_ROOT=/ue5 \
+  -t fabrica-horde-server:latest .
+```
+
+### Step 4: Pre-pull dependency images
+
+```bash
+docker pull mongo:7.0
+docker pull redis:7.2
+```
+
+### Step 5: Bake the compose stack and config into the AMI
+
+```bash
+sudo mkdir -p /etc/horde
+sudo cp docker-compose.yml /etc/horde/
+sudo cp globals.json /etc/horde/
+sudo cp server.json /etc/horde/
+```
+
+### Step 6: Verify the stack works
+
+```bash
+sudo docker compose -f /etc/horde/docker-compose.yml up -d
+sudo docker compose -f /etc/horde/docker-compose.yml ps
+curl -sf http://localhost:5000/ && echo "Horde is healthy"
+```
+
+### Step 7: Create the AMI
+
+```bash
+# Stop the stack so the AMI is clean
+sudo docker compose -f /etc/horde/docker-compose.yml down
+
+aws ec2 create-image \
+  --instance-id <instance-id> \
+  --name "fabrica-horde-$(date +%Y%m%d)" \
+  --description "Horde Docker compose AMI — MongoDB, Redis, Horde server" \
+  --no-reboot
+```
+
+Note the resulting AMI ID and add it to `fabrica.yaml`:
+
+```yaml
+horde:
+  amiId: ami-0abc123def456
+  instanceType: m7i.2xlarge
+  volumeSize: 100
+```
 
 ---
 
 ## Verifying the AMI Before Using It
 
-After building your AMI and launching a test instance from it:
+Launch a test instance from the new AMI and verify:
 
 ```bash
-# All three units should be enabled
-systemctl is-enabled mongod redis-server horde
+# Docker is running
+docker info
 
-# MongoDB should be accepting connections
-mongosh --eval "db.adminCommand('ping')"
+# Compose stack starts cleanly
+cd /etc/horde && docker compose up -d
+docker compose ps
 
-# Horde config path must exist and be writable
-ls -la /etc/horde/
+# Horde responds on port 5000
+curl -sf http://localhost:5000/ && echo "OK"
+
+# All three containers are healthy
+docker inspect --format='{{.Name}}: {{.State.Health.Status}}' horde-mongodb horde-redis horde-server
 ```
 
-Then run `fabrica horde create --dry-run` to verify Fabrica can build the plan before making
-any AWS calls.
+Then run `fabrica horde create --dry-run` to verify Fabrica can build the plan
+before making any AWS calls.
 
 ---
 
@@ -171,9 +245,24 @@ any AWS calls.
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| `mongod` not healthy at cloud-init time | Service enabled but takes >60s to start | Increase startup timeout or add `mongod` readiness checks to the AMI |
-| `horde` unit not found | Unit named `horde-server` or `horde-coordinator` in AMI | Rename the unit or symlink it to `horde` |
-| `/etc/horde/Server.json` not read | Horde binary reads config from a different path | Set `Horde__DataDir=/etc/horde` environment variable in the unit |
-| `redis` service not found | Redis installed under a different unit name | Try both `redis-server` and `redis`; Fabrica tries both |
-| AMI in wrong region | AMI IDs are region-scoped | Re-copy the AMI to each region you deploy to |
+| `Docker did not start within 60s` | Docker not enabled (`systemctl enable docker`) | Enable Docker before creating the AMI |
+| `Horde did not become ready within 5m` | Compose file not at `/etc/horde/docker-compose.yml` | Verify path matches cloud-init expectation |
+| Container exits immediately | Missing or malformed `globals.json` / `server.json` | Bake config files at `/etc/horde/` before creating AMI |
+| `docker compose` not found | Docker Compose v2 plugin not installed | `apt install docker-compose-plugin` or use Docker CE install script |
+| Images not found on first start | Dependency images not pre-pulled into the AMI | `docker pull mongo:7.0 redis:7.2` before `create-image` |
+| AMI in wrong region | AMI IDs are region-scoped | Re-copy the AMI to each region: `aws ec2 copy-image` |
 | `x86_64` vs `arm64` mismatch | AMI architecture doesn't match instance type | Build the AMI on the same instance family you plan to run |
+| MongoDB auth errors | `globals.json` references auth but compose uses `--noauth` | Ensure `databaseConnectionString` does not include username/password |
+
+---
+
+## MongoDB Password Note
+
+Fabrica generates a MongoDB password at `horde create` time and writes it to
+`.fabrica/horde-credentials.yaml`. With the Docker compose AMI, this password is
+**validated but not applied by cloud-init** — the compose stack manages MongoDB
+credentials independently (typically `--noauth` for intra-container communication).
+
+If your studio requires MongoDB authentication, configure it in the compose file
+and `globals.json` baked into the AMI. The password in the credentials file is
+kept for backward compatibility.

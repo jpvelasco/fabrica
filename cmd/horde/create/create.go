@@ -56,7 +56,9 @@ Creates two resources in order:
 State is written after each resource so a partial failure is recoverable:
 re-running create will detect the already-provisioned module and exit cleanly.
 
-A random MongoDB password is generated and written to .fabrica/horde-credentials.yaml.
+A MongoDB password is generated and written to .fabrica/horde-credentials.yaml.
+With Docker compose AMIs, this password is validated but not applied by cloud-init
+(the compose stack manages MongoDB credentials independently).
 
 With --dry-run, shows the provisioning plan and a monthly cost estimate without
 making any AWS calls.`,
