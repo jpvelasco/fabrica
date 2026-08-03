@@ -10,9 +10,11 @@ A Go CLI + infrastructure-as-code framework that provisions and manages game stu
 
 [`ROADMAP.md`](ROADMAP.md) is the single source of truth for phases, module status, and the Praetorium vision. Update it when module status changes.
 
-**Phase 1 is complete** (all five milestones ✅, as of 2026-07-05): the foundation, the full Perforce→Horde→CI→Deploy pipeline, cost visibility, full-stack teardown, E2E harness, and dormant release machinery are all production-ready. **Lore (v0.2)** ships `fabrica lore create|status|destroy` (AMI-first `loreserver`, parallel to Perforce, local/EBS only; no multi-region in V1). **DDC V1** ships `fabrica ddc setup|status|destroy` (single home-region Unreal Cloud DDC / Jupiter; no multi-region in V1). No release is cut until a `v*` tag is pushed. See [`ROADMAP.md`](ROADMAP.md) for deferred nice-to-haves (residual test-coverage gaps, Lore S3 store / ami build / JWT, scheduled Perforce backups, DDC multi-region).
+**Phase 0, Phase 1, Lore (v0.2), and DDC V1 are all complete.** Current stable release is **v0.1.3** (2026-08-02) — a reliability patch fixing a `resolveSeam` nil-deref on state-backend client constructors, a `StateBucketExists` error-code miss, and missing t3 cost entries, all found during live AWS road testing of v0.1.2. Every module below is production-ready; no release is cut until a `v*` tag is pushed. See [`ROADMAP.md`](ROADMAP.md) for deferred nice-to-haves (residual test-coverage gaps, Lore S3 store / ami build / JWT, DDC multi-region, scheduled Perforce backups).
 
-Phase 0 (CLI skeleton + AWS foundation) is complete; Phase 1 Milestones 1–5 core (teardown) are done. Implemented modules: `perforce` (create/status/destroy/backup/restore), `horde` (create/status/submit/destroy/ami), `lore` (create/status/destroy), `ddc` (setup/status/destroy — single-region Unreal Cloud DDC), `workstation` (create/list/stop/start/terminate), `ci` (setup/trigger/status/logs/destroy — CodeBuild orchestration over Horde), `deploy` (setup/promote/rollback/status/destroy — GameLift blue/green orchestration), and `cost` (report/forecast/alerts — offline config-derived reporting + local budget alerts). Full-stack teardown via `destroy --all` orchestrates ordered module teardown (deploy→ci→workstation→ddc→horde→lore→perforce) and deletes the state backend only if every module succeeds. All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` for resource types Cloud Control supports (verify first; see the CI notes for the CodeBuild exception).
+Implemented modules: `perforce` (create/status/destroy/backup/restore), `horde` (create/status/submit/destroy/ami), `lore` (create/status/destroy — AMI-first `loreserver`, parallel to Perforce, local/EBS only, no multi-region), `ddc` (setup/status/destroy — single home-region Unreal Cloud DDC/Jupiter, no `region add`), `workstation` (create/list/stop/start/terminate), `ci` (setup/trigger/status/logs/destroy — CodeBuild orchestration over Horde), `deploy` (setup/promote/rollback/status/destroy — GameLift blue/green orchestration), and `cost` (report/forecast/alerts — offline config-derived reporting + local budget alerts). Full-stack teardown via `destroy --all` orchestrates ordered module teardown (deploy→ci→workstation→ddc→horde→lore→perforce) and deletes the state backend only if every module succeeds. All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` for resource types Cloud Control supports (verify first; see the CI notes for the CodeBuild exception).
+
+**Post-v0.1.1 quality sprint (complete 2026-08-01):** structural duplication across plan, cost, userdata, IAM, status, teardown, and test layers was consolidated into shared packages — `internal/ec2plan`, `internal/ec2state`, `internal/ec2cost`, `internal/userdata`, `internal/iamrole`, `internal/topology`, `internal/assert`, and `cmd/internal/testutil` (see their own rows in Package Responsibilities below). New EC2-based modules should build on these instead of reintroducing the duplication they replaced.
 
 `fabrica setup` is fully functional: `internal/state/bootstrap.go` type-asserts the provider to `cloud.StateBackendBootstrapper` and creates the S3 state bucket (versioning + encryption + public-access-block) and the DynamoDB lock table, idempotently. `cmd/setup/setup.go` shows the plan + cost estimate, then prompts for y/N confirmation before any AWS write (`--yes` skips; `--dry-run` shows the plan and cost without creating anything). `fabrica status` is the aggregate read-only overview: state-backend health + per-module status, resource counts, and actionable next steps, with `--probe` for opt-in TCP readiness checks (off by default because modules use private IPs); it never mutates state.
 
@@ -35,7 +37,7 @@ CI runs lint + build + test cross-platform (ubuntu/windows/macos) on push/PR to 
 
 ### Linting
 
-`.golangci.yml` (v2 schema) starts from `default: none` and explicitly enables: `errcheck`, `govet`, `ineffassign`, `staticcheck`, `unused`, `gocritic`, `misspell`, `unconvert`, `gosec`, `dupl`. `gofmt` is the only formatter. `gosec` excludes G104/G301/G304/G306 (intentional best-effort cleanup, standard dir perms, config-file reads/writes) — match these rationales before adding new suppressions. Codacy mirrors this via `.codacy.yml` (govet + staticcheck engines); `.github/instructions/codacy.instructions.md` drives the Codacy MCP integration.
+`.golangci.yml` (v2 schema) starts from `default: none` and explicitly enables: `errcheck`, `govet`, `ineffassign`, `staticcheck`, `unused`, `gocritic`, `misspell`, `unconvert`, `gosec`, `dupl`. `gofmt` is the only formatter. `gosec` excludes G104 (best-effort cleanup), G204/G702/G703 (subprocess/taint-analysis noise for a CLI tool), G301/G306 (standard dir/file perms), G304 (config-file reads via variable path) — match these rationales before adding new suppressions. Codacy mirrors this via `.codacy.yml` (govet + staticcheck engines); `.github/instructions/codacy.instructions.md` drives the Codacy MCP integration.
 
 ## Git Hooks
 
@@ -139,6 +141,16 @@ go list -deps ./internal/cloud/...
 | `cmd/horde/ami` | Local file generator — no AWS calls, no `RuntimeSource`. `build` subcommand renders embedded templates (`embed.FS`) to an output dir: EC2 Image Builder recipe JSON + optional Packer HCL + build-guide.md |
 | `internal/horde` | Pure plan layer: `CreatePlan`, `SGDesiredState`, `InstanceDesiredState`, cloud-init generator (`Generate`/`GenerateRaw`), `VPCResolver` interface |
 | `internal/horde/buildgraph` | Isolated sub-package: `ParseBuildGraph(path)` → `*BuildGraphJob`; XML-only, no AWS/HTTP deps |
+| `cmd/lore` | Parent command; wires create/status/destroy subcommands. Lore runs in parallel with Perforce — studios may run either or both |
+| `cmd/lore/create` | Provision SG + EC2 instance (AMI-first `loreserver`); writes credentials to `.fabrica/lore-credentials.yaml` |
+| `cmd/lore/status` | Reads state + Cloud Control live data; TCP-probes port 41339 (`GET /health_check`); transitions provisioning→ready; `--json` emits `loreUrl`/`loreGrpc` |
+| `cmd/lore/destroy` | Deletes EC2 instance then SG in reverse order; mirrors perforce/destroy pattern |
+| `internal/lore` | Pure plan layer: `CreatePlan`, `SGDesiredState`/`InstanceDesiredState` (built on `internal/ec2state`), cloud-init generator (built on `internal/userdata`), cost estimators (built on `internal/ec2cost`); default ports 41337 (gRPC/QUIC) + 41339 (HTTP health) |
+| `cmd/ddc` | Parent command; wires setup/status/destroy subcommands. V1 is single home-region only — no `region add` |
+| `cmd/ddc/setup` | Provision IAM role + S3 bucket + SG + EC2 instance (AMI-first, co-located coordinator+edge); `--backend zen\|scylla`; writes `.fabrica/ddc-endpoints.yaml` |
+| `cmd/ddc/status` | Reads state + Cloud Control live data; probes `GET /health/ready`; `--json` emits `publicUrl`/`ddcStatus`/`backend` |
+| `cmd/ddc/destroy` | Deletes EC2 instance, SG, IAM role, then S3 bucket in reverse order |
+| `internal/ddc` | Pure plan layer: `SetupPlan`, `SGDesiredState` (opens public + internal API ports; adds CQL 9042 for `scylla` backend, internal-CIDR only), `Endpoints` builder, `internal/topology` types for a future multi-region graph without V1 multi-region runtime |
 | `cmd/workstation` | Parent command; wires create/list/stop/start/terminate subcommands |
 | `cmd/workstation/create` | Provision SG + EC2 instance (AMI-first, NICE DCV); `--template artist\|programmer` sets instance type + volume presets; `--mount-perforce` injects p4 CLI + `~/.p4config` via cloud-init using Perforce private IP from local state; writes credentials to `.fabrica/workstation-credentials.yaml` |
 | `cmd/workstation/list` | Reads local state; prints workstation status + resource IDs; `--json` emits `WorkstationEntry` array |
@@ -147,6 +159,14 @@ go list -deps ./internal/cloud/...
 | `internal/workstation` | Pure plan layer: `CreatePlan` (accepts `tmpl` + `perforceAddr` args), `SGDesiredState`, `InstanceDesiredState`, cloud-init generator (`Generate`/`GenerateRaw`), `VPCResolver` interface. GPU instance prices (g4dn/g5/g6) live in `internal/perforce/cost.go` alongside the shared EC2 estimators. |
 | `internal/credentials` | Shared helpers: `GeneratePassword`, `WriteCredentials` — write per-module credential YAML files to `.fabrica/` (mode 0600) |
 | `internal/stateutil` | Shared helpers: `ResourceByType` — query module state without repeating the lookup loop |
+| `internal/ec2plan` | `Base` struct + `New` constructor for the fields common to every single-instance EC2 module (account, region, instance type, volume, CIDR, VPC topology, naming). Embed `Base` in a module's `CreatePlan` to get promoted fields for free |
+| `internal/ec2state` | Shared Cloud Control desired-state builders: `InstanceDesiredState` (via `InstanceSpec` + `DesiredStateOption`s like `WithIAMProfile`/`WithDeviceName`), `SGDesiredState`/`SGIngressRule`, `InstanceProfileDesiredState` |
+| `internal/ec2cost` | Shared cost-resource builders: `InstanceAndVolume`/`ResourcesWithDefaults` — the standard EC2 instance + EBS volume `cost.Resource` pair every EC2-based module needs |
+| `internal/userdata` | Shared cloud-init template helpers: `Renderer` (`Render`/`RenderBase64`) wraps a parsed `text/template`; `Prepare` centralizes the apply-defaults → validate chain before render |
+| `internal/iamrole` | Shared IAM role desired-state helpers (used by perforce, ddc, ci, deploy): `AssumeRolePolicyDocument(service)` builds the standard trust-policy envelope |
+| `internal/topology` | Provider-agnostic coordinator/edge graph types (`Role`, node/graph structs) for distributed modules; DDC V1 uses it for a single home-region host, ahead of future multi-region runtime |
+| `internal/assert` | Shared test helper: `Contains` — consolidates the `assertContains` pattern duplicated across `*_test.go` files |
+| `cmd/internal/testutil` | Shared Cobra/cloud test fakes (importable only within `cmd/`): `TestProvider` and variants (`NilResourceProvider`, `UbuntuAMIProvider`, ...), `CreateTestSpec` — cuts boilerplate from each module's `cobra_test.go` |
 | `cmd/ci` | Parent command; wires setup/trigger/status/logs/destroy subcommands |
 | `cmd/ci/setup` | Provision IAM role (Cloud Control) + CodeBuild project (`CodeBuildRunner.EnsureProject`); dry-run, cost, y/N confirm, idempotent |
 | `cmd/ci/trigger` | Parse BuildGraph (reuses `internal/horde/buildgraph`), resolve Horde private IP from state, `StartBuild` with `BUILDGRAPH`/`TARGET`/`HORDE_URL` env; `--wait` polls `BuildStatus` |
@@ -176,11 +196,12 @@ go list -deps ./internal/cloud/...
 - **VPCResolver interface** — when a module needs AWS-specific resolution (VPC, subnet), define an interface in `internal/<module>/config.go` that the provider implements. Keeps `internal/*` SDK-free.
 - **EC2InstanceManager** — Cloud Control cannot stop or start EC2 instances. Use the `cloud.EC2InstanceManager` auxiliary interface (defined in `internal/cloud/ec2manager.go`, implemented by `awsProvider` in `internal/cloud/aws/`). Access via type assertion: `rt.Provider.(cloud.EC2InstanceManager)`. Follow the `state_backend.go` pattern when adding future provider-specific capabilities.
 - **Verify Cloud Control support per resource type** — not every CloudFormation type supports the Cloud Control CREATE action. `AWS::CodeBuild::Project` returns `UnsupportedActionException`, so the `ci` module creates it through the `cloud.CodeBuildRunner` SDK auxiliary interface while the IAM role still goes through Cloud Control. When adding a new resource type, confirm support before assuming `rt.Provider.Resources().Create` works; if it doesn't, add an SDK-backed auxiliary interface (the `EC2InstanceManager` / `StateBackendBootstrapper` / `CodeBuildRunner` pattern).
-- **Cost estimators** — m5/c5 (Perforce), m7i (Horde), and g4dn/g5/g6/c7i (workstation) EC2 prices live together in `internal/perforce/cost.go`. `cost.Global.Register` panics on duplicate `TypeName` — do not register `AWS::EC2::Instance` or `AWS::EC2::Volume` from a second package.
+- **Cost estimators** — m5/c5 (Perforce), m7i (Horde), and g4dn/g5/g6/c7i (workstation) EC2 prices live together in `internal/perforce/cost.go`. `cost.Global.Register` panics on duplicate `TypeName` — do not register `AWS::EC2::Instance` or `AWS::EC2::Volume` from a second package. Lore and DDC don't re-register either type; they call `internal/ec2cost.ResourcesWithDefaults` and reuse the existing registration.
 - **`GenerateRaw`** — when a function produces base64 output, add a `*Raw` variant returning the plain string for test assertions.
 - **State written after each resource** — partial failures leave a recoverable record; re-running detects already-provisioned state and exits cleanly.
-- **Config structs in `internal/config/config.go`** — `HordeConfig`, `PerforceConfig`, and `WorkstationConfig` all live here (not in their respective `internal/<module>` packages) to avoid circular imports.
+- **Config structs in `internal/config/config.go`** — `HordeConfig`, `PerforceConfig`, `LoreConfig`, `DDCConfig`, and `WorkstationConfig` all live here (not in their respective `internal/<module>` packages) to avoid circular imports.
 - **Embedded templates** — file-generator commands (e.g. `cmd/horde/ami`) use `embed.FS` + `text/template` with `Option("missingkey=error")`. Templates live under `cmd/<cmd>/templates/`. No `RuntimeSource`/`OptionsSource` needed when a command makes no AWS calls.
+- **Build EC2-based modules on the shared packages** — `internal/ec2plan` (plan base), `internal/ec2state` (desired-state JSON), `internal/ec2cost` (cost resources), and `internal/userdata` (cloud-init rendering) exist specifically so a new single-instance module doesn't reintroduce the duplication the post-v0.1.1 quality sprint removed. Lore and DDC are the reference consumers — read `internal/lore/plan.go` and `internal/ddc/plan.go` alongside `internal/perforce` before writing a new module's plan layer.
 
 ### Shared command helpers (`cmd/internal/*`)
 
@@ -264,6 +285,7 @@ fabrica status                              # health of all modules
 fabrica perforce create|status|destroy|backup|restore  # ✓ implemented
 fabrica horde create|status|submit|destroy  # ✓ implemented
 fabrica lore create|status|destroy          # ✓ implemented (v0.2; parallel to Perforce)
+fabrica ddc setup|status|destroy            # ✓ implemented (V1; single home-region Unreal Cloud DDC)
 fabrica horde ami build                     # ✓ implemented; generates Image Builder recipe + optional Packer HCL
 fabrica ci setup|trigger|status|logs|destroy        # ✓ implemented; CodeBuild orchestration over Horde
 fabrica deploy setup|promote|rollback|status|destroy  # ✓ implemented; GameLift blue/green deployment
@@ -294,6 +316,23 @@ fabrica export --format cloudformation      # escape hatch
 - **Ports** — 5000 (HTTP/web UI), 5002 (gRPC for agents). Status probes port 5000 only.
 - **Submit URL** — `hordeHTTPClient` uses the instance's private IP from Cloud Control. Requires VPN or same-VPC access; no public IP in V1.
 - **`horde_service_token`** in credentials is optional; if empty the auth header is omitted (Horde returns 401 if a token is required).
+
+## Lore-Specific Notes
+
+- **AMI-first provisioning** — the AMI must already contain the `loreserver` binary. Fabrica only configures and starts it via cloud-init, same pattern as Horde and DDC.
+- **Runs parallel to Perforce, not instead of it** — Lore is offered as an alternative version-control server; a studio can provision either or both. It has no interaction with the `perforce` module (no shared state, no `--mount-lore` equivalent).
+- **Ports** — 41337 (gRPC over TCP, and QUIC over UDP on the same port number) and 41339 (HTTP health, `GET /health_check`). Status probes port 41339 only.
+- **Store path** — local/EBS only in V1 (`DefaultStorePath = /opt/loreserver/store`); no S3-backed store yet (tracked in `ROADMAP.md` as a Phase 2+ follow-up).
+- **Built on the shared EC2 packages** — `internal/lore/plan.go` composes `internal/ec2plan.Base`, `resources.go` calls `internal/ec2state.SGDesiredState`, `cost.go` calls `internal/ec2cost.ResourcesWithDefaults` (default `m5.xlarge` / 500 GiB), and `userdata.go` renders through `internal/userdata.New`. Use this as the template for a new single-instance module ahead of `internal/perforce` (which predates the shared packages and duplicates what they now centralize).
+
+## DDC-Specific Notes
+
+- **Single home-region, V1-narrow** — one EC2 host with co-located coordinator + edge roles; no `region add`, no replication peers, no OIDC/HTTPS in V1. `internal/topology` types exist so a future multi-region graph doesn't need a breaking change, but nothing multi-region runs today.
+- **Backend choice** — `--backend zen` (default, Zen/Jupiter) or `--backend scylla` (adds a 1-node Scylla bootstrap, not HA). The security group only opens CQL port 9042 when `scylla` is selected, and only to `InternalCIDR` — never to the public `AllowedCIDR`.
+- **Hybrid storage** — EBS for local/hot storage plus an S3 bucket for the cold tier; the S3 bucket + IAM role provisioning follows the same Cloud-Control-plus-SDK-where-needed split as other modules.
+- **Endpoints file** — `setup` writes `.fabrica/ddc-endpoints.yaml` (backend, namespace, public/internal URLs, bucket, region) instead of a credentials file — DDC has no password to protect, just connection info consumers need.
+- **Probe** — `GET /health/ready` on the public port; `status` reports `ddcStatus`/`publicUrl`/`backend`.
+- **Deferred (Phase 2+)** — `ddc region add`, replication peers, OIDC/HTTPS, `ddc ami build`, production (HA) Scylla.
 
 ## CI-Specific Notes
 
