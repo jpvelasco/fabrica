@@ -4,7 +4,7 @@
 
 Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, zero external dependencies. Sister tool to [Ludus](https://github.com/jpvelasco/ludus) — Ludus orchestrates game builds, Fabrica gives them somewhere to run.
 
-**Current state:** Phase 0 complete; Phase 1 core complete; Lore (v0.2) complete; DDC V1 (single-region) complete. Modules implemented: `perforce`, `horde`, `lore`, `ddc`, `workstation`, `ci`, `deploy`, and `cost`, plus full-stack `destroy --all` and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) and [CLAUDE.md](CLAUDE.md) for the authoritative, current module status — this file is a high-level orientation, not a status mirror.
+**Current state:** All phases implemented — Phase 0, Phase 1 (core pipeline), Lore (v0.2), and DDC V1 (single-region) are complete; current stable release **v0.1.3** (2026-08-02). Modules implemented: `perforce`, `horde`, `lore`, `ddc`, `workstation`, `ci`, `deploy`, and `cost`, plus full-stack `destroy --all` and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) and [CLAUDE.md](CLAUDE.md) for the authoritative, current module status — this file is a high-level orientation, not a status mirror.
 
 **Private designs:** Draft specs and implementation plans for future work live under `.private/` (gitignored — never commit). Suggested layout: `.private/designs/`, `.private/plans/`. Public user docs stay in `docs/` (AMI guides, deploy notes) and root `README.md` / `ROADMAP.md`.
 
@@ -50,6 +50,10 @@ go list -deps ./internal/cloud/...
 
 **EC2InstanceManager for stop/start** — Cloud Control API only does CRUD and cannot stop or start EC2 instances. The `cloud.EC2InstanceManager` interface (defined in `internal/cloud/ec2manager.go`) exposes `StopInstance` / `StartInstance`. The AWS provider implements it in `internal/cloud/aws/ec2manager.go` via the EC2 SDK. Commands access it via type assertion: `rt.Provider.(cloud.EC2InstanceManager)`. Follow the `state_backend.go` auxiliary-interface pattern for any future provider-specific capabilities.
 
+**Verify Cloud Control support per resource type** — not every CloudFormation type supports the Cloud Control CREATE action. `AWS::CodeBuild::Project` throws `UnsupportedActionException`, so the `ci` module creates it through the `cloud.CodeBuildRunner` SDK auxiliary interface (IAM role still via Cloud Control); `deploy` adds `cloud.GameLiftManager` for fleet status/events. Confirm support before assuming `rt.Provider.Resources().Create` works; if it doesn't, add an SDK-backed auxiliary interface.
+
+**Build new EC2 modules on the shared packages** — `internal/ec2plan` (plan base), `internal/ec2state` (desired-state JSON), `internal/ec2cost` (cost resources), `internal/userdata` (cloud-init rendering), and `internal/iamrole` (trust policies) exist so a new single-instance module doesn't reintroduce the duplication they centralized. `internal/lore` and `internal/ddc` are the reference consumers — `internal/perforce` predates these packages and duplicates what they now own. Shared command orchestration lives in `cmd/internal/`: `provision` (create lifecycle), `modstatus` (status spine + per-command `Renderer`), `teardown` (destroy engine), `destroyall`, `costsource`, and `testutil` (Cobra/cloud test fakes).
+
 **Seam injection for testability** — the `command` struct holds `func` fields for all I/O operations (`readState`, `writeState`, `createResource`, `probeTCP`, etc.). `New()` wires real implementations; tests inject fakes. No global state, no `init()` side effects in tests.
 
 **Two-package test pattern:**
@@ -64,14 +68,15 @@ go list -deps ./internal/cloud/...
 
 ## How to Add a New Command / Module
 
-1. **Create `internal/<module>/`** — pure plan layer: `CreatePlan` struct, Cloud Control desired-state JSON builders, cloud-init generator, cost estimators. No AWS SDK imports.
-2. **Create `cmd/<module>/`** — Cobra command wired with `RuntimeSource` + `OptionsSource` closures (see `cmd/perforce/` or `cmd/horde/` as templates).
-3. **Add config struct** to `internal/config/config.go` (not inside `internal/<module>/`) to avoid circular imports. Add `mapstructure:` tags.
-4. **Register cost estimators** in the plan layer via `cost.Global.Register`. Do NOT register `AWS::EC2::Instance` or `AWS::EC2::Volume` from a second package — they're already registered.
-5. **Wire the parent command** in `cmd/root/root.go`.
-6. **Tests:** follow the two-file pattern. Cover partial failures, seam errors, confirmation rejection, `--dry-run`, `--json`.
+1. **Create `internal/<module>/`** — pure plan layer: `CreatePlan` struct, Cloud Control desired-state JSON builders, cloud-init generator, cost estimators. No AWS SDK imports. For a single-instance EC2 module, compose `internal/ec2plan.Base` and call `internal/ec2state` / `internal/ec2cost` / `internal/userdata` (read `internal/lore` + `internal/ddc` first — `perforce` predates these packages).
+2. **Confirm Cloud Control support** for each resource type. If a type has no CREATE action, add an SDK-backed auxiliary interface in `internal/cloud` + `internal/cloud/aws` and reach it via type assertion — don't force it through `Resources()`.
+3. **Create `cmd/<module>/`** — Cobra command wired with `RuntimeSource` + `OptionsSource` closures (see `cmd/perforce/` or `cmd/horde/` as templates).
+4. **Add config struct** to `internal/config/config.go` (not inside `internal/<module>/`) to avoid circular imports. Add `mapstructure:` tags.
+5. **Register cost estimators** in the plan layer via `cost.Global.Register`. Do NOT register `AWS::EC2::Instance` or `AWS::EC2::Volume` from a second package — they're already registered.
+6. **Wire the parent command** in `cmd/root/root.go`.
+7. **Tests:** follow the two-file pattern. Cover partial failures, seam errors, confirmation rejection, `--dry-run`, `--json`. Reuse `cmd/internal/testutil` cobra/cloud fakes, and document every new leaf command in `README.md` or the doc-drift guard fails (`cmd/root/docs_drift_test.go`).
 
-Reference: `cmd/perforce/` and `internal/perforce/` are the canonical templates.
+Reference: `cmd/perforce/` + `internal/perforce/` are the canonical Cloud-Control-only templates; `cmd/ci/` + `internal/ci/` show the mixed Cloud-Control-plus-SDK pattern.
 
 ## Important Conventions
 
@@ -85,7 +90,7 @@ Reference: `cmd/perforce/` and `internal/perforce/` are the canonical templates.
 
 **Config structs:** always add `mapstructure:` tags. Live in `internal/config/config.go`.
 
-**Error handling:** `fmt.Errorf("context: %w", err)`. Messages state what went wrong AND what to do. No sentinel errors.
+**Error handling:** `fmt.Errorf("context: %w", err)`. Messages state what went wrong AND what to do. No ad-hoc sentinels in `cmd/*` or module layers; the narrow exception is `internal/cloud`, which defines package-level sentinels (`ErrResourceNotFound`, `ErrStateBucketNotEmpty`) that callers branch on via `errors.Is`.
 
 **State:** always written after each resource so partial runs are recoverable.
 
@@ -98,12 +103,28 @@ Reference: `cmd/perforce/` and `internal/perforce/` are the canonical templates.
 - Coverage: new/changed code must meet the Codecov `patch` gate (≥90%, enforced in CI via `codecov.yml`); no new function ships at 0%
 - Use `GenerateRaw` variants for testing base64-encoded outputs (e.g., cloud-init)
 - `cobra_test.go` must build a minimal root command to replicate the persistent-flag hierarchy (`--dry-run`, `--yes`, `--json` live on root)
+- E2E: `test/e2e/` drives the real command tree against an in-memory fake provider (registered as `"fake"`); it runs in the default `go test ./...` — no build tag, serial only
+
+## Git Hooks
+
+Hooks live in `.githooks/` (tracked) and are inactive until enabled once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+- **pre-commit** — `gofmt -l` + `go vet` on staged Go files
+- **commit-msg** — enforces Conventional Commits (`feat|fix|refactor|test|docs|chore|perf|ci|build`)
+- **pre-push** — fails if any changed (non-test) function is at 0.0% coverage (early warning; the CI Codecov `patch` ≥90% gate is the real authority)
 
 ## Useful Commands
 
 ```bash
 # Build
 go build ./...
+
+# Vet (runs in CI build job and pre-commit)
+go vet ./...
 
 # Test (Windows — no -race)
 go test ./...
@@ -126,6 +147,8 @@ gofmt -w .
 # Layering check (must not contain internal/state, internal/cost, or cmd/*)
 go list -deps ./internal/cloud/...
 ```
+
+`make ci` (lint + vet + build + test) is the full local gate, but its `test`/`cover` targets use `-race` — run `go test ./...` directly on Windows instead. CI runs lint + vuln + build + test cross-platform plus a `goreleaser build --snapshot` validation; on PRs macOS is skipped. **Private-repo CI gotcha:** while the repo is private, a job that fails instantly with blank logs is a GitHub Actions billing block, not a code failure — see CLAUDE.md for the workaround.
 
 ## Workstation-Specific Notes
 
