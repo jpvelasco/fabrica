@@ -266,26 +266,34 @@ func TestSubmitMissingBuildGraphFile(t *testing.T) {
 	assert.Contains(t, err.Error(), "reading BuildGraph")
 }
 
-// TestSubmitMissingRequiredFields verifies that a BuildGraph with no agents
-// produces an empty job name (the command still submits, the Horde API validates).
-func TestSubmitMissingRequiredFields(t *testing.T) {
+// TestSubmitEmptyTargetFailsFast verifies that a BuildGraph with no nodes
+// in the first agent fails fast with an actionable error before any network call.
+func TestSubmitEmptyTargetFailsFast(t *testing.T) {
 	var out bytes.Buffer
 	dir := t.TempDir()
-	emptyXML := filepath.Join(dir, "empty.xml")
-	xml := `<?xml version="1.0"?><BuildGraph xmlns="http://www.epicgames.com/BuildGraph"></BuildGraph>`
-	if err := os.WriteFile(emptyXML, []byte(xml), 0600); err != nil {
+	emptyTarget := filepath.Join(dir, "empty-target.xml")
+	xml := `<?xml version="1.0"?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph">
+    <Agent Name="EmptyAgent" Type="Win64"></Agent>
+</BuildGraph>`
+	if err := os.WriteFile(emptyTarget, []byte(xml), 0600); err != nil {
 		t.Fatal(err)
 	}
 
 	st := hordeProvisionedState()
-	client := &fakeHordeClient{submitJobID: "job-empty"}
+	client := &fakeHordeClient{}
 	c := newTestCommand(&out, client, st)
-	c.buildGraphPath = emptyXML
+	c.buildGraphPath = emptyTarget
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error for empty target")
 	}
-	assert.Contains(t, out.String(), "job-empty")
+	assert.Contains(t, err.Error(), "no build target")
+	assert.Contains(t, err.Error(), "BuildGraph.sample.xml")
+	if client.submitCalls != 0 {
+		t.Error("submit should not be called when target is empty")
+	}
 }
 
 // TestSubmitWaitStatusError verifies polling error is returned.

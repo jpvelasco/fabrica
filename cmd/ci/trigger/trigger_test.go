@@ -144,6 +144,28 @@ func TestTriggerBadBuildGraphFailsFast(t *testing.T) {
 	}
 }
 
+func TestTriggerEmptyTargetFailsFast(t *testing.T) {
+	var out bytes.Buffer
+	dir := t.TempDir()
+	emptyTarget := filepath.Join(dir, "empty-target.xml")
+	_ = os.WriteFile(emptyTarget, []byte(`<?xml version="1.0"?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph">
+    <Agent Name="EmptyAgent" Type="Win64"></Agent>
+</BuildGraph>`), 0600)
+	c := newCmd(&out, &fakeRunner{startID: "x"}, provisionedState())
+	c.buildGraphPath = emptyTarget
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error for empty target")
+	}
+	if !strings.Contains(err.Error(), "no build target") {
+		t.Errorf("error %q should mention 'no build target'", err.Error())
+	}
+	if !strings.Contains(err.Error(), "BuildGraph.sample.xml") {
+		t.Errorf("error %q should reference sample file", err.Error())
+	}
+}
+
 func TestTriggerStartBuildErrorPropagates(t *testing.T) {
 	var out bytes.Buffer
 	c := newCmd(&out, &fakeRunner{startErr: errors.New("boom")}, provisionedState())
