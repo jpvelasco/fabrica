@@ -43,6 +43,7 @@ func TestInlinePolicyIncludesVPCDescribePermissions(t *testing.T) {
 	doc := inlinePolicyDocument(testPlan())
 	for _, want := range []string{
 		"ec2:CreateNetworkInterface",
+		"ec2:CreateNetworkInterfacePermission",
 		"ec2:DeleteNetworkInterface",
 		"ec2:DescribeDhcpOptions",
 		"ec2:DescribeInstances",
