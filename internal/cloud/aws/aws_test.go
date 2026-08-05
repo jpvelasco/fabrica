@@ -145,3 +145,9 @@ func (stubEC2) StartInstances(context.Context, *ec2.StartInstancesInput, ...func
 func (stubEC2) DescribeImages(context.Context, *ec2.DescribeImagesInput, ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error) {
 	return &ec2.DescribeImagesOutput{}, nil
 }
+func (stubEC2) DescribeVpcs(context.Context, *ec2.DescribeVpcsInput, ...func(*ec2.Options)) (*ec2.DescribeVpcsOutput, error) {
+	return &ec2.DescribeVpcsOutput{}, nil
+}
+func (stubEC2) DescribeSubnets(context.Context, *ec2.DescribeSubnetsInput, ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error) {
+	return &ec2.DescribeSubnetsOutput{}, nil
+}

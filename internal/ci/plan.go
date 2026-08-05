@@ -6,8 +6,12 @@
 package ci
 
 import (
+	"context"
+
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/topology"
 )
 
 const (
@@ -22,6 +26,7 @@ const (
 	defaultComputeType  = "BUILD_GENERAL1_SMALL"
 	defaultImage        = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
 	defaultBuildTimeout = 60
+	defaultSGName       = "fabrica-ci-sg"
 )
 
 // CreatePlan is the resolved CI provisioning plan for one account/region.
@@ -40,13 +45,21 @@ type CreatePlan struct {
 	// project is usable as soon as Horde is reachable.
 	HordeURL string
 
+	// VPCID and SubnetID place the CodeBuild project inside a VPC so builds
+	// can reach a private-IP Horde. SGName is the project's security group.
+	VPCID    string
+	SubnetID string
+	SGName   string
+
 	CostResources []cost.Resource
 }
 
 // NewCreatePlan builds the CI plan, applying defaults for any unset CIConfig
 // field. hordeURL may be empty at setup time; it becomes the project's default
-// HORDE_URL environment variable.
-func NewCreatePlan(cfg config.CIConfig, account, region, hordeURL string) *CreatePlan {
+// HORDE_URL environment variable. VPCResolver is called only when VPCId or
+// SubnetId are absent from cfg, so the project can be placed inside a VPC;
+// pass nil to skip resolution (explicit VPC values, or tests).
+func NewCreatePlan(ctx context.Context, cfg config.CIConfig, account, region, hordeURL string, resolver cloud.VPCResolver) (*CreatePlan, error) {
 	projectName := cfg.ProjectName
 	if projectName == "" {
 		projectName = defaultProjectName
@@ -64,6 +77,11 @@ func NewCreatePlan(cfg config.CIConfig, account, region, hordeURL string) *Creat
 		buildTimeout = defaultBuildTimeout
 	}
 
+	vpcID, subnetID, _, err := topology.ResolveVPC(ctx, cfg.VPCId, cfg.SubnetId, resolver)
+	if err != nil {
+		return nil, err
+	}
+
 	return &CreatePlan{
 		Account:       account,
 		Region:        region,
@@ -73,6 +91,9 @@ func NewCreatePlan(cfg config.CIConfig, account, region, hordeURL string) *Creat
 		Image:         image,
 		BuildTimeout:  buildTimeout,
 		HordeURL:      hordeURL,
+		VPCID:         vpcID,
+		SubnetID:      subnetID,
+		SGName:        defaultSGName,
 		CostResources: CostResources(cfg),
-	}
+	}, nil
 }

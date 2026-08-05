@@ -56,7 +56,10 @@ func TestIntegrationCI(t *testing.T) {
 
 	suffix := time.Now().UTC().Format("20060102150405")
 	cicfg := config.CIConfig{ProjectName: "fabrica-ci-it-" + suffix}
-	plan := ci.NewCreatePlan(cicfg, account, region, "http://10.0.0.1:5000")
+	plan, err := ci.NewCreatePlan(ctx, cicfg, account, region, "http://10.0.0.1:5000", nil)
+	if err != nil {
+		t.Fatalf("NewCreatePlan: %v", err)
+	}
 	plan.RoleName = "fabrica-ci-it-role-" + suffix
 
 	rc := prov.Resources()
@@ -88,7 +91,7 @@ func TestIntegrationCI(t *testing.T) {
 	// IAM role propagation can lag before CodeBuild accepts it as a service role.
 	time.Sleep(10 * time.Second)
 
-	created, err := runner.EnsureProject(ctx, ci.ProjectSpec(plan, roleARN))
+	created, err := runner.EnsureProject(ctx, ci.ProjectSpec(plan, roleARN, ""))
 	if err != nil {
 		t.Fatalf("EnsureProject: %v", err)
 	}
@@ -97,7 +100,7 @@ func TestIntegrationCI(t *testing.T) {
 	}
 
 	// Idempotency: second EnsureProject must be a no-op.
-	created2, err := runner.EnsureProject(ctx, ci.ProjectSpec(plan, roleARN))
+	created2, err := runner.EnsureProject(ctx, ci.ProjectSpec(plan, roleARN, ""))
 	if err != nil {
 		t.Fatalf("second EnsureProject: %v", err)
 	}
