@@ -63,8 +63,8 @@ func BuildspecRaw(plan *CreatePlan) string {
 }
 
 // inlinePolicyDocument returns the least-privilege inline IAM policy granting the
-// CodeBuild role CloudWatch Logs write access and read-only EC2 describe (to
-// resolve the Horde/Perforce coordinator addresses during a build).
+// CodeBuild role CloudWatch Logs write access and EC2 permissions for VPC
+// networking (ENI lifecycle + describe) and coordinator address resolution.
 func inlinePolicyDocument(plan *CreatePlan) string {
 	logsARN := fmt.Sprintf("arn:aws:logs:%s:%s:log-group:/aws/codebuild/%s*",
 		plan.Region, plan.Account, plan.ProjectName)
@@ -78,7 +78,19 @@ func inlinePolicyDocument(plan *CreatePlan) string {
 		},
 		{
 			"Effect": "Allow",
-			"Action": ["ec2:DescribeInstances"],
+			"Action": [
+				"ec2:CreateNetworkInterface",
+				"ec2:DeleteNetworkInterface",
+				"ec2:DescribeDhcpOptions",
+				"ec2:DescribeInstances",
+				"ec2:DescribeNetworkInterfaces",
+				"ec2:DescribeSecurityGroups",
+				"ec2:DescribeSubnets",
+				"ec2:DescribeTags",
+				"ec2:DescribeVpcs",
+				"ec2:CreateTags",
+				"ec2:DeleteTags"
+			],
 			"Resource": "*"
 		}
 	]
