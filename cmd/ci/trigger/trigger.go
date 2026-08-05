@@ -100,6 +100,9 @@ func (c command) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := buildgraph.ValidateJob(job); err != nil {
+		return err
+	}
 
 	if c.runner == nil {
 		return fmt.Errorf("no CodeBuild-capable cloud provider configured — check your credentials and that cloud.provider is \"aws\"")

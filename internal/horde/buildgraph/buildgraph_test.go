@@ -110,3 +110,52 @@ func TestParseBuildGraphAgentWithNoNodes(t *testing.T) {
 		t.Errorf("job.Target = %q, want empty for agent with no nodes", job.Target)
 	}
 }
+
+// TestValidateJobValidTarget verifies that a job with a non-empty target passes validation.
+func TestValidateJobValidTarget(t *testing.T) {
+	job := &BuildGraphJob{Name: "BuildAgent", Target: "Compile UnrealGame Win64"}
+	if err := ValidateJob(job); err != nil {
+		t.Fatalf("ValidateJob: %v", err)
+	}
+}
+
+// TestValidateJobEmptyTarget verifies that an empty target returns an actionable error.
+func TestValidateJobEmptyTarget(t *testing.T) {
+	job := &BuildGraphJob{Name: "EmptyAgent", Target: ""}
+	err := ValidateJob(job)
+	if err == nil {
+		t.Fatal("expected error for empty target")
+	}
+	if !strings.Contains(err.Error(), "no build target") {
+		t.Errorf("error %q should mention 'no build target'", err.Error())
+	}
+	if !strings.Contains(err.Error(), "BuildGraph.sample.xml") {
+		t.Errorf("error %q should reference sample file", err.Error())
+	}
+}
+
+// TestValidateJobNilJob verifies that a nil job returns an error.
+func TestValidateJobNilJob(t *testing.T) {
+	err := ValidateJob(nil)
+	if err == nil {
+		t.Fatal("expected error for nil job")
+	}
+}
+
+// TestParseBuildGraphSampleFile verifies that the sample BuildGraph file
+// in examples/ resolves a valid target end-to-end.
+func TestParseBuildGraphSampleFile(t *testing.T) {
+	job, err := ParseBuildGraph("../../../examples/BuildGraph.sample.xml")
+	if err != nil {
+		t.Fatalf("ParseBuildGraph sample: %v", err)
+	}
+	if job.Name == "" {
+		t.Error("sample file: job.Name is empty")
+	}
+	if job.Target == "" {
+		t.Error("sample file: job.Target is empty — the sample is invalid")
+	}
+	if err := ValidateJob(job); err != nil {
+		t.Fatalf("ValidateJob sample: %v", err)
+	}
+}

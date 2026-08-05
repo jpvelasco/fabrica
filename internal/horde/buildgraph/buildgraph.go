@@ -47,3 +47,15 @@ func ParseBuildGraph(path string) (*BuildGraphJob, error) {
 	}
 	return job, nil
 }
+
+// ValidateJob checks that the parsed job has a non-empty target. An empty
+// target means the BuildGraph XML had no <Agent>/<Node> elements for the
+// parser to resolve — this produces a PRE_BUILD failure downstream if not
+// caught here. Returns an actionable error pointing to the sample file.
+func ValidateJob(job *BuildGraphJob) error {
+	if job == nil || job.Target == "" {
+		return fmt.Errorf("BuildGraph has no build target: the first <Agent> must contain at least one <Node> with a Name attribute\n\n" +
+			"Use examples/BuildGraph.sample.xml as a reference, or fix your BuildGraph XML")
+	}
+	return nil
+}

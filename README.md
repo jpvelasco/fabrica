@@ -121,9 +121,9 @@ fabrica ddc status --probe             # GET /health/ready
 fabrica horde create
 fabrica horde status
 fabrica ci setup
-fabrica ci trigger path/to/BuildGraph.xml --wait
+fabrica ci trigger examples/BuildGraph.sample.xml --wait
 # low-level direct submit also works:
-fabrica horde submit --buildgraph path/to/BuildGraph.xml --target "Compile UnrealGame Win64"
+fabrica horde submit examples/BuildGraph.sample.xml
 ```
 
 ### 5. Deploy to GameLift (blue/green)
@@ -153,7 +153,7 @@ fabrica destroy --all                  # full-stack teardown when you're done
 fabrica setup --yes
 fabrica ddc setup                      # optional but recommended for UE teams
 fabrica horde create && fabrica ci setup
-fabrica ci trigger BuildGraph.xml --wait
+fabrica ci trigger examples/BuildGraph.sample.xml --wait
 fabrica deploy setup && fabrica deploy promote v1.0.0
 fabrica deploy status
 ```
@@ -232,11 +232,9 @@ Reads live state and TCP-probes port 5000. Reports the Horde web UI URL and gRPC
 
 #### `fabrica horde submit`
 
-Parses a BuildGraph XML file and POSTs the job to the Horde REST API via the coordinator's private IP. Options:
+Parses a BuildGraph XML file and POSTs the job to the Horde REST API via the coordinator's private IP. The target is resolved from the XML (first `<Agent>`'s first `<Node>` name). Use `examples/BuildGraph.sample.xml` as a starting point. Options:
 
 ```
---buildgraph   Path to BuildGraph XML file (required)
---target       Build target to run (required)
 --wait         Poll until the job completes
 ```
 
@@ -344,7 +342,9 @@ By default the CodeBuild project is placed inside the account's default VPC (or 
 
 #### `fabrica ci trigger <buildgraph.xml>`
 
-Starts a build run. Parses the BuildGraph XML for the job name and target, resolves the Horde coordinator's address from local state, and starts the CodeBuild project with those values as environment overrides; the build submits the job to Horde. Requires `fabrica ci setup` and a provisioned, reachable Horde coordinator. Use `--wait` to poll until the build reaches a terminal state.
+Starts a build run. Parses the BuildGraph XML for the job name and target (first `<Agent>`'s first `<Node>` name), resolves the Horde coordinator's address from local state, and starts the CodeBuild project with those values as environment overrides; the build submits the job to Horde. Requires `fabrica ci setup` and a provisioned, reachable Horde coordinator. Use `--wait` to poll until the build reaches a terminal state.
+
+If the BuildGraph has no `<Agent>`/`<Node>` elements, the command fails fast with an actionable error pointing to `examples/BuildGraph.sample.xml`.
 
 #### `fabrica ci status`
 
@@ -365,10 +365,10 @@ Tears down the CI infrastructure: deletes the CodeBuild project (via the AWS SDK
 fabrica ci setup
 
 # Trigger a build for a BuildGraph script and watch it run
-fabrica ci trigger BuildGraph.xml --wait
+fabrica ci trigger examples/BuildGraph.sample.xml --wait
 
 # Or fire-and-forget, then check status / logs by build ID
-fabrica ci trigger BuildGraph.xml
+fabrica ci trigger examples/BuildGraph.sample.xml
 fabrica ci status --build <build-id>
 fabrica ci logs <build-id>
 ```

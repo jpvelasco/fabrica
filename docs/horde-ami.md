@@ -285,7 +285,7 @@ region-scoped — do not share IDs across accounts.
 
 **Do not create the AMI image until these checks pass on the bake instance.**
 A health-only Horde (responds on `:5000` but no jobs API) will cause
-`fabrica horde submit` and `fabrica ci trigger` to fail with 404 errors.
+`fabrica horde submit` and `fabrica ci trigger` to fail with 404 errors. Use `examples/BuildGraph.sample.xml` as a reference for the expected BuildGraph XML shape — a BuildGraph without `<Agent>`/`<Node>` elements will fail fast with a clear error before reaching the Horde API.
 
 ### Pass criteria
 

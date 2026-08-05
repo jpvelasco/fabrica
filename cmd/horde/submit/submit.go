@@ -82,6 +82,9 @@ func (c command) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := buildgraph.ValidateJob(job); err != nil {
+		return err
+	}
 
 	st, err := c.readState()
 	if err != nil {
