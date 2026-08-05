@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-08-04
+
+### Fixed
+
+- **CodeBuild project VPC placement** — `ci setup` now resolves the default VPC (or `ci.vpcId`/`ci.subnetId` from `fabrica.yaml`) and attaches the CodeBuild project to it via a dedicated security group so builds can reach a private-IP Horde coordinator. Implements the `cloud.VPCResolver` interface on the AWS provider. (#213)
+- **Horde submit 404 diagnosis** — `horde submit` now probes `GET /api/v1/jobs` on a 404 response and, when that route is provably absent, reports a clear contract-mismatch error with guidance instead of a misleading status code. The CI buildspec pre-flights the route too. (#214)
+
+### Changed
+
+- **CI workflow** — bumped `codeql-action` to 4.37.4 across all steps (init, autobuild, analyze). (#212)
+- **Dependencies** — bumped AWS SDK v2 group (11 packages) and `smithy-go` to latest patch versions. (#203, #204)
+
 ## [0.1.4] - 2026-08-02
 
 ### Refactored
@@ -128,7 +140,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.5
 [0.1.4]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.4
 [0.1.3]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.3
 [0.1.2]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.2
