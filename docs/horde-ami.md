@@ -20,6 +20,7 @@ The AMI must meet all of the following:
 | **Compose stack** | `/etc/horde/docker-compose.yml` baked into the AMI |
 | **Horde config** | `/etc/horde/globals.json` and `/etc/horde/server.json` baked into the AMI |
 | **Architecture** | `x86_64` (required for m7i instances) |
+| **Job API** | The Horde server image must expose the job-creation API (`GET /api/v1/jobs` must not return 404). Fabrica submits BuildGraph jobs to this endpoint and fails fast with a clear message if the route is missing. |
 
 At boot, Fabrica's cloud-init script will:
 1. Wait for Docker to be running (`docker info`)
@@ -232,6 +233,9 @@ docker compose ps
 # Horde responds on port 5000
 curl -sf http://localhost:5000/ && echo "OK"
 
+# Job-creation API must exist (a 404 here means the server image cannot accept jobs)
+curl -sf http://localhost:5000/api/v1/jobs && echo "Job API OK"
+
 # All three containers are healthy
 docker inspect --format='{{.Name}}: {{.State.Health.Status}}' horde-mongodb horde-redis horde-server
 ```
@@ -253,6 +257,7 @@ before making any AWS calls.
 | AMI in wrong region | AMI IDs are region-scoped | Re-copy the AMI to each region: `aws ec2 copy-image` |
 | `x86_64` vs `arm64` mismatch | AMI architecture doesn't match instance type | Build the AMI on the same instance family you plan to run |
 | MongoDB auth errors | `globals.json` references auth but compose uses `--noauth` | Ensure `databaseConnectionString` does not include username/password |
+| `POST /api/v1/jobs` returns 404 | Horde server image built without the job-creation API (no jobs/graphs/agents controllers) | Use a Horde server image that includes the full API surface — verify `curl -sf http://localhost:5000/api/v1/jobs` returns 200 (not 404) before baking the AMI |
 
 ---
 
