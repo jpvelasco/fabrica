@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-08-05
+
+### Fixed
+
+- **CodeBuild VPC IAM permissions** — `ci setup` now grants the full set of EC2 permissions the CodeBuild service role needs for VPC networking: ENI lifecycle (`CreateNetworkInterface`, `DeleteNetworkInterface`, `CreateNetworkInterfacePermission`), VPC describe actions (`DescribeDhcpOptions`, `DescribeNetworkInterfaces`, `DescribeSecurityGroups`, `DescribeSubnets`, `DescribeTags`, `DescribeVpcs`), and tagging (`CreateTags`, `DeleteTags`). Without these, builds fail during PROVISIONING with `VPC_CLIENT_ERROR: UnauthorizedOperation`. (#216, #218)
+
+### Note
+
+CI projects now attach to a VPC so builds can reach a private-IP Horde coordinator. The CodeBuild service role includes the full ENI permission set required for VPC networking. Submit and trigger commands report a clear error when the coordinator has no job-creation API. Job execution still requires a Horde AMI that exposes the jobs surface — Fabrica does not build or provide this AMI.
+
 ## [0.1.5] - 2026-08-04
 
 ### Fixed
@@ -140,7 +150,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.6
 [0.1.5]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.5
 [0.1.4]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.4
 [0.1.3]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.3
