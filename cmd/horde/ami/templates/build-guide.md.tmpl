@@ -151,13 +151,52 @@ horde:
 
 ## Verifying the AMI
 
-After launching a test instance from your new AMI:
+After launching a test instance from your new AMI, verify the services are
+running and the jobs API is accessible. **A health-only Horde (responds on
+`:5000` but no jobs API) will cause `fabrica horde submit` and `fabrica ci
+trigger` to fail with 404 errors.**
+
+{{ if eq .Install "docker" -}}
+### Docker compose stack
 
 ```bash
+# Start the stack
+cd /etc/horde && docker compose up -d
+docker compose ps
+
+# Health check — must return 200
+curl -sf http://localhost:5000/ && echo "Health: OK"
+
+# Jobs API — must NOT return 404
+# Acceptable: 200 (empty list), 401 (auth challenge)
+# FAIL: 404 with empty body or "route missing"
+curl -s -o /dev/null -w "Jobs API: HTTP %{http_code}\n" \
+  http://localhost:5000/api/v1/jobs
+
+# Container health — all three should show "healthy"
+docker ps --filter "name=horde"
+```
+{{ else -}}
+### Native install
+
+```bash
+# Service status
 systemctl is-enabled mongod redis-server horde
+
+# Health check — must return 200
+curl -sf http://localhost:5000/ && echo "Health: OK"
+
+# Jobs API — must NOT return 404
+# Acceptable: 200 (empty list), 401 (auth challenge)
+# FAIL: 404 with empty body or "route missing" — do not bake this AMI
+curl -s -o /dev/null -w "Jobs API: HTTP %{http_code}\n" \
+  http://localhost:5000/api/v1/jobs
+
+# Database check
 mongosh --eval "db.adminCommand('ping')"
 ls -la /etc/horde/
 ```
+{{ end -}}
 
 Then verify Fabrica can build the provisioning plan:
 
