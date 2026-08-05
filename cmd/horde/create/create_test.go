@@ -13,6 +13,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/horde"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -428,5 +429,125 @@ func TestCreateReadStateError(t *testing.T) {
 	err := c.run(context.Background())
 	if err == nil {
 		t.Fatal("expected error when readState fails")
+	}
+}
+
+// TestCreateRoleFailurePreservesSG verifies IAM role create failure returns
+// a clear error and the security group remains in state for recovery.
+func TestCreateRoleFailurePreservesSG(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{
+		CreateErr: map[string]error{
+			cloud.TypeAWSIAMRole: errors.New("iam disabled"),
+		},
+	}
+	st := testutil.NewTestState()
+	capture := &testutil.StateWriteCapture{}
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.writeState = capture.WriteFunc()
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error on IAM role create failure")
+	}
+	assert.Contains(t, err.Error(), "creating IAM role")
+	if !capture.Written() {
+		t.Fatal("state was never written")
+	}
+	last := capture.Last()
+	_, hasSG := last.GetModuleResource("horde", "AWS::EC2::SecurityGroup")
+	if !hasSG {
+		t.Error("SG resource not recorded in state after role failure")
+	}
+}
+
+// TestCreateProfileFailurePreservesSGAndRole verifies instance profile create
+// failure returns a clear error and SG + role remain in state for recovery.
+func TestCreateProfileFailurePreservesSGAndRole(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{
+		CreateErr: map[string]error{
+			cloud.TypeAWSIAMInstanceProfile: errors.New("iam disabled"),
+		},
+	}
+	st := testutil.NewTestState()
+	capture := &testutil.StateWriteCapture{}
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.writeState = capture.WriteFunc()
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error on instance profile create failure")
+	}
+	assert.Contains(t, err.Error(), "creating instance profile")
+	if !capture.Written() {
+		t.Fatal("state was never written")
+	}
+	last := capture.Last()
+	_, hasSG := last.GetModuleResource("horde", "AWS::EC2::SecurityGroup")
+	if !hasSG {
+		t.Error("SG resource not recorded in state after profile failure")
+	}
+	_, hasRole := last.GetModuleResource("horde", "AWS::IAM::Role")
+	if !hasRole {
+		t.Error("IAM role not recorded in state after profile failure")
+	}
+}
+
+// TestCreatePasswordGenerationError verifies that a password generation failure
+// returns a clear error and no resources are created.
+func TestCreatePasswordGenerationError(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.genPassword = func(int) (string, error) {
+		return "", errors.New("rand unavailable")
+	}
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when password generation fails")
+	}
+	assert.Contains(t, err.Error(), "generating MongoDB password")
+	if provider.CreateCalls != 0 {
+		t.Fatalf("expected 0 create calls, got %d", provider.CreateCalls)
+	}
+}
+
+// TestCreateUserDataGenerationError verifies that a userdata generation failure
+// returns a clear error and no EC2 instance is created.
+func TestCreateUserDataGenerationError(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
+	capture := &testutil.StateWriteCapture{}
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.writeState = capture.WriteFunc()
+	c.genUserData = func(cfg horde.UserDataConfig) (string, error) {
+		return "", errors.New("template missing")
+	}
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when userdata generation fails")
+	}
+	assert.Contains(t, err.Error(), "generating user data")
+	// SG, role, and profile should be in state; instance should not.
+	if !capture.Written() {
+		t.Fatal("state was never written")
+	}
+	last := capture.Last()
+	_, hasSG := last.GetModuleResource("horde", "AWS::EC2::SecurityGroup")
+	if !hasSG {
+		t.Error("SG not in state after userdata failure")
+	}
+	_, hasInstance := last.GetModuleResource("horde", "AWS::EC2::Instance")
+	if hasInstance {
+		t.Error("EC2 instance should not be in state after userdata failure")
 	}
 }

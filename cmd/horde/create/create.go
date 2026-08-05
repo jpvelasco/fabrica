@@ -38,6 +38,8 @@ type command struct {
 	readState      func() (*fabricastate.State, error)
 	writeState     func(*fabricastate.State) error
 	createResource func(ctx context.Context, r *cloud.Resource) error
+	genPassword    func(int) (string, error)
+	genUserData    func(horde.UserDataConfig) (string, error)
 }
 
 // New returns the "horde create" subcommand.
@@ -135,7 +137,11 @@ func (c command) run(ctx context.Context) error {
 }
 
 func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *horde.CreatePlan) error {
-	mongoPass, err := credentials.GeneratePassword(passwordLen)
+	genPass := c.genPassword
+	if genPass == nil {
+		genPass = credentials.GeneratePassword
+	}
+	mongoPass, err := genPass(passwordLen)
 	if err != nil {
 		return fmt.Errorf("generating MongoDB password: %w", err)
 	}
@@ -194,7 +200,11 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 
 	// Create EC2 Instance
 	fmt.Fprintf(c.out, "Creating instance %s...\n", plan.InstanceName)
-	userData, err := horde.Generate(horde.UserDataConfig{
+	genUserData := c.genUserData
+	if genUserData == nil {
+		genUserData = horde.Generate
+	}
+	userData, err := genUserData(horde.UserDataConfig{
 		MongoPassword: mongoPass,
 		Port:          plan.Port,
 	})
@@ -253,9 +263,6 @@ func (c command) printDryRun(plan *horde.CreatePlan) {
 				fmt.Fprintln(w, "  Warning: allowedCidr is 0.0.0.0/0 — ports 5000 and 5002 are open")
 				fmt.Fprintln(w, "           to the internet. Restrict this in fabrica.yaml before connecting")
 				fmt.Fprintln(w, "           agents or running production workloads.")
-			}
-			if plan.InstanceType == "m7i.xlarge" {
-				fmt.Fprintln(w, "  Tip: For studios with >10 concurrent agents, consider m7i.2xlarge.")
 			}
 		},
 	})
