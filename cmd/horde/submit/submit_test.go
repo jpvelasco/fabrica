@@ -643,3 +643,51 @@ func TestHordeHTTPClientGetJobStatusInvalidJSON(t *testing.T) {
 	}
 	assert.Contains(t, err.Error(), "parsing response")
 }
+
+// TestHordeHTTPClientSubmitJobAPI404 verifies that when Horde has no
+// /api/v1/jobs route at all (both POST and the GET probe 404), the error
+// explains the missing job-creation API instead of a bare "HTTP 404".
+func TestHordeHTTPClientSubmitJobAPI404(t *testing.T) {
+	var probeCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			probeCalls++
+		} else if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := newHordeHTTPClient(srv.URL, "")
+	_, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{Name: "A", Target: "T"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	assert.Contains(t, err.Error(), "no job-creation API")
+	assert.Contains(t, err.Error(), "/api/v1/jobs")
+	if probeCalls != 1 {
+		t.Errorf("probeCalls = %d, want 1", probeCalls)
+	}
+}
+
+// TestHordeHTTPClientSubmitJobAPI404RouteExists verifies that a 404 on POST
+// when the GET probe succeeds keeps the original status message — the route
+// exists, so a 404 here is a server-side rejection, not a missing controller.
+func TestHordeHTTPClientSubmitJobAPI404RouteExists(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := newHordeHTTPClient(srv.URL, "")
+	_, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{Name: "A", Target: "T"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	assert.Contains(t, err.Error(), "HTTP 404")
+}

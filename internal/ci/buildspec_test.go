@@ -38,3 +38,20 @@ func TestInlinePolicyScopedToProjectLogGroup(t *testing.T) {
 		t.Errorf("inline policy not scoped to project log group:\n%s", doc)
 	}
 }
+
+// TestBuildspecRawPreflightsJobAPI verifies the buildspec probes the Horde
+// job-creation route before submitting, so a coordinator built without the
+// jobs API (404 on /api/v1/jobs) fails with a clear message instead of a
+// bare curl error.
+func TestBuildspecRawPreflightsJobAPI(t *testing.T) {
+	spec := BuildspecRaw(testPlan())
+	for _, want := range []string{
+		"/api/v1/jobs",
+		"no job-creation API",
+		"horde-ami",
+	} {
+		if !strings.Contains(spec, want) {
+			t.Errorf("buildspec missing pre-flight for %q:\n%s", want, spec)
+		}
+	}
+}

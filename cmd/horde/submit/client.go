@@ -61,6 +61,9 @@ func (c *hordeHTTPClient) SubmitJob(ctx context.Context, job *buildgraph.BuildGr
 		return "", fmt.Errorf("Horde rejected the request (auth): check admin token in .fabrica/horde-credentials.yaml")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if resp.StatusCode == http.StatusNotFound && c.jobsRouteMissing(ctx) {
+			return "", fmt.Errorf("Horde has no job-creation API: POST %s/api/v1/jobs returned HTTP 404. This Horde build does not expose the jobs/graphs/agents API surface, so it cannot accept jobs. Rebuild the Horde AMI with a server image that includes the job API (see docs/horde-ami.md), or use a supported Horde version.", c.baseURL)
+		}
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return "", fmt.Errorf("Horde returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
 	}
@@ -76,6 +79,27 @@ func (c *hordeHTTPClient) SubmitJob(ctx context.Context, job *buildgraph.BuildGr
 		return "", fmt.Errorf("parsing response: %w", err)
 	}
 	return result.ID, nil
+}
+
+// jobsRouteMissing reports whether the Horde server provably lacks the
+// job-creation route: GET /api/v1/jobs must itself return 404. A transport
+// error, an unbuildable request, or any other status means we cannot confirm
+// the controller is absent, so the original 404 is reported verbatim.
+func (c *hordeHTTPClient) jobsRouteMissing(ctx context.Context) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/jobs", nil)
+	if err != nil {
+		return false
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "ServiceAccount "+c.token)
+	}
+
+	resp, err := c.http.Do(req) //nolint:gosec // URL sourced from provisioned instance state, not user input
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusNotFound
 }
 
 func (c *hordeHTTPClient) GetJobStatus(ctx context.Context, jobID string) (string, error) {
