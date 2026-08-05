@@ -360,3 +360,21 @@ credentials independently (typically `--noauth` for intra-container communicatio
 If your studio requires MongoDB authentication, configure it in the compose file
 and `globals.json` baked into the AMI. The password in the credentials file is
 kept for backward compatibility.
+
+---
+
+## Operator Access (SSM)
+
+Horde instances are provisioned with an IAM role (`AmazonSSMManagedInstanceCore`)
+that enables **AWS Systems Manager Session Manager** for operator shell access.
+No public SSH is configured — the security group does not open port 22 to the
+internet.
+
+To connect:
+
+```bash
+aws ssm start-session --target <instance-id>
+```
+
+The SSM agent is included in standard Ubuntu 22.04 AMIs. If using a custom AMI,
+ensure the `amazon-ssm-agent` package is installed and enabled.

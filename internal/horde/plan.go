@@ -23,8 +23,10 @@ type CreatePlan struct {
 	SubnetID     string
 	DefaultVPC   bool
 
-	SGName       string
-	InstanceName string
+	SGName              string
+	InstanceName        string
+	RoleName            string
+	InstanceProfileName string
 
 	CostResources []cost.Resource
 }
@@ -61,19 +63,21 @@ func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region 
 	}
 
 	return &CreatePlan{
-		Account:       account,
-		Region:        region,
-		AmiID:         cfg.AmiID,
-		InstanceType:  instanceType,
-		VolumeSize:    volumeSize,
-		Port:          port,
-		GRPCPort:      grpcPort,
-		AllowedCIDR:   allowedCIDR,
-		VPCID:         vpcID,
-		SubnetID:      subnetID,
-		DefaultVPC:    defaultVPC,
-		SGName:        "fabrica-horde-sg",
-		InstanceName:  "fabrica-horde",
-		CostResources: CostResources(cfg),
+		Account:             account,
+		Region:              region,
+		AmiID:               cfg.AmiID,
+		InstanceType:        instanceType,
+		VolumeSize:          volumeSize,
+		Port:                port,
+		GRPCPort:            grpcPort,
+		AllowedCIDR:         allowedCIDR,
+		VPCID:               vpcID,
+		SubnetID:            subnetID,
+		DefaultVPC:          defaultVPC,
+		SGName:              "fabrica-horde-sg",
+		InstanceName:        "fabrica-horde",
+		RoleName:            "fabrica-horde-role",
+		InstanceProfileName: "fabrica-horde-profile",
+		CostResources:       CostResources(cfg),
 	}, nil
 }

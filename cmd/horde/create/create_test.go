@@ -129,17 +129,23 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if provider.CreateCalls != 2 {
-		t.Fatalf("expected 2 create calls, got %d", provider.CreateCalls)
+	if provider.CreateCalls != 4 {
+		t.Fatalf("expected 4 create calls (SG, role, profile, instance), got %d", provider.CreateCalls)
 	}
 	if provider.CreatedTypes[0] != "AWS::EC2::SecurityGroup" {
 		t.Errorf("first created resource = %q, want AWS::EC2::SecurityGroup", provider.CreatedTypes[0])
 	}
-	if provider.CreatedTypes[1] != "AWS::EC2::Instance" {
-		t.Errorf("second created resource = %q, want AWS::EC2::Instance", provider.CreatedTypes[1])
+	if provider.CreatedTypes[1] != "AWS::IAM::Role" {
+		t.Errorf("second created resource = %q, want AWS::IAM::Role", provider.CreatedTypes[1])
 	}
-	if len(capture.States) < 2 {
-		t.Fatalf("expected >=2 state writes, got %d", len(capture.States))
+	if provider.CreatedTypes[2] != "AWS::IAM::InstanceProfile" {
+		t.Errorf("third created resource = %q, want AWS::IAM::InstanceProfile", provider.CreatedTypes[2])
+	}
+	if provider.CreatedTypes[3] != "AWS::EC2::Instance" {
+		t.Errorf("fourth created resource = %q, want AWS::EC2::Instance", provider.CreatedTypes[3])
+	}
+	if len(capture.States) < 4 {
+		t.Fatalf("expected >=4 state writes, got %d", len(capture.States))
 	}
 	final := capture.Last()
 	m := final.GetModule("horde")
@@ -147,8 +153,8 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 		t.Fatal("horde module not in final state")
 		return
 	}
-	if len(m.Resources) != 2 {
-		t.Fatalf("final state has %d resources, want 2", len(m.Resources))
+	if len(m.Resources) != 4 {
+		t.Fatalf("final state has %d resources, want 4", len(m.Resources))
 	}
 	if m.Version != "ami-test123" {
 		t.Errorf("state version = %q, want ami-test123", m.Version)
@@ -177,9 +183,18 @@ func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
 	if !capture.Written() {
 		t.Fatal("state was never written")
 	}
-	_, hasSG := capture.Last().GetModuleResource("horde", "AWS::EC2::SecurityGroup")
+	last := capture.Last()
+	_, hasSG := last.GetModuleResource("horde", "AWS::EC2::SecurityGroup")
 	if !hasSG {
 		t.Error("SG resource not recorded in state after instance failure")
+	}
+	_, hasRole := last.GetModuleResource("horde", "AWS::IAM::Role")
+	if !hasRole {
+		t.Error("IAM role not recorded in state after instance failure")
+	}
+	_, hasProfile := last.GetModuleResource("horde", "AWS::IAM::InstanceProfile")
+	if !hasProfile {
+		t.Error("Instance profile not recorded in state after instance failure")
 	}
 }
 

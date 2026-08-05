@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/jpvelasco/fabrica/internal/ec2state"
+	"github.com/jpvelasco/fabrica/internal/iamrole"
 )
 
 // SGDesiredState returns the Cloud Control desired-state JSON for the Horde
@@ -23,17 +24,39 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 
 // InstanceDesiredState returns the Cloud Control desired-state JSON for the
 // Horde EC2 instance. ImageId is the user-provided AMI ID from HordeConfig.
-func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMessage, error) {
-	return ec2state.Build(
-		ec2state.InstanceSpec{
-			ImageID:         plan.AmiID,
-			InstanceType:    plan.InstanceType,
-			SubnetID:        plan.SubnetID,
-			SecurityGroupID: sgID,
-			UserData:        userData,
-			VolumeSize:      plan.VolumeSize,
-			InstanceName:    plan.InstanceName,
-		},
+// When instanceProfileName is non-empty, the instance is attached to that IAM
+// instance profile (required for SSM access).
+func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName string) (json.RawMessage, error) {
+	spec := ec2state.InstanceSpec{
+		ImageID:         plan.AmiID,
+		InstanceType:    plan.InstanceType,
+		SubnetID:        plan.SubnetID,
+		SecurityGroupID: sgID,
+		UserData:        userData,
+		VolumeSize:      plan.VolumeSize,
+		InstanceName:    plan.InstanceName,
+	}
+
+	dsOpts := []ec2state.DesiredStateOption{
 		ec2state.WithDeleteOnTermination(false),
-	)
+	}
+	if instanceProfileName != "" {
+		dsOpts = append(dsOpts, ec2state.WithIAMProfile(instanceProfileName))
+	}
+
+	return ec2state.Build(spec, dsOpts...)
+}
+
+// RoleDesiredState returns Cloud Control desired-state for the Horde EC2
+// instance role (SSM managed instance core).
+func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
+	return iamrole.RoleDocument(plan.RoleName, iamrole.ServiceEC2, []string{
+		"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+	}, nil, nil)
+}
+
+// InstanceProfileDesiredState returns Cloud Control desired-state for the
+// instance profile that wraps the Horde EC2 role.
+func InstanceProfileDesiredState(plan *CreatePlan) (json.RawMessage, error) {
+	return ec2state.InstanceProfileDesiredState(plan.InstanceProfileName, plan.RoleName)
 }
