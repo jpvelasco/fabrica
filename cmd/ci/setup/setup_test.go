@@ -402,3 +402,113 @@ func TestAppendUnique(t *testing.T) {
 		t.Errorf("first resource should be unchanged, got %s", resources[0].Identifier)
 	}
 }
+
+// TestSetupWithVPCResolvesCreatesSGAndVPCConfig verifies that when the provider
+// resolves a default VPC, setup creates the security group and passes the VPC
+// wiring through to the CodeBuild project spec.
+func TestSetupWithVPCResolvesCreatesSGAndVPCConfig(t *testing.T) {
+	var out bytes.Buffer
+	var lastSpec cloud.CodeBuildProjectSpec
+	st := fabricastate.NewState("123456789012", "us-west-2")
+	created := &[]string{}
+	c := &command{
+		runtime:    testRuntime(),
+		out:        &out,
+		costs:      fabricacost.Global,
+		assumeYes:  true,
+		readState:  func() (*fabricastate.State, error) { return st, nil },
+		writeState: func(*fabricastate.State) error { return nil },
+		createResource: func(_ context.Context, r *cloud.Resource) error {
+			*created = append(*created, r.TypeName)
+			r.Identifier = r.TypeName + "-id"
+			return nil
+		},
+		ensureProject: func(_ context.Context, spec cloud.CodeBuildProjectSpec) (bool, error) {
+			lastSpec = spec
+			*created = append(*created, "AWS::CodeBuild::Project")
+			return true, nil
+		},
+		confirm: func(string) bool { return true },
+	}
+	// TestProvider does not implement VPCResolver; inject the fake directly.
+	c.runtime.Provider = &testutil.VPCResolverProvider{VPCID: "vpc-default", SubnetID: "subnet-default"}
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(*created) != 3 {
+		t.Fatalf("created %d resources, want 3 (role, SG, project): %v", len(*created), *created)
+	}
+	if (*created)[1] != "AWS::EC2::SecurityGroup" {
+		t.Errorf("creation order = %v, want SG second", *created)
+	}
+	if lastSpec.VpcConfig == nil {
+		t.Fatal("project spec has no VpcConfig, want VPC wiring")
+	}
+	if lastSpec.VpcConfig.VpcID != "vpc-default" || lastSpec.VpcConfig.SubnetID != "subnet-default" {
+		t.Errorf("VpcConfig = %+v, want vpc-default/subnet-default", lastSpec.VpcConfig)
+	}
+	if !strings.Contains(out.String(), "vpc-default") {
+		t.Errorf("plan output should mention resolved VPC:\n%s", out.String())
+	}
+}
+
+// TestSetupVPCResolverError verifies a VPC resolution failure aborts setup.
+func TestSetupVPCResolverError(t *testing.T) {
+	var out bytes.Buffer
+	c := &command{
+		runtime:       testRuntime(),
+		out:           &out,
+		costs:         fabricacost.Global,
+		readState:     func() (*fabricastate.State, error) { return fabricastate.NewState("123456789012", "us-west-2"), nil },
+		writeState:    func(*fabricastate.State) error { return nil },
+		ensureProject: func(context.Context, cloud.CodeBuildProjectSpec) (bool, error) { return true, nil },
+		confirm:       func(string) bool { return true },
+	}
+	c.runtime.Provider = &testutil.VPCResolverProvider{VPCErr: errors.New("no default VPC")}
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when VPC resolution fails")
+	}
+	if !strings.Contains(err.Error(), "resolving default VPC") {
+		t.Errorf("expected VPC resolution error, got: %v", err)
+	}
+}
+
+// TestSetupVPCResolvesSGRoleError verifies that a security-group creation
+// failure during setup with a resolved VPC aborts setup after the role step.
+func TestSetupVPCResolvesSGRoleError(t *testing.T) {
+	var out bytes.Buffer
+	roleCreated := false
+	c := &command{
+		runtime:    testRuntime(),
+		out:        &out,
+		costs:      fabricacost.Global,
+		assumeYes:  true,
+		readState:  func() (*fabricastate.State, error) { return fabricastate.NewState("123456789012", "us-west-2"), nil },
+		writeState: func(*fabricastate.State) error { return nil },
+		createResource: func(_ context.Context, r *cloud.Resource) error {
+			if r.TypeName == cloud.TypeAWSEC2SecurityGroup {
+				return errors.New("sg create failed")
+			}
+			roleCreated = true
+			r.Identifier = r.TypeName + "-id"
+			return nil
+		},
+		ensureProject: func(context.Context, cloud.CodeBuildProjectSpec) (bool, error) { return true, nil },
+		confirm:       func(string) bool { return true },
+	}
+	c.runtime.Provider = &testutil.VPCResolverProvider{VPCID: "vpc-default", SubnetID: "subnet-default"}
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when security group creation fails")
+	}
+	if !roleCreated {
+		t.Error("expected IAM role to be created before the SG step")
+	}
+	if !strings.Contains(err.Error(), "Security group") {
+		t.Errorf("expected SG step error, got: %v", err)
+	}
+}

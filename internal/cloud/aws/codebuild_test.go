@@ -122,6 +122,59 @@ func TestEnsureProjectCreatesWhenAbsent(t *testing.T) {
 	if tagMap["ManagedBy"] != "fabrica" {
 		t.Errorf("ManagedBy tag = %q, want fabrica", tagMap["ManagedBy"])
 	}
+	// No VPC config → the SDK VpcConfig must be nil.
+	if cb.createInput.VpcConfig != nil {
+		t.Errorf("VpcConfig = %+v, want nil when spec has no VPC", cb.createInput.VpcConfig)
+	}
+}
+
+func TestEnsureProjectSetsVpcConfig(t *testing.T) {
+	cb := &fakeCodeBuildClient{}
+	p := newCodeBuildTestProvider(cb, nil)
+
+	created, err := p.EnsureProject(context.Background(), fabricac.CodeBuildProjectSpec{
+		Name:           "fabrica-ci",
+		ServiceRoleARN: "arn:aws:iam::123:role/fabrica-ci-codebuild",
+		ComputeType:    "BUILD_GENERAL1_SMALL",
+		Image:          "aws/codebuild/x:1",
+		BuildTimeout:   60,
+		Buildspec:      "version: 0.2",
+		Tags:           map[string]string{"ManagedBy": "fabrica"},
+		VpcConfig: &fabricac.CodeBuildVpcConfig{
+			VpcID:            "vpc-abc",
+			SubnetID:         "subnet-xyz",
+			SecurityGroupIDs: []string{"sg-123"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("EnsureProject: %v", err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+	if cb.createInput == nil || cb.createInput.VpcConfig == nil {
+		t.Fatal("VpcConfig = nil, want set")
+	}
+	if awssdk.ToString(cb.createInput.VpcConfig.VpcId) != "vpc-abc" {
+		t.Errorf("VpcId = %q, want vpc-abc", awssdk.ToString(cb.createInput.VpcConfig.VpcId))
+	}
+	if len(cb.createInput.VpcConfig.Subnets) != 1 || cb.createInput.VpcConfig.Subnets[0] != "subnet-xyz" {
+		t.Errorf("Subnets = %v, want [subnet-xyz]", cb.createInput.VpcConfig.Subnets)
+	}
+	if len(cb.createInput.VpcConfig.SecurityGroupIds) != 1 || cb.createInput.VpcConfig.SecurityGroupIds[0] != "sg-123" {
+		t.Errorf("SecurityGroupIds = %v, want [sg-123]", cb.createInput.VpcConfig.SecurityGroupIds)
+	}
+}
+
+func TestVpcConfigPartialNil(t *testing.T) {
+	// A spec with a VPC ID but no subnet must not produce an SDK VpcConfig —
+	// an invalid half-configured VPC would make the CreateProject call fail.
+	if vc := vpcConfig(&fabricac.CodeBuildVpcConfig{VpcID: "vpc-abc"}); vc != nil {
+		t.Errorf("vpcConfig(vpc only) = %+v, want nil", vc)
+	}
+	if vc := vpcConfig(nil); vc != nil {
+		t.Errorf("vpcConfig(nil) = %+v, want nil", vc)
+	}
 }
 
 func TestEnsureProjectIdempotent(t *testing.T) {

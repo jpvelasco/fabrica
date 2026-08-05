@@ -34,6 +34,18 @@ type CodeBuildProjectSpec struct {
 	Buildspec      string
 	EnvDefaults    map[string]string
 	Tags           map[string]string
+
+	// VpcConfig, when non-empty, places the project's builds inside a VPC.
+	// Required for builds to reach a private-IP Horde coordinator. When empty,
+	// the project runs outside any VPC (builds cannot reach private endpoints).
+	VpcConfig *CodeBuildVpcConfig
+}
+
+// CodeBuildVpcConfig describes the VPC a CodeBuild project's builds join.
+type CodeBuildVpcConfig struct {
+	VpcID            string
+	SubnetID         string
+	SecurityGroupIDs []string
 }
 
 // BuildInfo is the provider-agnostic snapshot of a CodeBuild build.
