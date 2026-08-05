@@ -109,11 +109,15 @@ type LoreConfig struct {
 
 // CIConfig holds the ci: section of fabrica.yaml. Defaults are applied in the
 // ci plan layer (internal/ci), matching the Horde/Workstation pattern.
+// VPCId and SubnetId place the CodeBuild project inside a VPC so builds can
+// reach a private-IP Horde; empty values fall back to the account default VPC.
 type CIConfig struct {
 	ProjectName  string `mapstructure:"projectName"  yaml:"projectName"`
 	ComputeType  string `mapstructure:"computeType"  yaml:"computeType"`
 	Image        string `mapstructure:"image"        yaml:"image"`
 	BuildTimeout int    `mapstructure:"buildTimeout" yaml:"buildTimeout"`
+	VPCId        string `mapstructure:"vpcId"        yaml:"vpcId"`
+	SubnetId     string `mapstructure:"subnetId"     yaml:"subnetId"`
 }
 
 // DeployConfig holds the deploy: section of fabrica.yaml. Defaults are applied

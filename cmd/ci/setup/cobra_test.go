@@ -99,3 +99,42 @@ func TestSetupCobraWithoutCodeBuildRunnerFails(t *testing.T) {
 	}
 	testutil.AssertContains(t, err.Error(), "CodeBuild")
 }
+
+// TestSetupCobraWithVPCResolvesSGAndVpcConfig exercises the real New→ExecuteContext
+// path with a provider that resolves a default VPC: it must create the security
+// group and pass VPC wiring into the project spec.
+func TestSetupCobraWithVPCResolvesSGAndVpcConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	provider := &testutil.CodeBuildVPCProvider{}
+	provider.VPCID = "vpc-default"
+	provider.SubnetID = "subnet-default"
+
+	got, err := runCISetup(t, testutil.NewTestRuntime(provider), "--yes")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	testutil.AssertContains(t, got, "CI setup complete")
+	if provider.EnsureProjectCalls != 1 {
+		t.Errorf("EnsureProjectCalls = %d, want 1", provider.EnsureProjectCalls)
+	}
+	// Role + SG created via Cloud Control, project via EnsureProject.
+	if provider.CreateCalls != 2 {
+		t.Errorf("CreateCalls = %d, want 2 (role + SG)", provider.CreateCalls)
+	}
+	vc := provider.LastEnsureProjectSpec.VpcConfig
+	if vc == nil {
+		t.Fatal("project spec has no VpcConfig")
+	}
+	if vc.VpcID != "vpc-default" || vc.SubnetID != "subnet-default" {
+		t.Errorf("VpcConfig = %+v, want vpc-default/subnet-default", vc)
+	}
+	if len(vc.SecurityGroupIDs) != 1 {
+		t.Errorf("SecurityGroupIDs = %v, want 1 SG", vc.SecurityGroupIDs)
+	}
+	// State file written via the real fabricastate.WriteState path.
+	if _, err := os.Stat(dir + "/.fabrica/state.json"); err != nil {
+		t.Errorf("expected state file after setup: %v", err)
+	}
+}

@@ -83,6 +83,69 @@ func (p *RemoteCommandProvider) RunCommand(_ context.Context, instanceID string,
 	return p.RemoteResult, p.RemoteErr
 }
 
+// VPCResolverProvider extends TestProvider with configurable default-VPC
+// resolution. It is intentionally separate so TestProvider continues to
+// exercise providers that do not implement cloud.VPCResolver.
+type VPCResolverProvider struct {
+	TestProvider
+
+	VPCID    string
+	SubnetID string
+	VPCErr   error
+	Calls    int
+}
+
+var _ cloud.VPCResolver = (*VPCResolverProvider)(nil)
+
+func (p *VPCResolverProvider) ResolveDefaultVPC(context.Context) (string, string, error) {
+	p.Calls++
+	if p.VPCErr != nil {
+		return "", "", p.VPCErr
+	}
+	vpcID := p.VPCID
+	if vpcID == "" {
+		vpcID = "vpc-fake"
+	}
+	subnetID := p.SubnetID
+	if subnetID == "" {
+		subnetID = "subnet-fake"
+	}
+	return vpcID, subnetID, nil
+}
+
+// CodeBuildVPCProvider implements both cloud.CodeBuildRunner and
+// cloud.VPCResolver in one fake, so cobra tests can exercise the full ci setup
+// wiring (VPC resolution → SG → project with VpcConfig) through New().
+type CodeBuildVPCProvider struct {
+	CodeBuildProvider
+
+	VPCID    string
+	SubnetID string
+	VPCErr   error
+	Calls    int
+}
+
+var (
+	_ cloud.CodeBuildRunner = (*CodeBuildVPCProvider)(nil)
+	_ cloud.VPCResolver     = (*CodeBuildVPCProvider)(nil)
+)
+
+func (p *CodeBuildVPCProvider) ResolveDefaultVPC(context.Context) (string, string, error) {
+	p.Calls++
+	if p.VPCErr != nil {
+		return "", "", p.VPCErr
+	}
+	vpcID := p.VPCID
+	if vpcID == "" {
+		vpcID = "vpc-fake"
+	}
+	subnetID := p.SubnetID
+	if subnetID == "" {
+		subnetID = "subnet-fake"
+	}
+	return vpcID, subnetID, nil
+}
+
 // CodeBuildProvider extends TestProvider with configurable CodeBuild behavior.
 // It is intentionally separate so TestProvider continues to exercise providers
 // that do not implement cloud.CodeBuildRunner.
@@ -106,12 +169,17 @@ type CodeBuildProvider struct {
 	BuildStatusErr error
 	BuildLogOutput string
 	BuildLogErr    error
+
+	// LastEnsureProjectSpec captures the most recent spec passed to
+	// EnsureProject for VPC wiring assertions.
+	LastEnsureProjectSpec cloud.CodeBuildProjectSpec
 }
 
 var _ cloud.CodeBuildRunner = (*CodeBuildProvider)(nil)
 
-func (p *CodeBuildProvider) EnsureProject(context.Context, cloud.CodeBuildProjectSpec) (bool, error) {
+func (p *CodeBuildProvider) EnsureProject(_ context.Context, spec cloud.CodeBuildProjectSpec) (bool, error) {
 	p.EnsureProjectCalls++
+	p.LastEnsureProjectSpec = spec
 	return !p.ProjectAlreadyExists, p.EnsureProjectErr
 }
 

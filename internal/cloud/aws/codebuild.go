@@ -90,12 +90,26 @@ func (p *awsProvider) EnsureProject(ctx context.Context, spec fabricac.CodeBuild
 			Type:      codebuildtypes.SourceTypeNoSource,
 			Buildspec: aws.String(spec.Buildspec),
 		},
-		Tags: tags,
+		Tags:      tags,
+		VpcConfig: vpcConfig(spec.VpcConfig),
 	})
 	if err != nil {
 		return false, fmt.Errorf("creating CodeBuild project %s: %w — check codebuild:CreateProject and that the service role exists", spec.Name, err)
 	}
 	return true, nil
+}
+
+// vpcConfig maps the provider-agnostic VPC spec onto the CodeBuild SDK type.
+// Returns nil when no VPC is configured so builds keep running VPC-less.
+func vpcConfig(v *fabricac.CodeBuildVpcConfig) *codebuildtypes.VpcConfig {
+	if v == nil || v.VpcID == "" || v.SubnetID == "" {
+		return nil
+	}
+	return &codebuildtypes.VpcConfig{
+		VpcId:            aws.String(v.VpcID),
+		Subnets:          []string{v.SubnetID},
+		SecurityGroupIds: v.SecurityGroupIDs,
+	}
 }
 
 func (p *awsProvider) DeleteProject(ctx context.Context, name string) error {

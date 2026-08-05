@@ -338,7 +338,9 @@ Permanently terminates the workstation EC2 instance and security group. Deletes 
 
 #### `fabrica ci setup`
 
-Provisions the CI infrastructure for this account: an IAM service role and a CodeBuild project. Idempotent — existing resources are detected and left in place. Shows a plan + monthly cost estimate, then prompts before creating (use `--yes` to skip, `--dry-run` to preview).
+Provisions the CI infrastructure for this account: an IAM service role, a security group, and a CodeBuild project. Idempotent — existing resources are detected and left in place. Shows a plan + monthly cost estimate, then prompts before creating (use `--yes` to skip, `--dry-run` to preview).
+
+By default the CodeBuild project is placed inside the account's default VPC (or the VPC/subnet from `ci.vpcId`/`ci.subnetId` in `fabrica.yaml`) so builds can reach a private-IP Horde coordinator. The project's security group is created by Fabrica. If no VPC can be resolved, setup still succeeds but the project runs VPC-less and cannot reach private endpoints.
 
 #### `fabrica ci trigger <buildgraph.xml>`
 
@@ -472,6 +474,10 @@ ddc:
   instanceType: m6i.xlarge
   volumeSize: 500
   backend: zen                    # or scylla (1-node bootstrap only — not HA)
+
+ci:
+  vpcId: vpc-0a1b2c3d4e5f67890   # optional — CodeBuild VPC for reaching a private-IP Horde
+  subnetId: subnet-0123456789abcdef0   # optional — defaults to the account default VPC when unset
 
 deploy:
   buildBucket: my-studio-builds   # S3 bucket where packaged server builds land

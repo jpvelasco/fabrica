@@ -106,7 +106,14 @@ func (c command) run(ctx context.Context) error {
 	// default HORDE_URL is populated. Not required for setup to succeed.
 	hordeURL := c.resolveHordeURL(ctx)
 
-	plan := ci.NewCreatePlan(c.runtime.Config.CI, account, region, hordeURL)
+	var resolver cloud.VPCResolver
+	if vr, ok := c.runtime.Provider.(cloud.VPCResolver); ok {
+		resolver = vr
+	}
+	plan, err := ci.NewCreatePlan(ctx, c.runtime.Config.CI, account, region, hordeURL, resolver)
+	if err != nil {
+		return fmt.Errorf("building CI plan: %w", err)
+	}
 
 	if c.dryRun {
 		c.printDryRun(plan)
@@ -160,9 +167,28 @@ func (c command) applyResources(ctx context.Context, st *fabricastate.State, pla
 		return nil, err
 	}
 
+	// When a VPC is resolved, place the CodeBuild project inside it so builds
+	// can reach a private-IP Horde. This requires a security group for the
+	// project's ENI. Without a VPC the project stays VPC-less (previous
+	// behavior) and cannot reach private endpoints.
+	sgID := ""
+	if plan.VPCID != "" && plan.SubnetID != "" {
+		resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+			Label:             "Security group",
+			TypeName:          cloud.TypeAWSEC2SecurityGroup,
+			BuildDesiredState: func() ([]byte, error) { return ci.SGDesiredState(plan) },
+			ReuseExisting:     true,
+			IgnoreWriteError:  true,
+		}, moduleName, plan.ProjectName, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+		if err != nil {
+			return nil, err
+		}
+		sgID = resources[len(resources)-1].Identifier
+	}
+
 	// CodeBuild projects are created via the CodeBuildRunner SDK path —
 	// AWS::CodeBuild::Project does not support Cloud Control CREATE.
-	created, err := c.ensureProject(ctx, ci.ProjectSpec(plan, roleARN))
+	created, err := c.ensureProject(ctx, ci.ProjectSpec(plan, roleARN, sgID))
 	if err != nil {
 		return nil, fmt.Errorf("creating CodeBuild project: %w", err)
 	}
@@ -226,6 +252,12 @@ func (c command) printPlanDetails(plan *ci.CreatePlan) {
 		fmt.Fprintf(c.out, "  Horde URL:     %s\n", plan.HordeURL)
 	} else {
 		fmt.Fprintln(c.out, "  Horde URL:     (not resolved — provision Horde, or it is set at trigger time)")
+	}
+	if plan.VPCID != "" && plan.SubnetID != "" {
+		fmt.Fprintf(c.out, "  VPC:           %s (subnet %s)\n", plan.VPCID, plan.SubnetID)
+		fmt.Fprintf(c.out, "  Security group: %s\n", plan.SGName)
+	} else {
+		fmt.Fprintln(c.out, "  VPC:           (none — builds cannot reach a private-IP Horde; set ci.vpcId/ci.subnetId)")
 	}
 	fmt.Fprintln(c.out)
 }
