@@ -39,6 +39,24 @@ func TestInlinePolicyScopedToProjectLogGroup(t *testing.T) {
 	}
 }
 
+func TestInlinePolicyIncludesVPCDescribePermissions(t *testing.T) {
+	doc := inlinePolicyDocument(testPlan())
+	for _, want := range []string{
+		"ec2:CreateNetworkInterface",
+		"ec2:DeleteNetworkInterface",
+		"ec2:DescribeDhcpOptions",
+		"ec2:DescribeInstances",
+		"ec2:DescribeNetworkInterfaces",
+		"ec2:DescribeSecurityGroups",
+		"ec2:DescribeSubnets",
+		"ec2:DescribeVpcs",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("inline policy missing %q:\n%s", want, doc)
+		}
+	}
+}
+
 // TestBuildspecRawPreflightsJobAPI verifies the buildspec probes the Horde
 // job-creation route before submitting, so a coordinator built without the
 // jobs API (404 on /api/v1/jobs) fails with a clear message instead of a
