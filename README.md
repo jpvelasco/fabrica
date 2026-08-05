@@ -117,7 +117,7 @@ fabrica ddc status --probe             # GET /health/ready
 ### 4. Horde build farm + CI
 
 ```bash
-# Horde coordinator — Docker compose AMI (see docs/horde-ami.md)
+# Horde coordinator — job-capable Docker compose AMI (see docs/horde-ami.md)
 fabrica horde create
 fabrica horde status
 fabrica ci setup
@@ -220,7 +220,7 @@ Restores Helix Core from a backup id: stops `helix-p4d`, restores checkpoint/jou
 
 ### Horde
 
-> **AMI requirement:** `fabrica horde create` is AMI-first. Your AMI must be a Docker-compose-based stack (Ubuntu 22.04 + Docker CE) with MongoDB, Redis, and the Horde server under `/etc/horde/`. Fabrica's cloud-init only runs `docker compose up -d` and probes port 5000. See [docs/horde-ami.md](docs/horde-ami.md) for build instructions.
+> **AMI requirement:** `fabrica horde create` is AMI-first. Your AMI must be a Docker-compose-based stack (Ubuntu 22.04 + Docker CE) with MongoDB, Redis, and a **job-capable** Horde server under `/etc/horde/` — `GET /api/v1/jobs` must not return 404. Fabrica's cloud-init only runs `docker compose up -d` and probes port 5000. See [docs/horde-ami.md](docs/horde-ami.md) for build instructions and bake-time verification.
 
 #### `fabrica horde create`
 
@@ -461,7 +461,7 @@ perforce:
 
 horde:
   instance_type: m7i.2xlarge
-  ami_id: ami-xxxxxxxxxxxxxxxxx   # Docker compose AMI (MongoDB, Redis, Horde)
+  ami_id: ami-xxxxxxxxxxxxxxxxx   # job-capable Docker compose AMI (MongoDB, Redis, Horde with jobs API)
 
 lore:
   amiId: ami-xxxxxxxxxxxxxxxxx    # must contain loreserver (see docs/lore-ami.md)

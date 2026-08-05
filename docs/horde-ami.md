@@ -104,6 +104,7 @@ Bake these into the AMI at `/etc/horde/`:
     "databaseConnectionString": "mongodb://mongodb:27017/horde"
   },
   "enabledPlugins": [
+    "Build",
     "Compute",
     "Experimental",
     "Health"
@@ -188,10 +189,15 @@ sudo cp server.json /etc/horde/
 
 ### Step 6: Verify the stack works
 
+Start the stack and run the bake-time verification checks from the
+[Bake-time Verification](#bake-time-verification-mandatory) section below.
+**Do not proceed to create the AMI if the jobs API check fails.**
+
 ```bash
 sudo docker compose -f /etc/horde/docker-compose.yml up -d
 sudo docker compose -f /etc/horde/docker-compose.yml ps
-curl -sf http://localhost:5000/ && echo "Horde is healthy"
+curl -sf http://localhost:5000/ && echo "Health: OK"
+curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/v1/jobs
 ```
 
 ### Step 7: Create the AMI
@@ -203,7 +209,7 @@ sudo docker compose -f /etc/horde/docker-compose.yml down
 aws ec2 create-image \
   --instance-id <instance-id> \
   --name "fabrica-horde-$(date +%Y%m%d)" \
-  --description "Horde Docker compose AMI — MongoDB, Redis, Horde server" \
+  --description "Horde Docker compose AMI — MongoDB, Redis, job-capable Horde server" \
   --no-reboot
 ```
 
@@ -218,26 +224,109 @@ horde:
 
 ---
 
-## Verifying the AMI Before Using It
+## GHCR vs Source — Choosing the Horde Server Image
 
-Launch a test instance from the new AMI and verify:
+**Try GHCR first.** If you have a GitHub PAT with `read:packages` scope and can
+pull from `ghcr.io/epicgames/unrealengine/horde-server`, use the official image.
+**Immediately verify the jobs API** after pulling — some tags expose only the
+health endpoint and lack the job-creation controllers.
 
 ```bash
-# Docker is running
-docker info
+# Pull and test before baking
+docker pull ghcr.io/epicgames/unrealengine/horde-server:5.8.1
 
-# Compose stack starts cleanly
+# Run a quick container to probe the jobs API
+docker run --rm -d --name horde-test -p 5000:5000 \
+  ghcr.io/epicgames/unrealengine/horde-server:5.8.1
+sleep 10
+curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/v1/jobs
+docker stop horde-test
+```
+
+- **`200` or `401`** — the image has the jobs API. Tag it and proceed to bake.
+- **`404`** — this tag does not include job-creation controllers. **Do not use
+  this image.** Build from source instead.
+
+### Build from source (UE 5.8.1+)
+
+When GHCR images lack the jobs API (or you cannot authenticate), build from the
+Unreal Engine source. The Dockerfile at
+`Engine/Source/Programs/Horde/HordeServer/Dockerfile` produces a server with the
+full API surface including Build/job controllers.
+
+```bash
+docker build -f Engine/Source/Programs/Horde/HordeServer/Dockerfile \
+  --build-arg UE_ENGINE_ROOT=/ue5 \
+  -t fabrica-horde-server:latest .
+```
+
+Ensure the Build plugin is enabled in `globals.json` (`"enabledPlugins"` includes
+`"Build"`) so the job-creation routes are registered at startup.
+
+---
+
+## Known-Good AMIs
+
+Only AMIs that have passed the bake-time verification above (health + jobs API)
+are listed here. If your account has no verified AMI yet, the table will show
+TBD — you need to bake one.
+
+| Region | AMI ID | Name / notes | Source | Jobs API verified |
+|--------|--------|-------------|--------|-------------------|
+| TBD | TBD — bake required | — | — | — |
+
+After a successful bake, record the AMI ID here and in `fabrica.yaml`. Keep this
+table updated as you bake new versions. AMIs are private (`--owners self`) and
+region-scoped — do not share IDs across accounts.
+
+---
+
+## Bake-time Verification (mandatory)
+
+**Do not create the AMI image until these checks pass on the bake instance.**
+A health-only Horde (responds on `:5000` but no jobs API) will cause
+`fabrica horde submit` and `fabrica ci trigger` to fail with 404 errors.
+
+### Pass criteria
+
+| Check | Command | Acceptable codes |
+|-------|---------|------------------|
+| Horde web UI responds | `curl -sf http://localhost:5000/` | `200` |
+| Jobs API exists | `curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/v1/jobs` | `200` (empty list OK), `401` (auth challenge OK) |
+| Containers healthy | `docker inspect --format='{{.Name}}: {{.State.Health.Status}}' horde-mongodb horde-redis horde-server` | All three `healthy` |
+
+### Fail criteria
+
+- `GET /api/v1/jobs` returns `404` with an empty body or a "route missing" response — **the Horde server image does not include the job-creation controllers. Do not bake this AMI.**
+- `GET /` returns anything other than `200` — Horde is not running or misconfigured.
+
+### Full verification script
+
+```bash
+# Start the stack
 cd /etc/horde && docker compose up -d
+
+# Wait for containers to be healthy
+sleep 15
 docker compose ps
 
-# Horde responds on port 5000
-curl -sf http://localhost:5000/ && echo "OK"
+# 1. Health check
+curl -sf http://localhost:5000/ && echo "Health: OK" || echo "Health: FAIL"
 
-# Job-creation API must exist (a 404 here means the server image cannot accept jobs)
-curl -sf http://localhost:5000/api/v1/jobs && echo "Job API OK"
+# 2. Jobs API — this is the gate
+JOBS_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/v1/jobs)
+if [ "$JOBS_CODE" = "200" ] || [ "$JOBS_CODE" = "401" ]; then
+  echo "Jobs API: OK (HTTP $JOBS_CODE)"
+else
+  echo "Jobs API: FAIL (HTTP $JOBS_CODE) — this AMI cannot accept jobs. Do not bake."
+  exit 1
+fi
 
-# All three containers are healthy
+# 3. Container health
 docker inspect --format='{{.Name}}: {{.State.Health.Status}}' horde-mongodb horde-redis horde-server
+
+# 4. Optional — check for swagger/docs endpoint
+curl -sf http://localhost:5000/swagger/index.html && echo "Swagger: available" || echo "Swagger: not available (OK)"
 ```
 
 Then run `fabrica horde create --dry-run` to verify Fabrica can build the plan
