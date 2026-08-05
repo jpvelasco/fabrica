@@ -1,6 +1,7 @@
 package horde
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/ec2state"
@@ -64,7 +65,7 @@ func TestInstanceDesiredStateShape(t *testing.T) {
 		SubnetID:     "subnet-abc",
 		VolumeSize:   100,
 	}
-	raw, err := InstanceDesiredState(plan, "sg-abc123", "dXNlcmRhdGE=")
+	raw, err := InstanceDesiredState(plan, "sg-abc123", "dXNlcmRhdGE=", "")
 	if err != nil {
 		t.Fatalf("InstanceDesiredState: %v", err)
 	}
@@ -78,8 +79,88 @@ func TestInstanceDesiredStateShape(t *testing.T) {
 	ec2state.AssertIMDSv2(t, doc)
 	ec2state.AssertEBS(t, doc, 100, false)
 
+	if _, has := doc["IamInstanceProfile"]; has {
+		t.Error("IamInstanceProfile should not be present when empty")
+	}
+
 	tags := ec2state.ParseTags(t, doc["Tags"].([]any))
 	if tags["Name"] != "fabrica-horde" {
 		t.Errorf("Name tag = %q, want fabrica-horde", tags["Name"])
+	}
+}
+
+func TestInstanceDesiredState_WithIAMProfile(t *testing.T) {
+	plan := &CreatePlan{
+		InstanceName: "fabrica-horde",
+		InstanceType: "m7i.xlarge",
+		AmiID:        "ami-abc123",
+		SubnetID:     "subnet-abc",
+		VolumeSize:   100,
+	}
+	raw, err := InstanceDesiredState(plan, "sg-abc123", "dXNlcmRhdGE=", "fabrica-horde-profile")
+	if err != nil {
+		t.Fatalf("InstanceDesiredState: %v", err)
+	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+
+	if doc["IamInstanceProfile"] != "fabrica-horde-profile" {
+		t.Errorf("IamInstanceProfile = %v, want fabrica-horde-profile", doc["IamInstanceProfile"])
+	}
+}
+
+func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
+	plan := &CreatePlan{RoleName: "fabrica-horde-role"}
+	raw, err := RoleDesiredState(plan)
+	if err != nil {
+		t.Fatalf("RoleDesiredState: %v", err)
+	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+
+	if doc["RoleName"] != "fabrica-horde-role" {
+		t.Errorf("RoleName = %v, want fabrica-horde-role", doc["RoleName"])
+	}
+
+	arns, ok := doc["ManagedPolicyArns"].([]any)
+	if !ok || len(arns) != 1 {
+		t.Fatalf("ManagedPolicyArns: expected 1 entry, got %v", doc["ManagedPolicyArns"])
+	}
+	if !strings.Contains(arns[0].(string), "AmazonSSMManagedInstanceCore") {
+		t.Errorf("ManagedPolicyArns[0] = %q, want to contain AmazonSSMManagedInstanceCore", arns[0])
+	}
+
+	// Check trust policy allows EC2
+	docMap, ok := doc["AssumeRolePolicyDocument"].(map[string]any)
+	if !ok {
+		t.Fatal("AssumeRolePolicyDocument is not a map")
+	}
+	stmts, ok := docMap["Statement"].([]any)
+	if !ok || len(stmts) != 1 {
+		t.Fatal("expected 1 statement in trust policy")
+	}
+	stmt := stmts[0].(map[string]any)
+	principal, ok := stmt["Principal"].(map[string]any)
+	if !ok {
+		t.Fatal("Principal is not a map")
+	}
+	if principal["Service"] != "ec2.amazonaws.com" {
+		t.Errorf("Principal.Service = %v, want ec2.amazonaws.com", principal["Service"])
+	}
+}
+
+func TestInstanceProfileDesiredState(t *testing.T) {
+	plan := &CreatePlan{RoleName: "fabrica-horde-role", InstanceProfileName: "fabrica-horde-profile"}
+	raw, err := InstanceProfileDesiredState(plan)
+	if err != nil {
+		t.Fatalf("InstanceProfileDesiredState: %v", err)
+	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+
+	if doc["InstanceProfileName"] != "fabrica-horde-profile" {
+		t.Errorf("InstanceProfileName = %v, want fabrica-horde-profile", doc["InstanceProfileName"])
+	}
+
+	roles, ok := doc["Roles"].([]any)
+	if !ok || len(roles) != 1 || roles[0] != "fabrica-horde-role" {
+		t.Errorf("Roles = %v, want [fabrica-horde-role]", doc["Roles"])
 	}
 }

@@ -5,6 +5,8 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
+	"github.com/jpvelasco/fabrica/internal/cloud"
+	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
 )
 
@@ -16,8 +18,30 @@ var spec = teardown.Spec{
 	NotProvisioned: "Horde is not provisioned. Nothing to destroy.",
 	PlanHeader:     "Unreal Horde build coordinator — destroy plan",
 	DryRunHeader:   "Unreal Horde build coordinator (destroy dry run)",
-	Irreversible:   "IRREVERSIBLE: This will permanently delete the Horde coordinator and its data.",
+	Irreversible:   "IRREVERSIBLE: This will permanently delete the Horde coordinator, IAM role/profile, and its data.",
 	SuccessMessage: "Unreal Horde build coordinator destroyed.",
+	// Instance → profile → role → SG (reverse of create: SG → role → profile → instance).
+	ResourceOrder: hordeResourceOrder,
+}
+
+func hordeResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
+	order := []string{
+		"AWS::EC2::Instance",
+		"AWS::IAM::InstanceProfile",
+		"AWS::IAM::Role",
+		"AWS::EC2::SecurityGroup",
+	}
+	byType := map[string]fabricastate.ModuleResource{}
+	for _, r := range m.Resources {
+		byType[r.TypeName] = r
+	}
+	out := make([]cloud.Resource, 0, len(order))
+	for _, t := range order {
+		if r, ok := byType[t]; ok && r.Identifier != "" {
+			out = append(out, cloud.Resource{TypeName: r.TypeName, Identifier: r.Identifier})
+		}
+	}
+	return out
 }
 
 // NewTeardown builds this module's teardown.Command for orchestrated use by

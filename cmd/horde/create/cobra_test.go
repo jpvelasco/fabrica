@@ -82,8 +82,8 @@ func TestCreateCobraYesFlagSkipsConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("--yes run failed: %v", err)
 	}
-	if provider.CreateCalls != 2 {
-		t.Fatalf("--yes: expected 2 create calls, got %d", provider.CreateCalls)
+	if provider.CreateCalls != 4 {
+		t.Fatalf("--yes: expected 4 create calls (SG, role, profile, instance), got %d", provider.CreateCalls)
 	}
 }
 

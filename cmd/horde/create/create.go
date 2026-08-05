@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
@@ -49,9 +50,11 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Short: "Provision an Unreal Horde build coordinator",
 		Long: `Provision an Unreal Horde build coordinator on AWS.
 
-Creates two resources in order:
+Creates four resources in order:
   1. EC2 Security Group — allows TCP 5000 (HTTP) and 5002 (gRPC) inbound
-  2. EC2 Instance — runs the Horde coordinator using a user-provided AMI
+  2. IAM Role — AmazonSSMManagedInstanceCore for SSM access
+  3. IAM Instance Profile — attaches the role to the EC2 instance
+  4. EC2 Instance — runs the Horde coordinator using a user-provided AMI
 
 State is written after each resource so a partial failure is recoverable:
 re-running create will detect the already-provisioned module and exit cleanly.
@@ -59,6 +62,9 @@ re-running create will detect the already-provisioned module and exit cleanly.
 A MongoDB password is generated and written to .fabrica/horde-credentials.yaml.
 With Docker compose AMIs, this password is validated but not applied by cloud-init
 (the compose stack manages MongoDB credentials independently).
+
+Operator access to the instance is via AWS Systems Manager Session Manager
+(not public SSH). The instance has no inbound SSH from the internet.
 
 With --dry-run, shows the provisioning plan and a monthly cost estimate without
 making any AWS calls.`,
@@ -156,6 +162,36 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	}
 	sgID := resources[len(resources)-1].Identifier
 
+	// IAM Role
+	fmt.Fprintf(c.out, "Creating IAM role %s...\n", plan.RoleName)
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:             "IAM role",
+		TypeName:          cloud.TypeAWSIAMRole,
+		BuildDesiredState: func() ([]byte, error) { return horde.RoleDesiredState(plan) },
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return fmt.Errorf("creating IAM role: %w", err)
+	}
+
+	// Instance Profile
+	fmt.Fprintf(c.out, "Creating instance profile %s...\n", plan.InstanceProfileName)
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:             "Instance profile",
+		TypeName:          cloud.TypeAWSIAMInstanceProfile,
+		BuildDesiredState: func() ([]byte, error) { return horde.InstanceProfileDesiredState(plan) },
+		ResourceIdentifier: func(created *cloud.Resource) string {
+			name := plan.InstanceProfileName
+			if created.Identifier != "" && !strings.HasPrefix(created.Identifier, "arn:") {
+				name = created.Identifier
+			}
+			return name
+		},
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return fmt.Errorf("creating instance profile: %w", err)
+	}
+	profileName := resources[len(resources)-1].Identifier
+
 	// Create EC2 Instance
 	fmt.Fprintf(c.out, "Creating instance %s...\n", plan.InstanceName)
 	userData, err := horde.Generate(horde.UserDataConfig{
@@ -170,7 +206,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		Label:    "Instance",
 		TypeName: cloud.TypeAWSEC2Instance,
 		BuildDesiredState: func() ([]byte, error) {
-			return horde.InstanceDesiredState(plan, sgID, userData)
+			return horde.InstanceDesiredState(plan, sgID, userData, profileName)
 		},
 		Properties: map[string]string{
 			"instanceType": plan.InstanceType,
@@ -206,6 +242,8 @@ func (c command) printDryRun(plan *horde.CreatePlan) {
 		},
 		Resources: []string{
 			"Security Group:   " + plan.SGName,
+			"IAM Role:         " + plan.RoleName,
+			"Instance Profile: " + plan.InstanceProfileName,
 			"EC2 Instance:     " + plan.InstanceName,
 		},
 		CostResources: plan.CostResources,
@@ -233,6 +271,8 @@ func (c command) printApplyPlan(plan *horde.CreatePlan) {
 		{Key: "AMI ID", Value: plan.AmiID},
 	}, []string{
 		"Security Group:   " + plan.SGName,
+		"IAM Role:         " + plan.RoleName,
+		"Instance Profile: " + plan.InstanceProfileName,
 		"EC2 Instance:     " + plan.InstanceName,
 	})
 }
@@ -257,6 +297,9 @@ func (c command) printPostCreate(plan *horde.CreatePlan, instanceID string) {
 			fmt.Fprintln(w, "  Note: Horde is accessible via the instance's private IP. Ensure your")
 			fmt.Fprintln(w, "        machine can reach it (VPN, VPC peering, or same-VPC access).")
 			fmt.Fprintln(w, "        To allow broader access, update horde.allowedCidr in fabrica.yaml.")
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "  Operator shell access is via AWS Systems Manager Session Manager:")
+			fmt.Fprintf(w, "    aws ssm start-session --target %s\n", instanceID)
 			if plan.AllowedCIDR == "0.0.0.0/0" {
 				fmt.Fprintln(w)
 				fmt.Fprintln(w, "  Warning: horde.allowedCidr is 0.0.0.0/0 — ports 5000 and 5002 are open")
