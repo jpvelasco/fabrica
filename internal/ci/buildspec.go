@@ -22,6 +22,17 @@ phases:
       - 'echo "Fabrica CI build starting"'
       - 'test -n "$HORDE_URL" || { echo "HORDE_URL not set — is Horde provisioned?"; exit 1; }'
       - 'test -n "$TARGET" || { echo "TARGET not set"; exit 1; }'
+      # Pre-flight: confirm the coordinator exposes the job-creation API. A Horde
+      # build without the jobs/graphs/agents controllers returns 404 on
+      # /api/v1/jobs; fail fast with a clear message instead of a bare curl error.
+      - |
+        if curl -fsS -o /dev/null "$HORDE_URL/api/v1/jobs"; then
+          echo "Horde job API check passed"
+        else
+          echo "Horde has no job-creation API: $HORDE_URL/api/v1/jobs is not reachable." >&2
+          echo "This Horde build does not expose the jobs API surface (see docs/horde-ami.md)." >&2
+          exit 1
+        fi
       # Perforce sync placeholder (out of scope for V1):
       # - 'p4 -p "$P4PORT" sync ...'
   build:
