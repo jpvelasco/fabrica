@@ -13,9 +13,10 @@ import (
 
 type fakeVPCClient struct {
 	stubEC2
-	vpcs        []types.Vpc
-	subnets     []types.Subnet
-	describeErr error
+	vpcs              []types.Vpc
+	subnets           []types.Subnet
+	describeErr       error
+	describeSubnetErr error
 }
 
 func (f *fakeVPCClient) DescribeVpcs(context.Context, *ec2.DescribeVpcsInput, ...func(*ec2.Options)) (*ec2.DescribeVpcsOutput, error) {
@@ -26,8 +27,8 @@ func (f *fakeVPCClient) DescribeVpcs(context.Context, *ec2.DescribeVpcsInput, ..
 }
 
 func (f *fakeVPCClient) DescribeSubnets(context.Context, *ec2.DescribeSubnetsInput, ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error) {
-	if f.describeErr != nil {
-		return nil, f.describeErr
+	if f.describeSubnetErr != nil {
+		return nil, f.describeSubnetErr
 	}
 	return &ec2.DescribeSubnetsOutput{Subnets: f.subnets}, nil
 }
@@ -82,6 +83,20 @@ func TestResolveDefaultVPC_DescribeError(t *testing.T) {
 		t.Fatal("expected error on describe failure")
 	}
 	assert.Contains(t, err.Error(), "describing default VPC")
+}
+
+func TestResolveDefaultVPC_DescribeSubnetError(t *testing.T) {
+	fake := &fakeVPCClient{
+		vpcs:              []types.Vpc{{VpcId: aws.String("vpc-default")}},
+		describeSubnetErr: errors.New("subnets unavailable"),
+	}
+	resolver := &ec2Service{client: fake}
+
+	_, _, err := resolver.ResolveDefaultVPC(context.Background())
+	if err == nil {
+		t.Fatal("expected error when subnet describe fails")
+	}
+	assert.Contains(t, err.Error(), "describing subnets")
 }
 
 func TestResolveDefaultVPC_LoadConfigError(t *testing.T) {

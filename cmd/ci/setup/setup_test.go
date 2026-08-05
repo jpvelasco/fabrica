@@ -475,3 +475,40 @@ func TestSetupVPCResolverError(t *testing.T) {
 		t.Errorf("expected VPC resolution error, got: %v", err)
 	}
 }
+
+// TestSetupVPCResolvesSGRoleError verifies that a security-group creation
+// failure during setup with a resolved VPC aborts setup after the role step.
+func TestSetupVPCResolvesSGRoleError(t *testing.T) {
+	var out bytes.Buffer
+	roleCreated := false
+	c := &command{
+		runtime:    testRuntime(),
+		out:        &out,
+		costs:      fabricacost.Global,
+		assumeYes:  true,
+		readState:  func() (*fabricastate.State, error) { return fabricastate.NewState("123456789012", "us-west-2"), nil },
+		writeState: func(*fabricastate.State) error { return nil },
+		createResource: func(_ context.Context, r *cloud.Resource) error {
+			if r.TypeName == cloud.TypeAWSEC2SecurityGroup {
+				return errors.New("sg create failed")
+			}
+			roleCreated = true
+			r.Identifier = r.TypeName + "-id"
+			return nil
+		},
+		ensureProject: func(context.Context, cloud.CodeBuildProjectSpec) (bool, error) { return true, nil },
+		confirm:       func(string) bool { return true },
+	}
+	c.runtime.Provider = &testutil.VPCResolverProvider{VPCID: "vpc-default", SubnetID: "subnet-default"}
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when security group creation fails")
+	}
+	if !roleCreated {
+		t.Error("expected IAM role to be created before the SG step")
+	}
+	if !strings.Contains(err.Error(), "Security group") {
+		t.Errorf("expected SG step error, got: %v", err)
+	}
+}
