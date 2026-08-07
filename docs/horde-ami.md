@@ -158,8 +158,8 @@ If using Epic's official Docker image from GHCR:
 echo "<YOUR_GITHUB_PAT>" | docker login ghcr.io -u <YOUR_GITHUB_USERNAME> --password-stdin
 
 # Pull the official image (or build from source)
-docker pull ghcr.io/epicgames/unrealengine/horde-server:5.8.1
-docker tag ghcr.io/epicgames/unrealengine/horde-server:5.8.1 fabrica-horde-server:latest
+docker pull ghcr.io/epicgames/horde-server:5.8.0
+docker tag ghcr.io/epicgames/horde-server:5.8.0 fabrica-horde-server:latest
 ```
 
 If building from source (UE 5.8.1+):
@@ -273,7 +273,7 @@ TBD — you need to bake one.
 
 | Region | AMI ID | Name / notes | Source | Jobs API verified |
 |--------|--------|-------------|--------|-------------------|
-| TBD | TBD — bake required | — | — | — |
+| us-west-2 | ami-0764d44c38ef85362 | fabrica-horde-20260806 — UE 5.8.0 Horde, Docker compose, mongo:7.0, redis:7.2 | ghcr.io/epicgames/horde-server:5.8.0 | Yes (200) |
 
 After a successful bake, record the AMI ID here and in `fabrica.yaml`. Keep this
 table updated as you bake new versions. AMIs are private (`--owners self`) and
