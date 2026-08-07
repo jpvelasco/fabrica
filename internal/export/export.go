@@ -178,6 +178,10 @@ func toLogicalID(module, typeName, identifier string) string {
 	id = strings.ReplaceAll(id, "_", "")
 	id = strings.ReplaceAll(id, ".", "")
 
+	if len(id) == 0 {
+		id = "X"
+	}
+
 	if len(id) > 16 {
 		id = id[:16]
 	}
