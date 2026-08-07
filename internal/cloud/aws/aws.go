@@ -52,6 +52,8 @@ var _ fabricac.EC2InstanceManager = (*awsProvider)(nil)
 var _ fabricac.StateBackendBootstrapper = (*awsProvider)(nil)
 var _ fabricac.AMIResolver = (*awsProvider)(nil)
 var _ fabricac.VPCResolver = (*awsProvider)(nil)
+var _ fabricac.VPCCIDRResolver = (*awsProvider)(nil)
+var _ fabricac.VPCCIDRResolver = (*awsProvider)(nil)
 
 func newProvider(cfg *config.Config) (fabricac.Provider, error) {
 	awsCfg := awsConfig{
@@ -102,6 +104,12 @@ func (p *awsProvider) ResolveUbuntuAMI(ctx context.Context, region string) (stri
 // cloud.VPCResolver interface so that type assertions in module commands work.
 func (p *awsProvider) ResolveDefaultVPC(ctx context.Context) (string, string, error) {
 	return p.ec2.ResolveDefaultVPC(ctx)
+}
+
+// ResolveVPCCIDR delegates to the EC2 service, satisfying the
+// cloud.VPCCIDRResolver interface so that type assertions in module commands work.
+func (p *awsProvider) ResolveVPCCIDR(ctx context.Context, vpcID string) (string, error) {
+	return p.ec2.ResolveVPCCIDR(ctx, vpcID)
 }
 
 func init() {

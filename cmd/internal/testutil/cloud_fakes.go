@@ -89,13 +89,17 @@ func (p *RemoteCommandProvider) RunCommand(_ context.Context, instanceID string,
 type VPCResolverProvider struct {
 	TestProvider
 
-	VPCID    string
-	SubnetID string
-	VPCErr   error
-	Calls    int
+	VPCID      string
+	SubnetID   string
+	VPCErr     error
+	Calls      int
+	VPCCIDR    string
+	VPCCIDRErr error
+	CIDRCalls  int
 }
 
 var _ cloud.VPCResolver = (*VPCResolverProvider)(nil)
+var _ cloud.VPCCIDRResolver = (*VPCResolverProvider)(nil)
 
 func (p *VPCResolverProvider) ResolveDefaultVPC(context.Context) (string, string, error) {
 	p.Calls++
@@ -111,6 +115,14 @@ func (p *VPCResolverProvider) ResolveDefaultVPC(context.Context) (string, string
 		subnetID = "subnet-fake"
 	}
 	return vpcID, subnetID, nil
+}
+
+func (p *VPCResolverProvider) ResolveVPCCIDR(context.Context, string) (string, error) {
+	p.CIDRCalls++
+	if p.VPCCIDRErr != nil {
+		return "", p.VPCCIDRErr
+	}
+	return p.VPCCIDR, nil
 }
 
 // CodeBuildVPCProvider implements both cloud.CodeBuildRunner and

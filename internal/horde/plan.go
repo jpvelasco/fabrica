@@ -31,7 +31,7 @@ type CreatePlan struct {
 	CostResources []cost.Resource
 }
 
-func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region string, resolver cloud.VPCResolver) (*CreatePlan, error) {
+func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region string, resolver cloud.VPCResolver, cidrResolver cloud.VPCCIDRResolver) (*CreatePlan, error) {
 	if cfg.AmiID == "" {
 		return nil, fmt.Errorf("horde.amiId is required. Provide an AMI ID that contains MongoDB, Redis,\nand the Horde server. See: https://github.com/jpvelasco/fabrica/blob/main/docs/horde-ami.md")
 	}
@@ -52,14 +52,25 @@ func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region 
 	if grpcPort <= 0 {
 		grpcPort = 5002
 	}
-	allowedCIDR := cfg.AllowedCIDR
-	if allowedCIDR == "" {
-		allowedCIDR = "10.0.0.0/8"
-	}
 
 	vpcID, subnetID, defaultVPC, err := topology.ResolveVPC(ctx, cfg.VPCId, cfg.SubnetId, resolver)
 	if err != nil {
 		return nil, err
+	}
+
+	allowedCIDR := cfg.AllowedCIDR
+	if allowedCIDR == "" {
+		// Try to resolve the VPC CIDR from the provider. Fall back to
+		// 10.0.0.0/8 if the VPC is unknown or the resolver is not available.
+		if vpcID != "" && cidrResolver != nil {
+			resolvedCIDR, resolveErr := cidrResolver.ResolveVPCCIDR(ctx, vpcID)
+			if resolveErr == nil && resolvedCIDR != "" {
+				allowedCIDR = resolvedCIDR
+			}
+		}
+		if allowedCIDR == "" {
+			allowedCIDR = "10.0.0.0/8"
+		}
 	}
 
 	return &CreatePlan{

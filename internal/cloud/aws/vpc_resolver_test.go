@@ -126,3 +126,69 @@ func TestAwsProviderResolveDefaultVPC(t *testing.T) {
 		t.Errorf("got %q/%q, want vpc-default/subnet-a", vpcID, subnetID)
 	}
 }
+
+func TestResolveVPCCIDR_Success(t *testing.T) {
+	fake := &fakeVPCClient{
+		vpcs: []types.Vpc{{VpcId: aws.String("vpc-123"), CidrBlock: aws.String("172.31.0.0/16")}},
+	}
+	resolver := &ec2Service{client: fake}
+
+	cidr, err := resolver.ResolveVPCCIDR(context.Background(), "vpc-123")
+	if err != nil {
+		t.Fatalf("ResolveVPCCIDR: %v", err)
+	}
+	if cidr != "172.31.0.0/16" {
+		t.Errorf("cidr = %q, want 172.31.0.0/16", cidr)
+	}
+}
+
+func TestResolveVPCCIDR_VPCNotFound(t *testing.T) {
+	fake := &fakeVPCClient{vpcs: nil}
+	resolver := &ec2Service{client: fake}
+
+	_, err := resolver.ResolveVPCCIDR(context.Background(), "vpc-missing")
+	if err == nil {
+		t.Fatal("expected error when VPC not found")
+	}
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestResolveVPCCIDR_NoCidrBlock(t *testing.T) {
+	fake := &fakeVPCClient{
+		vpcs: []types.Vpc{{VpcId: aws.String("vpc-123")}},
+	}
+	resolver := &ec2Service{client: fake}
+
+	_, err := resolver.ResolveVPCCIDR(context.Background(), "vpc-123")
+	if err == nil {
+		t.Fatal("expected error when VPC has no CIDR block")
+	}
+	assert.Contains(t, err.Error(), "no CIDR block")
+}
+
+func TestResolveVPCCIDR_DescribeError(t *testing.T) {
+	fake := &fakeVPCClient{describeErr: errors.New("access denied")}
+	resolver := &ec2Service{client: fake}
+
+	_, err := resolver.ResolveVPCCIDR(context.Background(), "vpc-123")
+	if err == nil {
+		t.Fatal("expected error on describe failure")
+	}
+	assert.Contains(t, err.Error(), "describing VPC")
+}
+
+func TestAwsProviderResolveVPCCIDR(t *testing.T) {
+	fake := &fakeVPCClient{
+		vpcs: []types.Vpc{{VpcId: aws.String("vpc-123"), CidrBlock: aws.String("172.31.0.0/16")}},
+	}
+	p := &awsProvider{
+		ec2: ec2Service{client: fake},
+	}
+	cidr, err := p.ResolveVPCCIDR(context.Background(), "vpc-123")
+	if err != nil {
+		t.Fatalf("ResolveVPCCIDR: %v", err)
+	}
+	if cidr != "172.31.0.0/16" {
+		t.Errorf("got %q, want 172.31.0.0/16", cidr)
+	}
+}

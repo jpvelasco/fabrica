@@ -334,6 +334,38 @@ before making any AWS calls.
 
 ---
 
+## Network Connectivity (allowedCidr)
+
+`fabrica horde create` opens ports 5000 (HTTP) and 5002 (gRPC) in the security
+group from the CIDR specified by `horde.allowedCidr` in `fabrica.yaml`. The
+default is `10.0.0.0/8` — which covers `10.x` VPCs but **does not cover the
+AWS default VPC** (`172.31.0.0/16`).
+
+If your CodeBuild project, workstations, or operator machines live in a
+`172.x` or `192.168.x` VPC, those clients will be blocked by the security group
+when trying to reach the Horde coordinator. The symptom is a connection timeout
+from CodeBuild ENIs or a `dial tcp <private-ip>:5000: i/o timeout` error in
+build logs.
+
+**Fix:** set `horde.allowedCidr` to your VPC CIDR in `fabrica.yaml`:
+
+```yaml
+horde:
+  amiId: ami-0abc123def456
+  allowedCidr: 172.31.0.0/16   # match your VPC CIDR
+```
+
+You can also set it to a broader range that covers both your VPC and any
+peered VPCs (e.g. `10.0.0.0/8` for a `10.x` VPC, or `172.16.0.0/12` for
+`172.16–31.x` VPCs). **Do not use `0.0.0.0/0`** — ports 5000/5002 should not
+be internet-exposed.
+
+> **Note:** If `horde create` can resolve your default VPC (via the provider's
+> VPC resolver), it will automatically use the resolved VPC CIDR as the default
+> for `allowedCidr` instead of `10.0.0.0/8`. Explicit config always wins.
+
+---
+
 ## Common Pitfalls
 
 | Problem | Cause | Fix |

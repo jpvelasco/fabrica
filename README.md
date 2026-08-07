@@ -224,7 +224,7 @@ Restores Helix Core from a backup id: stops `helix-p4d`, restores checkpoint/jou
 
 #### `fabrica horde create`
 
-Provisions an Unreal Horde build coordinator on an `m7i.2xlarge` instance using your pre-baked AMI. Security group allows ports 5000 (HTTP), 5002 (gRPC), and inbound traffic from `10.0.0.0/8`. Generates MongoDB credentials to `.fabrica/horde-credentials.yaml` (mode 0600).
+Provisions an Unreal Horde build coordinator on an `m7i.2xlarge` instance using your pre-baked AMI. Security group allows ports 5000 (HTTP) and 5002 (gRPC) inbound from the configured `horde.allowedCidr` (default `10.0.0.0/8`). **Important:** the default `10.0.0.0/8` does not cover AWS default VPCs (`172.31.0.0/16`). If your CodeBuild project, workstations, or operators live in a different CIDR, set `horde.allowedCidr` to your VPC CIDR (e.g. `172.31.0.0/16`) in `fabrica.yaml` before creating — or `horde create` will resolve the VPC CIDR automatically and use it as the default. Do not use `0.0.0.0/0` on ports 5000/5002. Generates MongoDB credentials to `.fabrica/horde-credentials.yaml` (mode 0600).
 
 #### `fabrica horde status`
 
@@ -338,7 +338,7 @@ Permanently terminates the workstation EC2 instance and security group. Deletes 
 
 Provisions the CI infrastructure for this account: an IAM service role, a security group, and a CodeBuild project. Idempotent — existing resources are detected and left in place. Shows a plan + monthly cost estimate, then prompts before creating (use `--yes` to skip, `--dry-run` to preview).
 
-By default the CodeBuild project is placed inside the account's default VPC (or the VPC/subnet from `ci.vpcId`/`ci.subnetId` in `fabrica.yaml`) so builds can reach a private-IP Horde coordinator. The project's security group is created by Fabrica. If no VPC can be resolved, setup still succeeds but the project runs VPC-less and cannot reach private endpoints.
+By default the CodeBuild project is placed inside the account's default VPC (or the VPC/subnet from `ci.vpcId`/`ci.subnetId` in `fabrica.yaml`) so builds can reach a private-IP Horde coordinator. The CodeBuild ENI gets an IP from the VPC's subnet CIDR — ensure `horde.allowedCidr` includes that CIDR, or builds will be blocked by the Horde security group (common if your VPC is `172.31.0.0/16` but `allowedCidr` is still the default `10.0.0.0/8`). The project's security group is created by Fabrica. If no VPC can be resolved, setup still succeeds but the project runs VPC-less and cannot reach private endpoints.
 
 #### `fabrica ci trigger <buildgraph.xml>`
 
