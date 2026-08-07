@@ -493,6 +493,112 @@ func TestRun_AMIMismatchFromVersion(t *testing.T) {
 	}
 }
 
+func TestRun_ExtraResource(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-123"},
+	})
+
+	engine := &Engine{
+		State: st,
+		ResourceGet: func(_ context.Context, r *cloud.Resource) error {
+			return nil
+		},
+		ResourceList: func(_ context.Context, typeName string) ([]cloud.Resource, error) {
+			// State has i-123; live has i-123 and i-456 (extra).
+			if typeName == "AWS::EC2::Instance" {
+				return []cloud.Resource{
+					{TypeName: "AWS::EC2::Instance", Identifier: "i-123"},
+					{TypeName: "AWS::EC2::Instance", Identifier: "i-456"},
+				}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	report := engine.Run(context.Background())
+
+	// i-123 is inSync, i-456 is Extra.
+	if report.InSync != 1 {
+		t.Errorf("expected 1 inSync, got %d", report.InSync)
+	}
+	if report.Extra != 1 {
+		t.Errorf("expected 1 extra, got %d", report.Extra)
+	}
+	// Find the extra resource in the report.
+	foundExtra := false
+	for _, md := range report.Modules {
+		for _, r := range md.Resources {
+			if r.Status == Extra && r.Identifier == "i-456" {
+				foundExtra = true
+			}
+		}
+	}
+	if !foundExtra {
+		t.Error("expected to find i-456 as Extra in drift report")
+	}
+}
+
+func TestRun_ExtraResourceNoList(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-123"},
+	})
+
+	engine := &Engine{
+		State: st,
+		ResourceGet: func(_ context.Context, r *cloud.Resource) error {
+			return nil
+		},
+		// No ResourceList — Extra detection should be skipped.
+	}
+
+	report := engine.Run(context.Background())
+
+	// Only the recorded resource should appear; no Extra.
+	if report.InSync != 1 {
+		t.Errorf("expected 1 inSync, got %d", report.InSync)
+	}
+	if report.Extra != 0 {
+		t.Errorf("expected 0 extra when no List, got %d", report.Extra)
+	}
+}
+
+func TestRun_ExtraResourceCodeBuildSkipped(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("ci", "fabrica-ci", "ready", []state.ModuleResource{
+		{TypeName: "AWS::IAM::Role", Identifier: "fabrica-ci-role"},
+		{TypeName: "AWS::CodeBuild::Project", Identifier: "fabrica-ci"},
+	})
+
+	engine := &Engine{
+		State: st,
+		ResourceGet: func(_ context.Context, r *cloud.Resource) error {
+			return nil
+		},
+		CodeBuildRunner: &fakeCodeBuildRunner{projectExists: true},
+		ResourceList: func(_ context.Context, typeName string) ([]cloud.Resource, error) {
+			// Even if IAM roles have an extra, CodeBuild should not be listed.
+			if typeName == "AWS::IAM::Role" {
+				return []cloud.Resource{
+					{TypeName: "AWS::IAM::Role", Identifier: "fabrica-ci-role"},
+				}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	report := engine.Run(context.Background())
+
+	// IAM role inSync, CodeBuild inSync, no Extra.
+	if report.InSync != 2 {
+		t.Errorf("expected 2 inSync, got %d", report.InSync)
+	}
+	if report.Extra != 0 {
+		t.Errorf("expected 0 extra, got %d", report.Extra)
+	}
+}
+
 // fakeBackendChecker implements cloud.StateBackendChecker for tests.
 type fakeBackendChecker struct {
 	bucketExists bool

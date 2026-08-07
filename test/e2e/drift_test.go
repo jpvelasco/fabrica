@@ -248,3 +248,50 @@ func TestDriftTextOutput(t *testing.T) {
 	assert.Contains(t, out, "Summary")
 	assert.Contains(t, out, "Missing:")
 }
+
+// TestDriftExtraResource: provision horde, then inject an extra EC2 instance
+// into the fake store that is not in local state, and assert drift reports it
+// as Extra.
+func TestDriftExtraResource(t *testing.T) {
+	store := setupE2E(t)
+
+	if out, err := runCLI(t, "setup", "--yes"); err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	if out, err := runCLI(t, "horde", "create", "--yes"); err != nil {
+		t.Fatalf("horde create: %v\n%s", err, out)
+	}
+
+	// Inject an extra EC2 instance into the fake store that is not in state.
+	store.resources["i-extra-999"] = &storedResource{
+		typeName:   "AWS::EC2::Instance",
+		identifier: "i-extra-999",
+		ec2Status:  "running",
+	}
+
+	out, err := runCLI(t, "drift", "--json")
+	if err != nil {
+		t.Fatalf("drift: %v\n%s", err, out)
+	}
+
+	var report drift.DriftReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("drift output is not valid JSON: %v\n%s", err, out)
+	}
+
+	// The recorded instance should be inSync; the extra should be Extra.
+	foundExtra := false
+	for _, md := range report.Modules {
+		for _, r := range md.Resources {
+			if r.Status == drift.Extra && r.Identifier == "i-extra-999" {
+				foundExtra = true
+			}
+		}
+	}
+	if !foundExtra {
+		t.Error("expected to find i-extra-999 as Extra in drift report")
+	}
+	if report.Extra != 1 {
+		t.Errorf("expected 1 extra resource, got %d", report.Extra)
+	}
+}
