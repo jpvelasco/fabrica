@@ -163,8 +163,8 @@ func looksLikeBase64Blob(s string) bool {
 		return false
 	}
 	for _, r := range s {
-		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') ||
-			(r >= '0' && r <= '9') || r == '+' || r == '/' || r == '=') {
+		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') &&
+			(r < '0' || r > '9') && r != '+' && r != '/' && r != '=' {
 			return false
 		}
 	}

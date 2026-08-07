@@ -140,6 +140,16 @@ func TestLooksLikeBase64Blob(t *testing.T) {
 	if looksLikeBase64Blob("has spaces in it") {
 		t.Error("string with spaces should not be detected")
 	}
+	// Long string with non-base64 character should return false
+	longInvalid := strings.Repeat("ABC@DEF", 50)
+	if looksLikeBase64Blob(longInvalid) {
+		t.Error("long string with non-base64 chars should not be detected")
+	}
+	// Exactly 200 chars of valid base64 should return true
+	exact200 := strings.Repeat("ABCDEFabcdef012345+/", 25)
+	if len(exact200) >= 200 && !looksLikeBase64Blob(exact200) {
+		t.Error("string >= 200 valid base64 chars should be detected")
+	}
 }
 
 func TestToLogicalID(t *testing.T) {
@@ -158,6 +168,10 @@ func TestTypeNameShort(t *testing.T) {
 	}
 	if typeNameShort("AWS::S3::Bucket") != "Bucket" {
 		t.Errorf("unexpected short name: %s", typeNameShort("AWS::S3::Bucket"))
+	}
+	// Edge case: less than 3 parts
+	if typeNameShort("EC2::Instance") != "Instance" {
+		t.Errorf("unexpected short name for 2 parts: %s", typeNameShort("EC2::Instance"))
 	}
 }
 
@@ -398,6 +412,21 @@ func TestInstanceTypeForModule(t *testing.T) {
 	cfg2 := config.Defaults()
 	if instanceTypeForModule("perforce", cfg2) != "c5.2xlarge" {
 		t.Errorf("unexpected default perforce instance type: %s", instanceTypeForModule("perforce", cfg2))
+	}
+
+	// Default for lore
+	if instanceTypeForModule("lore", cfg2) != "m5.xlarge" {
+		t.Errorf("unexpected default lore instance type: %s", instanceTypeForModule("lore", cfg2))
+	}
+
+	// Unknown module returns empty string
+	if instanceTypeForModule("unknown", cfg) != "" {
+		t.Errorf("expected empty string for unknown module, got: %s", instanceTypeForModule("unknown", cfg))
+	}
+
+	// Nil config returns empty string
+	if instanceTypeForModule("horde", nil) != "" {
+		t.Errorf("expected empty string for nil config, got: %s", instanceTypeForModule("horde", nil))
 	}
 }
 
@@ -904,5 +933,485 @@ func TestExtractPropertiesCamelCase(t *testing.T) {
 	// BlockDeviceMappings should be built from volumeSize
 	if _, ok := props["BlockDeviceMappings"]; !ok {
 		t.Error("BlockDeviceMappings should be built from volumeSize")
+	}
+}
+
+// TestLooksLikeBase64BlobEdgeCases covers edge cases in base64 detection.
+func TestLooksLikeBase64BlobEdgeCases(t *testing.T) {
+	// Long string with invalid characters should return false
+	longInvalid := strings.Repeat("A!B", 100)
+	if looksLikeBase64Blob(longInvalid) {
+		t.Error("long string with invalid chars should not be detected as base64")
+	}
+	// Exactly 200 chars of valid base64 should return true
+	exact200 := strings.Repeat("A", 200)
+	if !looksLikeBase64Blob(exact200) {
+		t.Error("exactly 200 valid chars should be detected as base64")
+	}
+	// 199 chars should return false (below threshold)
+	below200 := strings.Repeat("A", 199)
+	if looksLikeBase64Blob(below200) {
+		t.Error("199 chars should not be detected as base64")
+	}
+	// Long string with = padding should return true
+	withPadding := strings.Repeat("A", 198) + "=="
+	if !looksLikeBase64Blob(withPadding) {
+		t.Error("long string with = padding should be detected as base64")
+	}
+	// Long string with / should return true
+	withSlash := strings.Repeat("A/", 100)
+	if !looksLikeBase64Blob(withSlash) {
+		t.Error("long string with / should be detected as base64")
+	}
+}
+
+// TestTypeNameShortEdgeCases covers edge cases in type name shortening.
+func TestTypeNameShortEdgeCases(t *testing.T) {
+	// Standard 3-part type
+	if typeNameShort("AWS::EC2::Instance") != "Instance" {
+		t.Errorf("unexpected: %s", typeNameShort("AWS::EC2::Instance"))
+	}
+	// Two-part type (falls back to last part)
+	if typeNameShort("AWS::EC2") != "EC2" {
+		t.Errorf("unexpected: %s", typeNameShort("AWS::EC2"))
+	}
+	// Single-part type
+	if typeNameShort("Instance") != "Instance" {
+		t.Errorf("unexpected: %s", typeNameShort("Instance"))
+	}
+}
+
+// TestBuildModulesUnsupportedModuleDefault covers the default: continue branch.
+func TestBuildModulesUnsupportedModuleDefault(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("workstation", "v1", "ready", []state.ModuleResource{
+		{
+			TypeName:   "AWS::EC2::Instance",
+			Identifier: "i-ws1",
+			Properties: map[string]string{},
+		},
+	})
+	st.UpsertModule("ci", "v1", "ready", []state.ModuleResource{
+		{
+			TypeName:   "AWS::IAM::Role",
+			Identifier: "ci-role",
+			Properties: map[string]string{},
+		},
+	})
+	st.UpsertModule("deploy", "v1", "ready", []state.ModuleResource{
+		{
+			TypeName:   "AWS::GameLift::Fleet",
+			Identifier: "fleet-1",
+			Properties: map[string]string{},
+		},
+	})
+	cfg := config.Defaults()
+
+	modules, err := buildModules(st, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Only state-backend should be exported; workstation, ci, deploy are skipped
+	if len(modules) != 1 {
+		t.Errorf("expected 1 module (state-backend), got %d", len(modules))
+	}
+	if modules[0].Name != "state-backend" {
+		t.Errorf("expected state-backend, got %s", modules[0].Name)
+	}
+}
+
+// TestTerraformResourceTypeDefault covers the generic conversion path.
+func TestTerraformResourceTypeDefault(t *testing.T) {
+	gen := &terraformGenerator{}
+	// Unknown type — generic conversion
+	got := gen.tfResourceType("AWS::Lambda::Function")
+	if got != "aws_lambda_function" {
+		t.Errorf("tfResourceType(AWS::Lambda::Function) = %q, want aws_lambda_function", got)
+	}
+	// Unknown type with fewer parts
+	got2 := gen.tfResourceType("Lambda::Function")
+	if got2 != "aws_function" {
+		t.Errorf("tfResourceType(Lambda::Function) = %q, want aws_function", got2)
+	}
+}
+
+// TestTerraformHclEdgeCases covers type assertion failures in HCL helpers.
+func TestTerraformHclEdgeCases(t *testing.T) {
+	gen := &terraformGenerator{}
+	// hclTags with wrong type
+	if gen.hclTags("not a slice") != "" {
+		t.Error("hclTags should return empty for wrong type")
+	}
+	// hclSGIngress with wrong type
+	if gen.hclSGIngress("not a slice") != "" {
+		t.Error("hclSGIngress should return empty for wrong type")
+	}
+	// hclPolicyDoc with wrong type
+	if gen.hclPolicyDoc("not a map") != "" {
+		t.Error("hclPolicyDoc should return empty for wrong type")
+	}
+	// hclPolicyArns with string slice
+	arns := []string{"arn:aws:iam:://policy1"}
+	out := gen.hclPolicyArns(arns)
+	if !strings.Contains(out, "policy1") {
+		t.Error("hclPolicyArns should handle string slice")
+	}
+	// hclPolicyArns with wrong type
+	if gen.hclPolicyArns("not a slice") != "" {
+		t.Error("hclPolicyArns should return empty for wrong type")
+	}
+	// hclBlockDevices with wrong type
+	if gen.hclBlockDevices("not a slice") != "" {
+		t.Error("hclBlockDevices should return empty for wrong type")
+	}
+	// hclKeySchema with wrong type
+	if gen.hclKeySchema("not a slice") != "" {
+		t.Error("hclKeySchema should return empty for wrong type")
+	}
+	// hclAttrDefs with wrong type
+	if gen.hclAttrDefs("not a slice") != "" {
+		t.Error("hclAttrDefs should return empty for wrong type")
+	}
+	// hclVersioning with wrong type
+	if gen.hclVersioning("not a map") != "" {
+		t.Error("hclVersioning should return empty for wrong type")
+	}
+	// hclEncryption with wrong type
+	if gen.hclEncryption("not a map") != "" {
+		t.Error("hclEncryption should return empty for wrong type")
+	}
+	// hclPublicAccess with wrong type
+	if gen.hclPublicAccess("not a map") != "" {
+		t.Error("hclPublicAccess should return empty for wrong type")
+	}
+	// hclMetadataOptions with wrong type
+	if gen.hclMetadataOptions("not a map") != "" {
+		t.Error("hclMetadataOptions should return empty for wrong type")
+	}
+	// hclRoles with wrong type
+	if gen.hclRoles("not a slice") != "" {
+		t.Error("hclRoles should return empty for wrong type")
+	}
+}
+
+// TestTerraformHclScalar covers all scalar type cases.
+func TestTerraformHclScalar(t *testing.T) {
+	gen := &terraformGenerator{}
+	// String
+	out := gen.hclScalar("Name", "test")
+	if !strings.Contains(out, "test") {
+		t.Error("hclScalar should handle string")
+	}
+	// Int
+	out = gen.hclScalar("Port", 8080)
+	if !strings.Contains(out, "8080") {
+		t.Error("hclScalar should handle int")
+	}
+	// Int64
+	out = gen.hclScalar("Size", int64(100))
+	if !strings.Contains(out, "100") {
+		t.Error("hclScalar should handle int64")
+	}
+	// Float64
+	out = gen.hclScalar("Ratio", float64(3.14))
+	if !strings.Contains(out, "3") {
+		t.Error("hclScalar should handle float64")
+	}
+	// Bool
+	out = gen.hclScalar("Enabled", true)
+	if !strings.Contains(out, "true") {
+		t.Error("hclScalar should handle bool")
+	}
+	// Default (complex type)
+	out = gen.hclScalar("Complex", map[string]any{"a": 1})
+	if !strings.Contains(out, "#") {
+		t.Error("hclScalar should comment out complex types")
+	}
+}
+
+// TestTerraformAttributeNameDefault covers the snake_case conversion fallback.
+func TestTerraformAttributeNameDefault(t *testing.T) {
+	gen := &terraformGenerator{}
+	got := gen.tfAttributeName("SomeUnknownAttr")
+	if got != "some_unknown_attr" {
+		t.Errorf("tfAttributeName(SomeUnknownAttr) = %q, want some_unknown_attr", got)
+	}
+}
+
+// TestCloudFormationIngressEdgeCases covers cfIngressRules edge cases.
+func TestCloudFormationIngressEdgeCases(t *testing.T) {
+	// Nil rules list
+	out := cfIngressRules(nil)
+	if out != nil {
+		t.Error("cfIngressRules(nil) should return nil")
+	}
+	// Empty slice — returns empty slice, not nil
+	out = cfIngressRules([]map[string]any{})
+	if len(out) != 0 {
+		t.Error("cfIngressRules([]) should return empty slice")
+	}
+}
+
+// TestCloudFormationTagsEdgeCases covers cfTags edge cases.
+func TestCloudFormationTagsEdgeCases(t *testing.T) {
+	// Nil tags
+	out := cfTags(nil)
+	if out != nil {
+		t.Error("cfTags(nil) should return nil")
+	}
+	// Empty slice
+	out = cfTags([]map[string]string{})
+	if out == nil || len(out) != 0 {
+		t.Error("cfTags([]) should return empty slice")
+	}
+}
+
+// TestCloudFormationBlockDevicesEdgeCases covers cfBlockDevices edge cases.
+func TestCloudFormationBlockDevicesEdgeCases(t *testing.T) {
+	// Nil devices
+	out := cfBlockDevices(nil)
+	if out != nil {
+		t.Error("cfBlockDevices(nil) should return nil")
+	}
+	// Device without EBS — returns slice with nil entry
+	devs := []map[string]any{{"DeviceName": "/dev/sda1"}}
+	out = cfBlockDevices(devs)
+	if out == nil || len(out) != 1 {
+		t.Error("cfBlockDevices should return slice for device without EBS")
+	}
+	// Device with EBS but no DeleteOnTermination
+	devs2 := []map[string]any{{"DeviceName": "/dev/sda1", "Ebs": map[string]any{"VolumeSize": float64(100)}}}
+	out = cfBlockDevices(devs2)
+	if out == nil || len(out) != 1 {
+		t.Error("cfBlockDevices should handle EBS without DeleteOnTermination")
+	}
+}
+
+// TestSgRulesForModuleDefault covers the default case in sgRulesForModule.
+func TestSgRulesForModuleDefault(t *testing.T) {
+	cfg := config.Defaults()
+	rules := sgRulesForModule("unknown", cfg)
+	if len(rules) != 0 {
+		t.Errorf("expected 0 rules for unknown module, got %d", len(rules))
+	}
+}
+
+// TestGenerateOutputErrorPaths covers error paths in GenerateOutput.
+func TestGenerateOutputErrorPaths(t *testing.T) {
+	// Invalid format should error at NewGenerator
+	_, err := GenerateOutput(Format("invalid"), testStateWithHorde(), testConfigWithHorde())
+	if err == nil {
+		t.Fatal("expected error for invalid format")
+	}
+	// The error comes from NewGenerator rejecting the invalid format
+	if !strings.Contains(err.Error(), "invalid") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestFindResourceIDEdgeCases covers findResourceID edge cases.
+func TestFindResourceIDEdgeCases(t *testing.T) {
+	modules := []ExportModule{
+		{
+			Name:   "horde",
+			Status: "ready",
+			Resources: []ExportResource{
+				{TypeName: "AWS::EC2::Instance", LogicalID: "HordeInstanceI"},
+			},
+		},
+	}
+	// Find existing (empty module matches all)
+	id := findResourceID(modules, "", "AWS::EC2::Instance")
+	if id != "HordeInstanceI" {
+		t.Errorf("expected HordeInstanceI, got %s", id)
+	}
+	// Find with specific module
+	id = findResourceID(modules, "horde", "AWS::EC2::Instance")
+	if id != "HordeInstanceI" {
+		t.Errorf("expected HordeInstanceI with module filter, got %s", id)
+	}
+	// Find non-existing
+	id = findResourceID(modules, "", "AWS::S3::Bucket")
+	if id != "" {
+		t.Errorf("expected empty string for non-existent, got %s", id)
+	}
+	// Module filter that doesn't match
+	id = findResourceID(modules, "perforce", "AWS::EC2::Instance")
+	if id != "" {
+		t.Errorf("expected empty string for non-matching module, got %s", id)
+	}
+}
+
+// TestHclRolesWithSlice covers hclRoles with valid input.
+func TestHclRolesWithSlice(t *testing.T) {
+	gen := &terraformGenerator{}
+	out := gen.hclRoles([]string{"MyRole"})
+	if !strings.Contains(out, "MyRole") {
+		t.Error("hclRoles should output role name")
+	}
+}
+
+// TestHclKeySchemaWithValid covers hclKeySchema with valid input.
+func TestHclKeySchemaWithValid(t *testing.T) {
+	gen := &terraformGenerator{}
+	ks := []map[string]any{{"AttributeName": "UserId"}}
+	out := gen.hclKeySchema(ks)
+	if !strings.Contains(out, "UserId") {
+		t.Error("hclKeySchema should output attribute name")
+	}
+}
+
+// TestHclVersioningWithValid covers hclVersioning with valid input.
+func TestHclVersioningWithValid(t *testing.T) {
+	gen := &terraformGenerator{}
+	vc := map[string]any{"Status": "Enabled"}
+	out := gen.hclVersioning(vc)
+	if !strings.Contains(out, "enabled") {
+		t.Error("hclVersioning should output enabled")
+	}
+}
+
+// TestHclPublicAccessWithValid covers hclPublicAccess with valid input.
+func TestHclPublicAccessWithValid(t *testing.T) {
+	gen := &terraformGenerator{}
+	out := gen.hclPublicAccess(map[string]any{})
+	if !strings.Contains(out, "Public access block") {
+		t.Error("hclPublicAccess should output comment")
+	}
+}
+
+// TestHclMetadataOptionsWithValid covers hclMetadataOptions with valid input.
+func TestHclMetadataOptionsWithValid(t *testing.T) {
+	gen := &terraformGenerator{}
+	mo := map[string]any{"HttpTokens": "required"}
+	out := gen.hclMetadataOptions(mo)
+	if !strings.Contains(out, "required") {
+		t.Error("hclMetadataOptions should output http_tokens")
+	}
+}
+
+// TestHclEncryptionWithValid covers hclEncryption with valid input.
+func TestHclEncryptionWithValid(t *testing.T) {
+	gen := &terraformGenerator{}
+	be := map[string]any{
+		"ServerSideEncryptionConfiguration": []map[string]any{
+			{
+				"ServerSideEncryptionByDefault": map[string]any{
+					"SSEAlgorithm": "AES256",
+				},
+			},
+		},
+	}
+	out := gen.hclEncryption(be)
+	if !strings.Contains(out, "AES256") {
+		t.Error("hclEncryption should output sse_algorithm")
+	}
+}
+
+// TestHclAttrDefsWithValid covers hclAttrDefs with valid input.
+func TestHclAttrDefsWithValid(t *testing.T) {
+	gen := &terraformGenerator{}
+	ad := []map[string]any{{"AttributeName": "UserId", "AttributeType": "S"}}
+	out := gen.hclAttrDefs(ad)
+	if !strings.Contains(out, "UserId") {
+		t.Error("hclAttrDefs should output attribute name")
+	}
+	if !strings.Contains(out, "S") {
+		t.Error("hclAttrDefs should output attribute type")
+	}
+}
+
+// TestHclBlockDevicesWithValid covers hclBlockDevices with valid input.
+func TestHclBlockDevicesWithValid(t *testing.T) {
+	gen := &terraformGenerator{}
+	devs := []map[string]any{
+		{
+			"DeviceName": "/dev/sda1",
+			"Ebs": map[string]any{
+				"VolumeSize":          float64(100),
+				"VolumeType":          "gp3",
+				"DeleteOnTermination": true,
+			},
+		},
+	}
+	out := gen.hclBlockDevices(devs)
+	if !strings.Contains(out, "/dev/sda1") {
+		t.Error("hclBlockDevices should output device name")
+	}
+	if !strings.Contains(out, "gp3") {
+		t.Error("hclBlockDevices should output volume type")
+	}
+}
+
+// TestHclSGIngressWithValid covers hclSGIngress with valid input including description.
+func TestHclSGIngressWithValid(t *testing.T) {
+	gen := &terraformGenerator{}
+	rules := []map[string]any{
+		{
+			"IpProtocol":  "-1",
+			"FromPort":    float64(0),
+			"ToPort":      float64(65535),
+			"CidrIp":      "10.0.0.0/8",
+			"Description": "Allow all internal traffic",
+		},
+	}
+	out := gen.hclSGIngress(rules)
+	if !strings.Contains(out, "Allow all internal traffic") {
+		t.Error("hclSGIngress should output description when present")
+	}
+}
+
+// TestHclTagsWithValid covers hclTags with valid input.
+func TestHclTagsWithValid(t *testing.T) {
+	gen := &terraformGenerator{}
+	tags := []map[string]string{{"Key": "Name", "Value": "test"}}
+	out := gen.hclTags(tags)
+	if !strings.Contains(out, "Name") {
+		t.Error("hclTags should output tag key")
+	}
+	if !strings.Contains(out, "test") {
+		t.Error("hclTags should output tag value")
+	}
+}
+
+// TestHclPolicyDocWithValid covers hclPolicyDoc with valid input.
+func TestHclPolicyDocWithValid(t *testing.T) {
+	gen := &terraformGenerator{}
+	doc := map[string]any{"Version": "2012-10-17"}
+	out := gen.hclPolicyDoc(doc)
+	if !strings.Contains(out, "2012-10-17") {
+		t.Error("hclPolicyDoc should output version")
+	}
+	if !strings.Contains(out, "ec2.amazonaws.com") {
+		t.Error("hclPolicyDoc should output service")
+	}
+}
+
+// TestHclPolicyArnsWithMap covers hclPolicyArns with map slice input.
+func TestHclPolicyArnsWithMap(t *testing.T) {
+	gen := &terraformGenerator{}
+	arns := []map[string]any{{"arn": "arn:aws:iam:://policy1"}}
+	out := gen.hclPolicyArns(arns)
+	if !strings.Contains(out, "policy1") {
+		t.Error("hclPolicyArns should output arn from map")
+	}
+}
+
+// TestResourceToHclErrorPath covers the error return path in resourceToHCL.
+func TestResourceToHclErrorPath(t *testing.T) {
+	gen := &terraformGenerator{}
+	// Use an unknown type that will hit the default case in tfResourceType
+	res := ExportResource{
+		Module:     "test",
+		TypeName:   "AWS::Unknown::Resource",
+		LogicalID:  "TestResource",
+		Properties: map[string]any{},
+	}
+	block, err := gen.resourceToHCL(res)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(block, "resource") {
+		t.Error("resourceToHCL should produce a resource block for unknown types")
 	}
 }

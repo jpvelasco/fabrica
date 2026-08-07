@@ -19,13 +19,6 @@ type cfTemplate struct {
 	Outputs                  map[string]cfOutput       `yaml:"Outputs,omitempty"`
 }
 
-// cfResource is a single CloudFormation resource.
-type cfResource struct {
-	Type       string         `yaml:"Type"`
-	Properties map[string]any `yaml:"Properties"`
-	DependsOn  []string       `yaml:"DependsOn,omitempty"`
-}
-
 // cfOutput is a CloudFormation output definition.
 type cfOutput struct {
 	Description string    `yaml:"Description"`

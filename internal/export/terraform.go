@@ -13,7 +13,7 @@ func (g *terraformGenerator) Generate(modules []ExportModule) ([]byte, error) {
 	var sb strings.Builder
 
 	sb.WriteString("# Fabrica-managed infrastructure — exported from local state.\n")
-	sb.WriteString(fmt.Sprintf("# Modules: %s (V1)\n", moduleNames(modules)))
+	fmt.Fprintf(&sb, "# Modules: %s (V1)\n", moduleNames(modules))
 	sb.WriteString("#\n")
 	sb.WriteString("# Generated from Fabrica local state — review before applying.\n")
 	sb.WriteString("# UserData and credentials are redacted.\n")
@@ -32,7 +32,7 @@ func (g *terraformGenerator) Generate(modules []ExportModule) ([]byte, error) {
 
 	// Resource blocks.
 	for _, mod := range modules {
-		sb.WriteString(fmt.Sprintf("# Module: %s (status: %s)\n", mod.Name, mod.Status))
+		fmt.Fprintf(&sb, "# Module: %s (status: %s)\n", mod.Name, mod.Status)
 		for _, res := range mod.Resources {
 			block, err := g.resourceToHCL(res)
 			if err != nil {
@@ -61,7 +61,7 @@ func (g *terraformGenerator) resourceToHCL(res ExportResource) (string, error) {
 	resourceName := g.tfResourceName(res.LogicalID)
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("resource \"%s\" \"%s\" {\n", resourceType, resourceName))
+	fmt.Fprintf(&sb, "resource \"%s\" \"%s\" {\n", resourceType, resourceName)
 
 	for k, v := range res.Properties {
 		// Skip redacted fields.
@@ -156,7 +156,7 @@ func (g *terraformGenerator) hclTags(v any) string {
 	var sb strings.Builder
 	sb.WriteString("  tags = {\n")
 	for _, t := range tags {
-		sb.WriteString(fmt.Sprintf("    %s = %q\n", t["Key"], t["Value"]))
+		fmt.Fprintf(&sb, "    %s = %q\n", t["Key"], t["Value"])
 	}
 	sb.WriteString("  }\n")
 	return sb.String()
@@ -170,13 +170,13 @@ func (g *terraformGenerator) hclSGIngress(v any) string {
 	}
 	var sb strings.Builder
 	for i, rule := range rules {
-		sb.WriteString(fmt.Sprintf("  ingress {\n"))
-		sb.WriteString(fmt.Sprintf("    protocol = %q\n", rule["IpProtocol"]))
-		sb.WriteString(fmt.Sprintf("    from_port = %v\n", rule["FromPort"]))
-		sb.WriteString(fmt.Sprintf("    to_port   = %v\n", rule["ToPort"]))
-		sb.WriteString(fmt.Sprintf("    cidr_blocks = [%q]\n", rule["CidrIp"]))
+		sb.WriteString("  ingress {\n")
+		fmt.Fprintf(&sb, "    protocol = %q\n", rule["IpProtocol"])
+		fmt.Fprintf(&sb, "    from_port = %v\n", rule["FromPort"])
+		fmt.Fprintf(&sb, "    to_port   = %v\n", rule["ToPort"])
+		fmt.Fprintf(&sb, "    cidr_blocks = [%q]\n", rule["CidrIp"])
 		if desc, ok := rule["Description"].(string); ok && desc != "" {
-			sb.WriteString(fmt.Sprintf("    description = %q\n", desc))
+			fmt.Fprintf(&sb, "    description = %q\n", desc)
 		}
 		sb.WriteString("  }\n")
 		if i < len(rules)-1 {
@@ -194,13 +194,13 @@ func (g *terraformGenerator) hclPolicyDoc(v any) string {
 	}
 	var sb strings.Builder
 	sb.WriteString("  assume_role_policy = jsonencode({\n")
-	sb.WriteString(fmt.Sprintf("    Version = %q\n", doc["Version"]))
+	fmt.Fprintf(&sb, "    Version = %q\n", doc["Version"])
 	sb.WriteString("    Statement = [{\n")
-	sb.WriteString(fmt.Sprintf("      Effect    = %q\n", "Allow"))
+	fmt.Fprintf(&sb, "      Effect    = %q\n", "Allow")
 	sb.WriteString("      Principal = {\n")
-	sb.WriteString(fmt.Sprintf("        Service = %q\n", "ec2.amazonaws.com"))
+	fmt.Fprintf(&sb, "        Service = %q\n", "ec2.amazonaws.com")
 	sb.WriteString("      }\n")
-	sb.WriteString(fmt.Sprintf("      Action = %q\n", "sts:AssumeRole"))
+	fmt.Fprintf(&sb, "      Action = %q\n", "sts:AssumeRole")
 	sb.WriteString("    }]\n")
 	sb.WriteString("  })\n")
 	return sb.String()
@@ -213,7 +213,7 @@ func (g *terraformGenerator) hclPolicyArns(v any) string {
 		sb.WriteString("  managed_policy_arns = [\n")
 		for _, a := range arns {
 			if s, ok := a["arn"].(string); ok {
-				sb.WriteString(fmt.Sprintf("    %q,\n", s))
+				fmt.Fprintf(&sb, "    %q,\n", s)
 			}
 		}
 		sb.WriteString("  ]\n")
@@ -223,7 +223,7 @@ func (g *terraformGenerator) hclPolicyArns(v any) string {
 		var sb strings.Builder
 		sb.WriteString("  managed_policy_arns = [\n")
 		for _, a := range arns {
-			sb.WriteString(fmt.Sprintf("    %q,\n", a))
+			fmt.Fprintf(&sb, "    %q,\n", a)
 		}
 		sb.WriteString("  ]\n")
 		return sb.String()
@@ -240,12 +240,12 @@ func (g *terraformGenerator) hclBlockDevices(v any) string {
 	var sb strings.Builder
 	sb.WriteString("  ebs_block_device {\n")
 	for _, dev := range devs {
-		sb.WriteString(fmt.Sprintf("    device_name = %q\n", dev["DeviceName"]))
+		fmt.Fprintf(&sb, "    device_name = %q\n", dev["DeviceName"])
 		if ebs, ok := dev["Ebs"].(map[string]any); ok {
-			sb.WriteString(fmt.Sprintf("    volume_size = %v\n", ebs["VolumeSize"]))
-			sb.WriteString(fmt.Sprintf("    volume_type = %q\n", ebs["VolumeType"]))
+			fmt.Fprintf(&sb, "    volume_size = %v\n", ebs["VolumeSize"])
+			fmt.Fprintf(&sb, "    volume_type = %q\n", ebs["VolumeType"])
 			if del, ok := ebs["DeleteOnTermination"].(bool); ok {
-				sb.WriteString(fmt.Sprintf("    delete_on_termination = %t\n", del))
+				fmt.Fprintf(&sb, "    delete_on_termination = %t\n", del)
 			}
 		}
 	}
@@ -260,7 +260,7 @@ func (g *terraformGenerator) hclKeySchema(v any) string {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("  hash_key = %q\n", ks[0]["AttributeName"]))
+	fmt.Fprintf(&sb, "  hash_key = %q\n", ks[0]["AttributeName"])
 	return sb.String()
 }
 
@@ -273,8 +273,8 @@ func (g *terraformGenerator) hclAttrDefs(v any) string {
 	var sb strings.Builder
 	sb.WriteString("  attribute {\n")
 	for _, a := range ad {
-		sb.WriteString(fmt.Sprintf("    name = %q\n", a["AttributeName"]))
-		sb.WriteString(fmt.Sprintf("    type = %q\n", a["AttributeType"]))
+		fmt.Fprintf(&sb, "    name = %q\n", a["AttributeName"])
+		fmt.Fprintf(&sb, "    type = %q\n", a["AttributeType"])
 	}
 	sb.WriteString("  }\n")
 	return sb.String()
@@ -288,7 +288,7 @@ func (g *terraformGenerator) hclVersioning(v any) string {
 	}
 	var sb strings.Builder
 	sb.WriteString("  versioning {\n")
-	sb.WriteString(fmt.Sprintf("    enabled = %t\n", vc["Status"] == "Enabled"))
+	fmt.Fprintf(&sb, "    enabled = %t\n", vc["Status"] == "Enabled")
 	sb.WriteString("  }\n")
 	return sb.String()
 }
@@ -305,7 +305,7 @@ func (g *terraformGenerator) hclEncryption(v any) string {
 	sb.WriteString("      apply_server_side_encryption_by_default {\n")
 	if sse, ok := be["ServerSideEncryptionConfiguration"].([]map[string]any); ok && len(sse) > 0 {
 		if defaultEnc, ok := sse[0]["ServerSideEncryptionByDefault"].(map[string]any); ok {
-			sb.WriteString(fmt.Sprintf("        sse_algorithm = %q\n", defaultEnc["SSEAlgorithm"]))
+			fmt.Fprintf(&sb, "        sse_algorithm = %q\n", defaultEnc["SSEAlgorithm"])
 		}
 	}
 	sb.WriteString("      }\n")
@@ -333,7 +333,7 @@ func (g *terraformGenerator) hclMetadataOptions(v any) string {
 	}
 	var sb strings.Builder
 	sb.WriteString("  metadata_options {\n")
-	sb.WriteString(fmt.Sprintf("    http_tokens = %q\n", mo["HttpTokens"]))
+	fmt.Fprintf(&sb, "    http_tokens = %q\n", mo["HttpTokens"])
 	sb.WriteString("  }\n")
 	return sb.String()
 }
@@ -346,7 +346,7 @@ func (g *terraformGenerator) hclRoles(v any) string {
 	}
 	var sb strings.Builder
 	sb.WriteString("  role = ")
-	sb.WriteString(fmt.Sprintf("%q\n", roles[0]))
+	fmt.Fprintf(&sb, "%q\n", roles[0])
 	return sb.String()
 }
 
@@ -357,17 +357,17 @@ func (g *terraformGenerator) hclScalar(k string, v any) string {
 
 	switch val := v.(type) {
 	case string:
-		sb.WriteString(fmt.Sprintf("  %s = %q\n", hclKey, val))
+		fmt.Fprintf(&sb, "  %s = %q\n", hclKey, val)
 	case int:
-		sb.WriteString(fmt.Sprintf("  %s = %d\n", hclKey, val))
+		fmt.Fprintf(&sb, "  %s = %d\n", hclKey, val)
 	case int64:
-		sb.WriteString(fmt.Sprintf("  %s = %d\n", hclKey, val))
+		fmt.Fprintf(&sb, "  %s = %d\n", hclKey, val)
 	case float64:
-		sb.WriteString(fmt.Sprintf("  %s = %.0f\n", hclKey, val))
+		fmt.Fprintf(&sb, "  %s = %.0f\n", hclKey, val)
 	case bool:
-		sb.WriteString(fmt.Sprintf("  %s = %t\n", hclKey, val))
+		fmt.Fprintf(&sb, "  %s = %t\n", hclKey, val)
 	default:
-		sb.WriteString(fmt.Sprintf("  # %s = (complex type, see CloudFormation export)\n", hclKey))
+		fmt.Fprintf(&sb, "  # %s = (complex type, see CloudFormation export)\n", hclKey)
 	}
 
 	return sb.String()
@@ -474,8 +474,8 @@ func (g *terraformGenerator) addOutputHCL(sb *strings.Builder, res ExportResourc
 		return
 	}
 
-	sb.WriteString(fmt.Sprintf("output \"%s\" {\n", outputName))
-	sb.WriteString(fmt.Sprintf("  description = %q\n", desc))
-	sb.WriteString(fmt.Sprintf("  value       = %s\n", value))
+	fmt.Fprintf(sb, "output \"%s\" {\n", outputName)
+	fmt.Fprintf(sb, "  description = %q\n", desc)
+	fmt.Fprintf(sb, "  value       = %s\n", value)
 	sb.WriteString("}\n\n")
 }

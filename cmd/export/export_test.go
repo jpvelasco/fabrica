@@ -177,3 +177,17 @@ func TestRunNilState(t *testing.T) {
 		t.Fatal("expected error for nil state")
 	}
 }
+
+func TestRunOutputToFileError(t *testing.T) {
+	// Write to a directory path — should fail
+	var out bytes.Buffer
+	st := testStateWithHorde()
+	c := newTestCommand(&out, "cloudformation", "/nonexistent/dir/output.yaml", st)
+	err := c.run()
+	if err == nil {
+		t.Fatal("expected error for file write failure")
+	}
+	if !strings.Contains(err.Error(), "writing output file") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
