@@ -171,6 +171,9 @@ type CodeBuildProvider struct {
 	DeleteProjectErr   error
 	DeleteProjectCalls int
 
+	ProjectExistsResult bool
+	ProjectExistsErr    error
+
 	StartBuildID          string
 	StartBuildErr         error
 	StartBuildCalls       int
@@ -195,7 +198,11 @@ func (p *CodeBuildProvider) EnsureProject(_ context.Context, spec cloud.CodeBuil
 	return !p.ProjectAlreadyExists, p.EnsureProjectErr
 }
 
-func (p *CodeBuildProvider) DeleteProject(context.Context, string) error {
+func (p *CodeBuildProvider) ProjectExists(_ context.Context, _ string) (bool, error) {
+	return p.ProjectExistsResult, p.ProjectExistsErr
+}
+
+func (p *CodeBuildProvider) DeleteProject(_ context.Context, _ string) error {
 	p.DeleteProjectCalls++
 	return p.DeleteProjectErr
 }

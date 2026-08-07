@@ -4,7 +4,7 @@ This is the single source of truth for where Fabrica is and where it's going.
 The `README.md` describes how to use what exists today; this document tracks
 status and sequencing. When they disagree, this file wins.
 
-Last updated: 2026-08-02.
+Last updated: 2026-08-07.
 
 ## Vision
 
@@ -137,7 +137,7 @@ gaps) are tracked at the end and do not block Phase 1.
 - Multi-cloud / provider extensibility (GCP/Azure against the existing `cloud.Provider` interface)
 - Export capabilities — `fabrica export --format cloudformation|terraform`
 - Monitoring, alerts, and operational tools
-- Drift detection + `--fix` auto-remediation
+- Drift `--fix` auto-remediation (read-only drift detection is implemented)
 - Vigiles integration: telemetry + cost-data feed
 - Multi-region state, state encryption key rotation
 
@@ -153,6 +153,7 @@ gaps) are tracked at the end and do not block Phase 1.
 | `ddc` | `setup`, `status`, `destroy` | ✅ Complete (V1) — single home-region Unreal Cloud DDC; no region add |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | ✅ Complete |
 | `status` (aggregate) | `status` (`--probe`, `--json`) | ✅ Complete — read-only health overview across all modules |
+| `drift` | `drift` (`--json`) | ✅ Complete — read-only drift detection: state backend, EC2 instances, SGs, IAM roles, CodeBuild projects |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | ✅ Complete — CodeBuild orchestration over Horde; `destroy` removes CodeBuild project + IAM role |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | ✅ Complete — GameLift blue/green deploy orchestration |
 | `cost` | `report`, `forecast`, `alerts` | ✅ Complete — offline config-derived report/forecast + local budget alerts |

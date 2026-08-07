@@ -35,7 +35,7 @@ vision, and what's next.
 
 | Module | Commands | Status |
 |--------|----------|--------|
-| `setup` / `doctor` / `status` / `config show` | Foundation | Complete |
+| `setup` / `doctor` / `status` / `drift` / `config show` | Foundation | Complete |
 | `perforce` | `create`, `status`, `destroy`, `backup`, `restore` | Complete |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Complete |
 | `lore` | `create`, `status`, `destroy` | Complete |
@@ -177,6 +177,10 @@ Creates the state backend for this account: the S3 bucket (versioning, encryptio
 #### `fabrica status`
 
 Read-only aggregate overview of every provisioned module plus the state backend: a one-line health summary, per-module status with `[OK]`/`[WARN]` indicators and resource counts, and context-aware next steps. `--json` for scripts; `--probe` adds TCP readiness checks (requires VPN / in-VPC reachability).
+
+#### `fabrica drift`
+
+Read-only drift detection: compares recorded state (`.fabrica/state.json`) against live AWS resources and reports whether each resource is in sync, missing, or has attribute mismatches. Checks the state backend (S3 bucket, DynamoDB table), EC2 instances (existence, state, instance type, AMI), security groups, IAM roles, and CodeBuild projects. Never modifies state or cloud resources. `--json` for machine-readable output.
 
 #### `fabrica config show`
 

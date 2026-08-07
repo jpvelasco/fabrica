@@ -301,6 +301,12 @@ func (p *fakeProvider) EnsureProject(_ context.Context, spec cloud.CodeBuildProj
 	return created, nil
 }
 
+func (p *fakeProvider) ProjectExists(_ context.Context, name string) (bool, error) {
+	p.store.mu.Lock()
+	defer p.store.mu.Unlock()
+	return p.store.projects[name], nil
+}
+
 func (p *fakeProvider) DeleteProject(_ context.Context, name string) error {
 	p.store.mu.Lock()
 	defer p.store.mu.Unlock()
