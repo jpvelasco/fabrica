@@ -223,25 +223,38 @@ func handleCostReport(rt globals.Runtime) func(context.Context, *mcp.CallToolReq
 	}
 }
 
-func handleConfigShow(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, ConfigShowResult, error) {
-	return func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, ConfigShowResult, error) {
-		yamlBytes, err := rt.Config.YAML()
-		if err != nil {
-			return nil, ConfigShowResult{}, fmt.Errorf("reading config: %w", err)
-		}
+// configShowHandler wraps the config-show handler with a configurable YAML
+// reader seam for testability.
+type configShowHandler struct {
+	rt         globals.Runtime
+	configYAML func() ([]byte, error)
+}
 
-		var raw map[string]any
-		if err := yaml.Unmarshal(yamlBytes, &raw); err != nil {
-			return nil, ConfigShowResult{}, fmt.Errorf("parsing config: %w", err)
-		}
-
-		redactMap(raw)
-
-		return nil, ConfigShowResult{
-			Config:     raw,
-			ConfigPath: rt.ConfigFile(),
-		}, nil
+func (h *configShowHandler) handle(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, ConfigShowResult, error) {
+	yamlBytes, err := h.configYAML()
+	if err != nil {
+		return nil, ConfigShowResult{}, fmt.Errorf("reading config: %w", err)
 	}
+
+	var raw map[string]any
+	if err := yaml.Unmarshal(yamlBytes, &raw); err != nil {
+		return nil, ConfigShowResult{}, fmt.Errorf("parsing config: %w", err)
+	}
+
+	redactMap(raw)
+
+	return nil, ConfigShowResult{
+		Config:     raw,
+		ConfigPath: h.rt.ConfigFile(),
+	}, nil
+}
+
+func handleConfigShow(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, ConfigShowResult, error) {
+	h := &configShowHandler{
+		rt:         rt,
+		configYAML: rt.Config.YAML,
+	}
+	return h.handle
 }
 
 // redactMap recursively walks a map and redacts any key whose name ends with

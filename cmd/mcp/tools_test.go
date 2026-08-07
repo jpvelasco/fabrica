@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -62,6 +63,49 @@ func TestNew_RuntimeError(t *testing.T) {
 	err := cmd.ExecuteContext(context.Background())
 	if err == nil {
 		t.Fatal("expected error from bad runtime source")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Errorf("error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestNew_HappyPath(t *testing.T) {
+	// Use the command struct directly with a stubbed runServer seam to cover
+	// the happy path: runtimeSource succeeds → NewServer called → runServer called.
+	rt := newTestRuntime()
+	serverCalled := false
+	c := &command{
+		runtimeSource: func() (globals.Runtime, error) { return rt, nil },
+		optionsSource: func() globals.Options { return globals.Options{} },
+		runServer: func(ctx context.Context, s *mcp.Server) error {
+			serverCalled = true
+			return nil
+		},
+	}
+	cmd := c.cobraCommand()
+	err := cmd.ExecuteContext(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !serverCalled {
+		t.Error("expected runServer to be called on happy path")
+	}
+}
+
+func TestNew_RunServerError(t *testing.T) {
+	// Verify that errors from runServer propagate through RunE.
+	wantErr := errors.New("stdio transport failed")
+	c := &command{
+		runtimeSource: func() (globals.Runtime, error) { return newTestRuntime(), nil },
+		optionsSource: func() globals.Options { return globals.Options{} },
+		runServer: func(ctx context.Context, s *mcp.Server) error {
+			return wantErr
+		},
+	}
+	cmd := c.cobraCommand()
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected error from runServer")
 	}
 	if !errors.Is(err, wantErr) {
 		t.Errorf("error = %v, want %v", err, wantErr)
@@ -269,6 +313,37 @@ func TestHandleConfigShow(t *testing.T) {
 	}
 	if result.ConfigPath != "fabrica.yaml" {
 		t.Errorf("configPath = %q, want fabrica.yaml", result.ConfigPath)
+	}
+}
+
+func TestHandleConfigShow_YAMLError(t *testing.T) {
+	// Test the error path when configYAML returns an error.
+	wantErr := errors.New("yaml marshal failed")
+	h := &configShowHandler{
+		rt:         newTestRuntime(),
+		configYAML: func() ([]byte, error) { return nil, wantErr },
+	}
+	_, _, err := h.handle(context.Background(), nil, nil)
+	if err == nil {
+		t.Fatal("expected error from configYAML failure")
+	}
+	if !strings.Contains(err.Error(), "reading config") {
+		t.Errorf("error = %v, want it to contain 'reading config'", err)
+	}
+}
+
+func TestHandleConfigShow_BadYAML(t *testing.T) {
+	// Test the error path when yaml.Unmarshal fails (invalid YAML bytes).
+	h := &configShowHandler{
+		rt:         newTestRuntime(),
+		configYAML: func() ([]byte, error) { return []byte("\xff\xfe invalid yaml"), nil },
+	}
+	_, _, err := h.handle(context.Background(), nil, nil)
+	if err == nil {
+		t.Fatal("expected error from invalid YAML")
+	}
+	if !strings.Contains(err.Error(), "parsing config") {
+		t.Errorf("error = %v, want it to contain 'parsing config'", err)
 	}
 }
 

@@ -4,16 +4,36 @@
 package mcp
 
 import (
+	"context"
+
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	fabricav "github.com/jpvelasco/fabrica/internal/version"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 )
 
+// command holds the MCP server command with seams for testability.
+type command struct {
+	runtimeSource globals.RuntimeSource
+	optionsSource globals.OptionsSource
+	runServer     func(ctx context.Context, server *mcp.Server) error
+}
+
 // New returns the "fabrica mcp" command.
 // optionsSource is accepted for signature consistency with other commands but
 // is not currently wired to any flag.
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource) *cobra.Command {
+	cmd := &command{
+		runtimeSource: runtimeSource,
+		optionsSource: optionsSource,
+		runServer: func(ctx context.Context, server *mcp.Server) error {
+			return server.Run(ctx, &mcp.StdioTransport{})
+		},
+	}
+	return cmd.cobraCommand()
+}
+
+func (c *command) cobraCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "mcp",
 		Short: "Run the Fabrica MCP server (stdio transport)",
@@ -28,12 +48,12 @@ communicates over stdin/stdout using newline-delimited JSON.
 Example:
   fabrica mcp`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			rt, err := runtimeSource()
+			rt, err := c.runtimeSource()
 			if err != nil {
 				return err
 			}
 			server := NewServer(rt)
-			return server.Run(cmd.Context(), &mcp.StdioTransport{})
+			return c.runServer(cmd.Context(), server)
 		},
 	}
 }
