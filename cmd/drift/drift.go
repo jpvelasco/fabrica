@@ -21,13 +21,14 @@ import (
 const lineWidth = 64
 
 type command struct {
-	runtime     globals.Runtime
-	jsonOut     bool
-	out         io.Writer
-	readState   func() (*fabricastate.State, error)
-	getResource func(ctx context.Context, r *cloud.Resource) error
-	backend     cloud.StateBackendChecker
-	codebuild   cloud.CodeBuildRunner
+	runtime       globals.Runtime
+	jsonOut       bool
+	out           io.Writer
+	readState     func() (*fabricastate.State, error)
+	getResource   func(ctx context.Context, r *cloud.Resource) error
+	listResources func(ctx context.Context, typeName string) ([]cloud.Resource, error)
+	backend       cloud.StateBackendChecker
+	codebuild     cloud.CodeBuildRunner
 }
 
 // New returns the "fabrica drift" command.
@@ -63,6 +64,7 @@ and CodeBuild projects.`,
 			}
 			if rt.Provider != nil {
 				c.getResource = rt.Provider.Resources().Get
+				c.listResources = rt.Provider.Resources().List
 				if b, ok := rt.Provider.(cloud.StateBackendChecker); ok {
 					c.backend = b
 				}
@@ -85,6 +87,7 @@ func (c *command) run(ctx context.Context) error {
 	engine := &drift.Engine{
 		State:           st,
 		ResourceGet:     c.getResource,
+		ResourceList:    c.listResources,
 		BackendChecker:  c.backend,
 		CodeBuildRunner: c.codebuild,
 		Config: &drift.DriftConfig{
@@ -175,6 +178,9 @@ func (c *command) printSummary(report *drift.DriftReport) {
 	if report.Missing > 0 {
 		fmt.Fprintf(c.out, "  Missing:  %d\n", report.Missing)
 	}
+	if report.Extra > 0 {
+		fmt.Fprintf(c.out, "  Extra:    %d\n", report.Extra)
+	}
 	if report.Mismatch > 0 {
 		fmt.Fprintf(c.out, "  Mismatch: %d\n", report.Mismatch)
 	}
@@ -189,6 +195,8 @@ func statusSymbol(s drift.DriftStatus) string {
 		return "[OK]  "
 	case drift.Missing:
 		return "[FAIL]"
+	case drift.Extra:
+		return "[WARN]"
 	case drift.Mismatch:
 		return "[WARN]"
 	case drift.Error:

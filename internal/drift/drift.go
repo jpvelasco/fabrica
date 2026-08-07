@@ -1,15 +1,15 @@
 // Package drift provides drift detection for Fabrica-managed resources. It
 // compares recorded state (.fabrica/state.json) against live AWS resources and
-// reports whether each resource is in sync, missing, or has attribute
+// reports whether each resource is in sync, missing, extra, or has attribute
 // mismatches.
 //
 // The engine is provider-agnostic: it accepts a state snapshot and provider
 // interfaces (ResourceClient, StateBackendChecker, CodeBuildRunner) and produces
 // a DriftReport. No AWS SDK imports belong here.
 //
-// TODO: Extra (live-not-in-state) detection requires Cloud Control List-based
-// discovery — tagging conventions, VPC scoping, and a separate scan pass.
-// Deferred to a follow-up.
+// Extra detection uses ResourceClient.List to enumerate live resources per
+// type and diff against recorded state identifiers. CodeBuild projects are
+// excluded from Extra checks since CodeBuildRunner has no List method.
 package drift
 
 import (
@@ -27,6 +27,7 @@ type DriftStatus string
 const (
 	InSync   DriftStatus = "inSync"
 	Missing  DriftStatus = "missing"
+	Extra    DriftStatus = "extra"
 	Mismatch DriftStatus = "mismatch"
 	Error    DriftStatus = "error"
 )
@@ -47,6 +48,7 @@ type DriftReport struct {
 	Checked  int           `json:"checked"`
 	InSync   int           `json:"inSync"`
 	Missing  int           `json:"missing"`
+	Extra    int           `json:"extra"`
 	Mismatch int           `json:"mismatch"`
 	Errors   int           `json:"errors"`
 }
@@ -71,6 +73,7 @@ type ModuleDrift struct {
 type Engine struct {
 	State           *state.State
 	ResourceGet     func(ctx context.Context, r *cloud.Resource) error
+	ResourceList    func(ctx context.Context, typeName string) ([]cloud.Resource, error)
 	BackendChecker  cloud.StateBackendChecker
 	CodeBuildRunner cloud.CodeBuildRunner
 	Config          *DriftConfig
@@ -98,6 +101,20 @@ func (e *Engine) Run(ctx context.Context) *DriftReport {
 		report.Modules = append(report.Modules, md)
 	}
 
+	// Check for extra resources (live but not in any module's state).
+	// This is done at the report level so we can diff against all recorded
+	// identifiers across all modules, not just one module at a time.
+	extras := e.checkExtraResources(ctx)
+	for i := range report.Modules {
+		md := &report.Modules[i]
+		for j := range extras {
+			ex := &extras[j]
+			if ex.Module == md.Name {
+				md.Resources = append(md.Resources, *ex)
+			}
+		}
+	}
+
 	// Compute summary counts.
 	for i := range report.Modules {
 		for j := range report.Modules[i].Resources {
@@ -108,6 +125,8 @@ func (e *Engine) Run(ctx context.Context) *DriftReport {
 				report.InSync++
 			case Missing:
 				report.Missing++
+			case Extra:
+				report.Extra++
 			case Mismatch:
 				report.Mismatch++
 			case Error:
@@ -181,6 +200,62 @@ func (e *Engine) checkModule(ctx context.Context, m *state.ModuleState) ModuleDr
 	}
 
 	return md
+}
+
+// checkExtraResources lists live resources for each type across all modules
+// and reports any that are not recorded in state. CodeBuild projects are
+// excluded since CodeBuildRunner has no List method.
+//
+// Note: ResourceClient.List returns all resources of a type in the account,
+// not scoped to a module. We diff against all recorded identifiers across all
+// modules to avoid false positives when multiple modules share the same
+// resource type (e.g., IAM roles). Extras are assigned to the first module
+// that records the matching type name.
+func (e *Engine) checkExtraResources(ctx context.Context) []DriftResult {
+	if e.ResourceList == nil {
+		return nil
+	}
+
+	// Build sets of ALL recorded identifiers across ALL modules.
+	allRecorded := make(map[string]map[string]bool)
+	// Track which module owns each type (first module that has the type).
+	typeOwner := make(map[string]string)
+	for i := range e.State.Modules {
+		sm := &e.State.Modules[i]
+		for j := range sm.Resources {
+			r := &sm.Resources[j]
+			if r.TypeName == "AWS::CodeBuild::Project" {
+				continue
+			}
+			if allRecorded[r.TypeName] == nil {
+				allRecorded[r.TypeName] = make(map[string]bool)
+				typeOwner[r.TypeName] = sm.Name
+			}
+			allRecorded[r.TypeName][r.Identifier] = true
+		}
+	}
+
+	var results []DriftResult
+	for typeName, recordedIDs := range allRecorded {
+		live, err := e.ResourceList(ctx, typeName)
+		if err != nil {
+			continue
+		}
+
+		for _, res := range live {
+			if !recordedIDs[res.Identifier] {
+				results = append(results, DriftResult{
+					Module:     typeOwner[typeName],
+					TypeName:   typeName,
+					Identifier: res.Identifier,
+					Status:     Extra,
+					Details:    "resource exists in live state but not in recorded state",
+				})
+			}
+		}
+	}
+
+	return results
 }
 
 func (e *Engine) checkResource(ctx context.Context, m *state.ModuleState, r *state.ModuleResource) DriftResult {
