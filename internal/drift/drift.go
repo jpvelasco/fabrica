@@ -142,12 +142,13 @@ func (e *Engine) checkBackend(ctx context.Context) DriftBackend {
 
 	if e.Config.Bucket != "" {
 		exists, err := e.BackendChecker.StateBucketExists(ctx, e.Config.Bucket)
-		if err != nil {
+		switch {
+		case err != nil:
 			b.BucketStatus = Error
 			b.BucketDetails = fmt.Sprintf("check failed: %v", err)
-		} else if exists {
+		case exists:
 			b.BucketStatus = InSync
-		} else {
+		default:
 			b.BucketStatus = Missing
 			b.BucketDetails = "state bucket not found"
 		}
@@ -155,12 +156,13 @@ func (e *Engine) checkBackend(ctx context.Context) DriftBackend {
 
 	if e.Config.Table != "" {
 		exists, err := e.BackendChecker.StateLockTableExists(ctx, e.Config.Table)
-		if err != nil {
+		switch {
+		case err != nil:
 			b.TableStatus = Error
 			b.TableDetails = fmt.Sprintf("check failed: %v", err)
-		} else if exists {
+		case exists:
 			b.TableStatus = InSync
-		} else {
+		default:
 			b.TableStatus = Missing
 			b.TableDetails = "lock table not found"
 		}
