@@ -166,3 +166,51 @@ func TestCreateCobraRuntimeError(t *testing.T) {
 		t.Fatal("expected error from runtimeSource")
 	}
 }
+
+// TestCreateCobraVPCResolverWiring verifies that horde create wires the VPC
+// resolver from the provider, resolving VPC/subnet and defaulting allowedCidr
+// to the resolved VPC CIDR instead of the hard-coded 10.0.0.0/8.
+func TestCreateCobraVPCResolverWiring(t *testing.T) {
+	provider := &testutil.VPCResolverProvider{
+		VPCID:    "vpc-default",
+		SubnetID: "subnet-default",
+		VPCCIDR:  "172.31.0.0/16",
+	}
+	got, err := runCreate(t, newCobraTestRuntime(provider), "--dry-run")
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	testutil.AssertContains(t, got, "vpc-default")
+	testutil.AssertContains(t, got, "172.31.0.0/16")
+	if provider.Calls != 1 {
+		t.Errorf("ResolveDefaultVPC calls = %d, want 1", provider.Calls)
+	}
+	if provider.CIDRCalls != 1 {
+		t.Errorf("ResolveVPCCIDR calls = %d, want 1", provider.CIDRCalls)
+	}
+}
+
+// TestCreateCobraExplicitCIDROverridesResolver verifies that an explicit
+// horde.allowedCidr in config is not overridden by the VPC CIDR resolver.
+func TestCreateCobraExplicitCIDROverridesResolver(t *testing.T) {
+	provider := &testutil.VPCResolverProvider{
+		VPCID:    "vpc-default",
+		SubnetID: "subnet-default",
+		VPCCIDR:  "172.31.0.0/16",
+	}
+	cfg := config.Defaults()
+	cfg.State.Bucket = "fabrica-state-test"
+	cfg.State.Table = "fabrica-locks-test"
+	cfg.Horde.AmiID = "ami-test123"
+	cfg.Horde.AllowedCIDR = "192.168.0.0/16"
+	rt := globals.Runtime{Config: cfg, Provider: provider}
+	runtimeSource := func() (globals.Runtime, error) { return rt, nil }
+	got, err := runCreate(t, runtimeSource, "--dry-run")
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	testutil.AssertContains(t, got, "192.168.0.0/16")
+	if provider.CIDRCalls != 0 {
+		t.Errorf("ResolveVPCCIDR calls = %d, want 0 (explicit CIDR skips resolver)", provider.CIDRCalls)
+	}
+}

@@ -42,3 +42,28 @@ func TestTestVPCResolverCallCount(t *testing.T) {
 		t.Errorf("Calls = %d, want 3", r.Calls)
 	}
 }
+
+func TestTestVPCCIDRResolverHappyPath(t *testing.T) {
+	r := &TestVPCCIDRResolver{CIDR: "172.31.0.0/16"}
+	cidr, err := r.ResolveVPCCIDR(context.Background(), "vpc-123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cidr != "172.31.0.0/16" {
+		t.Errorf("CIDR = %q, want 172.31.0.0/16", cidr)
+	}
+	if r.Calls != 1 {
+		t.Errorf("Calls = %d, want 1", r.Calls)
+	}
+}
+
+func TestTestVPCCIDRResolverError(t *testing.T) {
+	r := &TestVPCCIDRResolver{Err: ErrResourceNotFound}
+	_, err := r.ResolveVPCCIDR(context.Background(), "vpc-123")
+	if err != ErrResourceNotFound {
+		t.Fatalf("expected ErrResourceNotFound, got: %v", err)
+	}
+	if r.Calls != 1 {
+		t.Errorf("Calls = %d, want 1", r.Calls)
+	}
+}

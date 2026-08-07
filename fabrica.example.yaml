@@ -28,6 +28,15 @@ state:
 #     s3Bucket: ""
 #     s3Prefix: perforce-backups/
 perforce: {}
+# Horde: Unreal build coordinator — AMI-first, see docs/horde-ami.md.
+# allowedCidr defaults to 10.0.0.0/8 — this does NOT cover AWS default VPCs
+# (172.31.0.0/16). Set it to your VPC CIDR if CodeBuild/workstations live
+# there. Do not use 0.0.0.0/0 on ports 5000/5002.
+# horde:
+#   amiId: ami-xxxxxxxxxxxxxxxxx   # required
+#   instanceType: m7i.2xlarge
+#   volumeSize: 100
+#   allowedCidr: 172.31.0.0/16    # set to your VPC CIDR
 horde: {}
 
 # Lore: Epic loreserver (parallel VCS option alongside Perforce).
