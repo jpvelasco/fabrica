@@ -136,7 +136,7 @@ gaps) are tracked at the end and do not block Phase 1.
 - ✅ MCP server V1: 6 read-only tools (`fabrica_version`, `fabrica_doctor`, `fabrica_status`, `fabrica_drift`, `fabrica_cost_report`, `fabrica_config_show`) over stdio transport — reuses same business logic as CLI
 - MCP server V2: destructive tools, streaming, resource management
 - Multi-cloud / provider extensibility (GCP/Azure against the existing `cloud.Provider` interface)
-- Export capabilities — `fabrica export --format cloudformation|terraform`
+- ✅ Export capabilities — `fabrica export --format cloudformation|terraform` (V1: state backend + Horde/Perforce/Lore; DDC/Workstation/CI/Deploy deferred to V2)
 - Monitoring, alerts, and operational tools
 - Drift `--fix` auto-remediation (read-only drift detection is implemented)
 - Vigiles integration: telemetry + cost-data feed
@@ -159,7 +159,7 @@ gaps) are tracked at the end and do not block Phase 1.
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | ✅ Complete — GameLift blue/green deploy orchestration |
 | `cost` | `report`, `forecast`, `alerts` | ✅ Complete — offline config-derived report/forecast + local budget alerts |
 | `destroy --all` | clean teardown | ✅ Complete — tears down all modules (deploy→ci→workstation→ddc→horde→lore→perforce) then the state backend; backend deleted only on full success |
-| `export` | `--format cloudformation\|terraform` | ⬜ Planned (Phase 2+) |
+| `export` | `--format cloudformation\|terraform` | ✅ Complete (V1) — CloudFormation YAML and Terraform HCL from local state; state backend + Horde/Perforce/Lore; secrets redacted |
 
 ## Architecture decisions (locked)
 

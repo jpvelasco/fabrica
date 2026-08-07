@@ -44,6 +44,7 @@ vision, and what's next.
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | Complete |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | Complete |
 | `cost` | `report`, `forecast`, `alerts` | Complete |
+| `export` | `--format cloudformation\|terraform` | Complete (V1) |
 | `destroy --all` | full-stack teardown | Complete |
 
 ## Requirements
@@ -453,6 +454,32 @@ Full-stack teardown: destroys every provisioned module in reverse dependency ord
 #### `fabrica version`
 
 Prints version, commit hash, Go toolchain version, and platform.
+
+#### `fabrica export`
+
+Generates infrastructure-as-code templates from Fabrica's recorded local state and configuration. Reads `.fabrica/state.json` and `fabrica.yaml`, then produces CloudFormation YAML or Terraform HCL for the resources Fabrica manages. No live AWS calls — all data comes from local state.
+
+V1 covers the state backend (S3 bucket, DynamoDB table) and the Horde, Perforce, and Lore modules. DDC, Workstation, CI, and Deploy are deferred to V2.
+
+```bash
+# Export as CloudFormation YAML to stdout:
+fabrica export --format cloudformation
+
+# Export as Terraform HCL to a file:
+fabrica export --format terraform --output infrastructure.tf
+
+# Preview what would be exported (dry-run):
+fabrica export --format cloudformation --dry-run
+```
+
+Key flags:
+
+```
+--format   Export format: cloudformation or terraform (required)
+--output   Output file path (default: stdout)
+```
+
+UserData and credential-like fields are automatically redacted in the output.
 
 ## Configuration
 
