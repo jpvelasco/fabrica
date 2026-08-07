@@ -153,7 +153,7 @@ gaps) are tracked at the end and do not block Phase 1.
 | `ddc` | `setup`, `status`, `destroy` | ✅ Complete (V1) — single home-region Unreal Cloud DDC; no region add |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | ✅ Complete |
 | `status` (aggregate) | `status` (`--probe`, `--json`) | ✅ Complete — read-only health overview across all modules |
-| `drift` | `drift` (`--json`) | ✅ Complete — read-only drift detection: state backend, EC2 instances, SGs, IAM roles, CodeBuild projects |
+| `drift` | `drift` (`--json`) | ✅ Complete — read-only drift detection: state backend, EC2 instances (state, type, AMI), SGs, IAM roles, CodeBuild projects, Extra resource detection (live-not-in-state via ResourceList) |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | ✅ Complete — CodeBuild orchestration over Horde; `destroy` removes CodeBuild project + IAM role |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | ✅ Complete — GameLift blue/green deploy orchestration |
 | `cost` | `report`, `forecast`, `alerts` | ✅ Complete — offline config-derived report/forecast + local budget alerts |

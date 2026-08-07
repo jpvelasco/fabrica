@@ -180,7 +180,7 @@ Read-only aggregate overview of every provisioned module plus the state backend:
 
 #### `fabrica drift`
 
-Read-only drift detection: compares recorded state (`.fabrica/state.json`) against live AWS resources and reports whether each resource is in sync, missing, or has attribute mismatches. Checks the state backend (S3 bucket, DynamoDB table), EC2 instances (existence, state, instance type, AMI), security groups, IAM roles, and CodeBuild projects. Never modifies state or cloud resources. `--json` for machine-readable output.
+Read-only drift detection: compares recorded state (`.fabrica/state.json`) against live AWS resources and reports whether each resource is in sync, missing, extra (live but not in state), or has attribute mismatches. Checks the state backend (S3 bucket, DynamoDB table), EC2 instances (existence, state, instance type, AMI), security groups, IAM roles, and CodeBuild projects. Extra detection uses `ResourceClient.List` to enumerate live resources and diff against recorded state — CodeBuild projects are excluded since they have no List API. Never modifies state or cloud resources. `--json` for machine-readable output.
 
 #### `fabrica config show`
 
