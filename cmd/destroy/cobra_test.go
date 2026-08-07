@@ -239,6 +239,10 @@ func (f *cobraFakeProviderWithCI) BuildLog(ctx context.Context, buildID string) 
 	return "", nil
 }
 
+func (f *cobraFakeProviderWithCI) ProjectExists(ctx context.Context, name string) (bool, error) {
+	return false, nil
+}
+
 type cobraFakeRCWithDelete struct {
 	provider *cobraFakeProviderWithCI
 }

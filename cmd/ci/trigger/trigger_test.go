@@ -44,7 +44,8 @@ func (f *fakeRunner) BuildLog(_ context.Context, _ string) (string, error) { ret
 func (f *fakeRunner) EnsureProject(_ context.Context, _ cloud.CodeBuildProjectSpec) (bool, error) {
 	return true, nil
 }
-func (f *fakeRunner) DeleteProject(_ context.Context, _ string) error { return nil }
+func (f *fakeRunner) DeleteProject(_ context.Context, _ string) error         { return nil }
+func (f *fakeRunner) ProjectExists(_ context.Context, _ string) (bool, error) { return false, nil }
 
 func writeTempBuildGraph(t *testing.T) string {
 	t.Helper()
@@ -211,6 +212,9 @@ func (f *alwaysInProgressRunner) EnsureProject(_ context.Context, _ cloud.CodeBu
 	return true, nil
 }
 func (f *alwaysInProgressRunner) DeleteProject(_ context.Context, _ string) error { return nil }
+func (f *alwaysInProgressRunner) ProjectExists(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
 
 func TestTriggerNoRunnerErrors(t *testing.T) {
 	var out bytes.Buffer

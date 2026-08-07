@@ -86,6 +86,23 @@ func TestCodeBuildProvider(t *testing.T) {
 		wantErr := errors.New("codebuild unavailable")
 		provider := &CodeBuildProvider{EnsureProjectErr: wantErr, DeleteProjectErr: wantErr}
 
+		// ProjectExists returns configured result.
+		exists, err := provider.ProjectExists(context.Background(), "project")
+		if exists || err != nil {
+			t.Fatalf("default ProjectExists() = (%v, %v)", exists, err)
+		}
+		provider.ProjectExistsResult = true
+		exists, err = provider.ProjectExists(context.Background(), "project")
+		if !exists || err != nil {
+			t.Fatalf("existing ProjectExists() = (%v, %v)", exists, err)
+		}
+		provider.ProjectExistsResult = false
+		provider.ProjectExistsErr = wantErr
+		exists, err = provider.ProjectExists(context.Background(), "project")
+		if exists || !errors.Is(err, wantErr) {
+			t.Fatalf("failed ProjectExists() = (%v, %v)", exists, err)
+		}
+
 		created, err := provider.EnsureProject(context.Background(), cloud.CodeBuildProjectSpec{})
 		if !created || !errors.Is(err, wantErr) || provider.EnsureProjectCalls != 1 {
 			t.Fatalf("EnsureProject() = (%v, %v), calls = %d", created, err, provider.EnsureProjectCalls)
@@ -197,4 +214,58 @@ func TestGameLiftProvider(t *testing.T) {
 			t.Fatalf("FleetEvents() = (%v, %v), calls = %d", events, err, provider.FleetEventsCalls)
 		}
 	})
+}
+
+func TestVPCResolverProvider(t *testing.T) {
+	t.Run("default VPC resolution", func(t *testing.T) {
+		provider := &VPCResolverProvider{}
+		vpcID, subnetID, err := provider.ResolveDefaultVPC(context.Background())
+		if err != nil || vpcID != "vpc-fake" || subnetID != "subnet-fake" {
+			t.Fatalf("default ResolveDefaultVPC() = (%q, %q, %v)", vpcID, subnetID, err)
+		}
+
+		provider.VPCID = "vpc-custom"
+		provider.SubnetID = "subnet-custom"
+		vpcID, subnetID, err = provider.ResolveDefaultVPC(context.Background())
+		if err != nil || vpcID != "vpc-custom" || subnetID != "subnet-custom" {
+			t.Fatalf("configured ResolveDefaultVPC() = (%q, %q, %v)", vpcID, subnetID, err)
+		}
+
+		wantErr := errors.New("vpc resolution failed")
+		provider.VPCErr = wantErr
+		_, _, err = provider.ResolveDefaultVPC(context.Background())
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("failed ResolveDefaultVPC() error = %v", err)
+		}
+	})
+
+	t.Run("VPC CIDR resolution", func(t *testing.T) {
+		provider := &VPCResolverProvider{VPCCIDR: "10.0.0.0/16"}
+		cidr, err := provider.ResolveVPCCIDR(context.Background(), "vpc-123")
+		if err != nil || cidr != "10.0.0.0/16" {
+			t.Fatalf("ResolveVPCCIDR() = (%q, %v)", cidr, err)
+		}
+
+		wantErr := errors.New("cidr resolution failed")
+		provider.VPCCIDRErr = wantErr
+		_, err = provider.ResolveVPCCIDR(context.Background(), "vpc-123")
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("failed ResolveVPCCIDR() error = %v", err)
+		}
+	})
+}
+
+func TestCodeBuildVPCProvider(t *testing.T) {
+	provider := &CodeBuildVPCProvider{VPCID: "vpc-cb", SubnetID: "subnet-cb"}
+	vpcID, subnetID, err := provider.ResolveDefaultVPC(context.Background())
+	if err != nil || vpcID != "vpc-cb" || subnetID != "subnet-cb" {
+		t.Fatalf("ResolveDefaultVPC() = (%q, %q, %v)", vpcID, subnetID, err)
+	}
+
+	wantErr := errors.New("vpc error")
+	provider.VPCErr = wantErr
+	_, _, err = provider.ResolveDefaultVPC(context.Background())
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("failed ResolveDefaultVPC() error = %v", err)
+	}
 }

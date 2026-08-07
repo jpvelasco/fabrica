@@ -13,6 +13,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/deploy"
 	"github.com/jpvelasco/fabrica/cmd/destroy"
 	"github.com/jpvelasco/fabrica/cmd/doctor"
+	driftcmd "github.com/jpvelasco/fabrica/cmd/drift"
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/horde"
 	"github.com/jpvelasco/fabrica/cmd/lore"
@@ -62,6 +63,7 @@ func New(out io.Writer) *cobra.Command {
 
 	cmd.AddCommand(version.Cmd)
 	cmd.AddCommand(doctor.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(driftcmd.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(status.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(setup.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(destroy.New(runtimeSource, optionsSource, out))

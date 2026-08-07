@@ -13,6 +13,10 @@ type CodeBuildRunner interface {
 	EnsureProject(ctx context.Context, spec CodeBuildProjectSpec) (created bool, err error)
 	// DeleteProject deletes the named project; a missing project is not an error.
 	DeleteProject(ctx context.Context, name string) error
+	// ProjectExists checks whether the named project exists. It returns false
+	// (not an error) when the project is absent, making it suitable for drift
+	// detection and idempotency checks.
+	ProjectExists(ctx context.Context, name string) (bool, error)
 	// StartBuild starts a build of the named project with the given environment
 	// variable overrides, returning the build ID.
 	StartBuild(ctx context.Context, project string, env map[string]string) (buildID string, err error)

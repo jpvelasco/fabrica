@@ -112,6 +112,22 @@ func vpcConfig(v *fabricac.CodeBuildVpcConfig) *codebuildtypes.VpcConfig {
 	}
 }
 
+func (p *awsProvider) ProjectExists(ctx context.Context, name string) (bool, error) {
+	cfg, err := p.stateBackendConfig(ctx)
+	if err != nil {
+		return false, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	client := p.codeBuildClient(cfg)
+	existing, err := client.BatchGetProjects(ctx, &codebuild.BatchGetProjectsInput{Names: []string{name}})
+	if err != nil {
+		return false, fmt.Errorf("checking CodeBuild project %s: %w", name, err)
+	}
+	return len(existing.Projects) > 0, nil
+}
+
 func (p *awsProvider) DeleteProject(ctx context.Context, name string) error {
 	cfg, err := p.stateBackendConfig(ctx)
 	if err != nil {
