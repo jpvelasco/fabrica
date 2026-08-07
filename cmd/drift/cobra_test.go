@@ -292,6 +292,44 @@ func (b *backendCheckerProvider) StateLockTableExists(_ context.Context, _ strin
 	return b.tableExists, b.tableErr
 }
 
+// TestDriftCobraExtraResource verifies extra resources show as [WARN]
+// and the summary counts them.
+func TestDriftCobraExtraResource(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	testutil.WriteStateFile(t, dir, testutil.NewProvisionedStateJSON(
+		testutil.StateModule{
+			Name:      "horde",
+			Version:   "ami-fake",
+			Status:    "ready",
+			Resources: testutil.EC2Pair("sg-123", "i-123"),
+		},
+	))
+
+	provider := &testutil.TestProvider{
+		GetResources: map[string]cloud.Resource{
+			cloud.TypeAWSEC2Instance:      {Identifier: "i-123", ActualState: json.RawMessage(`{"State":{"Name":"running"},"InstanceType":"m7i.2xlarge","ImageId":"ami-fake"}`)},
+			cloud.TypeAWSEC2SecurityGroup: {Identifier: "sg-123"},
+		},
+		ListResult: []cloud.Resource{
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-extra"},
+		},
+	}
+
+	got, err := runDrift(t, testutil.NewTestRuntime(provider))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(got, "[WARN]") {
+		t.Errorf("expected [WARN] for extra resource; got:\n%s", got)
+	}
+	if !strings.Contains(got, "Extra") {
+		t.Errorf("expected 'Extra' in summary; got:\n%s", got)
+	}
+}
+
 // TestDriftCobraCodeBuildMissing verifies CodeBuild project missing via
 // CodeBuildRunner auxiliary interface.
 func TestDriftCobraCodeBuildMissing(t *testing.T) {
