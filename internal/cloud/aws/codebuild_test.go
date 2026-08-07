@@ -383,3 +383,27 @@ func TestBuildLogSDKError(t *testing.T) {
 		t.Fatalf("error = %q, want substring %q", got, "fetching logs for build")
 	}
 }
+
+func TestProjectExistsTrue(t *testing.T) {
+	cb := &fakeCodeBuildClient{existingProjects: []codebuildtypes.Project{{Name: awssdk.String("fabrica-ci")}}}
+	p := newCodeBuildTestProvider(cb, nil)
+	exists, err := p.ProjectExists(context.Background(), "fabrica-ci")
+	if err != nil {
+		t.Fatalf("ProjectExists: %v", err)
+	}
+	if !exists {
+		t.Error("exists = false, want true")
+	}
+}
+
+func TestProjectExistsFalse(t *testing.T) {
+	cb := &fakeCodeBuildClient{} // no existing projects
+	p := newCodeBuildTestProvider(cb, nil)
+	exists, err := p.ProjectExists(context.Background(), "fabrica-ci")
+	if err != nil {
+		t.Fatalf("ProjectExists: %v", err)
+	}
+	if exists {
+		t.Error("exists = true, want false")
+	}
+}

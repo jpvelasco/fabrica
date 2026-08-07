@@ -86,6 +86,23 @@ func TestCodeBuildProvider(t *testing.T) {
 		wantErr := errors.New("codebuild unavailable")
 		provider := &CodeBuildProvider{EnsureProjectErr: wantErr, DeleteProjectErr: wantErr}
 
+		// ProjectExists returns configured result.
+		exists, err := provider.ProjectExists(context.Background(), "project")
+		if exists || err != nil {
+			t.Fatalf("default ProjectExists() = (%v, %v)", exists, err)
+		}
+		provider.ProjectExistsResult = true
+		exists, err = provider.ProjectExists(context.Background(), "project")
+		if !exists || err != nil {
+			t.Fatalf("existing ProjectExists() = (%v, %v)", exists, err)
+		}
+		provider.ProjectExistsResult = false
+		provider.ProjectExistsErr = wantErr
+		exists, err = provider.ProjectExists(context.Background(), "project")
+		if exists || !errors.Is(err, wantErr) {
+			t.Fatalf("failed ProjectExists() = (%v, %v)", exists, err)
+		}
+
 		created, err := provider.EnsureProject(context.Background(), cloud.CodeBuildProjectSpec{})
 		if !created || !errors.Is(err, wantErr) || provider.EnsureProjectCalls != 1 {
 			t.Fatalf("EnsureProject() = (%v, %v), calls = %d", created, err, provider.EnsureProjectCalls)
