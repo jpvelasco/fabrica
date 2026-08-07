@@ -1274,9 +1274,24 @@ func TestHclVersioningWithValid(t *testing.T) {
 // TestHclPublicAccessWithValid covers hclPublicAccess with valid input.
 func TestHclPublicAccessWithValid(t *testing.T) {
 	gen := &terraformGenerator{}
-	out := gen.hclPublicAccess(map[string]any{})
-	if !strings.Contains(out, "Public access block") {
-		t.Error("hclPublicAccess should output comment")
+	pab := map[string]any{
+		"BlockPublicAcls":       true,
+		"BlockPublicPolicy":     true,
+		"IgnorePublicAcls":      true,
+		"RestrictPublicBuckets": true,
+	}
+	out := gen.hclPublicAccess(pab)
+	if !strings.Contains(out, "block_public_acls = true") {
+		t.Error("hclPublicAccess should output block_public_acls")
+	}
+	if !strings.Contains(out, "block_public_policy = true") {
+		t.Error("hclPublicAccess should output block_public_policy")
+	}
+	if !strings.Contains(out, "ignore_public_acls = true") {
+		t.Error("hclPublicAccess should output ignore_public_acls")
+	}
+	if !strings.Contains(out, "restrict_public_buckets = true") {
+		t.Error("hclPublicAccess should output restrict_public_buckets")
 	}
 }
 
@@ -1377,13 +1392,30 @@ func TestHclTagsWithValid(t *testing.T) {
 // TestHclPolicyDocWithValid covers hclPolicyDoc with valid input.
 func TestHclPolicyDocWithValid(t *testing.T) {
 	gen := &terraformGenerator{}
-	doc := map[string]any{"Version": "2012-10-17"}
+	doc := map[string]any{
+		"Version": "2012-10-17",
+		"Statement": []map[string]any{
+			{
+				"Effect": "Allow",
+				"Principal": map[string]any{
+					"Service": "ec2.amazonaws.com",
+				},
+				"Action": "sts:AssumeRole",
+			},
+		},
+	}
 	out := gen.hclPolicyDoc(doc)
 	if !strings.Contains(out, "2012-10-17") {
 		t.Error("hclPolicyDoc should output version")
 	}
+	if !strings.Contains(out, "Allow") {
+		t.Error("hclPolicyDoc should output effect from statement")
+	}
 	if !strings.Contains(out, "ec2.amazonaws.com") {
-		t.Error("hclPolicyDoc should output service")
+		t.Error("hclPolicyDoc should output service from principal")
+	}
+	if !strings.Contains(out, "sts:AssumeRole") {
+		t.Error("hclPolicyDoc should output action from statement")
 	}
 }
 
@@ -1413,5 +1445,123 @@ func TestResourceToHclErrorPath(t *testing.T) {
 	}
 	if !strings.Contains(block, "resource") {
 		t.Error("resourceToHCL should produce a resource block for unknown types")
+	}
+}
+
+// TestToLogicalIDEmpty covers toLogicalID with empty and stripped-to-empty identifiers.
+func TestToLogicalIDEmpty(t *testing.T) {
+	tests := []struct {
+		name       string
+		identifier string
+		wantPrefix string
+	}{
+		{
+			name:       "empty string",
+			identifier: "",
+			wantPrefix: "HORDEInstanceX",
+		},
+		{
+			name:       "all dashes strips to empty",
+			identifier: "---",
+			wantPrefix: "HORDEInstanceX",
+		},
+		{
+			name:       "all underscores strips to empty",
+			identifier: "___",
+			wantPrefix: "HORDEInstanceX",
+		},
+		{
+			name:       "all dots strips to empty",
+			identifier: "...",
+			wantPrefix: "HORDEInstanceX",
+		},
+		{
+			name:       "normal identifier",
+			identifier: "i-12345",
+			wantPrefix: "HORDEInstanceI",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := toLogicalID("horde", "AWS::EC2::Instance", tt.identifier)
+			if !strings.HasPrefix(got, tt.wantPrefix) {
+				t.Errorf("toLogicalID(%q) = %q, want prefix %q", tt.identifier, got, tt.wantPrefix)
+			}
+		})
+	}
+}
+
+// TestHclPolicyDocNonEC2 covers hclPolicyDoc with a non-EC2 policy document.
+func TestHclPolicyDocNonEC2(t *testing.T) {
+	gen := &terraformGenerator{}
+	doc := map[string]any{
+		"Version": "2012-10-17",
+		"Statement": []map[string]any{
+			{
+				"Effect": "Allow",
+				"Principal": map[string]any{
+					"Service": "codebuild.amazonaws.com",
+				},
+				"Action": "sts:AssumeRole",
+			},
+		},
+	}
+	out := gen.hclPolicyDoc(doc)
+	if !strings.Contains(out, "codebuild.amazonaws.com") {
+		t.Error("hclPolicyDoc should read service from actual policy, not hardcode ec2")
+	}
+	if !strings.Contains(out, "2012-10-17") {
+		t.Error("hclPolicyDoc should output version from document")
+	}
+}
+
+// TestHclPolicyDocEmptyStatement covers hclPolicyDoc with no statements.
+func TestHclPolicyDocEmptyStatement(t *testing.T) {
+	gen := &terraformGenerator{}
+	doc := map[string]any{
+		"Version":   "2012-10-17",
+		"Statement": []map[string]any{},
+	}
+	out := gen.hclPolicyDoc(doc)
+	if !strings.Contains(out, "2012-10-17") {
+		t.Error("hclPolicyDoc should output version")
+	}
+	if !strings.Contains(out, "Statement = []") {
+		t.Error("hclPolicyDoc should output empty statement list")
+	}
+}
+
+// TestHclPublicAccessEmptyMap covers hclPublicAccess with an empty map.
+func TestHclPublicAccessEmptyMap(t *testing.T) {
+	gen := &terraformGenerator{}
+	out := gen.hclPublicAccess(map[string]any{})
+	if !strings.Contains(out, "S3 public access block") {
+		t.Error("hclPublicAccess should output comment for empty map")
+	}
+}
+
+// TestHclStringList covers hclStringList formatting.
+func TestHclStringList(t *testing.T) {
+	gen := &terraformGenerator{}
+	out := gen.hclPolicyDoc(map[string]any{
+		"Version": "2012-10-17",
+		"Statement": []map[string]any{
+			{
+				"Effect": "Allow",
+				"Principal": map[string]any{
+					"Service": []string{"ec2.amazonaws.com", "lambda.amazonaws.com"},
+				},
+				"Action": []string{"sts:AssumeRole", "sts:DecodeAuthorizationMessage"},
+			},
+		},
+	})
+	if !strings.Contains(out, "ec2.amazonaws.com") {
+		t.Error("hclStringList should include first service")
+	}
+	if !strings.Contains(out, "lambda.amazonaws.com") {
+		t.Error("hclStringList should include second service")
+	}
+	if !strings.Contains(out, "sts:DecodeAuthorizationMessage") {
+		t.Error("hclStringList should include second action")
 	}
 }

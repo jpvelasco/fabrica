@@ -195,15 +195,52 @@ func (g *terraformGenerator) hclPolicyDoc(v any) string {
 	var sb strings.Builder
 	sb.WriteString("  assume_role_policy = jsonencode({\n")
 	fmt.Fprintf(&sb, "    Version = %q\n", doc["Version"])
-	sb.WriteString("    Statement = [{\n")
-	fmt.Fprintf(&sb, "      Effect    = %q\n", "Allow")
-	sb.WriteString("      Principal = {\n")
-	fmt.Fprintf(&sb, "        Service = %q\n", "ec2.amazonaws.com")
-	sb.WriteString("      }\n")
-	fmt.Fprintf(&sb, "      Action = %q\n", "sts:AssumeRole")
-	sb.WriteString("    }]\n")
+
+	statements, ok := doc["Statement"].([]map[string]any)
+	if !ok || len(statements) == 0 {
+		sb.WriteString("    Statement = []\n")
+		sb.WriteString("  })\n")
+		return sb.String()
+	}
+
+	sb.WriteString("    Statement = [\n")
+	for i, stmt := range statements {
+		sb.WriteString("      {\n")
+		if effect, ok := stmt["Effect"].(string); ok {
+			fmt.Fprintf(&sb, "        Effect = %q\n", effect)
+		}
+		if principal, ok := stmt["Principal"].(map[string]any); ok {
+			sb.WriteString("        Principal = {\n")
+			if service, ok := principal["Service"].(string); ok {
+				fmt.Fprintf(&sb, "          Service = %q\n", service)
+			} else if services, ok := principal["Service"].([]string); ok {
+				fmt.Fprintf(&sb, "          Service = %v\n", hclStringList(services))
+			}
+			sb.WriteString("        }\n")
+		}
+		if action, ok := stmt["Action"].(string); ok {
+			fmt.Fprintf(&sb, "        Action = %q\n", action)
+		} else if actions, ok := stmt["Action"].([]string); ok {
+			fmt.Fprintf(&sb, "        Action = %v\n", hclStringList(actions))
+		}
+		sb.WriteString("      }")
+		if i < len(statements)-1 {
+			sb.WriteString(",")
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("    ]\n")
 	sb.WriteString("  })\n")
 	return sb.String()
+}
+
+// hclStringList formats a string slice as an HCL list literal.
+func hclStringList(s []string) string {
+	var parts []string
+	for _, s := range s {
+		parts = append(parts, fmt.Sprintf("%q", s))
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 // hclPolicyArns converts managed policy ARNs to HCL format.
@@ -316,12 +353,24 @@ func (g *terraformGenerator) hclEncryption(v any) string {
 
 // hclPublicAccess converts S3 public access block to HCL format.
 func (g *terraformGenerator) hclPublicAccess(v any) string {
-	_, ok := v.(map[string]any)
+	pab, ok := v.(map[string]any)
 	if !ok {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString("  # Public access block — all blocked\n")
+	sb.WriteString("  # S3 public access block configuration\n")
+	if val, ok := pab["BlockPublicAcls"].(bool); ok {
+		fmt.Fprintf(&sb, "  block_public_acls = %t\n", val)
+	}
+	if val, ok := pab["BlockPublicPolicy"].(bool); ok {
+		fmt.Fprintf(&sb, "  block_public_policy = %t\n", val)
+	}
+	if val, ok := pab["IgnorePublicAcls"].(bool); ok {
+		fmt.Fprintf(&sb, "  ignore_public_acls = %t\n", val)
+	}
+	if val, ok := pab["RestrictPublicBuckets"].(bool); ok {
+		fmt.Fprintf(&sb, "  restrict_public_buckets = %t\n", val)
+	}
 	return sb.String()
 }
 
