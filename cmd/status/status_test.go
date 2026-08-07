@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/statusreport"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -34,6 +36,43 @@ func (f fakeBackendChecker) StateLockTableExists(_ context.Context, _ string) (b
 	return f.table, f.tableErr
 }
 
+type fakeResourceClient struct {
+	getFunc func(ctx context.Context, r *cloud.Resource) error
+}
+
+func (f *fakeResourceClient) Create(ctx context.Context, r *cloud.Resource) error { return nil }
+func (f *fakeResourceClient) Get(ctx context.Context, r *cloud.Resource) error {
+	return f.getFunc(ctx, r)
+}
+func (f *fakeResourceClient) Update(ctx context.Context, r *cloud.Resource) error { return nil }
+func (f *fakeResourceClient) Delete(ctx context.Context, r *cloud.Resource) error { return nil }
+func (f *fakeResourceClient) List(ctx context.Context, typeName string) ([]cloud.Resource, error) {
+	return nil, nil
+}
+
+type fakeProvider struct {
+	backend   cloud.StateBackendChecker
+	resources *fakeResourceClient
+}
+
+func (f *fakeProvider) Name() string { return "fake" }
+func (f *fakeProvider) Identity(ctx context.Context) (string, string, string, error) {
+	return "123456789012", "", "us-east-1", nil
+}
+func (f *fakeProvider) Resources() cloud.ResourceClient { return f.resources }
+func (f *fakeProvider) StateBucketExists(ctx context.Context, bucket string) (bool, error) {
+	if f.backend == nil {
+		return false, nil
+	}
+	return f.backend.StateBucketExists(ctx, bucket)
+}
+func (f *fakeProvider) StateLockTableExists(ctx context.Context, table string) (bool, error) {
+	if f.backend == nil {
+		return false, nil
+	}
+	return f.backend.StateLockTableExists(ctx, table)
+}
+
 func TestRunEmptyState(t *testing.T) {
 	out := &bytes.Buffer{}
 	c := command{
@@ -54,11 +93,14 @@ func TestRunEmptyState(t *testing.T) {
 
 func TestRunEmptyStateBackendReady(t *testing.T) {
 	out := &bytes.Buffer{}
+	provider := &fakeProvider{
+		backend:   fakeBackendChecker{bucket: true, table: true},
+		resources: &fakeResourceClient{},
+	}
 	c := command{
-		runtime:   globals.Runtime{Config: configWithBackend("b", "t")},
+		runtime:   globals.Runtime{Config: configWithBackend("b", "t"), Provider: provider},
 		out:       out,
 		readState: func() (*fabricastate.State, error) { return fabricastate.NewState("123", "us-west-2"), nil },
-		backend:   fakeBackendChecker{bucket: true, table: true},
 	}
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -127,7 +169,7 @@ func TestRunJSONShape(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	var report StatusReport
+	var report statusreport.StatusReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatalf("unmarshal: %v\n%s", err, out.String())
 	}
@@ -145,14 +187,19 @@ func TestRunProbeReachable(t *testing.T) {
 		{TypeName: "AWS::EC2::Instance", Identifier: "i-abc"},
 	})
 	out := &bytes.Buffer{}
+	provider := &fakeProvider{
+		resources: &fakeResourceClient{
+			getFunc: func(ctx context.Context, r *cloud.Resource) error {
+				r.ActualState = []byte(`{"State":{"Name":"running"},"PrivateIpAddress":"10.0.0.5"}`)
+				return nil
+			},
+		},
+	}
 	c := command{
+		runtime:   globals.Runtime{Provider: provider},
 		out:       out,
 		probe:     true,
 		readState: func() (*fabricastate.State, error) { return st, nil },
-		getResource: func(ctx context.Context, r *cloud.Resource) error {
-			r.ActualState = []byte(`{"State":{"Name":"running"},"PrivateIpAddress":"10.0.0.5"}`)
-			return nil
-		},
 		probeTCP: func(address string) bool {
 			if address != "10.0.0.5:1666" {
 				t.Errorf("probe address = %q, want 10.0.0.5:1666", address)
@@ -174,15 +221,20 @@ func TestRunProbeUnreachable(t *testing.T) {
 		{TypeName: "AWS::EC2::Instance", Identifier: "i-h"},
 	})
 	out := &bytes.Buffer{}
+	provider := &fakeProvider{
+		resources: &fakeResourceClient{
+			getFunc: func(ctx context.Context, r *cloud.Resource) error {
+				r.ActualState = []byte(`{"State":{"Name":"running"},"PrivateIpAddress":"10.0.0.9"}`)
+				return nil
+			},
+		},
+	}
 	c := command{
+		runtime:   globals.Runtime{Provider: provider},
 		out:       out,
 		probe:     true,
 		readState: func() (*fabricastate.State, error) { return st, nil },
-		getResource: func(ctx context.Context, r *cloud.Resource) error {
-			r.ActualState = []byte(`{"State":{"Name":"running"},"PrivateIpAddress":"10.0.0.9"}`)
-			return nil
-		},
-		probeTCP: func(address string) bool { return false },
+		probeTCP:  func(address string) bool { return false },
 	}
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -199,15 +251,20 @@ func TestRunProbeOffByDefault(t *testing.T) {
 	})
 	out := &bytes.Buffer{}
 	probed := false
+	provider := &fakeProvider{
+		resources: &fakeResourceClient{
+			getFunc: func(ctx context.Context, r *cloud.Resource) error {
+				r.ActualState = []byte(`{"State":{"Name":"running"},"PrivateIpAddress":"10.0.0.5"}`)
+				return nil
+			},
+		},
+	}
 	c := command{
+		runtime:   globals.Runtime{Provider: provider},
 		out:       out,
 		probe:     false,
 		readState: func() (*fabricastate.State, error) { return st, nil },
-		getResource: func(ctx context.Context, r *cloud.Resource) error {
-			r.ActualState = []byte(`{"State":{"Name":"running"},"PrivateIpAddress":"10.0.0.5"}`)
-			return nil
-		},
-		probeTCP: func(address string) bool { probed = true; return true },
+		probeTCP:  func(address string) bool { probed = true; return true },
 	}
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -224,11 +281,14 @@ func TestRunBackendHealth(t *testing.T) {
 	st := fabricastate.NewState("123", "us-west-2")
 	cfg := configWithBackend("my-bucket", "my-table")
 	out := &bytes.Buffer{}
+	provider := &fakeProvider{
+		backend:   fakeBackendChecker{bucket: true, table: false},
+		resources: &fakeResourceClient{},
+	}
 	c := command{
-		runtime:   globals.Runtime{Config: cfg},
+		runtime:   globals.Runtime{Config: cfg, Provider: provider},
 		out:       out,
 		readState: func() (*fabricastate.State, error) { return st, nil },
-		backend:   fakeBackendChecker{bucket: true, table: false},
 	}
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -248,12 +308,17 @@ func TestRunGetResourceFailureDegrades(t *testing.T) {
 		{TypeName: "AWS::EC2::Instance", Identifier: "i-abc"},
 	})
 	out := &bytes.Buffer{}
+	provider := &fakeProvider{
+		resources: &fakeResourceClient{
+			getFunc: func(ctx context.Context, r *cloud.Resource) error {
+				return errors.New("boom")
+			},
+		},
+	}
 	c := command{
+		runtime:   globals.Runtime{Provider: provider},
 		out:       out,
 		readState: func() (*fabricastate.State, error) { return st, nil },
-		getResource: func(ctx context.Context, r *cloud.Resource) error {
-			return errBoom
-		},
 	}
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run should degrade gracefully, got: %v", err)
@@ -290,15 +355,19 @@ func TestRunProbeSkippedNoAddress(t *testing.T) {
 		{TypeName: "AWS::EC2::Instance", Identifier: "i-abc"},
 	})
 	out := &bytes.Buffer{}
+	provider := &fakeProvider{
+		resources: &fakeResourceClient{
+			getFunc: func(ctx context.Context, r *cloud.Resource) error {
+				r.ActualState = []byte(`{"State":{"Name":"pending"}}`)
+				return nil
+			},
+		},
+	}
 	c := command{
+		runtime:   globals.Runtime{Provider: provider},
 		out:       out,
 		probe:     true,
 		readState: func() (*fabricastate.State, error) { return st, nil },
-		getResource: func(ctx context.Context, r *cloud.Resource) error {
-			// No PrivateIpAddress → probe cannot reach the instance.
-			r.ActualState = []byte(`{"State":{"Name":"pending"}}`)
-			return nil
-		},
 		probeTCP: func(address string) bool {
 			t.Errorf("probeTCP must not be dialed without an address")
 			return false
@@ -315,15 +384,9 @@ func TestRunProbeSkippedNoAddress(t *testing.T) {
 func TestRunReadStateError(t *testing.T) {
 	c := command{
 		out:       &bytes.Buffer{},
-		readState: func() (*fabricastate.State, error) { return nil, errBoom },
+		readState: func() (*fabricastate.State, error) { return nil, errors.New("boom") },
 	}
 	if err := c.run(context.Background()); err == nil {
 		t.Fatal("expected error to propagate")
 	}
 }
-
-var errBoom = errBoomType("boom")
-
-type errBoomType string
-
-func (e errBoomType) Error() string { return string(e) }

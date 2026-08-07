@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/doctorchecks"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
@@ -43,13 +44,20 @@ func TestCheckCreds(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := checker{runtime: globals.Runtime{Provider: tt.provider}}
-			d := r.checkCreds(context.Background())
-			if d.status != tt.wantStatus {
-				t.Errorf("status = %q, want %q", d.status, tt.wantStatus)
+			rt := globals.Runtime{Provider: tt.provider}
+			checks := doctorchecks.RunChecks(context.Background(), rt, nil)
+			var d doctorchecks.DoctorCheck
+			for _, c := range checks {
+				if c.Name == "AWS credentials" {
+					d = c
+					break
+				}
 			}
-			if !strings.Contains(d.message, tt.wantMsg) {
-				t.Errorf("message = %q, want substring %q", d.message, tt.wantMsg)
+			if d.Status != tt.wantStatus {
+				t.Errorf("status = %q, want %q", d.Status, tt.wantStatus)
+			}
+			if !strings.Contains(d.Message, tt.wantMsg) {
+				t.Errorf("message = %q, want substring %q", d.Message, tt.wantMsg)
 			}
 		})
 	}
@@ -96,12 +104,20 @@ func TestCheckBucketWarnings(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := checker{runtime: globals.Runtime{Config: tt.cfg}, backend: tt.backend}.checkBucket(context.Background())
-			if d.status != "warning" {
-				t.Errorf("status = %q, want warning", d.status)
+			rt := globals.Runtime{Config: tt.cfg}
+			checks := doctorchecks.RunChecks(context.Background(), rt, tt.backend)
+			var d doctorchecks.DoctorCheck
+			for _, c := range checks {
+				if c.Name == "S3 state bucket" {
+					d = c
+					break
+				}
 			}
-			if !strings.Contains(d.message, tt.wantMsg) {
-				t.Errorf("message = %q, want substring %q", d.message, tt.wantMsg)
+			if d.Status != "warning" {
+				t.Errorf("status = %q, want warning", d.Status)
+			}
+			if !strings.Contains(d.Message, tt.wantMsg) {
+				t.Errorf("message = %q, want substring %q", d.Message, tt.wantMsg)
 			}
 		})
 	}
@@ -131,27 +147,22 @@ func TestCheckTableWarningsAndErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := checker{runtime: globals.Runtime{Config: tt.cfg}, backend: tt.backend}.checkTable(context.Background())
-			if d.status != tt.wantStatus {
-				t.Errorf("status = %q, want %q", d.status, tt.wantStatus)
+			rt := globals.Runtime{Config: tt.cfg}
+			checks := doctorchecks.RunChecks(context.Background(), rt, tt.backend)
+			var d doctorchecks.DoctorCheck
+			for _, c := range checks {
+				if c.Name == "DynamoDB lock table" {
+					d = c
+					break
+				}
 			}
-			if !strings.Contains(d.message, tt.wantMsg) {
-				t.Errorf("message = %q, want substring %q", d.message, tt.wantMsg)
+			if d.Status != tt.wantStatus {
+				t.Errorf("status = %q, want %q", d.Status, tt.wantStatus)
+			}
+			if !strings.Contains(d.Message, tt.wantMsg) {
+				t.Errorf("message = %q, want substring %q", d.Message, tt.wantMsg)
 			}
 		})
-	}
-}
-
-func TestStateBackendWarning(t *testing.T) {
-	d := stateBackendWarning("Thing")
-	if d.name != "Thing" {
-		t.Errorf("name = %q, want Thing", d.name)
-	}
-	if d.status != "warning" {
-		t.Errorf("status = %q, want warning", d.status)
-	}
-	if !strings.Contains(d.message, "run fabrica setup") {
-		t.Errorf("message = %q, want setup hint", d.message)
 	}
 }
 
@@ -161,25 +172,25 @@ func TestCheckerRun(t *testing.T) {
 	cfg.State.Bucket = "b"
 	cfg.State.Table = "t"
 
-	checks := checker{
-		runtime: globals.Runtime{Config: cfg, Provider: &testutil.TestProvider{}},
-		backend: &fakeStateBackendChecker{bucketExists: true, tableExists: true},
-	}.run(context.Background())
+	checks := doctorchecks.RunChecks(context.Background(),
+		globals.Runtime{Config: cfg, Provider: &testutil.TestProvider{}},
+		&fakeStateBackendChecker{bucketExists: true, tableExists: true},
+	)
 
 	if len(checks) != 6 {
 		t.Fatalf("got %d checks, want 6", len(checks))
 	}
 	for _, d := range checks {
-		if d.status != "ok" {
-			t.Errorf("check %q status = %q, want ok", d.name, d.status)
+		if d.Status != "ok" {
+			t.Errorf("check %q status = %q, want ok", d.Name, d.Status)
 		}
 	}
 }
 
 func TestJSONDiagnostics(t *testing.T) {
-	checks := []diagnostic{
-		{"Go version", "ok", "go1.25"},
-		{"Region", "warning", "not set"},
+	checks := []doctorchecks.DoctorCheck{
+		{Name: "Go version", Status: "ok", Message: "go1.25"},
+		{Name: "Region", Status: "warning", Message: "not set"},
 	}
 	out := jsonDiagnostics(checks)
 	if len(out) != 2 {
@@ -257,4 +268,23 @@ func TestCommandRunJSON(t *testing.T) {
 	if len(parsed) != 6 {
 		t.Fatalf("got %d diagnostics, want 6", len(parsed))
 	}
+}
+
+type fakeStateBackendChecker struct {
+	bucket       string
+	table        string
+	bucketExists bool
+	tableExists  bool
+	bucketErr    error
+	tableErr     error
+}
+
+func (f *fakeStateBackendChecker) StateBucketExists(ctx context.Context, bucket string) (bool, error) {
+	f.bucket = bucket
+	return f.bucketExists, f.bucketErr
+}
+
+func (f *fakeStateBackendChecker) StateLockTableExists(ctx context.Context, table string) (bool, error) {
+	f.table = table
+	return f.tableExists, f.tableErr
 }

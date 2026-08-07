@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/statusreport"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/cmd/status"
 	"github.com/spf13/cobra"
@@ -45,7 +46,7 @@ func TestStatusCobraJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var report status.StatusReport
+	var report statusreport.StatusReport
 	if err := json.Unmarshal([]byte(got), &report); err != nil {
 		t.Fatalf("invalid JSON: %v\noutput: %s", err, got)
 	}
