@@ -501,23 +501,23 @@ func (g *terraformGenerator) addOutputHCL(sb *strings.Builder, res ExportResourc
 	switch res.TypeName {
 	case "AWS::EC2::Instance":
 		outputName = g.tfResourceName(res.LogicalID) + "_instance_id"
-		value = fmt.Sprintf("${%s.%s.id}", g.tfResourceType(res.TypeName), g.tfResourceName(res.LogicalID))
+		value = fmt.Sprintf("%s.%s.id", g.tfResourceType(res.TypeName), g.tfResourceName(res.LogicalID))
 		desc = fmt.Sprintf("%s instance ID", moduleName)
 	case "AWS::EC2::SecurityGroup":
 		outputName = g.tfResourceName(res.LogicalID) + "_id"
-		value = fmt.Sprintf("${%s.%s.id}", g.tfResourceType(res.TypeName), g.tfResourceName(res.LogicalID))
+		value = fmt.Sprintf("%s.%s.id", g.tfResourceType(res.TypeName), g.tfResourceName(res.LogicalID))
 		desc = fmt.Sprintf("%s security group ID", moduleName)
 	case "AWS::S3::Bucket":
 		outputName = "state_bucket_name"
-		value = "${aws_s3_bucket.fabrica_state_bucket.id}"
+		value = "aws_s3_bucket.fabrica_state_bucket.id"
 		desc = "Fabrica state S3 bucket name"
 	case "AWS::DynamoDB::Table":
 		outputName = "state_lock_table_name"
-		value = "${aws_dynamodb_table.fabrica_state_lock_table.id}"
+		value = "aws_dynamodb_table.fabrica_state_lock_table.id"
 		desc = "Fabrica state lock DynamoDB table name"
 	case "AWS::IAM::Role":
 		outputName = g.tfResourceName(res.LogicalID) + "_arn"
-		value = fmt.Sprintf("${%s.%s.arn}", g.tfResourceType(res.TypeName), g.tfResourceName(res.LogicalID))
+		value = fmt.Sprintf("%s.%s.arn", g.tfResourceType(res.TypeName), g.tfResourceName(res.LogicalID))
 		desc = fmt.Sprintf("%s IAM role ARN", moduleName)
 	default:
 		return

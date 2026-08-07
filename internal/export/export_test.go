@@ -882,8 +882,10 @@ func TestVolumeSizeNotLeaked(t *testing.T) {
 }
 
 // TestTerraformOutputReferences verifies that Terraform output references include
-// the resource type prefix (e.g., ${aws_instance.horde_instance_i.id}).
-// Regression test for: outputs used ${horde_instance_i.id} without resource type.
+// the resource type prefix (e.g., aws_instance.horde_instance_i.id) without
+// HCL1-style ${} interpolation.
+// Regression test for: outputs used ${horde_instance_i.id} without resource type,
+// and ${resource.attr} which is invalid HCL2.
 func TestTerraformOutputReferences(t *testing.T) {
 	st := testStateWithHorde()
 	cfg := testConfigWithHorde()
@@ -905,6 +907,18 @@ func TestTerraformOutputReferences(t *testing.T) {
 	// IAM role output should reference aws_iam_role.<name>.arn
 	if !strings.Contains(output, "aws_iam_role.") {
 		t.Error("Terraform output should reference aws_iam_role resource type")
+	}
+	// State bucket output should reference aws_s3_bucket.<name>.id
+	if !strings.Contains(output, "aws_s3_bucket.") {
+		t.Error("Terraform output should reference aws_s3_bucket resource type")
+	}
+	// Lock table output should reference aws_dynamodb_table.<name>.id
+	if !strings.Contains(output, "aws_dynamodb_table.") {
+		t.Error("Terraform output should reference aws_dynamodb_table resource type")
+	}
+	// Output values must NOT use HCL1 ${} interpolation — HCL2 uses bare references
+	if strings.Contains(output, "${") {
+		t.Error("Terraform output must not contain ${} interpolation syntax (invalid HCL2)")
 	}
 }
 
