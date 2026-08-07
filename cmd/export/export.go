@@ -58,7 +58,7 @@ No live AWS calls are required — all data comes from local state.`,
 
 	cmd.Flags().StringVar(&format, "format", "", "Export format: cloudformation or terraform (required)")
 	cmd.Flags().StringVar(&output, "output", "", "Output file path (default: stdout)")
-	cmd.MarkFlagRequired("format") //nolint:errcheck
+	cmd.MarkFlagRequired("format") //nolint:errcheck //nosec G104: Cobra flag validation error not actionable at init time
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		rt, err := runtimeSource()
@@ -102,7 +102,7 @@ func (c *command) run() error {
 
 	// Write output.
 	if c.output != "" {
-		if err := os.WriteFile(c.output, data, 0644); err != nil {
+		if err := os.WriteFile(c.output, data, 0600); err != nil {
 			return fmt.Errorf("writing output file %s: %w", c.output, err)
 		}
 		fmt.Fprintf(c.out, "Exported %s template to %s\n", c.format, c.output)
