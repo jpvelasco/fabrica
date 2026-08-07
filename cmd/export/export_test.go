@@ -50,11 +50,12 @@ func testStateWithHorde() *state.State {
 
 func newTestCommand(out *bytes.Buffer, format, outputPath string, st *state.State) command {
 	return command{
-		format:    format,
-		output:    outputPath,
-		cfg:       config.Defaults(),
-		out:       out,
-		readState: func() (*state.State, error) { return st, nil },
+		format:          format,
+		output:          outputPath,
+		cfg:             config.Defaults(),
+		out:             out,
+		readState:       func() (*state.State, error) { return st, nil },
+		stateFileExists: func() bool { return true },
 	}
 }
 
@@ -111,6 +112,7 @@ func TestRunReadStateError(t *testing.T) {
 		readState: func() (*state.State, error) {
 			return nil, errors.New("state file missing")
 		},
+		stateFileExists: func() bool { return true },
 	}
 	err := c.run()
 	if err == nil {
@@ -171,10 +173,29 @@ func TestRunNilState(t *testing.T) {
 		readState: func() (*state.State, error) {
 			return nil, nil
 		},
+		stateFileExists: func() bool { return true },
 	}
 	err := c.run()
 	if err == nil {
 		t.Fatal("expected error for nil state")
+	}
+}
+
+func TestRunNoStateFile(t *testing.T) {
+	var out bytes.Buffer
+	c := command{
+		format:          "cloudformation",
+		cfg:             config.Defaults(),
+		out:             &out,
+		stateFileExists: func() bool { return false },
+	}
+	err := c.run()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s := out.String()
+	if !strings.Contains(s, "no state file found") {
+		t.Errorf("expected warning about no state file, got: %s", s)
 	}
 }
 
