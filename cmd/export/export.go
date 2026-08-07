@@ -23,11 +23,12 @@ import (
 )
 
 type command struct {
-	format    string
-	output    string
-	cfg       *config.Config
-	out       io.Writer
-	readState func() (*fabricastate.State, error)
+	format          string
+	output          string
+	cfg             *config.Config
+	out             io.Writer
+	readState       func() (*fabricastate.State, error)
+	stateFileExists func() bool
 }
 
 // New returns the "fabrica export" command.
@@ -71,6 +72,10 @@ No live AWS calls are required — all data comes from local state.`,
 			cfg:       rt.Config,
 			out:       out,
 			readState: func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+			stateFileExists: func() bool {
+				_, err := os.Stat(".fabrica/state.json")
+				return err == nil
+			},
 		}
 		return c.run()
 	}
@@ -82,6 +87,12 @@ func (c *command) run() error {
 	// Validate format.
 	if !fabricaexport.ValidFormat(c.format) {
 		return fmt.Errorf("unsupported export format %q — supported formats: cloudformation, terraform", c.format)
+	}
+
+	// Check state file exists — no state file means nothing to export.
+	if !c.stateFileExists() {
+		fmt.Fprintln(c.out, "Warning: no modules to export — no state file found (.fabrica/state.json).")
+		return nil
 	}
 
 	// Read state.

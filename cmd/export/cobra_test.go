@@ -181,9 +181,7 @@ func TestExportCobraEmptyState(t *testing.T) {
 }
 
 // TestExportCobraNoStateFile verifies that when no state file exists, the command
-// still exports the state backend (resolved from config account/region). With
-// default config (empty account, default region), ReadStateOrNew returns a fresh
-// state with region set, so the state backend module is built and exported.
+// warns and exits 0 instead of exporting anything.
 func TestExportCobraNoStateFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -192,9 +190,7 @@ func TestExportCobraNoStateFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// State backend is still exported from config-derived names even without a state file
-	assert.Contains(t, got, "FabricaStateBucket")
-	assert.Contains(t, got, "FabricaStateLockTable")
+	assert.Contains(t, got, "no state file found")
 }
 
 // TestExportCobraRuntimeError verifies runtimeSource errors surface.
