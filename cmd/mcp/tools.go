@@ -76,20 +76,46 @@ func registerTools(s *mcp.Server, rt globals.Runtime) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "fabrica_version",
 		Description: "Show Fabrica version, commit, Go runtime, and platform",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, VersionResult, error) {
-		return nil, VersionResult{
-			Version: fabricav.Version,
-			Commit:  fabricav.Commit,
-			Go:      runtime.Version(),
-			OS:      runtime.GOOS,
-			Arch:    runtime.GOARCH,
-		}, nil
-	})
+	}, handleVersion)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "fabrica_doctor",
 		Description: "Check environment health: Go, credentials, region, state backend",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, DoctorResult, error) {
+	}, handleDoctor(rt))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "fabrica_status",
+		Description: "Show aggregate status of all provisioned modules and state backend",
+	}, handleStatus(rt))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "fabrica_drift",
+		Description: "Detect drift between recorded state and live AWS resources",
+	}, handleDrift(rt))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "fabrica_cost_report",
+		Description: "Show estimated monthly cost broken down by module (offline, no AWS calls)",
+	}, handleCostReport(rt))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "fabrica_config_show",
+		Description: "Show current configuration with sensitive fields redacted",
+	}, handleConfigShow(rt))
+}
+
+func handleVersion(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, VersionResult, error) {
+	return nil, VersionResult{
+		Version: fabricav.Version,
+		Commit:  fabricav.Commit,
+		Go:      runtime.Version(),
+		OS:      runtime.GOOS,
+		Arch:    runtime.GOARCH,
+	}, nil
+}
+
+func handleDoctor(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, DoctorResult, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, DoctorResult, error) {
 		backend, _ := rt.Provider.(cloud.StateBackendChecker)
 		checks := doctorchecks.RunChecks(ctx, rt, backend)
 
@@ -114,12 +140,11 @@ func registerTools(s *mcp.Server, rt globals.Runtime) {
 			Checks:  dc,
 			Healthy: healthy,
 		}, nil
-	})
+	}
+}
 
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "fabrica_status",
-		Description: "Show aggregate status of all provisioned modules and state backend",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, StatusResult, error) {
+func handleStatus(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, StatusResult, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, StatusResult, error) {
 		st, err := fabricastate.ReadStateOrNew(rt.Config.Cloud.AWS.AccountID, rt.Config.Cloud.AWS.Region)
 		if err != nil {
 			return nil, StatusResult{}, fmt.Errorf("reading state: %w", err)
@@ -132,12 +157,11 @@ func registerTools(s *mcp.Server, rt globals.Runtime) {
 			Modules: report.Modules,
 			Summary: report.Summary,
 		}, nil
-	})
+	}
+}
 
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "fabrica_drift",
-		Description: "Detect drift between recorded state and live AWS resources",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, DriftResult, error) {
+func handleDrift(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, DriftResult, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, DriftResult, error) {
 		if rt.Provider == nil {
 			return nil, DriftResult{}, fmt.Errorf("provider not available — check your AWS credentials")
 		}
@@ -169,12 +193,11 @@ func registerTools(s *mcp.Server, rt globals.Runtime) {
 
 		report := engine.Run(ctx)
 		return nil, DriftResult{Report: report}, nil
-	})
+	}
+}
 
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "fabrica_cost_report",
-		Description: "Show estimated monthly cost broken down by module (offline, no AWS calls)",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, CostReportResult, error) {
+func handleCostReport(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, CostReportResult, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, CostReportResult, error) {
 		st, err := fabricastate.ReadStateOrNew(rt.Config.Cloud.AWS.AccountID, rt.Config.Cloud.AWS.Region)
 		if err != nil {
 			return nil, CostReportResult{}, fmt.Errorf("reading state: %w", err)
@@ -197,12 +220,11 @@ func registerTools(s *mcp.Server, rt globals.Runtime) {
 			Confidence: b.Confidence.String(),
 			Modules:    modules,
 		}, nil
-	})
+	}
+}
 
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "fabrica_config_show",
-		Description: "Show current configuration with sensitive fields redacted",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, ConfigShowResult, error) {
+func handleConfigShow(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, ConfigShowResult, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, ConfigShowResult, error) {
 		yamlBytes, err := rt.Config.YAML()
 		if err != nil {
 			return nil, ConfigShowResult{}, fmt.Errorf("reading config: %w", err)
@@ -219,7 +241,7 @@ func registerTools(s *mcp.Server, rt globals.Runtime) {
 			Config:     raw,
 			ConfigPath: rt.ConfigFile(),
 		}, nil
-	})
+	}
 }
 
 // redactMap recursively walks a map and redacts any key whose name ends with

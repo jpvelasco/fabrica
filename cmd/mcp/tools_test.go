@@ -1,9 +1,13 @@
 package mcp
 
 import (
+	"context"
+	"errors"
+	"os"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -28,6 +32,245 @@ func newTestRuntime() globals.Runtime {
 }
 
 // — Tool registration —
+
+func TestNew_Command(t *testing.T) {
+	cmd := New(func() (globals.Runtime, error) {
+		return newTestRuntime(), nil
+	}, func() globals.Options {
+		return globals.Options{}
+	})
+
+	if cmd.Use != "mcp" {
+		t.Errorf("Use = %q, want mcp", cmd.Use)
+	}
+	if cmd.Short != "Run the Fabrica MCP server (stdio transport)" {
+		t.Errorf("Short = %q, want 'Run the Fabrica MCP server (stdio transport)'", cmd.Short)
+	}
+	if cmd.Long == "" {
+		t.Error("Long should not be empty")
+	}
+}
+
+func TestNew_RuntimeError(t *testing.T) {
+	wantErr := errors.New("no provider")
+	cmd := New(func() (globals.Runtime, error) {
+		return globals.Runtime{}, wantErr
+	}, func() globals.Options {
+		return globals.Options{}
+	})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected error from bad runtime source")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Errorf("error = %v, want %v", err, wantErr)
+	}
+}
+
+// — Handler unit tests —
+
+func TestHandleDoctor_FailCheck(t *testing.T) {
+	rt := globals.Runtime{
+		Config: &config.Config{
+			Cloud: config.Cloud{
+				Provider: "aws",
+				AWS: config.AWS{
+					AccountID: "123456789012",
+					Region:    "",
+				},
+			},
+		},
+	}
+	h := handleDoctor(rt)
+	_, result, err := h(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// No provider → warnings only, so healthy is true (warnings don't flip it).
+	if !result.Healthy {
+		t.Error("expected healthy when only warnings present")
+	}
+	if len(result.Checks) == 0 {
+		t.Error("expected at least one check")
+	}
+}
+
+func TestHandleDoctor_HealthyPath(t *testing.T) {
+	rt := newTestRuntime()
+	h := handleDoctor(rt)
+	_, result, err := h(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Healthy {
+		t.Error("expected healthy")
+	}
+}
+
+func TestHandleDoctor_Unhealthy(t *testing.T) {
+	// A failing backend check produces status "fail" which flips healthy to false.
+	fakeBackend := &fakeDoctorBackend{bucketErr: true}
+	rt := newTestRuntime()
+	rt.Provider = fakeBackend
+	h := handleDoctor(rt)
+	_, result, err := h(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Healthy {
+		t.Error("expected unhealthy when backend check fails")
+	}
+}
+
+func TestHandleStatus(t *testing.T) {
+	rt := newTestRuntime()
+	h := handleStatus(rt)
+	_, result, err := h(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Summary.ModuleCount != 0 {
+		t.Errorf("expected 0 modules, got %d", result.Summary.ModuleCount)
+	}
+}
+
+func TestHandleStatus_BadStateFile(t *testing.T) {
+	// Create a bad state file to trigger the error path.
+	if err := os.MkdirAll(".fabrica", 0755); err != nil {
+		t.Skipf("cannot create .fabrica: %v", err)
+	}
+	f, err := os.Create(".fabrica/state.json")
+	if err != nil {
+		t.Skipf("cannot create state file: %v", err)
+	}
+	_, _ = f.WriteString("not json")
+	f.Close()
+	defer os.Remove(".fabrica/state.json")
+	defer os.Remove(".fabrica")
+
+	rt := newTestRuntime()
+	h := handleStatus(rt)
+	_, _, err = h(context.Background(), nil, nil)
+	if err == nil {
+		t.Fatal("expected error from bad state file")
+	}
+}
+
+func TestHandleDrift_NoProvider(t *testing.T) {
+	rt := newTestRuntime()
+	h := handleDrift(rt)
+	_, _, err := h(context.Background(), nil, nil)
+	if err == nil {
+		t.Fatal("expected error when no provider")
+	}
+}
+
+func TestHandleDrift_WithProvider(t *testing.T) {
+	rt := newTestRuntime()
+	rt.Provider = &fakeDriftProvider{}
+	h := handleDrift(rt)
+	_, result, err := h(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Report == nil {
+		t.Fatal("expected non-nil drift report")
+	}
+}
+
+func TestHandleDrift_BadStateFile(t *testing.T) {
+	if err := os.MkdirAll(".fabrica", 0755); err != nil {
+		t.Skipf("cannot create .fabrica: %v", err)
+	}
+	f, err := os.Create(".fabrica/state.json")
+	if err != nil {
+		t.Skipf("cannot create state file: %v", err)
+	}
+	_, _ = f.WriteString("not json")
+	f.Close()
+	defer os.Remove(".fabrica/state.json")
+	defer os.Remove(".fabrica")
+
+	rt := newTestRuntime()
+	rt.Provider = &fakeDriftProvider{}
+	h := handleDrift(rt)
+	_, _, err = h(context.Background(), nil, nil)
+	if err == nil {
+		t.Fatal("expected error from bad state file")
+	}
+}
+
+func TestHandleCostReport(t *testing.T) {
+	rt := newTestRuntime()
+	h := handleCostReport(rt)
+	_, result, err := h(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Total != 0 {
+		t.Errorf("expected $0 total, got %f", result.Total)
+	}
+}
+
+func TestHandleCostReport_BadStateFile(t *testing.T) {
+	if err := os.MkdirAll(".fabrica", 0755); err != nil {
+		t.Skipf("cannot create .fabrica: %v", err)
+	}
+	f, err := os.Create(".fabrica/state.json")
+	if err != nil {
+		t.Skipf("cannot create state file: %v", err)
+	}
+	_, _ = f.WriteString("not json")
+	f.Close()
+	defer os.Remove(".fabrica/state.json")
+	defer os.Remove(".fabrica")
+
+	rt := newTestRuntime()
+	h := handleCostReport(rt)
+	_, _, err = h(context.Background(), nil, nil)
+	if err == nil {
+		t.Fatal("expected error from bad state file")
+	}
+}
+
+func TestHandleCostReport_WithModules(t *testing.T) {
+	// Write a state file with a perforce module so the cost loop body runs.
+	if err := os.MkdirAll(".fabrica", 0755); err != nil {
+		t.Skipf("cannot create .fabrica: %v", err)
+	}
+	stateJSON := `{"account":"123456789012","region":"us-west-2","modules":[{"name":"perforce","status":"ready","resources":[{"typeName":"AWS::EC2::Instance","identifier":"i-abc"}]}]}`
+	if err := os.WriteFile(".fabrica/state.json", []byte(stateJSON), 0644); err != nil {
+		t.Skipf("cannot write state: %v", err)
+	}
+	defer os.Remove(".fabrica/state.json")
+	defer os.Remove(".fabrica")
+
+	rt := newTestRuntime()
+	h := handleCostReport(rt)
+	_, result, err := h(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Modules) != 1 {
+		t.Errorf("expected 1 module, got %d", len(result.Modules))
+	}
+	if result.Total <= 0 {
+		t.Errorf("expected positive total, got %f", result.Total)
+	}
+}
+
+func TestHandleConfigShow(t *testing.T) {
+	rt := newTestRuntime()
+	h := handleConfigShow(rt)
+	_, result, err := h(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ConfigPath != "fabrica.yaml" {
+		t.Errorf("configPath = %q, want fabrica.yaml", result.ConfigPath)
+	}
+}
 
 func TestRegisterTools_CreatesAllTools(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
@@ -260,4 +503,106 @@ func TestRedactKeys_List(t *testing.T) {
 			t.Errorf("redactKeys[%d] = %q, want %q", i, redactKeys[i], want)
 		}
 	}
+}
+
+// — Fakes —
+
+type fakeDoctorBackend struct {
+	bucketErr bool
+	tableErr  bool
+}
+
+func (f *fakeDoctorBackend) Name() string {
+	return "aws"
+}
+
+func (f *fakeDoctorBackend) Identity(_ context.Context) (string, string, string, error) {
+	return "123456789012", "", "us-west-2", nil
+}
+
+func (f *fakeDoctorBackend) Resources() cloud.ResourceClient {
+	return nil
+}
+
+func (f *fakeDoctorBackend) StateBucketExists(_ context.Context, _ string) (bool, error) {
+	if f.bucketErr {
+		return false, context.DeadlineExceeded
+	}
+	return true, nil
+}
+
+func (f *fakeDoctorBackend) StateLockTableExists(_ context.Context, _ string) (bool, error) {
+	if f.tableErr {
+		return false, context.DeadlineExceeded
+	}
+	return true, nil
+}
+
+type fakeDriftResourceClient struct{}
+
+func (f *fakeDriftResourceClient) Get(_ context.Context, r *cloud.Resource) error {
+	return nil
+}
+
+func (f *fakeDriftResourceClient) Create(_ context.Context, r *cloud.Resource) error {
+	return nil
+}
+
+func (f *fakeDriftResourceClient) Update(_ context.Context, r *cloud.Resource) error {
+	return nil
+}
+
+func (f *fakeDriftResourceClient) Delete(_ context.Context, r *cloud.Resource) error {
+	return nil
+}
+
+func (f *fakeDriftResourceClient) List(_ context.Context, _ string) ([]cloud.Resource, error) {
+	return nil, nil
+}
+
+type fakeDriftProvider struct{}
+
+func (f *fakeDriftProvider) Name() string {
+	return "aws"
+}
+
+func (f *fakeDriftProvider) Identity(_ context.Context) (string, string, string, error) {
+	return "123456789012", "", "us-west-2", nil
+}
+
+func (f *fakeDriftProvider) Resources() cloud.ResourceClient {
+	return &fakeDriftResourceClient{}
+}
+
+func (f *fakeDriftProvider) StateBucketExists(_ context.Context, _ string) (bool, error) {
+	return true, nil
+}
+
+func (f *fakeDriftProvider) StateLockTableExists(_ context.Context, _ string) (bool, error) {
+	return true, nil
+}
+
+// CodeBuildRunner methods (satisfies cloud.CodeBuildRunner for drift type assertion).
+func (f *fakeDriftProvider) EnsureProject(_ context.Context, _ cloud.CodeBuildProjectSpec) (bool, error) {
+	return false, nil
+}
+
+func (f *fakeDriftProvider) DeleteProject(_ context.Context, _ string) error {
+	return nil
+}
+
+func (f *fakeDriftProvider) ProjectExists(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
+
+func (f *fakeDriftProvider) StartBuild(_ context.Context, _ string, _ map[string]string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeDriftProvider) BuildStatus(_ context.Context, _ string) (cloud.BuildInfo, error) {
+	return cloud.BuildInfo{}, nil
+}
+
+func (f *fakeDriftProvider) BuildLog(_ context.Context, _ string) (string, error) {
+	return "", nil
 }

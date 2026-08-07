@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
@@ -213,6 +214,24 @@ func TestCheckCreds_NoProvider(t *testing.T) {
 	}
 }
 
+func TestCheckCreds_Error(t *testing.T) {
+	prov := &fakeProvider{identityErr: context.DeadlineExceeded}
+	rt := globals.Runtime{Provider: prov}
+	c := checkCreds(context.Background(), rt)
+	if c.Status != "fail" {
+		t.Errorf("status = %q, want fail", c.Status)
+	}
+}
+
+func TestCheckCreds_Ok(t *testing.T) {
+	prov := &fakeProvider{account: "123456789012", arn: "arn:aws:iam::123456789012:user/test", region: "us-east-1"}
+	rt := globals.Runtime{Provider: prov}
+	c := checkCreds(context.Background(), rt)
+	if c.Status != "ok" {
+		t.Errorf("status = %q, want ok", c.Status)
+	}
+}
+
 func TestCheckRegion_Empty(t *testing.T) {
 	rt := globals.Runtime{Config: &config.Config{Cloud: config.Cloud{AWS: config.AWS{}}}}
 	c := checkRegion(rt)
@@ -264,4 +283,23 @@ func (f *fakeBackendChecker) StateLockTableExists(_ context.Context, _ string) (
 		return false, context.DeadlineExceeded
 	}
 	return f.tableExists, nil
+}
+
+type fakeProvider struct {
+	account     string
+	arn         string
+	region      string
+	identityErr error
+}
+
+func (f *fakeProvider) Name() string {
+	return "fake"
+}
+
+func (f *fakeProvider) Identity(_ context.Context) (string, string, string, error) {
+	return f.account, f.arn, f.region, f.identityErr
+}
+
+func (f *fakeProvider) Resources() cloud.ResourceClient {
+	return nil
 }
