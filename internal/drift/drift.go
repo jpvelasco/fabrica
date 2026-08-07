@@ -1,11 +1,15 @@
 // Package drift provides drift detection for Fabrica-managed resources. It
 // compares recorded state (.fabrica/state.json) against live AWS resources and
-// reports whether each resource is in sync, missing, extra, or has attribute
+// reports whether each resource is in sync, missing, or has attribute
 // mismatches.
 //
 // The engine is provider-agnostic: it accepts a state snapshot and provider
 // interfaces (ResourceClient, StateBackendChecker, CodeBuildRunner) and produces
 // a DriftReport. No AWS SDK imports belong here.
+//
+// TODO: Extra (live-not-in-state) detection requires Cloud Control List-based
+// discovery — tagging conventions, VPC scoping, and a separate scan pass.
+// Deferred to a follow-up.
 package drift
 
 import (
@@ -23,7 +27,6 @@ type DriftStatus string
 const (
 	InSync   DriftStatus = "inSync"
 	Missing  DriftStatus = "missing"
-	Extra    DriftStatus = "extra"
 	Mismatch DriftStatus = "mismatch"
 	Error    DriftStatus = "error"
 )
@@ -44,7 +47,6 @@ type DriftReport struct {
 	Checked  int           `json:"checked"`
 	InSync   int           `json:"inSync"`
 	Missing  int           `json:"missing"`
-	Extra    int           `json:"extra"`
 	Mismatch int           `json:"mismatch"`
 	Errors   int           `json:"errors"`
 }
@@ -106,8 +108,6 @@ func (e *Engine) Run(ctx context.Context) *DriftReport {
 				report.InSync++
 			case Missing:
 				report.Missing++
-			case Extra:
-				report.Extra++
 			case Mismatch:
 				report.Mismatch++
 			case Error:

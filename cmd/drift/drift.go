@@ -175,9 +175,6 @@ func (c *command) printSummary(report *drift.DriftReport) {
 	if report.Missing > 0 {
 		fmt.Fprintf(c.out, "  Missing:  %d\n", report.Missing)
 	}
-	if report.Extra > 0 {
-		fmt.Fprintf(c.out, "  Extra:    %d\n", report.Extra)
-	}
 	if report.Mismatch > 0 {
 		fmt.Fprintf(c.out, "  Mismatch: %d\n", report.Mismatch)
 	}
@@ -192,8 +189,6 @@ func statusSymbol(s drift.DriftStatus) string {
 		return "[OK]  "
 	case drift.Missing:
 		return "[FAIL]"
-	case drift.Extra:
-		return "[WARN]"
 	case drift.Mismatch:
 		return "[WARN]"
 	case drift.Error:
