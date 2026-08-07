@@ -186,6 +186,10 @@ Read-only drift detection: compares recorded state (`.fabrica/state.json`) again
 
 Displays the current configuration as clean YAML, including resolved resource names.
 
+#### `fabrica mcp`
+
+Runs the Fabrica MCP (Model Context Protocol) server over stdio transport. Exposes 6 read-only tools for querying Fabrica state: `fabrica_version`, `fabrica_doctor`, `fabrica_status`, `fabrica_drift`, `fabrica_cost_report`, and `fabrica_config_show`. Reuses the same business logic as the CLI — no duplicated AWS paths. Connect an MCP client (Claude, editors, agents) by running this command as a subprocess.
+
 ### Perforce
 
 #### `fabrica perforce create`

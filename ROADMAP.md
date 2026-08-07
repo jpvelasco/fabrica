@@ -133,7 +133,8 @@ gaps) are tracked at the end and do not block Phase 1.
 - Perforce backup follow-ups: scheduled backups, DR rehydrate from S3/orphan volume, attach-role migration for pre-SSM stacks
 - Lore follow-ups: S3-backed store, `lore ami build`, JWT/CA TLS, client helpers
 - DDC multi-region (`region add`), OIDC, production Scylla
-- MCP server wrapping the same business-logic functions
+- ✅ MCP server V1: 6 read-only tools (`fabrica_version`, `fabrica_doctor`, `fabrica_status`, `fabrica_drift`, `fabrica_cost_report`, `fabrica_config_show`) over stdio transport — reuses same business logic as CLI
+- MCP server V2: destructive tools, streaming, resource management
 - Multi-cloud / provider extensibility (GCP/Azure against the existing `cloud.Provider` interface)
 - Export capabilities — `fabrica export --format cloudformation|terraform`
 - Monitoring, alerts, and operational tools

@@ -1,13 +1,10 @@
 package doctor
 
 import (
-	"context"
-	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/jpvelasco/fabrica/cmd/globals"
-	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/cmd/internal/doctorchecks"
 )
 
 func TestStatusSymbol(t *testing.T) {
@@ -89,165 +86,21 @@ func TestFormatDiagnosticSummary(t *testing.T) {
 	}
 }
 
-func TestCheckGo(t *testing.T) {
-	d := checkGo()
-	if d.status != "ok" {
-		t.Errorf("checkGo status = %q, want ok", d.status)
-	}
-	if d.message == "" {
-		t.Error("checkGo message is empty")
-	}
-}
-
-func TestCheckVersion(t *testing.T) {
-	d := checkVersion()
-	if d.status != "ok" {
-		t.Errorf("checkVersion status = %q, want ok", d.status)
-	}
-	if d.message == "" {
-		t.Error("checkVersion message is empty")
-	}
-}
-
-func TestCheckRegion(t *testing.T) {
-	tests := []struct {
-		name        string
-		region      string
-		wantStatus  string
-		wantContain string
-	}{
-		{
-			name:       "region set",
-			region:     "us-east-1",
-			wantStatus: "ok",
-		},
-		{
-			name:       "region empty",
-			region:     "",
-			wantStatus: "warning",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := config.Defaults()
-			cfg.Cloud.AWS.Region = tt.region
-			r := checker{runtime: globals.Runtime{Config: cfg}}
-			d := r.checkRegion()
-			if d.status != tt.wantStatus {
-				t.Errorf("status = %q, want %q", d.status, tt.wantStatus)
-			}
-		})
-	}
-}
-
-func TestDiagnosticStruct(t *testing.T) {
-	d := diagnostic{
-		name:    "test",
-		status:  "ok",
-		message: "all good",
-	}
-
-	if d.name != "test" {
-		t.Errorf("name = %q, want test", d.name)
-	}
-	if d.status != "ok" {
-		t.Errorf("status = %q, want ok", d.status)
-	}
-	if d.message != "all good" {
-		t.Errorf("message = %q, want all good", d.message)
-	}
-}
-
-func TestCheckBucketUsesStateBackendChecker(t *testing.T) {
-	cfg := config.Defaults()
-	cfg.State.Bucket = "state-bucket"
-	backend := &fakeStateBackendChecker{bucketExists: true}
-
-	d := checker{
-		runtime: globals.Runtime{Config: cfg},
-		backend: backend,
-	}.checkBucket(context.Background())
-
-	if d.status != "ok" {
-		t.Fatalf("status = %q, want ok", d.status)
-	}
-	if backend.bucket != "state-bucket" {
-		t.Fatalf("bucket = %q, want state-bucket", backend.bucket)
-	}
-}
-
-func TestCheckTableUsesStateBackendChecker(t *testing.T) {
-	cfg := config.Defaults()
-	cfg.State.Bucket = "state-bucket"
-	cfg.State.Table = "state-locks"
-	backend := &fakeStateBackendChecker{tableExists: true}
-
-	d := checker{
-		runtime: globals.Runtime{Config: cfg},
-		backend: backend,
-	}.checkTable(context.Background())
-
-	if d.status != "ok" {
-		t.Fatalf("status = %q, want ok", d.status)
-	}
-	if backend.table != "state-locks" {
-		t.Fatalf("table = %q, want state-locks", backend.table)
-	}
-}
-
-func TestCheckBucketReportsBackendCheckerErrors(t *testing.T) {
-	cfg := config.Defaults()
-	cfg.State.Bucket = "state-bucket"
-	backend := &fakeStateBackendChecker{bucketErr: fmt.Errorf("boom")}
-
-	d := checker{
-		runtime: globals.Runtime{Config: cfg},
-		backend: backend,
-	}.checkBucket(context.Background())
-
-	if d.status != "fail" {
-		t.Fatalf("status = %q, want fail", d.status)
-	}
-	if !strings.Contains(d.message, "boom") {
-		t.Fatalf("message = %q, want boom", d.message)
-	}
-}
-
-type fakeStateBackendChecker struct {
-	bucket       string
-	table        string
-	bucketExists bool
-	tableExists  bool
-	bucketErr    error
-	tableErr     error
-}
-
-func (f *fakeStateBackendChecker) StateBucketExists(ctx context.Context, bucket string) (bool, error) {
-	f.bucket = bucket
-	return f.bucketExists, f.bucketErr
-}
-
-func (f *fakeStateBackendChecker) StateLockTableExists(ctx context.Context, table string) (bool, error) {
-	f.table = table
-	return f.tableExists, f.tableErr
-}
-
 func TestPrintDiagnostics(t *testing.T) {
 	tests := []struct {
 		name   string
-		checks []diagnostic
+		checks []doctorchecks.DoctorCheck
 	}{
 		{
 			name:   "empty",
-			checks: []diagnostic{},
+			checks: []doctorchecks.DoctorCheck{},
 		},
 		{
 			name: "mixed",
-			checks: []diagnostic{
-				{"Go version", "ok", "1.25.9"},
-				{"AWS credentials", "warning", "no creds"},
-				{"Region", "fail", "missing"},
+			checks: []doctorchecks.DoctorCheck{
+				{Name: "Go version", Status: "ok", Message: "1.25.9"},
+				{Name: "AWS credentials", Status: "warning", Message: "no creds"},
+				{Name: "Region", Status: "fail", Message: "missing"},
 			},
 		},
 	}

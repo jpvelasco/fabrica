@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/doctorchecks"
 	"github.com/jpvelasco/fabrica/internal/cloud"
-	"github.com/jpvelasco/fabrica/internal/config"
-	fabricav "github.com/jpvelasco/fabrica/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -40,12 +38,6 @@ the state backend (S3 bucket and DynamoDB lock table).`,
 	}
 }
 
-type diagnostic struct {
-	name    string
-	status  string
-	message string
-}
-
 type command struct {
 	runtime globals.Runtime
 	backend cloud.StateBackendChecker
@@ -54,10 +46,7 @@ type command struct {
 }
 
 func (c command) run(ctx context.Context) error {
-	checks := checker{
-		runtime: c.runtime,
-		backend: c.backend,
-	}.run(ctx)
+	checks := doctorchecks.RunChecks(ctx, c.runtime, c.backend)
 
 	if c.json {
 		return c.printJSON(checks)
@@ -68,7 +57,7 @@ func (c command) run(ctx context.Context) error {
 	return c.printText(checks)
 }
 
-func (c command) printJSON(checks []diagnostic) error {
+func (c command) printJSON(checks []doctorchecks.DoctorCheck) error {
 	b, err := json.MarshalIndent(jsonDiagnostics(checks), "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding diagnostics: %w", err)
@@ -77,16 +66,16 @@ func (c command) printJSON(checks []diagnostic) error {
 	return nil
 }
 
-func (c command) printText(checks []diagnostic) error {
+func (c command) printText(checks []doctorchecks.DoctorCheck) error {
 	fails, warns := 0, 0
 	for _, d := range checks {
-		switch d.status {
+		switch d.Status {
 		case "fail":
 			fails++
 		case "warning":
 			warns++
 		}
-		fmt.Fprintf(c.out, "  %-6s %-26s %s\n", statusSymbol(d.status), d.name+":", d.message)
+		fmt.Fprintf(c.out, "  %-6s %-26s %s\n", statusSymbol(d.Status), d.Name+":", d.Message)
 	}
 
 	fmt.Fprintln(c.out)
@@ -110,128 +99,16 @@ func (c command) printSummary(fails, warns int) error {
 	return nil
 }
 
-type checker struct {
-	runtime globals.Runtime
-	backend cloud.StateBackendChecker
-}
-
-func (r checker) run(ctx context.Context) []diagnostic {
-	return []diagnostic{
-		checkGo(),
-		checkVersion(),
-		r.checkCreds(ctx),
-		r.checkRegion(),
-		r.checkBucket(ctx),
-		r.checkTable(ctx),
-	}
-}
-
-func jsonDiagnostics(checks []diagnostic) []map[string]string {
+func jsonDiagnostics(checks []doctorchecks.DoctorCheck) []map[string]string {
 	out := make([]map[string]string, len(checks))
 	for i, d := range checks {
 		out[i] = map[string]string{
-			"name":    d.name,
-			"status":  d.status,
-			"message": d.message,
+			"name":    d.Name,
+			"status":  d.Status,
+			"message": d.Message,
 		}
 	}
 	return out
-}
-
-func checkGo() diagnostic {
-	msg := runtime.Version()
-	return diagnostic{"Go version", "ok", msg}
-}
-
-func checkVersion() diagnostic {
-	msg := fabricav.Version
-	if fabricav.Commit != "" {
-		msg += " (commit " + fabricav.Commit + ")"
-	}
-	return diagnostic{"Fabrica version", "ok", msg}
-}
-
-func (r checker) checkCreds(ctx context.Context) diagnostic {
-	if r.runtime.Provider == nil {
-		return diagnostic{"AWS credentials", "warning", "no provider configured"}
-	}
-
-	_, _, _, err := r.runtime.Provider.Identity(ctx)
-	if err != nil {
-		return diagnostic{"AWS credentials", "fail", "could not authenticate — check your credentials and region"}
-	}
-
-	return diagnostic{"AWS credentials", "ok", "authenticated"}
-}
-
-func (r checker) checkRegion() diagnostic {
-	if r.runtime.Config == nil || r.runtime.Config.Cloud.AWS.Region == "" {
-		return diagnostic{"Region", "warning", "not set — using " + config.DefaultAWSRegion + " default"}
-	}
-	return diagnostic{"Region", "ok", r.runtime.Config.Cloud.AWS.Region}
-}
-
-func (r checker) checkBucket(ctx context.Context) diagnostic {
-	if r.runtime.Config == nil {
-		return stateBackendWarning("S3 state bucket")
-	}
-
-	bucket := r.runtime.Config.State.Bucket
-	if bucket == "" {
-		return stateBackendWarning("S3 state bucket")
-	}
-
-	if r.backend == nil {
-		return diagnostic{"S3 state bucket", "warning", "state backend checker unavailable for provider"}
-	}
-
-	ok, err := r.backend.StateBucketExists(ctx, bucket)
-	if err != nil {
-		return diagnostic{"S3 state bucket", "fail", "check failed: " + err.Error()}
-	}
-
-	if ok {
-		return diagnostic{"S3 state bucket", "ok", bucket}
-	}
-
-	return diagnostic{"S3 state bucket", "warning", "bucket not found (run fabrica setup)"}
-}
-
-func (r checker) checkTable(ctx context.Context) diagnostic {
-	if r.runtime.Config == nil {
-		return stateBackendWarning("DynamoDB lock table")
-	}
-
-	bucket := r.runtime.Config.State.Bucket
-	table := r.runtime.Config.State.Table
-
-	// If bucket is not set, setup hasn't run — skip DynamoDB probe
-	if bucket == "" {
-		return stateBackendWarning("DynamoDB lock table")
-	}
-
-	if r.backend == nil {
-		return diagnostic{"DynamoDB lock table", "warning", "state backend checker unavailable for provider"}
-	}
-
-	ok, err := r.backend.StateLockTableExists(ctx, table)
-	if err != nil {
-		return diagnostic{"DynamoDB lock table", "fail", "check failed: " + err.Error()}
-	}
-
-	if ok {
-		return diagnostic{"DynamoDB lock table", "ok", table}
-	}
-
-	return diagnostic{"DynamoDB lock table", "warning", "table not found (run fabrica setup)"}
-}
-
-func stateBackendWarning(name string) diagnostic {
-	return diagnostic{name, "warning", "not yet provisioned (run fabrica setup)"}
-}
-
-func printDiagnostics(checks []diagnostic) error {
-	return command{out: os.Stdout}.printText(checks)
 }
 
 func statusSymbol(status string) string {
@@ -243,6 +120,10 @@ func statusSymbol(status string) string {
 	default:
 		return "[OK]"
 	}
+}
+
+func printDiagnostics(checks []doctorchecks.DoctorCheck) error {
+	return command{out: os.Stdout}.printText(checks)
 }
 
 func formatDiagnosticSummary(fails, warns int) error {
