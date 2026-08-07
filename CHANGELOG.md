@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-06
+
+### Added
+
+- **SSM instance profile for Horde** — `horde create` now provisions an IAM role (`AmazonSSMManagedInstanceCore`) and instance profile alongside the EC2 instance, enabling Session Manager shell access without manual IAM setup. Destroy deletes resources in correct reverse order (instance → profile → role → SG). (#222)
+
+### Fixed
+
+- **Horde allowedCidr auto-resolve** — `horde create` now resolves the VPC CIDR block via a new `cloud.VPCCIDRResolver` interface and defaults `allowedCidr` to the resolved VPC CIDR when config is unset. This fixes the common footgun where the default `10.0.0.0/8` blocks CodeBuild ENIs and workstations in AWS default VPCs (`172.31.0.0/16`). Explicit config always wins. (#226)
+- **Empty BuildGraph fail-fast** — `ci trigger` and `horde submit` now validate the parsed BuildGraph has a non-empty target before making any AWS or network calls. Previously produced a silent PRE_BUILD failure; now fails fast with an actionable error pointing to `examples/BuildGraph.sample.xml`. A minimal sample BuildGraph is included. (#224)
+
+### Changed
+
+- **Horde AMI requirements** — docs now require a job-capable Horde AMI with bake-time verification: `GET /api/v1/jobs` must not return 404. Known-good AMI for UE 5.8.0 in us-west-2 documented (`ami-0764d44c38ef85362`). README and horde-ami.md updated. (#221, #225)
+
+### Note
+
+Horde instances now have SSM access out of the box. The security group defaults to the resolved VPC CIDR instead of `10.0.0.0/8`, fixing connectivity for AWS default VPCs. BuildGraph validation catches empty targets before any API calls.
+
 ## [0.1.6] - 2026-08-05
 
 ### Fixed
@@ -150,7 +169,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jpvelasco/fabrica/compare/v0.1.6...v0.2.0
 [0.1.6]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.6
 [0.1.5]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.5
 [0.1.4]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.4
