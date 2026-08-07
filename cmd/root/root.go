@@ -14,6 +14,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/destroy"
 	"github.com/jpvelasco/fabrica/cmd/doctor"
 	driftcmd "github.com/jpvelasco/fabrica/cmd/drift"
+	"github.com/jpvelasco/fabrica/cmd/export"
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/horde"
 	"github.com/jpvelasco/fabrica/cmd/lore"
@@ -77,6 +78,7 @@ func New(out io.Writer) *cobra.Command {
 	cmd.AddCommand(deploy.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(ddc.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(cost.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(export.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(mcp.New(runtimeSource, optionsSource))
 
 	return cmd
