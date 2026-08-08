@@ -10,9 +10,9 @@ A Go CLI + infrastructure-as-code framework that provisions and manages game stu
 
 [`ROADMAP.md`](ROADMAP.md) is the single source of truth for phases, module status, and the Praetorium vision. Update it when module status changes.
 
-**Phase 0, Phase 1, Lore (v0.2), and DDC V1 are all complete.** Current stable release is **v0.1.3** (2026-08-02) — a reliability patch fixing a `resolveSeam` nil-deref on state-backend client constructors, a `StateBucketExists` error-code miss, and missing t3 cost entries, all found during live AWS road testing of v0.1.2. Every module below is production-ready; no release is cut until a `v*` tag is pushed. See [`ROADMAP.md`](ROADMAP.md) for deferred nice-to-haves (residual test-coverage gaps, Lore S3 store / ami build / JWT, DDC multi-region, scheduled Perforce backups).
+**Phase 0, Phase 1, Lore (v0.2), and DDC (V1 + multi-region edge nodes) are all complete.** Current stable release is **v0.1.3** (2026-08-02) — a reliability patch fixing a `resolveSeam` nil-deref on state-backend client constructors, a `StateBucketExists` error-code miss, and missing t3 cost entries, all found during live AWS road testing of v0.1.2. Every module below is production-ready; no release is cut until a `v*` tag is pushed. See [`ROADMAP.md`](ROADMAP.md) for deferred nice-to-haves (residual test-coverage gaps, Lore S3 store / ami build / JWT, DDC replication-peer automation, scheduled Perforce backups).
 
-Implemented modules: `perforce` (create/status/destroy/backup/restore), `horde` (create/status/submit/destroy/ami), `lore` (create/status/destroy — AMI-first `loreserver`, parallel to Perforce, local/EBS only, no multi-region), `ddc` (setup/status/destroy — single home-region Unreal Cloud DDC/Jupiter, no `region add`), `workstation` (create/list/stop/start/terminate), `ci` (setup/trigger/status/logs/destroy — CodeBuild orchestration over Horde), `deploy` (setup/promote/rollback/status/destroy — GameLift blue/green orchestration), and `cost` (report/forecast/alerts — offline config-derived reporting + local budget alerts). Full-stack teardown via `destroy --all` orchestrates ordered module teardown (deploy→ci→workstation→ddc→horde→lore→perforce) and deletes the state backend only if every module succeeds. All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` for resource types Cloud Control supports (verify first; see the CI notes for the CodeBuild exception).
+Implemented modules: `perforce` (create/status/destroy/backup/restore), `horde` (create/status/submit/destroy/ami), `lore` (create/status/destroy — AMI-first `loreserver`, parallel to Perforce, local/EBS only, no multi-region), `ddc` (setup/status/destroy/region add — home-region Unreal Cloud DDC/Jupiter plus additional edge regions), `workstation` (create/list/stop/start/terminate), `ci` (setup/trigger/status/logs/destroy — CodeBuild orchestration over Horde), `deploy` (setup/promote/rollback/status/destroy — GameLift blue/green orchestration), and `cost` (report/forecast/alerts — offline config-derived reporting + local budget alerts). Full-stack teardown via `destroy --all` orchestrates ordered module teardown (deploy→ci→workstation→ddc→horde→lore→perforce) and deletes the state backend only if every module succeeds. All five `ResourceClient` methods in `internal/cloud/aws/cloudcontrol.go` are implemented against the real Cloud Control API — new modules can use `rt.Provider.Resources()` for resource types Cloud Control supports (verify first; see the CI notes for the CodeBuild exception).
 
 **Post-v0.1.1 quality sprint (complete 2026-08-01):** structural duplication across plan, cost, userdata, IAM, status, teardown, and test layers was consolidated into shared packages — `internal/ec2plan`, `internal/ec2state`, `internal/ec2cost`, `internal/userdata`, `internal/iamrole`, `internal/topology`, `internal/assert`, and `cmd/internal/testutil` (see their own rows in Package Responsibilities below). New EC2-based modules should build on these instead of reintroducing the duplication they replaced.
 
@@ -146,11 +146,12 @@ go list -deps ./internal/cloud/...
 | `cmd/lore/status` | Reads state + Cloud Control live data; TCP-probes port 41339 (`GET /health_check`); transitions provisioning→ready; `--json` emits `loreUrl`/`loreGrpc` |
 | `cmd/lore/destroy` | Deletes EC2 instance then SG in reverse order; mirrors perforce/destroy pattern |
 | `internal/lore` | Pure plan layer: `CreatePlan`, `SGDesiredState`/`InstanceDesiredState` (built on `internal/ec2state`), cloud-init generator (built on `internal/userdata`), cost estimators (built on `internal/ec2cost`); default ports 41337 (gRPC/QUIC) + 41339 (HTTP health) |
-| `cmd/ddc` | Parent command; wires setup/status/destroy subcommands. V1 is single home-region only — no `region add` |
-| `cmd/ddc/setup` | Provision IAM role + S3 bucket + SG + EC2 instance (AMI-first, co-located coordinator+edge); `--backend zen\|scylla`; writes `.fabrica/ddc-endpoints.yaml` |
-| `cmd/ddc/status` | Reads state + Cloud Control live data; probes `GET /health/ready`; `--json` emits `publicUrl`/`ddcStatus`/`backend` |
-| `cmd/ddc/destroy` | Deletes EC2 instance, SG, IAM role, then S3 bucket in reverse order |
-| `internal/ddc` | Pure plan layer: `SetupPlan`, `SGDesiredState` (opens public + internal API ports; adds CQL 9042 for `scylla` backend, internal-CIDR only), `Endpoints` builder, `internal/topology` types for a future multi-region graph without V1 multi-region runtime |
+| `cmd/ddc` | Parent command; wires setup/status/destroy/region add subcommands |
+| `cmd/ddc/setup` | Provision IAM role + S3 bucket + SG + EC2 instance (AMI-first, co-located coordinator+edge); `--backend zen\|scylla`; writes `.fabrica/ddc-endpoints.yaml`; SG state records `region` so status/destroy can tell it apart from edge SGs |
+| `cmd/ddc/status` | Reads state + Cloud Control live data; probes `GET /health/ready`; `--json` emits `publicUrl`/`ddcStatus`/`backend` plus an `edges` array (from local state — no live edge probes) |
+| `cmd/ddc/region` | `region add REGION`: provisions edge SG + EC2 in a peer region reusing the home blob bucket + IAM profile; requires the AMI to exist in REGION (`aws ec2 copy-image`); idempotent with resume-on-partial; `--dry-run` shows plan + cost |
+| `cmd/ddc/destroy` | Deletes edge nodes first (per region, via `cloud.RegionProvider` views), then home EC2/SG, IAM role, S3 bucket in reverse order; non-empty bucket refused |
+| `internal/ddc` | Pure plan layer: `SetupPlan`, `EdgePlan` (`NewEdgePlan` validates region/AMI and reuses home defaults), `SGDesiredState`/`EdgeSGDesiredState` (public + internal API ports; CQL 9042 for `scylla` backend, internal-CIDR only), `EdgeRegions`/`EdgeExists` state helpers, `Endpoints` builder, `internal/topology` coordinator/edge graph types |
 | `cmd/workstation` | Parent command; wires create/list/stop/start/terminate subcommands |
 | `cmd/workstation/create` | Provision SG + EC2 instance (AMI-first, NICE DCV); `--template artist\|programmer` sets instance type + volume presets; `--mount-perforce` injects p4 CLI + `~/.p4config` via cloud-init using Perforce private IP from local state; writes credentials to `.fabrica/workstation-credentials.yaml` |
 | `cmd/workstation/list` | Reads local state; prints workstation status + resource IDs; `--json` emits `WorkstationEntry` array |
@@ -164,7 +165,7 @@ go list -deps ./internal/cloud/...
 | `internal/ec2cost` | Shared cost-resource builders: `InstanceAndVolume`/`ResourcesWithDefaults` — the standard EC2 instance + EBS volume `cost.Resource` pair every EC2-based module needs |
 | `internal/userdata` | Shared cloud-init template helpers: `Renderer` (`Render`/`RenderBase64`) wraps a parsed `text/template`; `Prepare` centralizes the apply-defaults → validate chain before render |
 | `internal/iamrole` | Shared IAM role desired-state helpers (used by perforce, ddc, ci, deploy): `AssumeRolePolicyDocument(service)` builds the standard trust-policy envelope |
-| `internal/topology` | Provider-agnostic coordinator/edge graph types (`Role`, node/graph structs) for distributed modules; DDC V1 uses it for a single home-region host, ahead of future multi-region runtime |
+| `internal/topology` | Provider-agnostic coordinator/edge graph types (`Role`, node/graph structs) for distributed modules; DDC uses them for the home host + `WithRemoteEdge` edge nodes |
 | `internal/assert` | Shared test helper: `Contains` — consolidates the `assertContains` pattern duplicated across `*_test.go` files |
 | `cmd/internal/testutil` | Shared Cobra/cloud test fakes (importable only within `cmd/`): `TestProvider` and variants (`NilResourceProvider`, `UbuntuAMIProvider`, ...), `CreateTestSpec` — cuts boilerplate from each module's `cobra_test.go` |
 | `cmd/ci` | Parent command; wires setup/trigger/status/logs/destroy subcommands |
@@ -285,7 +286,7 @@ fabrica status                              # health of all modules
 fabrica perforce create|status|destroy|backup|restore  # ✓ implemented
 fabrica horde create|status|submit|destroy  # ✓ implemented
 fabrica lore create|status|destroy          # ✓ implemented (v0.2; parallel to Perforce)
-fabrica ddc setup|status|destroy            # ✓ implemented (V1; single home-region Unreal Cloud DDC)
+fabrica ddc setup|status|destroy|region add    # ✓ implemented (home region + edge regions)
 fabrica horde ami build                     # ✓ implemented; generates Image Builder recipe + optional Packer HCL
 fabrica ci setup|trigger|status|logs|destroy        # ✓ implemented; CodeBuild orchestration over Horde
 fabrica deploy setup|promote|rollback|status|destroy  # ✓ implemented; GameLift blue/green deployment
@@ -327,12 +328,13 @@ fabrica export --format cloudformation      # escape hatch
 
 ## DDC-Specific Notes
 
-- **Single home-region, V1-narrow** — one EC2 host with co-located coordinator + edge roles; no `region add`, no replication peers, no OIDC/HTTPS in V1. `internal/topology` types exist so a future multi-region graph doesn't need a breaking change, but nothing multi-region runs today.
+- **Home + edge regions** — `ddc setup` provisions the home-region host (co-located coordinator + edge roles). `ddc region add REGION` provisions a peer-region edge node (SG + EC2 only) that reuses the home blob bucket and the global `fabrica-ddc-profile` IAM profile. Edge AMIs are region-specific: pass `--ami-id` (or set `ddc.amiId`) with an AMI copied via `aws ec2 copy-image`. No replication-peer automation, OIDC/HTTPS, or live edge probes yet.
+- **Region-scoped clients** — `ddc region add`/`destroy` type-assert the provider to `cloud.RegionProvider` and call `WithRegion(ctx, region)` for a `RegionView{Resources, VPCs}` bound to the target region. `internal/cloud/aws` implements it by cloning the `awsProvider` with a region-scoped `ec2Service` — the receiver is never mutated. The edge node's SG and instance are recorded in module state with `Properties: {"role": "edge", "region": ..., "instanceType": ..., "volumeSize": ...}` (home SG carries only `region`).
 - **Backend choice** — `--backend zen` (default, Zen/Jupiter) or `--backend scylla` (adds a 1-node Scylla bootstrap, not HA). The security group only opens CQL port 9042 when `scylla` is selected, and only to `InternalCIDR` — never to the public `AllowedCIDR`.
 - **Hybrid storage** — EBS for local/hot storage plus an S3 bucket for the cold tier; the S3 bucket + IAM role provisioning follows the same Cloud-Control-plus-SDK-where-needed split as other modules.
 - **Endpoints file** — `setup` writes `.fabrica/ddc-endpoints.yaml` (backend, namespace, public/internal URLs, bucket, region) instead of a credentials file — DDC has no password to protect, just connection info consumers need.
-- **Probe** — `GET /health/ready` on the public port; `status` reports `ddcStatus`/`publicUrl`/`backend`.
-- **Deferred (Phase 2+)** — `ddc region add`, replication peers, OIDC/HTTPS, `ddc ami build`, production (HA) Scylla.
+- **Probe** — `GET /health/ready` on the public port; `status` reports `ddcStatus`/`publicUrl`/`backend` and lists edge regions in an `edges` array (from local state, `"status": "provisioned"` — edges are not live-probed).
+- **Deferred (Phase 2+)** — replication peers (operator-managed today), OIDC/HTTPS, `ddc ami build`, production (HA) Scylla, live edge probes.
 
 ## CI-Specific Notes
 

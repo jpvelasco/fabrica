@@ -2,7 +2,14 @@
 
 `fabrica ddc setup` is **AMI-first**. The AMI must already contain Unreal Cloud DDC (Jupiter) and (for `backend: scylla`) a Scylla Open Source install. Fabrica only mounts the hot EBS volume, writes config env under `/etc/unreal-cloud-ddc/fabrica.env`, and starts the service unit.
 
-V1 is **single home-region only**. There is no multi-region edge or replication peer automation.
+**Multi-region edges:** `fabrica ddc region add REGION` provisions an edge node from the **same** AMI shape, but AMIs are region-specific — the image used in the home region does not exist in the edge region. Copy it first:
+
+```
+aws ec2 copy-image --source-region us-east-1 --region eu-west-1 \
+  --name ddc-edge-eu-west-1
+```
+
+Then pass the copy (or set `ddc.amiId` in `fabrica.yaml`) when adding the region. Edge nodes reuse the home blob bucket and the global instance profile; there is no replication-peer automation — peer/replication wiring is operator-managed.
 
 ## Required (zen — default)
 
@@ -37,7 +44,7 @@ Fabrica writes `/etc/unreal-cloud-ddc/fabrica.env` with:
 | `FABRICA_DDC_STORE` | Mounted hot store path |
 | `FABRICA_DDC_SCYLLA_CONTACT` | Optional contact (often empty at first boot) |
 
-Your AMI’s unit should source this file and configure Jupiter accordingly. **No remote replication peer list is written in V1.**
+Your AMI’s unit should source this file and configure Jupiter accordingly. **No remote replication peer list is written — replication is operator-managed.**
 
 ## Ports
 
@@ -47,7 +54,7 @@ Your AMI’s unit should source this file and configure Jupiter accordingly. **N
 | Internal API | Reserved | `internalCidr` |
 | 9042 | Scylla CQL (scylla backend only) | `internalCidr` |
 
-Warn if `allowedCidr` is `0.0.0.0/0` — V1 has no OIDC.
+Warn if `allowedCidr` is `0.0.0.0/0` — there is no OIDC.
 
 ## References
 

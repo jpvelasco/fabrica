@@ -88,6 +88,8 @@ fabrica perforce create && fabrica perforce status
 
 # Keep cooks fast
 fabrica ddc setup && fabrica ddc status --probe
+# Low-latency regions (optional; copy the home AMI first)
+fabrica ddc region add eu-west-1 --yes
 
 # Build farm + CI over Horde
 fabrica horde create && fabrica horde status
@@ -108,7 +110,7 @@ fabrica deploy status
 | `perforce` | `create`, `status`, `destroy`, `backup`, `restore` | Helix Core on EC2 + EBS checkpoints |
 | `lore` | `create`, `status`, `destroy` | Epic `loreserver` (parallel to Perforce) |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Unreal Horde coordinator + BuildGraph jobs |
-| `ddc` | `setup`, `status`, `destroy` | Unreal Cloud DDC (Jupiter), single-region V1 |
+| `ddc` | `setup`, `status`, `destroy`, `region add` | Unreal Cloud DDC (Jupiter), home + edge regions |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | NICE DCV cloud workstations |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | CodeBuild orchestration over Horde |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | GameLift blue/green (alias flip) |

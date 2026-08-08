@@ -286,7 +286,7 @@ Terminates the EC2 instance and deletes the security group in reverse order. Ide
 
 > **AMI requirement:** `fabrica ddc setup` is AMI-first. Your AMI must already contain Unreal Cloud DDC (Jupiter). Fabrica mounts the hot EBS volume, writes hybrid-storage config, and starts the service. See [docs/ddc-ami.md](docs/ddc-ami.md).
 >
-> **V1 scope:** single home-region EC2 only (co-located coordinator + edge roles). **No `region add` (or any multi-region command) in V1** — deferred to a later milestone. Default backend is `zen`. Scylla is an optional single-node bootstrap path only (not production HA).
+> **Current scope:** one home-region EC2 (co-located coordinator + edge roles) plus additional edge regions via `ddc region add`. Default backend is `zen`. Scylla is an optional single-node bootstrap path only (not production HA).
 
 #### `fabrica ddc setup`
 
@@ -296,13 +296,25 @@ Provisions IAM role + instance profile, S3 blob bucket, security group, optional
 --backend    zen (default) or scylla (1-node bootstrap only — not HA)
 ```
 
+#### `fabrica ddc region add REGION`
+
+Provisions one additional DDC edge node in REGION (e.g. `eu-west-1`): a security group (public + internal API ports) and an AMI-first EC2 instance that reuses the home stack's IAM profile and shares the home blob bucket. The AMI must exist in REGION — copy the home AMI first (`aws ec2 copy-image --source-region <home> --region REGION --name ddc-edge`). Idempotent — re-running with an already-provisioned region exits cleanly. Cost estimate and dry-run supported.
+
+```
+--ami-id           AMI for this region (default: ddc.amiId; must exist in REGION)
+--instance-type    EC2 instance type (default: ddc.instanceType or m7i.xlarge)
+--volume-size      Hot volume size in GiB (default: ddc.volumeSize or 500)
+--vpc-id           VPC in REGION (default: the region's default VPC)
+--subnet-id        Subnet in REGION (default: the region's default subnet)
+```
+
 #### `fabrica ddc status`
 
-Reads live state and probes `GET /health/ready` on the public API port. Transitions `provisioning` → `ready` when healthy. Supports `--wait` / `-w` and `--json`.
+Reads live state and probes `GET /health/ready` on the public API port. Transitions `provisioning` → `ready` when healthy. Supports `--wait` / `-w` and `--json`. With `--json`, edge regions are listed in the `edges` array (region, instanceId, sgId, instanceType, status); edge nodes are shown from local state — live probes for edges are not available in this release.
 
 #### `fabrica ddc destroy`
 
-Deletes DDC resources in reverse order (instances → bucket → IAM → SG). Non-empty S3 buckets are not force-deleted. Typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview.
+Deletes edge nodes first (each in its region), then home resources (instances → bucket → IAM → SG). Non-empty S3 buckets are not force-deleted. Typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview.
 
 ### Workstation
 
