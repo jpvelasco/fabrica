@@ -89,6 +89,14 @@ type Command struct {
 	// lack Cloud Control DELETE support (e.g. AWS::CodeBuild::Project).
 	// The identifier is the resource identifier (project name, etc.).
 	SDKDeleteFunc func(ctx context.Context, typeName, identifier string) error
+
+	// DeleteHook, when non-nil, replaces the default per-resource delete loop.
+	// It receives the state, module, and the deletion-ordered resources, and
+	// must return the destroyed identifiers. The engine still removes the
+	// module from state, writes it, and renders output afterward.
+	// Modules whose resources live in multiple regions (ddc edges) use this
+	// to route each resource to its region-scoped client.
+	DeleteHook func(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, resources []cloud.Resource) ([]string, error)
 }
 
 // Run executes the teardown: read state, plan, confirm, then delete resources
@@ -146,7 +154,7 @@ func (c Command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 		fmt.Fprintln(c.Out)
 	}
 
-	destroyed, err := c.deleteResources(ctx, st, m, resources)
+	destroyed, err := c.deleteAll(ctx, st, m, resources)
 	if err != nil {
 		return err
 	}
@@ -170,9 +178,21 @@ func (c Command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 	return nil
 }
 
-// deleteResources iterates over the resources in order, deleting each one and
+// deleteAll runs the deletion loop, delegating to DeleteHook when set.
+func (c Command) deleteAll(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, resources []cloud.Resource) ([]string, error) {
+	if c.DeleteHook != nil {
+		return c.DeleteHook(ctx, st, m, resources)
+	}
+	return c.deleteResources(ctx, st, m, resources)
+}
+
+// DeleteResources iterates over the resources in order, deleting each one and
 // removing it from state afterward so partial failures are recoverable.
 // Returns the list of destroyed identifiers and any error that stopped the loop.
+func (c Command) DeleteResources(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, resources []cloud.Resource) ([]string, error) {
+	return c.deleteResources(ctx, st, m, resources)
+}
+
 func (c Command) deleteResources(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, resources []cloud.Resource) ([]string, error) {
 	destroyed := make([]string, 0, len(resources))
 
@@ -180,7 +200,7 @@ func (c Command) deleteResources(ctx context.Context, st *fabricastate.State, m 
 		if skip, err := c.shouldSkipBeforeDelete(ctx, res); err != nil {
 			return nil, err
 		} else if skip {
-			c.removeResourceAndPersist(st, m, res.TypeName)
+			c.removeResourceAndPersist(st, m, res.TypeName, res.Identifier)
 			continue
 		}
 		if err := c.deleteOneResource(ctx, st, m, res); err != nil {
@@ -219,7 +239,7 @@ func (c Command) deleteOneResource(ctx context.Context, st *fabricastate.State, 
 	if !c.JSONOut {
 		fmt.Fprintf(c.Out, "  Deleted: %s\n", r.Identifier)
 	}
-	c.removeResourceAndPersist(st, m, r.TypeName)
+	c.removeResourceAndPersist(st, m, r.TypeName, r.Identifier)
 	return nil
 }
 
@@ -255,8 +275,8 @@ func (c Command) deleteViaCloudControl(ctx context.Context, r *cloud.Resource) e
 
 // removeResourceAndPersist drops a resource from the module and writes state,
 // surfacing a write failure as a warning (state persistence is best-effort).
-func (c Command) removeResourceAndPersist(st *fabricastate.State, m *fabricastate.ModuleState, typeName string) {
-	removeResource(m, typeName)
+func (c Command) removeResourceAndPersist(st *fabricastate.State, m *fabricastate.ModuleState, typeName, identifier string) {
+	removeResource(m, typeName, identifier)
 	st.UpsertModule(c.Spec.ModuleName, m.Version, "destroying", m.Resources)
 	if err := c.WriteState(st); err != nil {
 		fmt.Fprintf(c.Out, "Warning: could not update local state: %v\n", err)
@@ -387,12 +407,16 @@ func resourcesToDelete2(spec Spec, m *fabricastate.ModuleState) []cloud.Resource
 	return resourcesToDelete(m)
 }
 
-func removeResource(m *fabricastate.ModuleState, typeName string) {
+// removeResource drops the resource with the given (typeName, identifier) from
+// the module's resource list. Matching on identifier keeps sibling resources
+// of the same type (edge SGs/instances, coordinator + scylla) intact.
+func removeResource(m *fabricastate.ModuleState, typeName, identifier string) {
 	filtered := m.Resources[:0]
 	for _, r := range m.Resources {
-		if r.TypeName != typeName {
-			filtered = append(filtered, r)
+		if r.TypeName == typeName && r.Identifier == identifier {
+			continue
 		}
+		filtered = append(filtered, r)
 	}
 	m.Resources = filtered
 }
