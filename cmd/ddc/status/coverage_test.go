@@ -10,6 +10,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/ddc"
+	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
 func TestRendererAllBranches(t *testing.T) {
@@ -98,5 +99,64 @@ func TestNewRuntimeError(t *testing.T) {
 	)
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+// stateWithEdges returns a readState seam backed by a DDC state that also has
+// one edge region (eu-west-1) plus the home SG.
+func stateWithEdges() func() (*fabricastate.State, error) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("ddc", "ami-ddc", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-home"},
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-home"},
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-edge", Properties: map[string]string{"region": "eu-west-1", "role": ddc.RoleEdge}},
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-edge", Properties: map[string]string{"region": "eu-west-1", "role": ddc.RoleEdge, "instanceType": "m7i.large"}},
+	})
+	return func() (*fabricastate.State, error) { return st, nil }
+}
+
+func TestRendererEdgeText(t *testing.T) {
+	r := renderer{publicPort: 8081, backend: "zen", readState: stateWithEdges()}
+	var buf bytes.Buffer
+	r.printText(&buf, modstatus.Info{ModuleStatus: "ready", SGID: "sg-home"})
+	out := buf.String()
+	for _, want := range []string{"eu-west-1", "i-edge", "sg-edge", "Edge regions:  1"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestRendererEdgeJSON(t *testing.T) {
+	r := renderer{publicPort: 8081, backend: "zen", readState: stateWithEdges()}
+	var buf bytes.Buffer
+	r.printJSON(&buf, modstatus.Info{ModuleStatus: "ready", SGID: "sg-home", InstanceID: "i-home"})
+	out := buf.String()
+	for _, want := range []string{`"edges"`, "eu-west-1", `"instanceId": "i-edge"`, `"sgId": "sg-edge"`, `"status": "provisioned"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, `"sgId": "sg-edge"`) {
+		// the home SG (sg-home) must remain the top-level sgId
+		if !strings.Contains(out, `"sgId": "sg-home"`) {
+			t.Fatalf("home sgId lost:\n%s", out)
+		}
+	}
+}
+
+func TestRendererEdgeReadStateError(t *testing.T) {
+	r := renderer{
+		publicPort: 8081, backend: "zen",
+		readState: func() (*fabricastate.State, error) { return nil, fmt.Errorf("state missing") },
+	}
+	var buf bytes.Buffer
+	r.printText(&buf, modstatus.Info{ModuleStatus: "ready", SGID: "sg-home"})
+	out := buf.String()
+	if strings.Contains(out, "Edge regions:  1") {
+		t.Fatalf("unexpected edge list on read error:\n%s", out)
+	}
+	if !strings.Contains(out, "none") {
+		t.Fatalf("expected no-edges fallback:\n%s", out)
 	}
 }

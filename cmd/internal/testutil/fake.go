@@ -48,6 +48,16 @@ func (f *TestProvider) Resources() cloud.ResourceClient {
 	return &FakeResourceClient{provider: f}
 }
 
+// WithRegion satisfies cloud.RegionProvider for multi-region command tests:
+// the fake store is region-agnostic, so every region shares the same fake
+// client; the resolver is a dedicated TestVPCResolver.
+func (f *TestProvider) WithRegion(_ context.Context, _ string) (cloud.RegionView, error) {
+	return cloud.RegionView{
+		Resources: &FakeResourceClient{provider: f},
+		VPCs:      &TestVPCResolver{VPCID: "vpc-fake", SubnetID: "subnet-fake"},
+	}, nil
+}
+
 // FakeResourceClient is a fake ResourceClient backed by TestProvider.
 type FakeResourceClient struct {
 	provider *TestProvider

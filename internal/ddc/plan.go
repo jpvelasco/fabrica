@@ -42,6 +42,7 @@ const (
 	RoleCoordinator = "coordinator"
 	RoleScylla      = "scylla"
 	RoleBlob        = "blob"
+	RoleEdge        = "edge"
 )
 
 // SetupPlan is everything needed to provision single-region DDC. No AWS SDK types.

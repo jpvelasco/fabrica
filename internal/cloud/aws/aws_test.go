@@ -99,6 +99,52 @@ func (s stubSTS) GetCallerIdentity(context.Context, *sts.GetCallerIdentityInput,
 	}, nil
 }
 
+func TestAwsProviderWithRegion(t *testing.T) {
+	p, err := newProvider(config.Defaults())
+	if err != nil {
+		t.Fatalf("newProvider: %v", err)
+	}
+	ap := p.(*awsProvider)
+	view, err := ap.WithRegion(context.Background(), "eu-west-1")
+	if err != nil {
+		t.Fatalf("WithRegion: %v", err)
+	}
+	if view.Resources == nil {
+		t.Fatal("view.Resources is nil")
+	}
+	if view.VPCs == nil {
+		t.Fatal("view.VPCs is nil")
+	}
+	rc, ok := view.Resources.(*resourceClients)
+	if !ok {
+		t.Fatalf("Resources type = %T, want *resourceClients", view.Resources)
+	}
+	if rc.awsCfg.region != "eu-west-1" {
+		t.Fatalf("scoped client region = %q, want eu-west-1", rc.awsCfg.region)
+	}
+	if rc.awsCfg.profile != ap.awsCfg.profile {
+		t.Fatalf("scoped client profile = %q, want %q", rc.awsCfg.profile, ap.awsCfg.profile)
+	}
+	if ap.awsCfg.region != config.DefaultAWSRegion {
+		t.Fatalf("WithRegion mutated the provider: region = %q", ap.awsCfg.region)
+	}
+	// VPCs must resolve in the target region too.
+	vp, ok := view.VPCs.(*awsProvider)
+	if !ok {
+		t.Fatalf("VPCs type = %T, want *awsProvider", view.VPCs)
+	}
+	if vp.awsCfg.region != "eu-west-1" {
+		t.Fatalf("scoped VPC resolver region = %q, want eu-west-1", vp.awsCfg.region)
+	}
+}
+
+func TestAwsProviderWithRegionEmpty(t *testing.T) {
+	p := &awsProvider{awsCfg: awsConfig{region: "us-east-1"}}
+	if _, err := p.WithRegion(context.Background(), ""); err == nil {
+		t.Fatal("expected error for empty region")
+	}
+}
+
 func TestAwsProviderStopStart(t *testing.T) {
 	p := &awsProvider{
 		ec2: ec2Service{

@@ -172,6 +172,7 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, plan *ddc.Se
 		Label:             "Security group",
 		TypeName:          cloud.TypeAWSEC2SecurityGroup,
 		BuildDesiredState: func() ([]byte, error) { return ddc.SGDesiredState(plan) },
+		Properties:        map[string]string{"region": plan.Region},
 		IgnoreWriteError:  true,
 	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
@@ -267,7 +268,7 @@ func (c command) printPlan(plan *ddc.SetupPlan) {
 
 func (c command) printPlanBody(plan *ddc.SetupPlan) {
 	fmt.Fprintf(c.out, "  AWS account:      %s\n", plan.Account)
-	fmt.Fprintf(c.out, "  AWS region:       %s (home only — no multi-region in V1)\n", plan.Region)
+	fmt.Fprintf(c.out, "  AWS region:       %s (home region)\n", plan.Region)
 	fmt.Fprintf(c.out, "  Backend:          %s\n", plan.Backend)
 	fmt.Fprintf(c.out, "  AMI ID:           %s\n", plan.AmiID)
 	fmt.Fprintf(c.out, "  Instance type:    %s\n", plan.InstanceType)
@@ -308,7 +309,7 @@ func (c command) printCompletion(plan *ddc.SetupPlan, instanceID string) {
 	fmt.Fprintf(c.out, "  2. Point UE/Horde cooks at http://<private-ip>:%d\n", plan.PublicPort)
 	fmt.Fprintln(c.out, "     e.g. -UE-CloudDataCacheHost=http://<private-ip>")
 	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "  Note: V1 is single home-region only. No region add in this release.")
+	fmt.Fprintln(c.out, "  Note: additional regions are added with 'fabrica ddc region add'.")
 	if w := ddc.WarnOpenCIDR(plan.AllowedCIDR); w != "" {
 		fmt.Fprintln(c.out)
 		fmt.Fprintln(c.out, w)

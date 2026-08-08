@@ -120,19 +120,20 @@ gaps) are tracked at the end and do not block Phase 1.
 - ✅ Design approved: single-region AMI-first `loreserver` (EC2 + SG + EBS), `create`/`status`/`destroy`
 - ✅ Implementation: parallel to Perforce; local/EBS store; no multi-region in V1
 
-### Phase 2 / Milestone 2 — Distributed DDC ✅ Implemented (V1 narrow)
+### Phase 2 / Milestone 2 — Distributed DDC ✅ Implemented
 
 - ✅ Design approved: single home-region EC2 (co-located coordinator + edge roles)
-- ✅ Commands: `ddc setup` / `status` / `destroy` only (no `region add`)
+- ✅ Commands: `ddc setup` / `status` / `destroy`; home-region V1
 - ✅ Zen (Jupiter) default + optional 1-node Scylla bootstrap; hybrid EBS + S3
-- ✅ `internal/topology` types for future multi-region without V1 multi-region runtime
-- Deferred: `ddc region add`, replication peers, OIDC/HTTPS, `ddc ami build`, Scylla HA
+- ✅ Multi-region edge nodes: `ddc region add` provisions peer-region edge SG + EC2 sharing the home blob bucket and IAM profile; `status` lists edges from state; `destroy` tears down edges (per region) then the home stack
+- ✅ `internal/topology` coordinator/edge graph types; `cloud.RegionProvider` region-scoped clients
+- Deferred: replication peers (operator-managed today), OIDC/HTTPS, `ddc ami build`, Scylla HA
 
 ### Phase 2+ — Expansion 🔭 Future
 
 - Perforce backup follow-ups: scheduled backups, DR rehydrate from S3/orphan volume, attach-role migration for pre-SSM stacks
 - Lore follow-ups: S3-backed store, `lore ami build`, JWT/CA TLS, client helpers
-- DDC multi-region (`region add`), OIDC, production Scylla
+- DDC: OIDC, production Scylla, replication-peer automation, live edge probes in `ddc status`
 - ✅ MCP server V1: 6 read-only tools (`fabrica_version`, `fabrica_doctor`, `fabrica_status`, `fabrica_drift`, `fabrica_cost_report`, `fabrica_config_show`) over stdio transport — reuses same business logic as CLI
 - MCP server V2: destructive tools, streaming, resource management
 - Multi-cloud / provider extensibility (GCP/Azure against the existing `cloud.Provider` interface)
@@ -151,7 +152,7 @@ gaps) are tracked at the end and do not block Phase 1.
 | `perforce` | `create`, `status`, `destroy`, `backup`, `backup list`, `backup delete`, `restore` | ✅ Complete — EBS backup/restore via SSM; optional S3 export |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | ✅ Complete |
 | `lore` | `create`, `status`, `destroy` | ✅ Complete (v0.2) — AMI-first loreserver; parallel to Perforce |
-| `ddc` | `setup`, `status`, `destroy` | ✅ Complete (V1) — single home-region Unreal Cloud DDC; no region add |
+| `ddc` | `setup`, `status`, `destroy`, `region add` | ✅ Complete — home-region Unreal Cloud DDC + additional edge regions; no replication-peer automation (operator-managed) |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | ✅ Complete |
 | `status` (aggregate) | `status` (`--probe`, `--json`) | ✅ Complete — read-only health overview across all modules |
 | `drift` | `drift` (`--json`) | ✅ Complete — read-only drift detection: state backend, EC2 instances (state, type, AMI), SGs, IAM roles, CodeBuild projects, Extra resource detection (live-not-in-state via ResourceList) |

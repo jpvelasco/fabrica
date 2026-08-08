@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -53,7 +54,7 @@ var _ fabricac.StateBackendBootstrapper = (*awsProvider)(nil)
 var _ fabricac.AMIResolver = (*awsProvider)(nil)
 var _ fabricac.VPCResolver = (*awsProvider)(nil)
 var _ fabricac.VPCCIDRResolver = (*awsProvider)(nil)
-var _ fabricac.VPCCIDRResolver = (*awsProvider)(nil)
+var _ fabricac.RegionProvider = (*awsProvider)(nil)
 
 func newProvider(cfg *config.Config) (fabricac.Provider, error) {
 	awsCfg := awsConfig{
@@ -110,6 +111,22 @@ func (p *awsProvider) ResolveDefaultVPC(ctx context.Context) (string, string, er
 // cloud.VPCCIDRResolver interface so that type assertions in module commands work.
 func (p *awsProvider) ResolveVPCCIDR(ctx context.Context, vpcID string) (string, error) {
 	return p.ec2.ResolveVPCCIDR(ctx, vpcID)
+}
+
+// WithRegion returns a RegionView bound to the given region, reusing the
+// provider's credential profile. Multi-region modules (DDC edges) use it to
+// provision resources outside the home region. The receiver is never mutated.
+func (p *awsProvider) WithRegion(_ context.Context, region string) (fabricac.RegionView, error) {
+	if region == "" {
+		return fabricac.RegionView{}, fmt.Errorf("region is required")
+	}
+	scopedCfg := awsConfig{region: region, profile: p.awsCfg.profile}
+	scoped := &awsProvider{
+		cfg:    p.cfg,
+		awsCfg: scopedCfg,
+		ec2:    ec2Service{awsCfg: scopedCfg},
+	}
+	return fabricac.RegionView{Resources: scoped.Resources(), VPCs: scoped}, nil
 }
 
 func init() {

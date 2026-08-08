@@ -8,6 +8,31 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 )
 
+func TestFakeProviderWithRegion(t *testing.T) {
+	f := &TestProvider{}
+	view, err := f.WithRegion(context.Background(), "eu-west-1")
+	if err != nil {
+		t.Fatalf("WithRegion error: %v", err)
+	}
+	if view.Resources == nil || view.VPCs == nil {
+		t.Fatal("RegionView must expose Resources and VPCs")
+	}
+	res := &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup}
+	if err := view.Resources.Create(context.Background(), res); err != nil {
+		t.Fatalf("region-scoped Create error: %v", err)
+	}
+	if f.CreateCalls != 1 {
+		t.Errorf("region-scoped Create must hit the shared fake, CreateCalls = %d", f.CreateCalls)
+	}
+	vpcID, subnetID, err := view.VPCs.ResolveDefaultVPC(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveDefaultVPC error: %v", err)
+	}
+	if vpcID == "" || subnetID == "" {
+		t.Errorf("resolver returned empty ids: %q / %q", vpcID, subnetID)
+	}
+}
+
 func TestFakeProviderName(t *testing.T) {
 	f := &TestProvider{}
 	if got := f.Name(); got != "fake" {

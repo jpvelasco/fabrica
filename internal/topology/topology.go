@@ -1,6 +1,6 @@
 // Package topology provides provider-agnostic coordinator/edge graph types.
-// Used by Distributed DDC (and future multi-region modules). V1 materializes
-// only a single home-region host with co-located coordinator + edge roles.
+// Used by Distributed DDC: the home region hosts a co-located coordinator +
+// edge node, and additional regions add edge-only nodes via WithRemoteEdge.
 package topology
 
 import (
@@ -30,16 +30,17 @@ type NodeSpec struct {
 }
 
 // Topology is a home-region coordinator plus optional edge nodes.
-// V1 DDC uses NewHomeCoLocated: one physical host, both roles recorded.
+// V1 DDC uses NewHomeCoLocated to record one co-located home host; additional
+// edge regions are appended with WithRemoteEdge.
 type Topology struct {
 	HomeRegion  string
 	Coordinator NodeSpec
-	// Edges may include a single co-located home edge (same region as HomeRegion).
-	// Remote edges (Region != HomeRegion) are rejected by Validate for V1 callers.
+	// Edges includes the co-located home edge (Region == HomeRegion) and any
+	// remote edges added via WithRemoteEdge (Region != HomeRegion).
 	Edges []NodeSpec
 }
 
-// NewHomeCoLocated builds a V1 single-host topology: coordinator and home edge
+// NewHomeCoLocated builds a single-host topology: coordinator and home edge
 // roles share the same region and instance shape (co-located on one EC2).
 func NewHomeCoLocated(region string, node NodeSpec) Topology {
 	coord := node
@@ -57,8 +58,18 @@ func NewHomeCoLocated(region string, node NodeSpec) Topology {
 	}
 }
 
-// Validate checks structural invariants. Rejects edges outside HomeRegion so
-// V1 code cannot accidentally encode multi-region graphs.
+// WithRemoteEdge appends an edge node in another region, stamping the role so
+// callers can pass a plain NodeSpec. Returns a copy; does not mutate t.
+func (t Topology) WithRemoteEdge(edge NodeSpec) Topology {
+	edge.Role = RoleEdge
+	if edge.Region != "" {
+		t.Edges = append(t.Edges, edge)
+	}
+	return t
+}
+
+// Validate checks structural invariants. The coordinator must stay in the home
+// region; edge regions may differ (multi-region graphs are valid).
 func (t Topology) Validate() error {
 	if t.HomeRegion == "" {
 		return fmt.Errorf("topology: HomeRegion is required")
@@ -70,8 +81,11 @@ func (t Topology) Validate() error {
 		return fmt.Errorf("topology: Coordinator.Region %q must match HomeRegion %q", t.Coordinator.Region, t.HomeRegion)
 	}
 	for i, e := range t.Edges {
-		if e.Region != "" && e.Region != t.HomeRegion {
-			return fmt.Errorf("topology: edge[%d] region %q is outside HomeRegion %q (multi-region edges are not valid in V1 graphs)", i, e.Region, t.HomeRegion)
+		if e.Region == "" {
+			return fmt.Errorf("topology: edge[%d] region is required", i)
+		}
+		if e.Region == t.HomeRegion && i > 0 {
+			return fmt.Errorf("topology: edge[%d] duplicates the home region (only the co-located home edge may use %q)", i, t.HomeRegion)
 		}
 		if e.Role != "" && e.Role != RoleEdge {
 			return fmt.Errorf("topology: edge[%d] Role must be %q, got %q", i, RoleEdge, e.Role)
@@ -80,7 +94,7 @@ func (t Topology) Validate() error {
 	return nil
 }
 
-// Regions returns the unique regions referenced (V1: only HomeRegion when valid).
+// Regions returns the unique regions referenced by the topology.
 func (t Topology) Regions() []string {
 	seen := map[string]bool{}
 	var out []string

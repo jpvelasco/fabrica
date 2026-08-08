@@ -116,6 +116,24 @@ func (p *fakeProvider) Identity(context.Context) (string, string, string, error)
 
 func (p *fakeProvider) Resources() cloud.ResourceClient { return &fakeRC{store: p.store} }
 
+// --- RegionProvider + VPCResolver ---
+
+// WithRegion satisfies cloud.RegionProvider for the multi-region DDC flow:
+// the fake store is region-agnostic, so every region shares the same store;
+// the resolver returns deterministic fake VPC/subnet IDs.
+func (p *fakeProvider) WithRegion(_ context.Context, _ string) (cloud.RegionView, error) {
+	return cloud.RegionView{
+		Resources: &fakeRC{store: p.store},
+		VPCs:      &fakeVPCResolver{},
+	}, nil
+}
+
+type fakeVPCResolver struct{}
+
+func (*fakeVPCResolver) ResolveDefaultVPC(context.Context) (string, string, error) {
+	return "vpc-e2e", "subnet-e2e", nil
+}
+
 // --- ResourceClient ---
 
 type fakeRC struct{ store *fakeStore }
@@ -349,5 +367,6 @@ var (
 	_ cloud.CodeBuildRunner          = (*fakeProvider)(nil)
 	_ cloud.GameLiftManager          = (*fakeProvider)(nil)
 	_ cloud.RemoteRunner             = (*fakeProvider)(nil)
+	_ cloud.RegionProvider           = (*fakeProvider)(nil)
 	_ cloud.ResourceClient           = (*fakeRC)(nil)
 )
