@@ -33,14 +33,10 @@ func TestParentNewWiresSubcommands(t *testing.T) {
 	for _, c := range parent.Commands() {
 		names[c.Name()] = true
 	}
-	for _, want := range []string{"setup", "status", "destroy"} {
+	for _, want := range []string{"setup", "status", "destroy", "region"} {
 		if !names[want] {
 			t.Fatalf("missing subcommand %q; have %v", want, names)
 		}
-	}
-	// Ensure no multi-region command slipped in.
-	if names["region"] {
-		t.Fatal("region subcommand must not exist in V1")
 	}
 
 	root := &cobra.Command{Use: "fabrica"}
