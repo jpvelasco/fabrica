@@ -111,3 +111,64 @@ func TestScyllaInstanceDesiredState(t *testing.T) {
 		t.Fatalf("%s", raw)
 	}
 }
+
+func testEdgePlan() *EdgePlan {
+	return &EdgePlan{
+		Account:             "123",
+		Region:              "eu-west-1",
+		AmiID:               "ami-edge",
+		InstanceType:        "m7i.large",
+		VolumeSize:          250,
+		PublicPort:          80,
+		InternalPort:        8080,
+		AllowedCIDR:         "10.0.0.0/8",
+		InternalCIDR:        "10.0.0.0/8",
+		VPCID:               "vpc-edge",
+		SubnetID:            "subnet-edge",
+		Bucket:              "fabrica-ddc-test",
+		Namespace:           "deriveddatacache",
+		SGName:              "fabrica-ddc-sg-eu-west-1",
+		InstanceName:        "fabrica-ddc-edge-eu-west-1",
+		InstanceProfileName: "fabrica-ddc-profile",
+	}
+}
+
+func TestEdgeSGDesiredState(t *testing.T) {
+	raw, err := EdgeSGDesiredState(testEdgePlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, "public API") || !strings.Contains(s, "8080") {
+		t.Fatalf("edge SG: %s", s)
+	}
+	if strings.Contains(s, "9042") {
+		t.Fatalf("edge SG must not open Scylla CQL: %s", s)
+	}
+	if strings.Contains(s, "fabrica-ddc-sg-eu-west-1") == false {
+		t.Fatalf("edge SG missing name: %s", s)
+	}
+}
+
+func TestEdgeInstanceDesiredState(t *testing.T) {
+	raw, err := EdgeInstanceDesiredState(testEdgePlan(), "sg-edge", "dGVzdA==")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc["ImageId"] != "ami-edge" {
+		t.Fatalf("ImageId = %v", doc["ImageId"])
+	}
+	if doc["IamInstanceProfile"] != "fabrica-ddc-profile" {
+		t.Fatalf("IamInstanceProfile = %v", doc["IamInstanceProfile"])
+	}
+	if !strings.Contains(string(raw), "fabrica-ddc-edge-eu-west-1") {
+		t.Fatalf("instance name missing: %s", raw)
+	}
+	if !strings.Contains(string(raw), "FabricaRole") {
+		t.Fatalf("edge role tag missing: %s", raw)
+	}
+}

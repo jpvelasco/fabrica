@@ -37,7 +37,7 @@ func TestNewHomeCoLocated(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsRemoteEdge(t *testing.T) {
+func TestValidateAcceptsRemoteEdge(t *testing.T) {
 	top := Topology{
 		HomeRegion:  "us-east-1",
 		Coordinator: NodeSpec{Role: RoleCoordinator, Region: "us-east-1"},
@@ -45,8 +45,56 @@ func TestValidateRejectsRemoteEdge(t *testing.T) {
 			{Role: RoleEdge, Region: "eu-west-1"},
 		},
 	}
+	if err := top.Validate(); err != nil {
+		t.Fatalf("remote edge must be valid in multi-region graphs: %v", err)
+	}
+}
+
+func TestValidateRejectsEdgeWithoutRegion(t *testing.T) {
+	top := Topology{
+		HomeRegion:  "us-east-1",
+		Coordinator: NodeSpec{Role: RoleCoordinator, Region: "us-east-1"},
+		Edges:       []NodeSpec{{Role: RoleEdge}},
+	}
 	if err := top.Validate(); err == nil {
-		t.Fatal("expected error for remote edge")
+		t.Fatal("expected error for edge without region")
+	}
+}
+
+func TestValidateRejectsDuplicateRemoteHome(t *testing.T) {
+	top := NewHomeCoLocated("us-east-1", NodeSpec{InstanceType: "m7i.xlarge"})
+	top = top.WithRemoteEdge(NodeSpec{Region: "us-east-1", InstanceType: "m7i.xlarge"})
+	if err := top.Validate(); err == nil {
+		t.Fatal("expected error for second home-region edge")
+	}
+}
+
+func TestWithRemoteEdge(t *testing.T) {
+	top := NewHomeCoLocated("us-east-1", NodeSpec{InstanceType: "m7i.xlarge", AmiID: "ami-1", VolumeSize: 500})
+	top = top.WithRemoteEdge(NodeSpec{Region: "eu-west-1", InstanceType: "m7i.large", AmiID: "ami-2", VolumeSize: 250})
+	if len(top.Edges) != 2 {
+		t.Fatalf("len(Edges) = %d, want 2", len(top.Edges))
+	}
+	edge := top.Edges[1]
+	if edge.Role != RoleEdge {
+		t.Fatalf("remote edge role = %q", edge.Role)
+	}
+	if edge.Region != "eu-west-1" || edge.InstanceType != "m7i.large" || edge.AmiID != "ami-2" || edge.VolumeSize != 250 {
+		t.Fatalf("remote edge = %+v", edge)
+	}
+	if got := top.Regions(); len(got) != 2 {
+		t.Fatalf("Regions = %v, want 2 regions", got)
+	}
+	if err := top.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestWithRemoteEdgeEmptyRegionSkipped(t *testing.T) {
+	top := NewHomeCoLocated("us-east-1", NodeSpec{})
+	top = top.WithRemoteEdge(NodeSpec{})
+	if len(top.Edges) != 1 {
+		t.Fatalf("empty-region edge must be dropped; len = %d", len(top.Edges))
 	}
 }
 

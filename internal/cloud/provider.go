@@ -44,3 +44,20 @@ type Resource struct {
 	DesiredState json.RawMessage `json:"desiredState,omitempty"`
 	ActualState  json.RawMessage `json:"actualState,omitempty"`
 }
+
+// RegionView bundles the clients a multi-region module needs to operate on
+// resources in one specific region. Resources performs Cloud Control CRUD in
+// that region; VPCs resolves the region's default VPC/subnet.
+type RegionView struct {
+	Resources ResourceClient
+	VPCs      VPCResolver
+}
+
+// RegionProvider supplies region-scoped clients. Multi-region commands (DDC
+// region add / destroy) type-assert this on the exec Provider instead of
+// forcing every ResourceClient to be region-agnostic.
+type RegionProvider interface {
+	// WithRegion returns a RegionView bound to region without mutating the
+	// receiver. Implementations must validate the region themselves.
+	WithRegion(ctx context.Context, region string) (RegionView, error)
+}

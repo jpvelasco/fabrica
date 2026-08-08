@@ -87,6 +87,42 @@ func ScyllaInstanceDesiredState(plan *SetupPlan, sgID, userData, instanceProfile
 	)
 }
 
+// EdgeSGDesiredState returns Cloud Control desired-state for an edge region's
+// security group. The edge opens the same public API + internal ports as the
+// home stack; replication traffic uses the internal port and is restricted to
+// internalCidr — operators extend that CIDR to cover both regions if needed.
+func EdgeSGDesiredState(plan *EdgePlan) (json.RawMessage, error) {
+	rules := []ec2state.SGIngressRule{
+		{IpProtocol: "tcp", FromPort: plan.PublicPort, ToPort: plan.PublicPort, CidrIp: plan.AllowedCIDR, Description: "Unreal Cloud DDC public API (edge)"},
+		{IpProtocol: "tcp", FromPort: plan.InternalPort, ToPort: plan.InternalPort, CidrIp: plan.InternalCIDR, Description: "Unreal Cloud DDC internal API (edge; peer wiring is operator-managed)"},
+	}
+	return ec2state.SGDesiredState(plan.SGName, "Fabrica-managed security group for Unreal Cloud DDC edge", plan.VPCID, rules, map[string]string{
+		"FabricaModule": "ddc",
+		"FabricaRole":   "edge",
+	})
+}
+
+// EdgeInstanceDesiredState returns desired-state for the edge region's DDC EC2
+// instance. It reuses the home instance profile (IAM is global) and the shared
+// blob bucket via cloud-init.
+func EdgeInstanceDesiredState(plan *EdgePlan, sgID, userData string) (json.RawMessage, error) {
+	spec := ec2state.InstanceSpec{
+		ImageID:         plan.AmiID,
+		InstanceType:    plan.InstanceType,
+		SubnetID:        plan.SubnetID,
+		SecurityGroupID: sgID,
+		UserData:        userData,
+		VolumeSize:      plan.VolumeSize,
+		InstanceName:    plan.InstanceName,
+	}
+	dsOpts := []ec2state.DesiredStateOption{
+		ec2state.WithExtraTags("FabricaModule", "ddc"),
+		ec2state.WithExtraTags("FabricaRole", "edge"),
+		ec2state.WithIAMProfile(plan.InstanceProfileName),
+	}
+	return ec2state.Build(spec, dsOpts...)
+}
+
 func ec2DesiredState(amiID, instanceType, subnetID, sgID, userData, profileName string, volumeSize int, name string) (json.RawMessage, error) {
 	spec := ec2state.InstanceSpec{
 		ImageID:         amiID,
