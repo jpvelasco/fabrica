@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-07
+
+### Added
+
+- **Drift detection** — `fabrica drift` compares recorded state against live AWS resources and reports whether each resource is in-sync, missing, extra (live but not in state), or has attribute mismatches. Covers state backend (S3/DynamoDB), EC2 instances (state, type, AMI), security groups, IAM roles, and CodeBuild projects. Extra detection uses `ResourceClient.List` to enumerate live resources and diff against recorded state. `--json` for machine-readable output. (#228, #230)
+- **MCP server** — `fabrica mcp` runs a Model Context Protocol server over stdio transport, exposing 6 read-only tools (`fabrica_version`, `fabrica_doctor`, `fabrica_status`, `fabrica_drift`, `fabrica_cost_report`, `fabrica_config_show`). Reuses existing business logic from `internal/*` packages with zero duplication. Doctor and status logic extracted to shared `cmd/internal/doctorchecks` and `cmd/internal/statusreport` packages. (#232)
+- **Export** — `fabrica export --format cloudformation|terraform` generates infrastructure-as-code templates (CloudFormation YAML or Terraform HCL) from recorded local state. V1 covers the state backend (S3 bucket, DynamoDB table) and Horde, Perforce, and Lore modules. Secrets (UserData, credential-like fields) are redacted in output. DDC, Workstation, CI, and Deploy deferred to V2. (#233)
+
+### Fixed
+
+- **Export edge cases** — `toLogicalID` now guards against empty identifiers (preventing panic on strings that strip to empty). S3 public access block HCL emits real property fields instead of comment-only placeholders. IAM policy document HCL reads actual Effect/Principal/Action from the policy Statement array instead of hardcoding EC2 defaults, supporting non-EC2 policies and multi-statement documents. (#234)
+- **Export no-state-file behavior** — when `.fabrica/state.json` is absent, `fabrica export` now prints a warning and exits 0 instead of creating a state from config defaults. (#235)
+- **Terraform output references** — HCL2 output values use bare resource references (`aws_s3_bucket.name.id`) instead of invalid HCL1 interpolation syntax (`${resource.attr}`). (#236)
+
 ## [0.2.0] - 2026-08-06
 
 ### Added
@@ -169,7 +183,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/jpvelasco/fabrica/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jpvelasco/fabrica/compare/v0.1.6...v0.2.0
 [0.1.6]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.6
 [0.1.5]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.5
