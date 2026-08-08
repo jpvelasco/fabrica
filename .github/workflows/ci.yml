@@ -222,26 +222,6 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
 
-  # Codacy Static Analysis — push to main only (dashboard refresh).
-  # PR quality: Codacy GitHub integration. Token: CODACY_REPOSITORY_API_TOKEN.
-  #
-  # Locked Fabrica profile (do not freestyle):
-  #   Cloud ON:  Opengrep, Revive, Trivy, Checkov, Lizard, Deadcode
-  #   Cloud OFF: Gosec/Staticcheck/GolangCI client-side, ESLint*, Jackson, PMD, …
-  #   CI owns:   golangci-lint, gosec@v2.27+, govulncheck, tests/Codecov
-  #   NEVER set run-gosec / run-staticcheck — action pins gosec v2.15.0 + Go 1.20
-  #   and panics on this module (Go 1.25+). See .private/guides/CODACY-FABRICA-AGENT-GUIDE.md
-  #   (gitignored) for the full agent contract.
-  codacy-analysis:
-    name: Codacy Analysis
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - name: Run Codacy Analysis CLI
-        uses: codacy/codacy-analysis-cli-action@562ee3e92b8e92df8b67e0a5ff8aa8e261919c08  # v4.4.7
-        with:
-          project-token: ${{ secrets.CODACY_REPOSITORY_API_TOKEN }}
-          upload: true
-          # Informational — do not block the pipeline.
-          max-allowed-issues: 2147483647
+  # Codacy Static Analysis runs in the Codacy cloud (GitHub integration) for
+  # both PRs and main — the repository's "Run on CI" mode is OFF, so no CLI
+  # upload job is needed. Coverage is uploaded by .github/workflows/codacy-coverage.yml.
