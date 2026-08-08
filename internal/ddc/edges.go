@@ -206,8 +206,9 @@ func property(r state.ModuleResource, key string) string {
 	return r.Properties[key]
 }
 
+// atoiOrZero parses an integer property, returning 0 on missing or invalid.
 func atoiOrZero(s string) int {
 	n := 0
-	fmt.Sscanf(s, "%d", &n)
+	_, _ = fmt.Sscanf(s, "%d", &n)
 	return n
 }

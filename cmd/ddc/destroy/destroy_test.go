@@ -151,7 +151,7 @@ type regionTrackingProvider struct {
 
 func (p *regionTrackingProvider) WithRegion(_ context.Context, region string) (cloud.RegionView, error) {
 	return cloud.RegionView{
-		Resources: &regionTagClient{inner: p.TestProvider.Resources().(*testutil.FakeResourceClient), p: p, region: region},
+		Resources: &regionTagClient{inner: p.Resources().(*testutil.FakeResourceClient), p: p, region: region},
 		VPCs:      &testutil.TestVPCResolver{},
 	}, nil
 }
