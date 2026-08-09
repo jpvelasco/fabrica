@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-08
+
+### Added
+
+- **DDC multi-region edge nodes** — `fabrica ddc region add REGION` provisions a peer-region edge node (SG + AMI-first EC2) reusing the home blob bucket and IAM profile. Multiple edge regions supported; `ddc status` lists all edges from local state. `ddc destroy` tears down edges first (per region) then the home stack. `cloud.RegionProvider` interface for region-scoped clients; `internal/topology` coordinator/edge graph types. Replication peers remain operator-managed; edge status is state-based (no live edge probes in this cut). (#238)
+
+### Changed
+
+- **CI** — removed redundant Codacy CLI upload job; aligned local Codacy config with cloud profile. (#239)
+
 ## [0.3.0] - 2026-08-07
 
 ### Added
@@ -183,7 +193,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/jpvelasco/fabrica/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/jpvelasco/fabrica/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jpvelasco/fabrica/compare/v0.1.6...v0.2.0
 [0.1.6]: https://github.com/jpvelasco/fabrica/releases/tag/v0.1.6
