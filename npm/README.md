@@ -168,6 +168,5 @@ UserData.
 
 - **Source & full docs:** [github.com/jpvelasco/fabrica](https://github.com/jpvelasco/fabrica)
 - **Changelog:** [CHANGELOG.md](https://github.com/jpvelasco/fabrica/blob/main/CHANGELOG.md)
-- **Roadmap:** [ROADMAP.md](https://github.com/jpvelasco/fabrica/blob/main/ROADMAP.md)
 - **Issues:** [github.com/jpvelasco/fabrica/issues](https://github.com/jpvelasco/fabrica/issues)
 - **License:** MIT
