@@ -307,6 +307,46 @@ func TestRun_FixJSONWithResult(t *testing.T) {
 	}
 }
 
+func TestRun_FixJSONFailure(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
+			"instanceType": "m7i.2xlarge",
+		}},
+	})
+
+	c := newTestCommand(t, func(c *command) {
+		c.fixMode = true
+		c.jsonOut = true
+		c.assumeYes = true
+		c.readState = func() (*fabricastate.State, error) { return st, nil }
+		c.createResource = func(_ context.Context, r *cloud.Resource) error {
+			return errors.New("simulated failure")
+		}
+		c.writeState = func(s *fabricastate.State) error { return nil }
+	})
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		return cloud.ErrResourceNotFound
+	}
+	c.listResources = func(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
+
+	err := c.run(context.Background(), false)
+	if err == nil {
+		t.Fatal("expected error on failure in JSON mode")
+	}
+	if !strings.Contains(err.Error(), "remediation failed") {
+		t.Errorf("unexpected error: %v", err)
+	}
+	got := c.out.(*bytes.Buffer).String()
+	var output map[string]any
+	if err := json.Unmarshal([]byte(got), &output); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, got)
+	}
+	if _, ok := output["result"]; !ok {
+		t.Error("expected 'result' in JSON output even on failure")
+	}
+}
+
 // --- printText tests ---
 
 func TestPrintText_WithModules(t *testing.T) {

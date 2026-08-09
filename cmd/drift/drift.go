@@ -175,7 +175,11 @@ func (c *command) runFix(ctx context.Context, dryRun bool, st *fabricastate.Stat
 	}
 
 	if c.jsonOut {
-		return c.printFixJSON(result, plan, nil)
+		err := c.printFixJSON(result, plan, nil)
+		if len(result.Failed) > 0 {
+			return fmt.Errorf("remediation failed: %d action(s) failed", len(result.Failed))
+		}
+		return err
 	}
 	c.printFixResult(result, plan)
 	if len(result.Failed) > 0 {
