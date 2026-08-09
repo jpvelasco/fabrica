@@ -4,7 +4,7 @@
 
 Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, zero external dependencies. Sister tool to [Ludus](https://github.com/jpvelasco/ludus) — Ludus orchestrates game builds, Fabrica gives them somewhere to run.
 
-**Current state:** All phases implemented — Phase 0, Phase 1 (core pipeline), Lore (v0.2), and DDC (V1 + multi-region edge nodes) are complete; current stable release **v0.1.3** (2026-08-02). Modules implemented: `perforce`, `horde`, `lore`, `ddc`, `workstation`, `ci`, `deploy`, and `cost`, plus full-stack `destroy --all` and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) and [CLAUDE.md](CLAUDE.md) for the authoritative, current module status — this file is a high-level orientation, not a status mirror.
+**Current state:** All phases implemented — Phase 0, Phase 1 (core pipeline), Lore (v0.2), and DDC (V1 + multi-region edge nodes) are complete; current stable release **v0.3.0** (2026-08-07). Modules implemented: `perforce`, `horde`, `lore`, `ddc`, `workstation`, `ci`, `deploy`, `cost`, plus read-only `status`, `doctor`, `drift`, `config show`, `export`, `mcp`, full-stack `destroy --all`, and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) and [CLAUDE.md](CLAUDE.md) for the authoritative, current module status — this file is a high-level orientation, not a status mirror.
 
 **Private designs:** Draft specs and implementation plans for future work live under `.private/` (gitignored — never commit). Suggested layout: `.private/designs/`, `.private/plans/`. Public user docs stay in `docs/` (AMI guides, deploy notes) and root `README.md` / `ROADMAP.md`.
 
@@ -12,11 +12,14 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 
 | Module | Commands | What it does |
 |--------|----------|--------------|
+| foundation | `setup`, `status`, `doctor`, `drift`, `config show`, `version` | S3 + DynamoDB state backend, aggregate health overview, env checks, read-only drift detection against live AWS, config display, version |
 | `perforce` | `create`, `status`, `destroy`, `backup`, `restore` | Provisions a Perforce Helix Core EC2 instance with SG + SSM instance profile; tracks provisioning state; TCP probe on 1666; EBS backup/restore via SSM |
-| `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Provisions an Unreal Horde build coordinator (AMI-first, m7i.2xlarge); probes port 5000; parses BuildGraph XML and POSTs jobs to the Horde REST API; generates EC2 Image Builder recipe + optional Packer HCL for building the required AMI |
+| `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Provisions an Unreal Horde build coordinator (AMI-first, m7i.2xlarge) with SG + IAM SSM instance profile; probes port 5000; parses BuildGraph XML and POSTs jobs to the Horde REST API; generates EC2 Image Builder recipe + optional Packer HCL for building the required AMI |
 | `lore` | `create`, `status`, `destroy` | Provisions an Epic Lore (`loreserver`) EC2 instance (AMI-first, local/EBS store); probes `GET /health_check` on port 41339; parallel to Perforce |
 | `ddc` | `setup`, `status`, `destroy`, `region add` | Provisions Unreal Cloud DDC (Jupiter) on EC2 (AMI-first, home region + additional edge regions); hybrid EBS+S3; default `zen` backend; probes `GET /health/ready` |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Provisions a NICE DCV cloud workstation on EC2 (AMI-first, g4dn.xlarge default); allows TCP 8443 inbound; writes DCV session credentials to `.fabrica/workstation-credentials.yaml`; supports stop/start via EC2InstanceManager and permanent termination |
+| `export` | `--format cloudformation\|terraform` | Generates IaC templates from recorded local state only — no live AWS calls; V1 covers state backend + horde/perforce/lore; secrets redacted |
+| `mcp` | `mcp` | stdio MCP server exposing 6 read-only tools (`fabrica_version`, `fabrica_doctor`, `fabrica_status`, `fabrica_drift`, `fabrica_cost_report`, `fabrica_config_show`); reuses the same `internal/*` logic as the CLI |
 
 **Perforce** provisions a Helix Core version control server on EC2 — security group, instance, and credentials — then tracks whether the server is accepting connections. It's the source-of-truth for a game studio's asset and code history.
 
@@ -52,7 +55,7 @@ go list -deps ./internal/cloud/...
 
 **Verify Cloud Control support per resource type** — not every CloudFormation type supports the Cloud Control CREATE action. `AWS::CodeBuild::Project` throws `UnsupportedActionException`, so the `ci` module creates it through the `cloud.CodeBuildRunner` SDK auxiliary interface (IAM role still via Cloud Control); `deploy` adds `cloud.GameLiftManager` for fleet status/events. Confirm support before assuming `rt.Provider.Resources().Create` works; if it doesn't, add an SDK-backed auxiliary interface.
 
-**Build new EC2 modules on the shared packages** — `internal/ec2plan` (plan base), `internal/ec2state` (desired-state JSON), `internal/ec2cost` (cost resources), `internal/userdata` (cloud-init rendering), and `internal/iamrole` (trust policies) exist so a new single-instance module doesn't reintroduce the duplication they centralized. `internal/lore` and `internal/ddc` are the reference consumers — `internal/perforce` predates these packages and duplicates what they now own. Shared command orchestration lives in `cmd/internal/`: `provision` (create lifecycle), `modstatus` (status spine + per-command `Renderer`), `teardown` (destroy engine), `destroyall`, `costsource`, and `testutil` (Cobra/cloud test fakes).
+**Build new EC2 modules on the shared packages** — `internal/ec2plan` (plan base), `internal/ec2state` (desired-state JSON), `internal/ec2cost` (cost resources), `internal/userdata` (cloud-init rendering), and `internal/iamrole` (trust policies) exist so a new single-instance module doesn't reintroduce the duplication they centralized. `internal/lore` and `internal/ddc` are the reference consumers — `internal/perforce` predates these packages and duplicates what they now own. Shared command orchestration lives in `cmd/internal/`: `provision` (create lifecycle), `modstatus` (status spine + per-command `Renderer`), `teardown` (destroy engine), `destroyall`, `costsource`, `doctorchecks` + `statusreport` (doctor/status logic extracted so the MCP server reuses it), and `testutil` (Cobra/cloud test fakes).
 
 **Seam injection for testability** — the `command` struct holds `func` fields for all I/O operations (`readState`, `writeState`, `createResource`, `probeTCP`, etc.). `New()` wires real implementations; tests inject fakes. No global state, no `init()` side effects in tests.
 
