@@ -26,9 +26,10 @@ status, tear down — with typed-phrase confirmations and recoverable partial st
 
 ## Current Status
 
-**Current stable: v0.1.2.** Phase 0, Phase 1, Lore (v0.2), and DDC V1 are
-complete: Perforce, Horde, Lore, Distributed DDC (single home-region),
-Workstation, CI, Deploy, Cost, full-stack `destroy --all`, offline cost
+**Current stable: v0.3.0.** Phase 0, Phase 1, Lore (v0.2), and DDC (V1 +
+multi-region edge nodes) are complete: Perforce, Horde, Lore, Distributed DDC
+(home + edge regions), Workstation, CI, Deploy, Cost, read-only drift
+detection, MCP server, IaC export, full-stack `destroy --all`, offline cost
 visibility, and a CLI E2E suite. Install via `npm install -g fabrica-cli` or
 GitHub Releases. See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium
 vision, and what's next.
@@ -39,7 +40,7 @@ vision, and what's next.
 | `perforce` | `create`, `status`, `destroy`, `backup`, `restore` | Complete |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Complete |
 | `lore` | `create`, `status`, `destroy` | Complete |
-| `ddc` | `setup`, `status`, `destroy` | Complete (V1 single-region) |
+| `ddc` | `setup`, `status`, `destroy`, `region add` | Complete (V1, home + edge regions) |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Complete |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | Complete |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | Complete |
