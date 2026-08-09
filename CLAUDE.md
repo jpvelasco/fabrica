@@ -128,6 +128,7 @@ go list -deps ./internal/cloud/...
 | `internal/tags` | Tag injection helpers; `ManagedBy: fabrica` applied to all resources |
 | `internal/prompt` | `Confirm` (y/N) and `ConfirmExact` (typed phrase) for interactive confirmation dialogs |
 | `internal/version` | Version constant |
+| `internal/oplog` | Stdlib-only operational logging (`log/slog`): `Init` from level/verbose, `Logger()`, `WithModule`, `WithResource`, `Redact`. Logs to stderr; safe without Init. |
 | `cmd/perforce` | Parent command; wires create/status/destroy subcommands |
 | `cmd/perforce/create` | Provision SG + EC2 instance in order; writes state after each; generates credentials |
 | `cmd/perforce/status` | Reads state + Cloud Control live data; TCP-probes port 1666; transitions provisioning→ready |
@@ -227,7 +228,8 @@ Config: `fabrica.yaml` (or `fabrica-<profile>.yaml` with `--profile`). Copy `fab
 
 - **IaC:** AWS Cloud Control API (`aws-sdk-go-v2/service/cloudcontrol`) — no Terraform, no Pulumi, no external binaries
 - **Module path:** `github.com/jpvelasco/fabrica`
-- **Config:** Viper + YAML — Viper scoped inside `internal/config` only; no logging library, `fmt.Printf`/`Println` only
+- **Config:** Viper + YAML — Viper scoped inside `internal/config` only
+- **Output:** dual streams — human output via `fmt.Printf`/`Println` to stdout; operational diagnostics via `internal/oplog` (stdlib `log/slog`) to stderr. Enable with `--verbose` or `FABRICA_LOG_LEVEL=debug`. No third-party logging libraries.
 
 ## Test Strategy
 
@@ -270,7 +272,7 @@ Reference: `cmd/perforce/` + `internal/perforce/` are the canonical templates fo
 
 **Cost estimation:** every new resource type needs a cost estimator registered by `TypeName` via `cost.Global.Register`. Do not re-register `AWS::EC2::Instance` or `AWS::EC2::Volume` — already registered in `internal/perforce/cost.go`.
 
-**No logging library:** `fmt.Printf`/`Println` only.
+**No third-party logging library:** human output via `fmt.Printf`/`Println` only; operational diagnostics via `internal/oplog` (stdlib `log/slog`) to stderr.
 
 **Coverage target:** New/changed code must meet the Codecov `patch` gate (≥90%; enforced in CI via `codecov.yml`). **No new function ships at 0% coverage** — strive for 100%. Tests use mocked SDK interfaces — no real AWS calls. "Tests pass" ≠ "code is covered": before claiming a task done, run `go tool cover -func` on the changed functions, or check the Codecov `patch` verdict via the API (`gh api repos/OWNER/REPO/commits/SHA/check-runs`), not the cosmetic `gh pr checks` line.
 

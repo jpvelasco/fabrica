@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/drift"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -635,4 +637,334 @@ func TestRun_WriteStateError(t *testing.T) {
 	if !strings.Contains(err.Error(), "writing state after fix") {
 		t.Errorf("unexpected error: %v", err)
 	}
+}
+
+// --- oplog coverage for runFix ---
+
+func logBuf(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	oplog.ResetForTest()
+	buf := &bytes.Buffer{}
+	oplog.InitWithWriter(slog.LevelInfo, true, buf)
+	return buf
+}
+
+func hasLog(t *testing.T, buf *bytes.Buffer, substr string) {
+	t.Helper()
+	if !strings.Contains(buf.String(), substr) {
+		t.Errorf("expected log to contain %q, got:\n%s", substr, buf.String())
+	}
+}
+
+func TestRunFix_NoDrift_Oplog(t *testing.T) {
+	buf := logBuf(t)
+	c := newTestCommand(t, func(c *command) {
+		c.fixMode = true
+		c.assumeYes = true
+	})
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		return cloud.ErrResourceNotFound
+	}
+	err := c.run(context.Background(), false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hasLog(t, buf, "no drift found, nothing to fix")
+}
+
+func TestRunFix_DryRun_Oplog(t *testing.T) {
+	buf := logBuf(t)
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
+			"instanceType": "m7i.2xlarge",
+		}},
+	})
+
+	c := newTestCommand(t, func(c *command) {
+		c.fixMode = true
+		c.assumeYes = true
+		c.readState = func() (*fabricastate.State, error) { return st, nil }
+	})
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		return cloud.ErrResourceNotFound
+	}
+	c.listResources = func(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
+
+	err := c.run(context.Background(), true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hasLog(t, buf, "drift fix dry-run, showing plan")
+	hasLog(t, buf, "plan action")
+}
+
+func TestRunFix_ConfirmReject_Oplog(t *testing.T) {
+	buf := logBuf(t)
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
+			"instanceType": "m7i.2xlarge",
+		}},
+	})
+
+	c := newTestCommand(t, func(c *command) {
+		c.fixMode = true
+		c.assumeYes = false
+		c.readState = func() (*fabricastate.State, error) { return st, nil }
+		c.confirm = func(string) bool { return false }
+	})
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		return cloud.ErrResourceNotFound
+	}
+	c.listResources = func(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
+
+	err := c.run(context.Background(), false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hasLog(t, buf, "drift fix aborted by user")
+}
+
+func TestRunFix_ConfirmAccept_Oplog(t *testing.T) {
+	buf := logBuf(t)
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
+			"instanceType": "m7i.2xlarge",
+		}},
+	})
+
+	var created int
+	c := newTestCommand(t, func(c *command) {
+		c.fixMode = true
+		c.assumeYes = false
+		c.readState = func() (*fabricastate.State, error) { return st, nil }
+		c.confirm = func(string) bool { return true }
+		c.createResource = func(_ context.Context, r *cloud.Resource) error {
+			created++
+			return nil
+		}
+		c.writeState = func(s *fabricastate.State) error { return nil }
+	})
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		return cloud.ErrResourceNotFound
+	}
+	c.listResources = func(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
+
+	err := c.run(context.Background(), false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hasLog(t, buf, "drift fix confirmed by user")
+}
+
+func TestRunFix_AssumeYes_Oplog(t *testing.T) {
+	buf := logBuf(t)
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
+			"instanceType": "m7i.2xlarge",
+		}},
+	})
+
+	var created int
+	c := newTestCommand(t, func(c *command) {
+		c.fixMode = true
+		c.assumeYes = true
+		c.readState = func() (*fabricastate.State, error) { return st, nil }
+		c.createResource = func(_ context.Context, r *cloud.Resource) error {
+			created++
+			return nil
+		}
+		c.writeState = func(s *fabricastate.State) error { return nil }
+	})
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		return cloud.ErrResourceNotFound
+	}
+	c.listResources = func(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
+
+	err := c.run(context.Background(), false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hasLog(t, buf, "drift fix proceeding without confirmation")
+}
+
+func TestRunFix_FixPathLogMessages_Oplog(t *testing.T) {
+	buf := logBuf(t)
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
+			"instanceType": "m7i.2xlarge",
+		}},
+	})
+
+	c := newTestCommand(t, func(c *command) {
+		c.fixMode = true
+		c.assumeYes = true
+		c.readState = func() (*fabricastate.State, error) { return st, nil }
+		c.createResource = func(_ context.Context, r *cloud.Resource) error { return nil }
+		c.writeState = func(s *fabricastate.State) error { return nil }
+	})
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		return cloud.ErrResourceNotFound
+	}
+	c.listResources = func(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
+
+	err := c.run(context.Background(), false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// A single successful fix run emits all of these debug messages.
+	hasLog(t, buf, "plan action")
+	hasLog(t, buf, "i-123")
+	hasLog(t, buf, "applying drift remediation")
+	hasLog(t, buf, "applied")
+}
+
+func TestRunFix_ResultMixed_Oplog(t *testing.T) {
+	buf := logBuf(t)
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
+			"instanceType": "m7i.2xlarge",
+		}},
+	})
+
+	var callCount int
+	c := newTestCommand(t, func(c *command) {
+		c.fixMode = true
+		c.assumeYes = true
+		c.readState = func() (*fabricastate.State, error) { return st, nil }
+		c.createResource = func(_ context.Context, r *cloud.Resource) error {
+			callCount++
+			// First action (SG) succeeds, second (instance) fails.
+			if callCount == 1 {
+				r.Identifier = "sg-new"
+				return nil
+			}
+			return errors.New("simulated failure")
+		}
+		c.writeState = func(s *fabricastate.State) error { return nil }
+	})
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		return cloud.ErrResourceNotFound
+	}
+	c.listResources = func(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
+
+	err := c.run(context.Background(), false)
+	if err == nil {
+		t.Fatal("expected error on partial failure")
+	}
+	hasLog(t, buf, "applied")
+	hasLog(t, buf, "failed")
+}
+
+func TestRunFix_WriteStateSuccess_Oplog(t *testing.T) {
+	buf := logBuf(t)
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
+			"instanceType": "m7i.2xlarge",
+		}},
+	})
+
+	var writeCalled bool
+	c := newTestCommand(t, func(c *command) {
+		c.fixMode = true
+		c.assumeYes = true
+		c.readState = func() (*fabricastate.State, error) { return st, nil }
+		c.createResource = func(_ context.Context, r *cloud.Resource) error { return nil }
+		c.writeState = func(s *fabricastate.State) error {
+			writeCalled = true
+			return nil
+		}
+	})
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		return cloud.ErrResourceNotFound
+	}
+	c.listResources = func(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
+
+	err := c.run(context.Background(), false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !writeCalled {
+		t.Error("expected writeState to be called")
+	}
+	hasLog(t, buf, "writing state after drift fix")
+}
+
+func TestRunFix_WriteStateError_Oplog(t *testing.T) {
+	buf := logBuf(t)
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
+			"instanceType": "m7i.2xlarge",
+		}},
+	})
+
+	c := newTestCommand(t, func(c *command) {
+		c.fixMode = true
+		c.assumeYes = true
+		c.readState = func() (*fabricastate.State, error) { return st, nil }
+		c.createResource = func(_ context.Context, r *cloud.Resource) error { return nil }
+		c.writeState = func(s *fabricastate.State) error {
+			return errors.New("disk full")
+		}
+	})
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		return cloud.ErrResourceNotFound
+	}
+	c.listResources = func(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
+
+	err := c.run(context.Background(), false)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	hasLog(t, buf, "failed to write state after drift fix")
+}
+
+func TestRunFix_SkippedActions_Oplog(t *testing.T) {
+	buf := logBuf(t)
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
+			"instanceType": "m7i.2xlarge",
+		}},
+		{TypeName: cloud.TypeAWSEC2Volume, Identifier: "vol-123"},
+	})
+
+	var callCount int
+	c := newTestCommand(t, func(c *command) {
+		c.fixMode = true
+		c.assumeYes = true
+		c.readState = func() (*fabricastate.State, error) { return st, nil }
+		c.createResource = func(_ context.Context, r *cloud.Resource) error {
+			callCount++
+			// SG succeeds, instance fails — remaining actions (Volume ActionSkip)
+			// are collected as skipped by ApplyRemediation.
+			if callCount == 1 {
+				r.Identifier = "sg-new"
+				return nil
+			}
+			return errors.New("simulated failure")
+		}
+		c.writeState = func(s *fabricastate.State) error { return nil }
+	})
+	c.getResource = func(_ context.Context, r *cloud.Resource) error {
+		return cloud.ErrResourceNotFound
+	}
+	c.listResources = func(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
+
+	err := c.run(context.Background(), false)
+	if err == nil {
+		t.Fatal("expected error on partial failure")
+	}
+	hasLog(t, buf, "applied")
+	hasLog(t, buf, "failed")
+	hasLog(t, buf, "skipped")
 }

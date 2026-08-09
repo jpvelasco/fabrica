@@ -3,10 +3,13 @@ package state
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 )
 
 // mockLockClient implements lockClient for testing.
@@ -468,5 +471,96 @@ func TestGenTokenUniqueness(t *testing.T) {
 			t.Errorf("duplicate token at iteration %d: %s", i, token)
 		}
 		seen[token] = true
+	}
+}
+
+func TestLockAcquire_ErrorLog(t *testing.T) {
+	oplog.ResetForTest()
+	var buf strings.Builder
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
+
+	lc := newMockLockClient()
+	lc.conditionOK = false
+	ls := NewLockStore("fabrica-state-lock", "us-east-1", lc)
+
+	_, err := ls.Acquire(context.Background(), "my-resource", "test-holder")
+	if err == nil {
+		t.Fatal("expected error on conflict, got nil")
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "failed to acquire lock") {
+		t.Errorf("expected error log 'failed to acquire lock', got:\n%s", logOutput)
+	}
+}
+
+func TestLockAcquire_DebugLog(t *testing.T) {
+	oplog.ResetForTest()
+	var buf strings.Builder
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
+
+	lc := newMockLockClient()
+	ls := NewLockStore("fabrica-state-lock", "us-east-1", lc)
+
+	token, err := ls.Acquire(context.Background(), "my-resource", "test-holder")
+	if err != nil {
+		t.Fatalf("Acquire returned error: %v", err)
+	}
+	if token == "" {
+		t.Fatal("Acquire returned empty token")
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "lock acquired") {
+		t.Errorf("expected debug log 'lock acquired', got:\n%s", logOutput)
+	}
+}
+
+func TestLockRelease_ErrorLog(t *testing.T) {
+	oplog.ResetForTest()
+	var buf strings.Builder
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
+
+	lc := newMockLockClient()
+	lc.deleteOK = false
+	ls := NewLockStore("fabrica-state-lock", "us-east-1", lc)
+
+	_, err := ls.Acquire(context.Background(), "my-resource", "test-holder")
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+
+	err = ls.Release(context.Background(), "my-resource", "wrong-token")
+	if err == nil {
+		t.Fatal("expected error on bad token release")
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "failed to release lock") {
+		t.Errorf("expected error log 'failed to release lock', got:\n%s", logOutput)
+	}
+}
+
+func TestLockRelease_DebugLog(t *testing.T) {
+	oplog.ResetForTest()
+	var buf strings.Builder
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
+
+	lc := newMockLockClient()
+	ls := NewLockStore("fabrica-state-lock", "us-east-1", lc)
+
+	token, err := ls.Acquire(context.Background(), "my-resource", "test-holder")
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+
+	err = ls.Release(context.Background(), "my-resource", token)
+	if err != nil {
+		t.Fatalf("Release failed: %v", err)
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "lock released") {
+		t.Errorf("expected debug log 'lock released', got:\n%s", logOutput)
 	}
 }

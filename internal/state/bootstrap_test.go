@@ -1,12 +1,16 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/oplog"
+	"log/slog"
 )
 
 type fakeBootProvider struct {
@@ -103,5 +107,79 @@ func TestBootstrapUnsupportedProvider(t *testing.T) {
 	_, err := Bootstrap(context.Background(), plainProvider{account: "123"}, cfgFor("123"))
 	if err == nil {
 		t.Fatal("expected unsupported-provider error")
+	}
+}
+
+func TestBootstrapIdentityFailure_ErrorLog(t *testing.T) {
+	oplog.ResetForTest()
+	var buf bytes.Buffer
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
+
+	p := &fakeBootProvider{identityErr: errors.New("no creds")}
+	_, err := Bootstrap(context.Background(), p, cfgFor("123"))
+	if err == nil {
+		t.Fatal("expected identity error")
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "failed to resolve provider identity") {
+		t.Errorf("expected error log 'failed to resolve provider identity', got:\n%s", logOutput)
+	}
+}
+
+func TestBootstrapUnsupportedProvider_ErrorLog(t *testing.T) {
+	oplog.ResetForTest()
+	var buf bytes.Buffer
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
+
+	_, err := Bootstrap(context.Background(), plainProvider{account: "123"}, cfgFor("123"))
+	if err == nil {
+		t.Fatal("expected unsupported-provider error")
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "does not support state backend bootstrap") {
+		t.Errorf("expected error log 'does not support state backend bootstrap', got:\n%s", logOutput)
+	}
+}
+
+func TestBootstrapBucketFailure_ErrorLog(t *testing.T) {
+	oplog.ResetForTest()
+	var buf bytes.Buffer
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
+
+	p := &fakeBootProvider{
+		account:   "123",
+		bucketErr: errors.New("s3 access denied"),
+	}
+	_, err := Bootstrap(context.Background(), p, cfgFor("123"))
+	if err == nil {
+		t.Fatal("expected bucket error")
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "failed to ensure state bucket") {
+		t.Errorf("expected error log 'failed to ensure state bucket', got:\n%s", logOutput)
+	}
+}
+
+func TestBootstrapTableFailure_ErrorLog(t *testing.T) {
+	oplog.ResetForTest()
+	var buf bytes.Buffer
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
+
+	p := &fakeBootProvider{
+		account:   "123",
+		bucketRes: fabricac.StateBackendCreateResult{Identifier: "fabrica-state-123", Created: true},
+		tableErr:  errors.New("dynamodb throttled"),
+	}
+	_, err := Bootstrap(context.Background(), p, cfgFor("123"))
+	if err == nil {
+		t.Fatal("expected table error")
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "failed to ensure lock table") {
+		t.Errorf("expected error log 'failed to ensure lock table', got:\n%s", logOutput)
 	}
 }

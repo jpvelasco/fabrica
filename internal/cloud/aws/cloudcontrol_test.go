@@ -1,10 +1,12 @@
 package aws
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
 	"github.com/aws/aws-sdk-go-v2/service/cloudcontrol/types"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 )
 
 // newCCTestClients returns a resourceClients wired with the provided fakes.
@@ -20,6 +23,17 @@ func newCCTestClients(fakeClient *fakeCCClient, fakeWaiter *fakeCCWaiter) *resou
 	return &resourceClients{
 		cc:      fakeClient,
 		waiter:  fakeWaiter,
+		version: "test",
+	}
+}
+
+// newCCTestClientsWithRegion is like newCCTestClients but sets awsCfg.region
+// so that oplog lines include the region attribute.
+func newCCTestClientsWithRegion(fakeClient *fakeCCClient, fakeWaiter *fakeCCWaiter, region string) *resourceClients {
+	return &resourceClients{
+		cc:      fakeClient,
+		waiter:  fakeWaiter,
+		awsCfg:  awsConfig{region: region},
 		version: "test",
 	}
 }
@@ -452,6 +466,195 @@ func TestTimeout_CustomValueRespected(t *testing.T) {
 	rc := &resourceClients{waitTimeout: 5 * time.Minute}
 	if rc.timeout() != 5*time.Minute {
 		t.Errorf("timeout() = %v, want 5m", rc.timeout())
+	}
+}
+
+// --- oplog error-path coverage ---
+
+func TestCreate_SDKError_LogsError(t *testing.T) {
+	var buf bytes.Buffer
+	oplog.ResetForTest()
+	oplog.InitWithWriter(0, true, &buf) // verbose=true forces debug level
+
+	client := &fakeCCClient{createErr: fmt.Errorf("access denied")}
+	rc := newCCTestClientsWithRegion(client, &fakeCCWaiter{}, "us-east-1")
+
+	r := &fabricac.Resource{TypeName: "AWS::EC2::SecurityGroup", DesiredState: json.RawMessage(`{}`)}
+	err := rc.Create(context.Background(), r)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertStringContains(t, err.Error(), "creating AWS::EC2::SecurityGroup")
+
+	out := buf.String()
+	if !strings.Contains(out, "cloud control create failed") {
+		t.Fatalf("log missing 'cloud control create failed': %s", out)
+	}
+	if !strings.Contains(out, "us-east-1") {
+		t.Fatalf("log missing region 'us-east-1': %s", out)
+	}
+}
+
+func TestCreate_AlreadyExists_LogsDebug(t *testing.T) {
+	var buf bytes.Buffer
+	oplog.ResetForTest()
+	oplog.InitWithWriter(0, true, &buf) // verbose=true forces debug level
+
+	existingID := "sg-already-exists"
+	client := &fakeCCClient{
+		createOut: &cloudcontrol.CreateResourceOutput{
+			ProgressEvent: &types.ProgressEvent{RequestToken: awssdk.String("tok")},
+		},
+	}
+	waiter := &fakeCCWaiter{
+		out: &cloudcontrol.GetResourceRequestStatusOutput{
+			ProgressEvent: &types.ProgressEvent{
+				OperationStatus: types.OperationStatusFailed,
+				ErrorCode:       types.HandlerErrorCodeAlreadyExists,
+				Identifier:      awssdk.String(existingID),
+				StatusMessage:   awssdk.String("Resource already exists"),
+			},
+		},
+	}
+	rc := newCCTestClientsWithRegion(client, waiter, "eu-west-1")
+
+	r := &fabricac.Resource{TypeName: "AWS::EC2::SecurityGroup", DesiredState: json.RawMessage(`{}`)}
+	err := rc.Create(context.Background(), r)
+	if err != nil {
+		t.Fatalf("Create should not error on AlreadyExists: %v", err)
+	}
+	if r.Identifier != existingID {
+		t.Errorf("Identifier = %q, want %q", r.Identifier, existingID)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "resource already exists") {
+		t.Fatalf("log missing 'resource already exists': %s", out)
+	}
+	if !strings.Contains(out, "eu-west-1") {
+		t.Fatalf("log missing region 'eu-west-1': %s", out)
+	}
+}
+
+func TestGet_NotFound_LogsDebug(t *testing.T) {
+	var buf bytes.Buffer
+	oplog.ResetForTest()
+	oplog.InitWithWriter(0, true, &buf) // verbose=true forces debug level
+
+	client := &fakeCCClient{getErr: ccAPIError("NotFound")}
+	rc := newCCTestClientsWithRegion(client, nil, "ap-southeast-1")
+
+	r := &fabricac.Resource{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-missing"}
+	err := rc.Get(context.Background(), r)
+	if !errors.Is(err, fabricac.ErrResourceNotFound) {
+		t.Fatalf("error = %v, want ErrResourceNotFound", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "not found") {
+		t.Fatalf("log missing 'not found': %s", out)
+	}
+	if !strings.Contains(out, "ap-southeast-1") {
+		t.Fatalf("log missing region 'ap-southeast-1': %s", out)
+	}
+}
+
+func TestGet_SDKError_LogsError(t *testing.T) {
+	var buf bytes.Buffer
+	oplog.ResetForTest()
+	oplog.InitWithWriter(0, true, &buf) // verbose=true forces debug level
+
+	client := &fakeCCClient{getErr: fmt.Errorf("network error")}
+	rc := newCCTestClientsWithRegion(client, nil, "us-west-2")
+
+	r := &fabricac.Resource{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-abc123"}
+	err := rc.Get(context.Background(), r)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertStringContains(t, err.Error(), "getting AWS::EC2::SecurityGroup sg-abc123")
+
+	out := buf.String()
+	if !strings.Contains(out, "cloud control get failed") {
+		t.Fatalf("log missing 'cloud control get failed': %s", out)
+	}
+	if !strings.Contains(out, "us-west-2") {
+		t.Fatalf("log missing region 'us-west-2': %s", out)
+	}
+}
+
+func TestUpdate_SDKError_LogsError(t *testing.T) {
+	var buf bytes.Buffer
+	oplog.ResetForTest()
+	oplog.InitWithWriter(0, true, &buf) // verbose=true forces debug level
+
+	client := &fakeCCClient{updateErr: fmt.Errorf("throttling")}
+	rc := newCCTestClientsWithRegion(client, &fakeCCWaiter{}, "us-east-1")
+
+	r := &fabricac.Resource{
+		TypeName:     "AWS::EC2::SecurityGroup",
+		Identifier:   "sg-abc123",
+		DesiredState: json.RawMessage(`[]`),
+	}
+	err := rc.Update(context.Background(), r)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertStringContains(t, err.Error(), "updating AWS::EC2::SecurityGroup sg-abc123")
+
+	out := buf.String()
+	if !strings.Contains(out, "cloud control update failed") {
+		t.Fatalf("log missing 'cloud control update failed': %s", out)
+	}
+	if !strings.Contains(out, "us-east-1") {
+		t.Fatalf("log missing region 'us-east-1': %s", out)
+	}
+}
+
+func TestDelete_NotFound_LogsDebug(t *testing.T) {
+	var buf bytes.Buffer
+	oplog.ResetForTest()
+	oplog.InitWithWriter(0, true, &buf) // verbose=true forces debug level
+
+	client := &fakeCCClient{deleteErr: ccAPIError("NotFound")}
+	rc := newCCTestClientsWithRegion(client, nil, "us-east-1")
+
+	r := &fabricac.Resource{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-missing"}
+	err := rc.Delete(context.Background(), r)
+	if !errors.Is(err, fabricac.ErrResourceNotFound) {
+		t.Fatalf("error = %v, want ErrResourceNotFound", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "already deleted") {
+		t.Fatalf("log missing 'already deleted': %s", out)
+	}
+	if !strings.Contains(out, "us-east-1") {
+		t.Fatalf("log missing region 'us-east-1': %s", out)
+	}
+}
+
+func TestDelete_SDKError_LogsError(t *testing.T) {
+	var buf bytes.Buffer
+	oplog.ResetForTest()
+	oplog.InitWithWriter(0, true, &buf) // verbose=true forces debug level
+
+	client := &fakeCCClient{deleteErr: fmt.Errorf("dependency violation")}
+	rc := newCCTestClientsWithRegion(client, nil, "eu-central-1")
+
+	r := &fabricac.Resource{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-abc123"}
+	err := rc.Delete(context.Background(), r)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertStringContains(t, err.Error(), "deleting AWS::EC2::SecurityGroup sg-abc123")
+
+	out := buf.String()
+	if !strings.Contains(out, "cloud control delete failed") {
+		t.Fatalf("log missing 'cloud control delete failed': %s", out)
+	}
+	if !strings.Contains(out, "eu-central-1") {
+		t.Fatalf("log missing region 'eu-central-1': %s", out)
 	}
 }
 

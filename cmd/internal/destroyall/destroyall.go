@@ -14,6 +14,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 )
 
 const lineWidth = 62
@@ -118,6 +119,7 @@ func (e Engine) runDryRun() error {
 
 func (e Engine) confirmAggregate() bool {
 	if e.AssumeYes {
+		oplog.WithModule("destroy-all").Debug("proceeding without interactive confirmation (--yes flag set)")
 		if !e.JSONOut {
 			fmt.Fprintln(e.Out, "Proceeding without interactive confirmation (--yes flag set).")
 		}
@@ -134,9 +136,11 @@ func (e Engine) confirmAggregate() bool {
 	}
 	fmt.Fprintf(e.Out, "\nType this exact phrase to continue:\n\n  %s\n\n", phrase)
 	if !e.Confirm("Enter confirmation phrase", phrase) {
+		oplog.WithModule("destroy-all").Debug("destroy --all cancelled by user")
 		fmt.Fprintln(e.Out, "Cancelled. No AWS calls were made.")
 		return false
 	}
+	oplog.WithModule("destroy-all").Debug("destroy --all confirmation accepted")
 	fmt.Fprintln(e.Out, "Confirmation accepted.")
 	return true
 }
@@ -146,6 +150,7 @@ func (e Engine) execute(ctx context.Context) error {
 	anyFailed := false
 
 	for _, m := range e.Modules {
+		oplog.WithModule(m.Name).Debug("starting module teardown")
 		if !e.JSONOut {
 			fmt.Fprintf(e.Out, "\n=== Tearing down %s ===\n", m.Name)
 		}
@@ -154,9 +159,12 @@ func (e Engine) execute(ctx context.Context) error {
 		if err != nil {
 			mr.Error = err.Error()
 			anyFailed = true
+			oplog.WithModule(m.Name).Error("module teardown failed", "error", err)
 			if !e.JSONOut {
 				fmt.Fprintf(e.Out, "  ERROR tearing down %s: %v\n", m.Name, err)
 			}
+		} else {
+			oplog.WithModule(m.Name).Debug("module teardown complete", "resources_destroyed", len(ids))
 		}
 		res.Modules = append(res.Modules, mr)
 	}
