@@ -551,3 +551,622 @@ func TestApplyRemediation_NothingToFix(t *testing.T) {
 		t.Errorf("expected 1 skipped, got %d", len(result.Skipped))
 	}
 }
+
+// --- rebuildSGDesiredState per-module tests ---
+
+func TestRebuildSGDesiredState_Horde(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Horde.VPCId = "vpc-123"
+	cfg.Horde.AllowedCIDR = "10.0.0.0/16"
+
+	mod := &state.ModuleState{Name: "horde"}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}
+
+	ds := rebuildSGDesiredState(rec, mod, cfg)
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if m["VpcId"] != "vpc-123" {
+		t.Errorf("expected VpcId vpc-123, got %v", m["VpcId"])
+	}
+	ingress, ok := m["SecurityGroupIngress"].([]any)
+	if !ok || len(ingress) != 2 {
+		t.Fatalf("expected 2 ingress rules, got %d", len(ingress))
+	}
+	rule0 := ingress[0].(map[string]any)
+	if rule0["FromPort"].(float64) != 5000 {
+		t.Errorf("expected port 5000, got %v", rule0["FromPort"])
+	}
+}
+
+func TestRebuildSGDesiredState_Lore(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Lore.VPCId = "vpc-lore"
+	cfg.Lore.AllowedCIDR = "10.0.0.0/16"
+
+	mod := &state.ModuleState{Name: "lore"}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}
+
+	ds := rebuildSGDesiredState(rec, mod, cfg)
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	ingress, ok := m["SecurityGroupIngress"].([]any)
+	if !ok || len(ingress) != 3 {
+		t.Fatalf("expected 3 ingress rules (gRPC tcp, QUIC udp, health tcp), got %d", len(ingress))
+	}
+}
+
+func TestRebuildSGDesiredState_DDC(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.DDC.VPCId = "vpc-ddc"
+	cfg.DDC.AllowedCIDR = "10.0.0.0/16"
+
+	mod := &state.ModuleState{Name: "ddc"}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}
+
+	ds := rebuildSGDesiredState(rec, mod, cfg)
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	ingress, ok := m["SecurityGroupIngress"].([]any)
+	if !ok || len(ingress) != 2 {
+		t.Fatalf("expected 2 ingress rules (80, 8080), got %d", len(ingress))
+	}
+}
+
+func TestRebuildSGDesiredState_Workstation(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Workstation.VPCId = "vpc-ws"
+	cfg.Workstation.AllowedCIDR = "10.0.0.0/16"
+
+	mod := &state.ModuleState{Name: "workstation"}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}
+
+	ds := rebuildSGDesiredState(rec, mod, cfg)
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	ingress, ok := m["SecurityGroupIngress"].([]any)
+	if !ok || len(ingress) != 1 {
+		t.Fatalf("expected 1 ingress rule (8443), got %d", len(ingress))
+	}
+	rule0 := ingress[0].(map[string]any)
+	if rule0["FromPort"].(float64) != 8443 {
+		t.Errorf("expected port 8443, got %v", rule0["FromPort"])
+	}
+}
+
+func TestRebuildSGDesiredState_NoCIDR(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Perforce.VPCId = "vpc-123"
+	// AllowedCIDR left empty
+
+	mod := &state.ModuleState{Name: "perforce"}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}
+
+	ds := rebuildSGDesiredState(rec, mod, cfg)
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	// No ingress when CIDR is empty.
+	if _, has := m["SecurityGroupIngress"]; has {
+		t.Error("expected no SecurityGroupIngress when CIDR is empty")
+	}
+}
+
+func TestRebuildSGDesiredState_UnknownModule(t *testing.T) {
+	cfg := config.Defaults()
+	mod := &state.ModuleState{Name: "unknown"}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}
+
+	ds := rebuildSGDesiredState(rec, mod, cfg)
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if m["GroupDescription"] != "Fabrica-managed security group" {
+		t.Error("expected default description")
+	}
+	if _, has := m["VpcId"]; has {
+		t.Error("expected no VpcId for unknown module")
+	}
+	if _, has := m["SecurityGroupIngress"]; has {
+		t.Error("expected no ingress for unknown module")
+	}
+}
+
+func TestRebuildSGDesiredState_PropertiesOverride(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Horde.VPCId = "vpc-config"
+
+	mod := &state.ModuleState{Name: "horde"}
+	rec := &state.ModuleResource{
+		TypeName: cloud.TypeAWSEC2SecurityGroup,
+		Properties: map[string]string{
+			"vpcId": "vpc-recorded",
+		},
+	}
+
+	ds := rebuildSGDesiredState(rec, mod, cfg)
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if m["VpcId"] != "vpc-recorded" {
+		t.Errorf("expected recorded vpcId override, got %v", m["VpcId"])
+	}
+}
+
+// --- rebuildInstanceDesiredState per-module tests ---
+
+func TestRebuildInstanceDesiredState_Perforce(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Perforce.InstanceType = "m5.xlarge"
+	cfg.Perforce.SubnetId = "subnet-pf"
+
+	mod := &state.ModuleState{Name: "perforce", Version: "2024.2"}
+	rec := &state.ModuleResource{
+		TypeName:   cloud.TypeAWSEC2Instance,
+		Properties: map[string]string{"instanceType": "m5.xlarge"},
+	}
+
+	ds := rebuildInstanceDesiredState(rec, mod, cfg)
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if m["InstanceType"] != "m5.xlarge" {
+		t.Errorf("expected m5.xlarge, got %v", m["InstanceType"])
+	}
+	if m["ImageId"] != "2024.2" {
+		t.Errorf("expected ImageId 2024.2 (module version), got %v", m["ImageId"])
+	}
+	if m["SubnetId"] != "subnet-pf" {
+		t.Errorf("expected SubnetId subnet-pf, got %v", m["SubnetId"])
+	}
+}
+
+func TestRebuildInstanceDesiredState_Lore(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Lore.InstanceType = "m5.xlarge"
+	cfg.Lore.AmiID = "ami-lore"
+	cfg.Lore.SubnetId = "subnet-lore"
+
+	mod := &state.ModuleState{Name: "lore", Version: "ami-lore"}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance}
+
+	ds := rebuildInstanceDesiredState(rec, mod, cfg)
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if m["InstanceType"] != "m5.xlarge" {
+		t.Errorf("expected m5.xlarge, got %v", m["InstanceType"])
+	}
+}
+
+func TestRebuildInstanceDesiredState_DDC(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.DDC.InstanceType = "m5.xlarge"
+	cfg.DDC.AmiID = "ami-ddc"
+
+	mod := &state.ModuleState{Name: "ddc", Version: ""}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance}
+
+	ds := rebuildInstanceDesiredState(rec, mod, cfg)
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if m["ImageId"] != "ami-ddc" {
+		t.Errorf("expected ImageId ami-ddc from config, got %v", m["ImageId"])
+	}
+}
+
+func TestRebuildInstanceDesiredState_Workstation(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Workstation.InstanceType = "g4dn.xlarge"
+	cfg.Workstation.AmiID = "ami-ws"
+
+	mod := &state.ModuleState{Name: "workstation", Version: ""}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance}
+
+	ds := rebuildInstanceDesiredState(rec, mod, cfg)
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if m["InstanceType"] != "g4dn.xlarge" {
+		t.Errorf("expected g4dn.xlarge, got %v", m["InstanceType"])
+	}
+	if m["ImageId"] != "ami-ws" {
+		t.Errorf("expected ImageId ami-ws, got %v", m["ImageId"])
+	}
+}
+
+func TestRebuildInstanceDesiredState_SecurityGroupLink(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Horde.InstanceType = "m7i.2xlarge"
+	cfg.Horde.AmiID = "ami-fake"
+
+	mod := &state.ModuleState{Name: "horde", Version: "ami-fake"}
+	mod.Resources = []state.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-linked"},
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123"},
+	}
+	rec := &mod.Resources[1]
+
+	ds := rebuildInstanceDesiredState(rec, mod, cfg)
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	sgIDs, ok := m["SecurityGroupIds"].([]any)
+	if !ok || len(sgIDs) != 1 {
+		t.Fatalf("expected SecurityGroupIds with 1 entry, got %v", m["SecurityGroupIds"])
+	}
+	if sgIDs[0].(string) != "sg-linked" {
+		t.Errorf("expected sg-linked, got %v", sgIDs[0])
+	}
+}
+
+func TestRebuildInstanceDesiredState_PropertiesOverride(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Horde.InstanceType = "m7i.2xlarge"
+
+	mod := &state.ModuleState{Name: "horde", Version: "ami-fake"}
+	rec := &state.ModuleResource{
+		TypeName: cloud.TypeAWSEC2Instance,
+		Properties: map[string]string{
+			"instanceType": "m7i.4xlarge",
+			"subnetId":     "subnet-recorded",
+		},
+	}
+
+	ds := rebuildInstanceDesiredState(rec, mod, cfg)
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if m["InstanceType"] != "m7i.4xlarge" {
+		t.Errorf("expected recorded instanceType override, got %v", m["InstanceType"])
+	}
+	if m["SubnetId"] != "subnet-recorded" {
+		t.Errorf("expected recorded subnetId override, got %v", m["SubnetId"])
+	}
+}
+
+// --- rebuildResource tests ---
+
+func TestRebuildResource_ModuleNotFound(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	cfg := config.Defaults()
+
+	dr := &DriftResult{
+		Module:     "nonexistent",
+		TypeName:   cloud.TypeAWSEC2Instance,
+		Identifier: "i-123",
+	}
+
+	res := rebuildResource(dr, st, cfg)
+	if res.TypeName != cloud.TypeAWSEC2Instance {
+		t.Errorf("expected typeName, got %s", res.TypeName)
+	}
+	if res.Identifier != "i-123" {
+		t.Errorf("expected identifier, got %s", res.Identifier)
+	}
+	if res.DesiredState != nil {
+		t.Error("expected nil desired state when module not found")
+	}
+}
+
+func TestRebuildResource_ResourceNotFoundInModule(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
+	})
+	cfg := config.Defaults()
+
+	dr := &DriftResult{
+		Module:     "horde",
+		TypeName:   cloud.TypeAWSEC2Instance,
+		Identifier: "i-missing",
+	}
+
+	res := rebuildResource(dr, st, cfg)
+	if res.DesiredState != nil {
+		t.Error("expected nil desired state when resource not found in module")
+	}
+}
+
+func TestRebuildResource_InstanceWithDesiredState(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
+			"instanceType": "m7i.2xlarge",
+		}},
+	})
+	cfg := config.Defaults()
+	cfg.Horde.InstanceType = "m7i.2xlarge"
+
+	dr := &DriftResult{
+		Module:     "horde",
+		TypeName:   cloud.TypeAWSEC2Instance,
+		Identifier: "i-123",
+	}
+
+	res := rebuildResource(dr, st, cfg)
+	if res.DesiredState == nil {
+		t.Fatal("expected non-nil desired state for instance")
+	}
+	var m map[string]any
+	if err := json.Unmarshal(res.DesiredState, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if m["InstanceType"] != "m7i.2xlarge" {
+		t.Errorf("expected m7i.2xlarge, got %v", m["InstanceType"])
+	}
+}
+
+func TestRebuildResource_SGWithDesiredState(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("perforce", "2024.2", "ready", []state.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
+	})
+	cfg := config.Defaults()
+	cfg.Perforce.AllowedCIDR = "10.0.0.0/16"
+
+	dr := &DriftResult{
+		Module:     "perforce",
+		TypeName:   cloud.TypeAWSEC2SecurityGroup,
+		Identifier: "sg-123",
+	}
+
+	res := rebuildResource(dr, st, cfg)
+	if res.DesiredState == nil {
+		t.Fatal("expected non-nil desired state for SG")
+	}
+	var m map[string]any
+	if err := json.Unmarshal(res.DesiredState, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if m["GroupDescription"] != "Fabrica-managed security group" {
+		t.Errorf("unexpected description: %v", m["GroupDescription"])
+	}
+}
+
+// --- refreshSGIDs tests ---
+
+func TestRefreshSGIDs_UpdatesInstanceAfterSG(t *testing.T) {
+	sgDS := json.RawMessage(`{"GroupDescription":"test"}`)
+	instDS := json.RawMessage(`{"InstanceType":"m5.xlarge","SecurityGroupIds":["sg-old"]}`)
+
+	plan := &RemediationPlan{
+		Actions: []RemediationAction{
+			{Module: "horde", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", DesiredState: sgDS}},
+			{Module: "horde", TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", DesiredState: instDS}},
+		},
+	}
+
+	refreshSGIDs(plan, 0, "horde", "sg-new")
+
+	var ds map[string]any
+	if err := json.Unmarshal(plan.Actions[1].Resource.DesiredState, &ds); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	sgIDs, ok := ds["SecurityGroupIds"].([]any)
+	if !ok || len(sgIDs) != 1 || sgIDs[0].(string) != "sg-new" {
+		t.Errorf("expected SecurityGroupIds updated to sg-new, got %v", ds["SecurityGroupIds"])
+	}
+}
+
+func TestRefreshSGIDs_SkipsDifferentModule(t *testing.T) {
+	sgDS := json.RawMessage(`{"GroupDescription":"test"}`)
+	instDS := json.RawMessage(`{"InstanceType":"m5.xlarge","SecurityGroupIds":["sg-old"]}`)
+
+	plan := &RemediationPlan{
+		Actions: []RemediationAction{
+			{Module: "horde", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", DesiredState: sgDS}},
+			{Module: "perforce", TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-456", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-456", DesiredState: instDS}},
+		},
+	}
+
+	refreshSGIDs(plan, 0, "horde", "sg-new")
+
+	var ds map[string]any
+	if err := json.Unmarshal(plan.Actions[1].Resource.DesiredState, &ds); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	sgIDs, ok := ds["SecurityGroupIds"].([]any)
+	if !ok || sgIDs[0].(string) != "sg-old" {
+		t.Error("expected SecurityGroupIds unchanged for different module")
+	}
+}
+
+func TestRefreshSGIDs_SkipsNonInstance(t *testing.T) {
+	sgDS := json.RawMessage(`{"GroupDescription":"test"}`)
+
+	plan := &RemediationPlan{
+		Actions: []RemediationAction{
+			{Module: "horde", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", DesiredState: sgDS}},
+			{Module: "horde", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-other", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-other", DesiredState: sgDS}},
+		},
+	}
+
+	// Should not panic when next action is not an instance.
+	refreshSGIDs(plan, 0, "horde", "sg-new")
+}
+
+// --- canRecreate tests ---
+
+func TestCanRecreate(t *testing.T) {
+	tests := []struct {
+		typeName string
+		want     bool
+	}{
+		{cloud.TypeAWSEC2Instance, true},
+		{cloud.TypeAWSEC2SecurityGroup, true},
+		{"AWS::IAM::Role", false},
+		{"AWS::CodeBuild::Project", false},
+		{"AWS::S3::Bucket", false},
+		{"", false},
+	}
+	for _, tc := range tests {
+		got := canRecreate(tc.typeName)
+		if got != tc.want {
+			t.Errorf("canRecreate(%q) = %v, want %v", tc.typeName, got, tc.want)
+		}
+	}
+}
+
+// --- PlanRemediation for additional module SG types ---
+
+func TestPlanRemediation_MissingSGPerModule(t *testing.T) {
+	tests := []struct {
+		module       string
+		ami          string
+		sgID         string
+		expectedRule int
+		setter       func(*config.Config)
+	}{
+		{
+			module: "horde", ami: "ami-fake", sgID: "sg-123", expectedRule: 2,
+			setter: func(c *config.Config) { c.Horde.AllowedCIDR = "10.0.0.0/16" },
+		},
+		{
+			module: "lore", ami: "ami-lore", sgID: "sg-lore", expectedRule: 3,
+			setter: func(c *config.Config) { c.Lore.AllowedCIDR = "10.0.0.0/16" },
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.module, func(t *testing.T) {
+			st := state.NewState("123456789012", "us-east-1")
+			st.UpsertModule(tc.module, tc.ami, "ready", []state.ModuleResource{
+				{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: tc.sgID},
+			})
+
+			report := &DriftReport{
+				Modules: []ModuleDrift{{
+					Name: tc.module,
+					Resources: []DriftResult{
+						{Module: tc.module, TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: tc.sgID, Status: Missing},
+					},
+				}},
+				Missing: 1,
+			}
+
+			cfg := config.Defaults()
+			tc.setter(cfg)
+			plan := PlanRemediation(report, st, cfg)
+
+			if plan.ToFix != 1 {
+				t.Errorf("expected 1 to fix, got %d", plan.ToFix)
+			}
+			for _, a := range plan.Actions {
+				if a.Kind == ActionCreate && a.Resource != nil {
+					var ds map[string]any
+					if err := json.Unmarshal(a.Resource.DesiredState, &ds); err != nil {
+						t.Fatalf("invalid desired state: %v", err)
+					}
+					ingress, ok := ds["SecurityGroupIngress"].([]any)
+					if !ok || len(ingress) != tc.expectedRule {
+						t.Errorf("expected %d ingress rules for %s, got %d", tc.expectedRule, tc.module, len(ingress))
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestPlanRemediation_MissingDDCInstance(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("ddc", "ami-ddc", "ready", []state.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-ddc"},
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-ddc", Properties: map[string]string{
+			"instanceType": "m5.xlarge",
+		}},
+	})
+
+	report := &DriftReport{
+		Modules: []ModuleDrift{{
+			Name: "ddc",
+			Resources: []DriftResult{
+				{Module: "ddc", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-ddc", Status: InSync},
+				{Module: "ddc", TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-ddc", Status: Missing},
+			},
+		}},
+		Missing: 1,
+	}
+
+	cfg := config.Defaults()
+	cfg.DDC.InstanceType = "m5.xlarge"
+	cfg.DDC.AmiID = "ami-ddc"
+	plan := PlanRemediation(report, st, cfg)
+
+	if plan.ToFix != 1 {
+		t.Errorf("expected 1 to fix, got %d", plan.ToFix)
+	}
+	for _, a := range plan.Actions {
+		if a.Kind == ActionCreate && a.Resource != nil {
+			var ds map[string]any
+			if err := json.Unmarshal(a.Resource.DesiredState, &ds); err != nil {
+				t.Fatalf("invalid desired state: %v", err)
+			}
+			if ds["InstanceType"] != "m5.xlarge" {
+				t.Errorf("expected m5.xlarge, got %v", ds["InstanceType"])
+			}
+			// Should have SG linked.
+			sgIDs, ok := ds["SecurityGroupIds"].([]any)
+			if !ok || len(sgIDs) != 1 {
+				t.Error("expected SecurityGroupIds linked to sg-ddc")
+			}
+		}
+	}
+}
+
+func TestPlanRemediation_MissingWorkstationInstance(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("workstation", "ami-ws", "ready", []state.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-ws"},
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-ws", Properties: map[string]string{
+			"instanceType": "g4dn.xlarge",
+		}},
+	})
+
+	report := &DriftReport{
+		Modules: []ModuleDrift{{
+			Name: "workstation",
+			Resources: []DriftResult{
+				{Module: "workstation", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-ws", Status: InSync},
+				{Module: "workstation", TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-ws", Status: Missing},
+			},
+		}},
+		Missing: 1,
+	}
+
+	cfg := config.Defaults()
+	cfg.Workstation.InstanceType = "g4dn.xlarge"
+	cfg.Workstation.AmiID = "ami-ws"
+	plan := PlanRemediation(report, st, cfg)
+
+	if plan.ToFix != 1 {
+		t.Errorf("expected 1 to fix, got %d", plan.ToFix)
+	}
+	for _, a := range plan.Actions {
+		if a.Kind == ActionCreate && a.Resource != nil {
+			var ds map[string]any
+			if err := json.Unmarshal(a.Resource.DesiredState, &ds); err != nil {
+				t.Fatalf("invalid desired state: %v", err)
+			}
+			if ds["InstanceType"] != "g4dn.xlarge" {
+				t.Errorf("expected g4dn.xlarge, got %v", ds["InstanceType"])
+			}
+		}
+	}
+}

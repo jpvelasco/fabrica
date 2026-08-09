@@ -80,8 +80,8 @@ and CodeBuild projects.`,
 				assumeYes:  opts.AssumeYes,
 				out:        out,
 				readState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-				writeState: func(st *fabricastate.State) error { return fabricastate.WriteState(st) },
-				confirm:    func(msg string) bool { return prompt.Confirm(msg) },
+				writeState: fabricastate.WriteState,
+				confirm:    prompt.Confirm,
 			}
 			if rt.Provider != nil {
 				c.getResource = rt.Provider.Resources().Get
