@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/assert"
@@ -293,5 +294,125 @@ func TestDriftExtraResource(t *testing.T) {
 	}
 	if report.Extra != 1 {
 		t.Errorf("expected 1 extra resource, got %d", report.Extra)
+	}
+}
+
+// TestDriftFixMissingInstance: provision horde, delete the EC2 instance from
+// the fake store, run drift --fix --yes to recreate it, then verify drift
+// shows all inSync.
+func TestDriftFixMissingInstance(t *testing.T) {
+	store := setupE2E(t)
+
+	// Setup the state backend.
+	if out, err := runCLI(t, "setup", "--yes"); err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+
+	// Provision horde.
+	if out, err := runCLI(t, "horde", "create", "--yes"); err != nil {
+		t.Fatalf("horde create: %v\n%s", err, out)
+	}
+
+	// Find and delete the EC2 instance from the fake store.
+	var instanceID string
+	for id, sr := range store.resources {
+		if sr.typeName == "AWS::EC2::Instance" {
+			instanceID = id
+			break
+		}
+	}
+	if instanceID == "" {
+		t.Fatal("no EC2 instance found in fake store")
+	}
+	delete(store.resources, instanceID)
+
+	// Verify drift shows the instance as missing.
+	out, err := runCLI(t, "drift", "--json")
+	if err != nil {
+		t.Fatalf("drift: %v\n%s", err, out)
+	}
+	var report drift.DriftReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("drift JSON parse: %v\n%s", err, out)
+	}
+	if report.Missing != 1 {
+		t.Fatalf("expected 1 missing before fix, got %d", report.Missing)
+	}
+
+	// Run drift --fix --yes to recreate the missing instance.
+	out, err = runCLI(t, "drift", "--fix", "--yes")
+	if err != nil {
+		t.Fatalf("drift --fix: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Drift remediation result") {
+		t.Errorf("expected remediation result; got:\n%s", out)
+	}
+	if !strings.Contains(out, "Applied:") {
+		t.Errorf("expected 'Applied:' section; got:\n%s", out)
+	}
+
+	// Verify subsequent drift shows all inSync.
+	out, err = runCLI(t, "drift", "--json")
+	if err != nil {
+		t.Fatalf("post-fix drift: %v\n%s", err, out)
+	}
+	var reportAfter drift.DriftReport
+	if err := json.Unmarshal([]byte(out), &reportAfter); err != nil {
+		t.Fatalf("post-fix drift JSON parse: %v\n%s", err, out)
+	}
+
+	// All module resources should be in sync now.
+	for _, md := range reportAfter.Modules {
+		for _, r := range md.Resources {
+			if r.Status != drift.InSync {
+				t.Errorf("module %q resource %s/%s: status = %q, want %q; details: %s",
+					md.Name, r.TypeName, r.Identifier, r.Status, drift.InSync, r.Details)
+			}
+		}
+	}
+	if reportAfter.Missing > 0 {
+		t.Errorf("expected 0 missing after fix, got %d", reportAfter.Missing)
+	}
+}
+
+// TestDriftFixDryRunNoChanges: verify --fix --dry-run does not change state.
+func TestDriftFixDryRunNoChanges(t *testing.T) {
+	store := setupE2E(t)
+
+	if out, err := runCLI(t, "setup", "--yes"); err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	if out, err := runCLI(t, "horde", "create", "--yes"); err != nil {
+		t.Fatalf("horde create: %v\n%s", err, out)
+	}
+
+	// Delete the instance from the fake store.
+	for id, sr := range store.resources {
+		if sr.typeName == "AWS::EC2::Instance" {
+			delete(store.resources, id)
+			break
+		}
+	}
+
+	// Run --fix --dry-run — should show plan but not fix.
+	out, err := runCLI(t, "drift", "--fix", "--dry-run")
+	if err != nil {
+		t.Fatalf("drift --fix --dry-run: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "--dry-run") {
+		t.Errorf("expected dry-run header; got:\n%s", out)
+	}
+
+	// Verify drift still shows missing (dry-run should not have fixed it).
+	out, err = runCLI(t, "drift", "--json")
+	if err != nil {
+		t.Fatalf("post dry-run drift: %v\n%s", err, out)
+	}
+	var report drift.DriftReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("JSON parse: %v\n%s", err, out)
+	}
+	if report.Missing != 1 {
+		t.Errorf("expected 1 missing after dry-run (should not have fixed), got %d", report.Missing)
 	}
 }

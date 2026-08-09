@@ -1,6 +1,6 @@
-// Package driftcmd implements `fabrica drift`: a read-only drift detection
-// command that compares recorded state against live AWS resources. It never
-// mutates state or cloud resources.
+// Package driftcmd implements `fabrica drift`: drift detection and optional
+// auto-remediation. The default mode is read-only; `--fix` enables recreating
+// Missing managed resources from recorded state.
 package driftcmd
 
 import (
@@ -14,6 +14,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/drift"
+	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -21,14 +22,19 @@ import (
 const lineWidth = 64
 
 type command struct {
-	runtime       globals.Runtime
-	jsonOut       bool
-	out           io.Writer
-	readState     func() (*fabricastate.State, error)
-	getResource   func(ctx context.Context, r *cloud.Resource) error
-	listResources func(ctx context.Context, typeName string) ([]cloud.Resource, error)
-	backend       cloud.StateBackendChecker
-	codebuild     cloud.CodeBuildRunner
+	runtime        globals.Runtime
+	jsonOut        bool
+	fixMode        bool
+	assumeYes      bool
+	out            io.Writer
+	readState      func() (*fabricastate.State, error)
+	writeState     func(*fabricastate.State) error
+	getResource    func(ctx context.Context, r *cloud.Resource) error
+	listResources  func(ctx context.Context, typeName string) ([]cloud.Resource, error)
+	createResource func(ctx context.Context, r *cloud.Resource) error
+	backend        cloud.StateBackendChecker
+	codebuild      cloud.CodeBuildRunner
+	confirm        func(string) bool
 }
 
 // New returns the "fabrica drift" command.
@@ -40,7 +46,9 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 and report whether each resource is in sync, missing, or has attribute
 mismatches.
 
-This command is read-only: it never modifies state or cloud resources.
+This command is read-only by default. Use --fix to auto-remediate Missing
+managed resources (EC2 instances and security groups) by recreating them
+from recorded state. Mismatch and Extra resources are report-only.
 
 Checks the state backend (S3 bucket, DynamoDB table), EC2 instances
 (existence, state, instance type, AMI), security groups, IAM roles,
@@ -48,7 +56,13 @@ and CodeBuild projects.`,
 		Example: `  # Check drift for all provisioned modules:
   fabrica drift
 
-  # Machine-readable output for scripts:
+  # Preview what --fix would do:
+  fabrica drift --fix --dry-run
+
+  # Auto-fix missing resources:
+  fabrica drift --fix
+
+  # Machine-readable output:
   fabrica drift --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
@@ -56,15 +70,23 @@ and CodeBuild projects.`,
 				return err
 			}
 			opts := optionsSource()
+
+			fixMode, _ := cmd.Flags().GetBool("fix")
+
 			c := command{
-				runtime:   rt,
-				jsonOut:   opts.JSONOutput,
-				out:       out,
-				readState: func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				runtime:    rt,
+				jsonOut:    opts.JSONOutput,
+				fixMode:    fixMode,
+				assumeYes:  opts.AssumeYes,
+				out:        out,
+				readState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				writeState: func(st *fabricastate.State) error { return fabricastate.WriteState(st) },
+				confirm:    func(msg string) bool { return prompt.Confirm(msg) },
 			}
 			if rt.Provider != nil {
 				c.getResource = rt.Provider.Resources().Get
 				c.listResources = rt.Provider.Resources().List
+				c.createResource = rt.Provider.Resources().Create
 				if b, ok := rt.Provider.(cloud.StateBackendChecker); ok {
 					c.backend = b
 				}
@@ -72,13 +94,14 @@ and CodeBuild projects.`,
 					c.codebuild = cb
 				}
 			}
-			return c.run(cmd.Context())
+			return c.run(cmd.Context(), opts.DryRun)
 		},
 	}
+	cmd.Flags().BoolP("fix", "f", false, "Auto-remediate Missing managed resources (EC2 instances and security groups)")
 	return cmd
 }
 
-func (c *command) run(ctx context.Context) error {
+func (c *command) run(ctx context.Context, dryRun bool) error {
 	st, err := c.readState()
 	if err != nil {
 		return fmt.Errorf("reading state: %w", err)
@@ -100,10 +123,64 @@ func (c *command) run(ctx context.Context) error {
 
 	report := engine.Run(ctx)
 
+	// Fix mode: plan remediation and optionally apply.
+	if c.fixMode {
+		return c.runFix(ctx, dryRun, st, report)
+	}
+
+	// Default: read-only report.
 	if c.jsonOut {
 		return c.printJSON(report)
 	}
 	c.printText(report)
+	return nil
+}
+
+func (c *command) runFix(ctx context.Context, dryRun bool, st *fabricastate.State, report *drift.DriftReport) error {
+	plan := drift.PlanRemediation(report, st, c.runtime.Config)
+
+	if len(plan.Actions) == 0 {
+		if c.jsonOut {
+			return c.printFixJSON(nil, plan, nil)
+		}
+		fmt.Fprintln(c.out, "No drift found — nothing to fix.")
+		return nil
+	}
+
+	if dryRun {
+		if c.jsonOut {
+			return c.printFixJSON(nil, plan, nil)
+		}
+		c.printFixPlan(plan)
+		return nil
+	}
+
+	// Real fix: require confirmation unless --yes.
+	if !c.assumeYes && c.confirm != nil {
+		msg := fmt.Sprintf("Fix %d missing resource(s) — %d will be recreated, %d report-only", plan.ToFix, plan.ToFix, plan.ToSkip)
+		if !c.confirm(msg) {
+			fmt.Fprintln(c.out, "Aborted — no changes made.")
+			return nil
+		}
+	}
+
+	// Apply remediation.
+	result := drift.ApplyRemediation(ctx, plan, st, c.createResource)
+
+	// Write updated state if anything was applied.
+	if len(result.Applied) > 0 && c.writeState != nil {
+		if err := c.writeState(st); err != nil {
+			return fmt.Errorf("writing state after fix: %w", err)
+		}
+	}
+
+	if c.jsonOut {
+		return c.printFixJSON(result, plan, nil)
+	}
+	c.printFixResult(result, plan)
+	if len(result.Failed) > 0 {
+		return fmt.Errorf("remediation failed: %d action(s) failed", len(result.Failed))
+	}
 	return nil
 }
 
@@ -204,4 +281,87 @@ func statusSymbol(s drift.DriftStatus) string {
 	default:
 		return "[????]"
 	}
+}
+
+// --- Fix mode output ---
+
+func (c *command) printFixPlan(plan *drift.RemediationPlan) {
+	fmt.Fprintln(c.out, "Drift remediation plan (--dry-run)")
+	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
+	fmt.Fprintln(c.out)
+
+	for i := range plan.Actions {
+		a := &plan.Actions[i]
+		switch a.Kind {
+		case drift.ActionCreate:
+			fmt.Fprintf(c.out, "  [FIX]  %s/%s %s — will recreate from recorded state\n",
+				a.Module, a.TypeName, a.Identifier)
+		case drift.ActionSkip:
+			fmt.Fprintf(c.out, "  [SKIP] %s/%s %s — %s\n",
+				a.Module, a.TypeName, a.Identifier, a.Reason)
+		}
+	}
+
+	fmt.Fprintln(c.out)
+	fmt.Fprintf(c.out, "  To fix:   %d\n", plan.ToFix)
+	fmt.Fprintf(c.out, "  To skip:  %d (report-only)\n", plan.ToSkip)
+}
+
+func (c *command) printFixResult(result *drift.RemediationResult, plan *drift.RemediationPlan) {
+	fmt.Fprintln(c.out, "Drift remediation result")
+	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
+	fmt.Fprintln(c.out)
+
+	if len(result.Applied) > 0 {
+		fmt.Fprintln(c.out, "  Applied:")
+		for i := range result.Applied {
+			a := &result.Applied[i]
+			fmt.Fprintf(c.out, "    [OK]  %s/%s %s\n", a.Module, a.TypeName, a.Identifier)
+		}
+		fmt.Fprintln(c.out)
+	}
+
+	if len(result.Skipped) > 0 {
+		fmt.Fprintln(c.out, "  Skipped (report-only):")
+		for i := range result.Skipped {
+			a := &result.Skipped[i]
+			fmt.Fprintf(c.out, "    [SKIP] %s/%s %s — %s\n",
+				a.Module, a.TypeName, a.Identifier, a.Reason)
+		}
+		fmt.Fprintln(c.out)
+	}
+
+	if len(result.Failed) > 0 {
+		fmt.Fprintln(c.out, "  Failed:")
+		for i := range result.Failed {
+			a := &result.Failed[i]
+			fmt.Fprintf(c.out, "    [FAIL] %s/%s %s\n", a.Module, a.TypeName, a.Identifier)
+		}
+		for i := range result.Errors {
+			fmt.Fprintf(c.out, "          %s\n", result.Errors[i])
+		}
+		fmt.Fprintln(c.out)
+	}
+
+	fmt.Fprintf(c.out, "  Applied: %d  Skipped: %d  Failed: %d\n",
+		len(result.Applied), len(result.Skipped), len(result.Failed))
+}
+
+func (c *command) printFixJSON(result *drift.RemediationResult, plan *drift.RemediationPlan, _ error) error {
+	type fixOutput struct {
+		Plan   *drift.RemediationPlan   `json:"plan"`
+		Result *drift.RemediationResult `json:"result,omitempty"`
+	}
+
+	out := fixOutput{Plan: plan}
+	if result != nil {
+		out.Result = result
+	}
+
+	data, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encoding fix output: %w", err)
+	}
+	fmt.Fprintln(c.out, string(data))
+	return nil
 }

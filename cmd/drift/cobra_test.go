@@ -364,3 +364,297 @@ func TestDriftCobraCodeBuildMissing(t *testing.T) {
 		t.Errorf("expected 1 missing in JSON report, got: %v", report["missing"])
 	}
 }
+
+// --- Fix mode tests ---
+
+// missingFixProvider returns ErrResourceNotFound for EC2 instances so drift
+// detects them as Missing, enabling fix mode tests.
+type missingFixProvider struct {
+	*testutil.TestProvider
+}
+
+func (m *missingFixProvider) Resources() cloud.ResourceClient {
+	return &missingFixClient{provider: m.TestProvider}
+}
+
+type missingFixClient struct {
+	provider *testutil.TestProvider
+}
+
+func (c *missingFixClient) Create(_ context.Context, res *cloud.Resource) error {
+	c.provider.CreateCalls++
+	c.provider.CreatedTypes = append(c.provider.CreatedTypes, res.TypeName)
+	if c.provider.CreateErr != nil {
+		if err, ok := c.provider.CreateErr[res.TypeName]; ok {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *missingFixClient) Get(_ context.Context, res *cloud.Resource) error {
+	if res.TypeName == cloud.TypeAWSEC2Instance {
+		return cloud.ErrResourceNotFound
+	}
+	if c.provider.GetResources != nil {
+		if stored, ok := c.provider.GetResources[res.TypeName]; ok {
+			res.Identifier = stored.Identifier
+			res.ActualState = stored.ActualState
+		}
+	}
+	return nil
+}
+
+func (c *missingFixClient) Update(_ context.Context, _ *cloud.Resource) error { return nil }
+func (c *missingFixClient) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
+func (c *missingFixClient) List(_ context.Context, _ string) ([]cloud.Resource, error) {
+	return c.provider.ListResult, c.provider.ListErr
+}
+
+// TestDriftCobraFixDryRun verifies --fix --dry-run shows a remediation plan
+// without mutating anything.
+func TestDriftCobraFixDryRun(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	testutil.WriteStateFile(t, dir, testutil.NewProvisionedStateJSON(
+		testutil.StateModule{
+			Name:      "horde",
+			Version:   "ami-fake",
+			Status:    "ready",
+			Resources: testutil.EC2Pair("sg-123", "i-123"),
+		},
+	))
+
+	provider := &testutil.TestProvider{
+		GetResources: map[string]cloud.Resource{
+			cloud.TypeAWSEC2SecurityGroup: {Identifier: "sg-123"},
+		},
+	}
+
+	got, err := runDrift(t, func() (globals.Runtime, error) {
+		return globals.Runtime{
+			Config:   config.Defaults(),
+			Provider: &missingFixProvider{TestProvider: provider},
+		}, nil
+	}, "--fix", "--dry-run")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\n%s", err, got)
+	}
+	if !strings.Contains(got, "--dry-run") {
+		t.Errorf("expected dry-run header; got:\n%s", got)
+	}
+	if !strings.Contains(got, "[FIX]") {
+		t.Errorf("expected [FIX] for missing instance; got:\n%s", got)
+	}
+	if !strings.Contains(got, "To fix:") {
+		t.Errorf("expected 'To fix:' summary; got:\n%s", got)
+	}
+}
+
+// TestDriftCobraFixWithYes verifies --fix --yes applies remediation without
+// confirmation prompt.
+func TestDriftCobraFixWithYes(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	testutil.WriteStateFile(t, dir, testutil.NewProvisionedStateJSON(
+		testutil.StateModule{
+			Name:      "horde",
+			Version:   "ami-fake",
+			Status:    "ready",
+			Resources: testutil.EC2Pair("sg-123", "i-123"),
+		},
+	))
+
+	provider := &testutil.TestProvider{
+		GetResources: map[string]cloud.Resource{
+			cloud.TypeAWSEC2SecurityGroup: {Identifier: "sg-123"},
+		},
+	}
+
+	got, err := runDrift(t, func() (globals.Runtime, error) {
+		return globals.Runtime{
+			Config:   config.Defaults(),
+			Provider: &missingFixProvider{TestProvider: provider},
+		}, nil
+	}, "--fix", "--yes")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\n%s", err, got)
+	}
+	if !strings.Contains(got, "Drift remediation result") {
+		t.Errorf("expected remediation result header; got:\n%s", got)
+	}
+	if !strings.Contains(got, "Applied:") {
+		t.Errorf("expected 'Applied:' section; got:\n%s", got)
+	}
+}
+
+// TestDriftCobraFixJSON verifies --fix --yes --json produces parseable output
+// with plan and result fields.
+func TestDriftCobraFixJSON(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	testutil.WriteStateFile(t, dir, testutil.NewProvisionedStateJSON(
+		testutil.StateModule{
+			Name:      "horde",
+			Version:   "ami-fake",
+			Status:    "ready",
+			Resources: testutil.EC2Pair("sg-123", "i-123"),
+		},
+	))
+
+	provider := &testutil.TestProvider{
+		GetResources: map[string]cloud.Resource{
+			cloud.TypeAWSEC2SecurityGroup: {Identifier: "sg-123"},
+		},
+	}
+
+	got, err := runDrift(t, func() (globals.Runtime, error) {
+		return globals.Runtime{
+			Config:   config.Defaults(),
+			Provider: &missingFixProvider{TestProvider: provider},
+		}, nil
+	}, "--fix", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\n%s", err, got)
+	}
+
+	var output map[string]any
+	if err := json.Unmarshal([]byte(got), &output); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, got)
+	}
+	if _, ok := output["plan"]; !ok {
+		t.Error("expected 'plan' field in JSON output")
+	}
+	if _, ok := output["result"]; !ok {
+		t.Error("expected 'result' field in JSON output")
+	}
+}
+
+// TestDriftCobraFixNoDrift verifies --fix with no drift reports nothing to fix.
+func TestDriftCobraFixNoDrift(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	testutil.WriteStateFile(t, dir, testutil.NewProvisionedStateJSON(
+		testutil.StateModule{
+			Name:      "horde",
+			Version:   "ami-fake",
+			Status:    "ready",
+			Resources: testutil.EC2Pair("sg-123", "i-123"),
+		},
+	))
+
+	provider := &testutil.TestProvider{
+		GetResources: map[string]cloud.Resource{
+			cloud.TypeAWSEC2SecurityGroup: {Identifier: "sg-123"},
+			cloud.TypeAWSEC2Instance: {
+				Identifier:  "i-123",
+				ActualState: json.RawMessage(`{"State":{"Name":"running"},"InstanceType":"m7i.2xlarge","ImageId":"ami-fake"}`),
+			},
+		},
+	}
+
+	got, err := runDrift(t, testutil.NewTestRuntime(provider), "--fix", "--yes")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\n%s", err, got)
+	}
+	if !strings.Contains(got, "No drift found") {
+		t.Errorf("expected 'No drift found'; got:\n%s", got)
+	}
+}
+
+// TestDriftCobraFixDryRunJSON verifies --fix --dry-run --json produces
+// parseable plan output.
+func TestDriftCobraFixDryRunJSON(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	testutil.WriteStateFile(t, dir, testutil.NewProvisionedStateJSON(
+		testutil.StateModule{
+			Name:      "horde",
+			Version:   "ami-fake",
+			Status:    "ready",
+			Resources: testutil.EC2Pair("sg-123", "i-123"),
+		},
+	))
+
+	provider := &testutil.TestProvider{
+		GetResources: map[string]cloud.Resource{
+			cloud.TypeAWSEC2SecurityGroup: {Identifier: "sg-123"},
+		},
+	}
+
+	got, err := runDrift(t, func() (globals.Runtime, error) {
+		return globals.Runtime{
+			Config:   config.Defaults(),
+			Provider: &missingFixProvider{TestProvider: provider},
+		}, nil
+	}, "--fix", "--dry-run", "--json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\n%s", err, got)
+	}
+
+	var output map[string]any
+	if err := json.Unmarshal([]byte(got), &output); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, got)
+	}
+	if _, ok := output["plan"]; !ok {
+		t.Error("expected 'plan' field in dry-run JSON output")
+	}
+}
+
+// TestDriftCobraConfirmReject verifies that when --fix is used without --yes,
+// a rejected confirmation aborts the fix and makes no changes.
+func TestDriftCobraConfirmReject(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	testutil.WriteStateFile(t, dir, testutil.NewProvisionedStateJSON(
+		testutil.StateModule{
+			Name:      "horde",
+			Version:   "ami-fake",
+			Status:    "ready",
+			Resources: testutil.EC2Pair("sg-123", "i-123"),
+		},
+	))
+
+	provider := &testutil.TestProvider{
+		GetResources: map[string]cloud.Resource{
+			cloud.TypeAWSEC2SecurityGroup: {Identifier: "sg-123"},
+		},
+	}
+
+	// Build the command manually so we can inject a confirm seam that returns false.
+	var out bytes.Buffer
+	root, optionsSource := testutil.BuildTestSubcommand(&out)
+	root.AddCommand(driftcmd.New(func() (globals.Runtime, error) {
+		return globals.Runtime{
+			Config:   config.Defaults(),
+			Provider: &missingFixProvider{TestProvider: provider},
+		}, nil
+	}, optionsSource, &out))
+
+	// We need to set the --fix flag and override the confirm seam.
+	// The command struct's confirm field is set in RunE; we can't inject it
+	// directly. Instead, we use the fact that without --yes and with no
+	// stdin, prompt.Confirm will return false.
+	root.SetArgs([]string{"drift", "--fix"})
+
+	// Execute — without --yes, the confirm prompt will fail (no stdin),
+	// so the fix should be aborted.
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "Aborted") {
+		t.Errorf("expected 'Aborted' in output when confirm rejected; got:\n%s", got)
+	}
+	// Verify no Create was called — the provider should have zero create calls.
+	if provider.CreateCalls > 0 {
+		t.Errorf("expected 0 create calls after abort, got %d", provider.CreateCalls)
+	}
+}
