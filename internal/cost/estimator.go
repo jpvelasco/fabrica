@@ -5,8 +5,6 @@
 // the registry looks up the appropriate Estimator by TypeName and runs it.
 // This design lets Phase 1 modules register their own estimators and Phase 2+
 // providers register for their own resource names against the same registry.
-//
-// Vigiles will later consume cost telemetry and diagnostics from this layer.
 package cost
 
 import (
