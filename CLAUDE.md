@@ -8,7 +8,7 @@ A Go CLI + infrastructure-as-code framework that provisions and manages game stu
 
 ## Project Status
 
-[`ROADMAP.md`](ROADMAP.md) is the single source of truth for phases, module status, and the Praetorium vision. Update it when module status changes.
+[`ROADMAP.md`](ROADMAP.md) is the single source of truth for phases and module status. Update it when module status changes.
 
 **Phase 0, Phase 1, Lore (v0.2), and DDC (V1 + multi-region edge nodes) are all complete.** Current stable release is **v0.3.0** (2026-08-07) — adds read-only drift detection (`fabrica drift`), a stdio MCP server (`fabrica mcp`, 6 read-only tools), and IaC export (`fabrica export --format cloudformation|terraform`). v0.2.0 added the Horde SSM instance profile and `allowedCidr` auto-resolution; v0.1.3 fixed a `resolveSeam` nil-deref on state-backend client constructors, a `StateBucketExists` error-code miss, and missing t3 cost entries, all found during live AWS road testing of v0.1.2. Every module below is production-ready; no release is cut until a `v*` tag is pushed. See [`ROADMAP.md`](ROADMAP.md) for deferred nice-to-haves (residual test-coverage gaps, Lore S3 store / ami build / JWT, DDC replication-peer automation, scheduled Perforce backups).
 

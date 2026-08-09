@@ -2,8 +2,8 @@
 
 `fabrica deploy` orchestrates GameLift deployment of the UE5 dedicated-server
 builds produced by the CI/Horde pipeline. It owns the build-to-deploy path;
-live runtime fleet operations (scaling, matchmaking, sessions) are left to
-Classis.
+live runtime fleet operations (scaling, matchmaking, sessions) are outside
+Fabrica scope.
 
 ## Commands
 
@@ -45,5 +45,5 @@ teardown.
 ## Out of scope (V1)
 
 Scaling policies, FlexMatch matchmaking, game-session management, deep runtime
-monitoring (→ Classis); auto-draining sessions on fleet delete; multi-region
+monitoring; auto-draining sessions on fleet delete; multi-region
 fleets; container/Anywhere/Realtime fleets.

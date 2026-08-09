@@ -31,8 +31,7 @@ multi-region edge nodes) are complete: Perforce, Horde, Lore, Distributed DDC
 (home + edge regions), Workstation, CI, Deploy, Cost, drift detection with
 auto-remediation (`--fix`), MCP server, IaC export, full-stack `destroy --all`,
 offline cost visibility, and a CLI E2E suite. Install via `npm install -g fabrica-cli` or
-GitHub Releases. See [ROADMAP.md](ROADMAP.md) for phases, the Praetorium
-vision, and what's next.
+GitHub Releases. See [ROADMAP.md](ROADMAP.md) for status and what's next.
 
 | Module | Commands | Status |
 |--------|----------|--------|
@@ -399,7 +398,7 @@ fabrica ci logs <build-id>
 
 ### Deploy
 
-> **Orchestration over GameLift:** `fabrica deploy` rolls CI/Horde-produced server builds out to GameLift managed-EC2 fleets using alias-flip blue/green. Fabrica owns the build-to-deploy path; live runtime fleet operations (scaling, matchmaking, sessions) are left to Classis. GameLift Build/Fleet/Alias resources are created via Cloud Control; the 20–40 min fleet activation is tracked through an SDK auxiliary interface so you see live phase progress and real failure events.
+> **Orchestration over GameLift:** `fabrica deploy` rolls CI/Horde-produced server builds out to GameLift managed-EC2 fleets using alias-flip blue/green. Fabrica owns the build-to-deploy path; live runtime fleet operations (scaling, matchmaking, sessions) are outside Fabrica scope. GameLift Build/Fleet/Alias resources are created via Cloud Control; the 20–40 min fleet activation is tracked through an SDK auxiliary interface so you see live phase progress and real failure events.
 
 #### `fabrica deploy setup`
 
