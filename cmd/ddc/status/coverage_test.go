@@ -2,12 +2,14 @@ package status
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/ddc"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -158,5 +160,174 @@ func TestRendererEdgeReadStateError(t *testing.T) {
 	}
 	if !strings.Contains(out, "none") {
 		t.Fatalf("expected no-edges fallback:\n%s", out)
+	}
+}
+
+func TestEdgeCompositeStatus(t *testing.T) {
+	cases := []struct {
+		name   string
+		status ddc.EdgeStatus
+		want   string
+	}{
+		{"ready", ddc.EdgeStatus{ProbeStatus: "ready"}, "ready"},
+		{"unreachable", ddc.EdgeStatus{ProbeStatus: "unreachable"}, "unreachable"},
+		{"skipped_running", ddc.EdgeStatus{ProbeStatus: "skipped", InstanceState: "running"}, "running"},
+		{"skipped_stopped", ddc.EdgeStatus{ProbeStatus: "skipped", InstanceState: "stopped"}, "stopped"},
+		{"skipped_terminated", ddc.EdgeStatus{ProbeStatus: "skipped", InstanceState: "terminated"}, "terminated"},
+		{"skipped_missing", ddc.EdgeStatus{ProbeStatus: "skipped", InstanceState: "missing"}, "missing"},
+		{"skipped_empty", ddc.EdgeStatus{ProbeStatus: "skipped"}, "provisioned"},
+		{"empty", ddc.EdgeStatus{}, "provisioned"},
+		{"running_no_probe", ddc.EdgeStatus{InstanceState: "running"}, "running"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := edgeCompositeStatus(tc.status)
+			if got != tc.want {
+				t.Fatalf("edgeCompositeStatus(%+v) = %q, want %q", tc.status, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRendererEdgeLiveProbe(t *testing.T) {
+	// Test with a fake getEdgeStatus seam that returns live data.
+	r := renderer{
+		publicPort: 80, backend: "zen",
+		readState: stateWithEdges(),
+		getEdgeStatus: func(ctx context.Context, edges []ddc.EdgeResource, provider cloud.Provider) []ddc.EdgeStatus {
+			return []ddc.EdgeStatus{
+				{
+					Region:        "eu-west-1",
+					InstanceID:    "i-edge",
+					InstanceState: "running",
+					InstanceType:  "m7i.large",
+					PrivateIP:     "10.0.2.1",
+					ProbeStatus:   "ready",
+				},
+			}
+		},
+	}
+	var buf bytes.Buffer
+	r.printText(&buf, modstatus.Info{ModuleStatus: "ready", SGID: "sg-home"})
+	out := buf.String()
+	for _, want := range []string{"eu-west-1", "running", "ready", "10.0.2.1", "Instance state: running", "Health:        ready"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestRendererEdgeLiveProbeJSON(t *testing.T) {
+	r := renderer{
+		publicPort: 80, backend: "zen",
+		readState: stateWithEdges(),
+		getEdgeStatus: func(ctx context.Context, edges []ddc.EdgeResource, provider cloud.Provider) []ddc.EdgeStatus {
+			return []ddc.EdgeStatus{
+				{
+					Region:        "eu-west-1",
+					InstanceID:    "i-edge",
+					InstanceState: "running",
+					InstanceType:  "m7i.large",
+					PrivateIP:     "10.0.2.1",
+					ProbeStatus:   "ready",
+				},
+			}
+		},
+	}
+	var buf bytes.Buffer
+	r.printJSON(&buf, modstatus.Info{ModuleStatus: "ready", SGID: "sg-home"})
+	out := buf.String()
+	for _, want := range []string{`"region": "eu-west-1"`, `"instanceState": "running"`, `"privateIp": "10.0.2.1"`, `"probeStatus": "ready"`, `"status": "ready"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestRendererEdgeUnreachable(t *testing.T) {
+	r := renderer{
+		publicPort: 80, backend: "zen",
+		readState: stateWithEdges(),
+		getEdgeStatus: func(ctx context.Context, edges []ddc.EdgeResource, provider cloud.Provider) []ddc.EdgeStatus {
+			return []ddc.EdgeStatus{
+				{
+					Region:        "eu-west-1",
+					InstanceID:    "i-edge",
+					InstanceState: "running",
+					PrivateIP:     "10.0.2.1",
+					ProbeStatus:   "unreachable",
+					ProbeError:    "connection timed out",
+				},
+			}
+		},
+	}
+	var buf bytes.Buffer
+	r.printText(&buf, modstatus.Info{ModuleStatus: "ready", SGID: "sg-home"})
+	out := buf.String()
+	for _, want := range []string{"unreachable", "connection timed out", "Probe error"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestRendererEdgeMissing(t *testing.T) {
+	r := renderer{
+		publicPort: 80, backend: "zen",
+		readState: stateWithEdges(),
+		getEdgeStatus: func(ctx context.Context, edges []ddc.EdgeResource, provider cloud.Provider) []ddc.EdgeStatus {
+			return []ddc.EdgeStatus{
+				{
+					Region:        "eu-west-1",
+					InstanceID:    "i-edge",
+					InstanceState: "missing",
+					ProbeStatus:   "skipped",
+					ProbeError:    "Cloud Control Get failed: resource not found",
+				},
+			}
+		},
+	}
+	var buf bytes.Buffer
+	r.printText(&buf, modstatus.Info{ModuleStatus: "ready", SGID: "sg-home"})
+	out := buf.String()
+	for _, want := range []string{"Instance state: missing", "Cloud Control Get failed"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestRendererEdgeNoProvider(t *testing.T) {
+	// When provider is nil, edges should fall back to state-only "provisioned".
+	r := renderer{
+		publicPort: 80, backend: "zen",
+		readState: stateWithEdges(),
+		provider:  nil,
+		getEdgeStatus: func(ctx context.Context, edges []ddc.EdgeResource, provider cloud.Provider) []ddc.EdgeStatus {
+			return nil
+		},
+	}
+	var buf bytes.Buffer
+	r.printJSON(&buf, modstatus.Info{ModuleStatus: "ready", SGID: "sg-home"})
+	out := buf.String()
+	// Should show "provisioned" status since no live data.
+	if !strings.Contains(out, `"status": "provisioned"`) {
+		t.Fatalf("expected provisioned fallback:\n%s", out)
+	}
+}
+
+func TestRendererEdgeNoSeam(t *testing.T) {
+	// When getEdgeStatus seam is nil, edges should fall back to state-only.
+	r := renderer{
+		publicPort: 80, backend: "zen",
+		readState:     stateWithEdges(),
+		provider:      nil, // no provider
+		getEdgeStatus: nil, // seam not set
+	}
+	var buf bytes.Buffer
+	r.printJSON(&buf, modstatus.Info{ModuleStatus: "ready", SGID: "sg-home"})
+	out := buf.String()
+	if !strings.Contains(out, `"status": "provisioned"`) {
+		t.Fatalf("expected provisioned fallback when seam is nil:\n%s", out)
 	}
 }

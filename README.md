@@ -316,7 +316,7 @@ Provisions one additional DDC edge node in REGION (e.g. `eu-west-1`): a security
 
 #### `fabrica ddc status`
 
-Reads live state and probes `GET /health/ready` on the public API port. Transitions `provisioning` → `ready` when healthy. Supports `--wait` / `-w` and `--json`. With `--json`, edge regions are listed in the `edges` array (region, instanceId, sgId, instanceType, status); edge nodes are shown from local state — live probes for edges are not available in this release.
+Reads live state and probes `GET /health/ready` on the public API port. Transitions `provisioning` → `ready` when healthy. Supports `--wait` / `-w` and `--json`. Edge regions are probed live via region-scoped Cloud Control queries and optional health probes; each edge reports `ready`, `unreachable`, `stopped`, `terminated`, or `missing`. With `--json`, edge regions are listed in the `edges` array with live instance state, probe status, and private IP when available.
 
 #### `fabrica ddc destroy`
 
