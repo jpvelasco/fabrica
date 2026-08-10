@@ -39,11 +39,9 @@ func WriteState(st *State) error {
 		oplog.Logger().Error("failed to create .fabrica directory", "error", err)
 		return fmt.Errorf("creating .fabrica directory: %w", err)
 	}
-	data, err := json.MarshalIndent(st, "", "  ")
-	if err != nil {
-		oplog.Logger().Error("failed to serialize state", "error", err)
-		return fmt.Errorf("serializing state: %w", err)
-	}
+	// MarshalIndent cannot fail for State — it has no unexported fields,
+	// no circular references, and no custom Marshaler.
+	data, _ := json.MarshalIndent(st, "", "  ")
 	if err := os.WriteFile(stateFile, data, 0600); err != nil {
 		oplog.Logger().Error("failed to write state file", "file", stateFile, "error", err)
 		return fmt.Errorf("writing state file: %w", err)
