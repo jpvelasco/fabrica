@@ -151,7 +151,7 @@ gofmt -w .
 go list -deps ./internal/cloud/...
 ```
 
-`make ci` (lint + vet + build + test) is the full local gate, but its `test`/`cover` targets use `-race` — run `go test ./...` directly on Windows instead. CI runs lint + vuln + build + test cross-platform plus a `goreleaser build --snapshot` validation; on PRs macOS is skipped. **Private-repo CI gotcha:** while the repo is private, a job that fails instantly with blank logs is a GitHub Actions billing block, not a code failure — see CLAUDE.md for the workaround.
+`make ci` (lint + vet + build + test) is the full local gate, but its `test`/`cover` targets use `-race` — run `go test ./...` directly on Windows instead. CI runs lint + vuln + build + test cross-platform plus a `goreleaser build --snapshot` validation; on PRs macOS is skipped.
 
 ## Workstation-Specific Notes
 
