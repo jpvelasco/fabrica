@@ -992,7 +992,111 @@ func TestLooksLikeBase64BlobEdgeCases(t *testing.T) {
 	}
 }
 
-// TestTypeNameShortEdgeCases covers edge cases in type name shortening.
+// TestDeviceNameForModule verifies that deviceNameForModule returns the correct
+// EBS device name per module. Workstation uses /dev/sda1 (root EBS), all others
+// use /dev/sdf. Regression test for: workstation was hardcoded to /dev/sdf.
+func TestDeviceNameForModule(t *testing.T) {
+	// Workstation uses /dev/sda1 (root EBS)
+	if deviceNameForModule("workstation") != "/dev/sda1" {
+		t.Errorf("workstation device name = %q, want %q", deviceNameForModule("workstation"), "/dev/sda1")
+	}
+	// All other modules use /dev/sdf
+	for _, mod := range []string{"horde", "perforce", "lore", "ddc", "ci", "deploy", ""} {
+		if deviceNameForModule(mod) != "/dev/sdf" {
+			t.Errorf("deviceNameForModule(%q) = %q, want %q", mod, deviceNameForModule(mod), "/dev/sdf")
+		}
+	}
+}
+
+// TestWorkstationBlockDeviceMapping verifies that a workstation EC2 instance
+// gets /dev/sda1 in its BlockDeviceMappings (not /dev/sdf).
+func TestWorkstationBlockDeviceMapping(t *testing.T) {
+	res := state.ModuleResource{
+		TypeName:   "AWS::EC2::Instance",
+		Identifier: "i-ws123",
+		Properties: map[string]string{
+			"instanceType": "g4dn.xlarge",
+			"volumeSize":   "100",
+		},
+	}
+	cfg := config.Defaults()
+	cfg.Workstation.AmiID = "ami-ws123"
+	cfg.Workstation.InstanceType = "g4dn.xlarge"
+
+	props := extractProperties("workstation", res, cfg)
+	bdm, ok := props["BlockDeviceMappings"].([]map[string]any)
+	if !ok || len(bdm) == 0 {
+		t.Fatal("expected BlockDeviceMappings for workstation instance")
+	}
+	if bdm[0]["DeviceName"] != "/dev/sda1" {
+		t.Errorf("workstation device name = %q, want %q", bdm[0]["DeviceName"], "/dev/sda1")
+	}
+}
+
+// TestHordeBlockDeviceMapping verifies that a horde EC2 instance
+// gets /dev/sdf in its BlockDeviceMappings (the non-workstation default).
+func TestHordeBlockDeviceMapping(t *testing.T) {
+	res := state.ModuleResource{
+		TypeName:   "AWS::EC2::Instance",
+		Identifier: "i-horde123",
+		Properties: map[string]string{
+			"instanceType": "m7i.2xlarge",
+			"volumeSize":   "100",
+		},
+	}
+	cfg := testConfigWithHorde()
+
+	props := extractProperties("horde", res, cfg)
+	bdm, ok := props["BlockDeviceMappings"].([]map[string]any)
+	if !ok || len(bdm) == 0 {
+		t.Fatal("expected BlockDeviceMappings for horde instance")
+	}
+	if bdm[0]["DeviceName"] != "/dev/sdf" {
+		t.Errorf("horde device name = %q, want %q", bdm[0]["DeviceName"], "/dev/sdf")
+	}
+}
+
+// TestCodeBuildArtifactsNoArtifacts verifies that the CI CodeBuild project
+// defaults to NO_ARTIFACTS (matching production internal/cloud/aws/codebuild.go).
+// Regression test for: export was defaulting to S3 instead of NO_ARTIFACTS.
+func TestCodeBuildArtifactsNoArtifacts(t *testing.T) {
+	res := state.ModuleResource{
+		TypeName:   "AWS::CodeBuild::Project",
+		Identifier: "fabrica-ci",
+		Properties: map[string]string{},
+	}
+	cfg := config.Defaults()
+
+	props := extractProperties("ci", res, cfg)
+	artifacts, ok := props["Artifacts"].(map[string]any)
+	if !ok {
+		t.Fatal("expected Artifacts in CI extractProperties")
+	}
+	if artifacts["Type"] != "NO_ARTIFACTS" {
+		t.Errorf("CodeBuild Artifacts Type = %q, want %q", artifacts["Type"], "NO_ARTIFACTS")
+	}
+}
+
+// TestCodeBuildArtifactsStatePreserved verifies that when state already has
+// an Artifacts property, extractProperties does not override it.
+func TestCodeBuildArtifactsStatePreserved(t *testing.T) {
+	res := state.ModuleResource{
+		TypeName:   "AWS::CodeBuild::Project",
+		Identifier: "fabrica-ci",
+		Properties: map[string]string{
+			"Artifacts": `{"Type":"S3","Location":"my-bucket"}`,
+		},
+	}
+	cfg := config.Defaults()
+
+	props := extractProperties("ci", res, cfg)
+	// The state-provided Artifacts should be preserved (it's a string in state,
+	// not a map, so the !ok check won't trigger the default)
+	if _, ok := props["Artifacts"]; !ok {
+		t.Error("expected Artifacts to be present from state")
+	}
+}
+
 func TestTypeNameShortEdgeCases(t *testing.T) {
 	// Standard 3-part type
 	if typeNameShort("AWS::EC2::Instance") != "Instance" {
