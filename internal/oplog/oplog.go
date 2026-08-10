@@ -32,18 +32,14 @@ func init() {
 
 // Init configures the global logger from the given level and verbose flag.
 //
-// When verbose is true, the level is set to debug. When verbose is false,
-// the level comes from the level parameter (typically parsed from
-// FABRICA_LOG_LEVEL). A zero/empty level defaults to info.
+// The level parameter should be an already-resolved slog.Level (typically from
+// [ParseLevel]). When verbose is true, the level is overridden to debug.
 //
 // Init is safe to call multiple times; only the first call takes effect.
 func Init(level slog.Level, verbose bool) {
 	initOnce.Do(func() {
 		if verbose {
 			level = slog.LevelDebug
-		}
-		if level == 0 {
-			level = slog.LevelInfo
 		}
 		defaultLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 			Level: level,
@@ -57,9 +53,6 @@ func InitWithWriter(level slog.Level, verbose bool, w io.Writer) {
 	initOnce.Do(func() {
 		if verbose {
 			level = slog.LevelDebug
-		}
-		if level == 0 {
-			level = slog.LevelInfo
 		}
 		defaultLogger = slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{
 			Level: level,

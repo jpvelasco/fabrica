@@ -223,11 +223,11 @@ func TestInitWithLevel(t *testing.T) {
 	}
 }
 
-func TestInitZeroLevel(t *testing.T) {
+func TestInitExplicitInfoLevel(t *testing.T) {
 	ResetForTest()
-	Init(0, false) // zero level should default to info
+	Init(slog.LevelInfo, false)
 
-	Logger().Info("init zero level test")
+	Logger().Info("init info level test")
 	if Logger() == nil {
 		t.Fatal("Logger() is nil after Init")
 	}

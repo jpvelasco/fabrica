@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -474,7 +475,7 @@ func TestTimeout_CustomValueRespected(t *testing.T) {
 func TestCreate_SDKError_LogsError(t *testing.T) {
 	var buf bytes.Buffer
 	oplog.ResetForTest()
-	oplog.InitWithWriter(0, true, &buf) // verbose=true forces debug level
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf) // verbose=true forces debug level
 
 	client := &fakeCCClient{createErr: fmt.Errorf("access denied")}
 	rc := newCCTestClientsWithRegion(client, &fakeCCWaiter{}, "us-east-1")
@@ -498,7 +499,7 @@ func TestCreate_SDKError_LogsError(t *testing.T) {
 func TestCreate_AlreadyExists_LogsDebug(t *testing.T) {
 	var buf bytes.Buffer
 	oplog.ResetForTest()
-	oplog.InitWithWriter(0, true, &buf) // verbose=true forces debug level
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf) // verbose=true forces debug level
 
 	existingID := "sg-already-exists"
 	client := &fakeCCClient{
@@ -539,7 +540,7 @@ func TestCreate_AlreadyExists_LogsDebug(t *testing.T) {
 func TestGet_NotFound_LogsDebug(t *testing.T) {
 	var buf bytes.Buffer
 	oplog.ResetForTest()
-	oplog.InitWithWriter(0, true, &buf) // verbose=true forces debug level
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf) // verbose=true forces debug level
 
 	client := &fakeCCClient{getErr: ccAPIError("NotFound")}
 	rc := newCCTestClientsWithRegion(client, nil, "ap-southeast-1")
@@ -562,7 +563,7 @@ func TestGet_NotFound_LogsDebug(t *testing.T) {
 func TestGet_SDKError_LogsError(t *testing.T) {
 	var buf bytes.Buffer
 	oplog.ResetForTest()
-	oplog.InitWithWriter(0, true, &buf) // verbose=true forces debug level
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf) // verbose=true forces debug level
 
 	client := &fakeCCClient{getErr: fmt.Errorf("network error")}
 	rc := newCCTestClientsWithRegion(client, nil, "us-west-2")
@@ -586,7 +587,7 @@ func TestGet_SDKError_LogsError(t *testing.T) {
 func TestUpdate_SDKError_LogsError(t *testing.T) {
 	var buf bytes.Buffer
 	oplog.ResetForTest()
-	oplog.InitWithWriter(0, true, &buf) // verbose=true forces debug level
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf) // verbose=true forces debug level
 
 	client := &fakeCCClient{updateErr: fmt.Errorf("throttling")}
 	rc := newCCTestClientsWithRegion(client, &fakeCCWaiter{}, "us-east-1")
@@ -614,7 +615,7 @@ func TestUpdate_SDKError_LogsError(t *testing.T) {
 func TestDelete_NotFound_LogsDebug(t *testing.T) {
 	var buf bytes.Buffer
 	oplog.ResetForTest()
-	oplog.InitWithWriter(0, true, &buf) // verbose=true forces debug level
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf) // verbose=true forces debug level
 
 	client := &fakeCCClient{deleteErr: ccAPIError("NotFound")}
 	rc := newCCTestClientsWithRegion(client, nil, "us-east-1")
@@ -637,7 +638,7 @@ func TestDelete_NotFound_LogsDebug(t *testing.T) {
 func TestDelete_SDKError_LogsError(t *testing.T) {
 	var buf bytes.Buffer
 	oplog.ResetForTest()
-	oplog.InitWithWriter(0, true, &buf) // verbose=true forces debug level
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf) // verbose=true forces debug level
 
 	client := &fakeCCClient{deleteErr: fmt.Errorf("dependency violation")}
 	rc := newCCTestClientsWithRegion(client, nil, "eu-central-1")
