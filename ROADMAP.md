@@ -30,9 +30,10 @@ These govern every structural decision and carry across all phases.
 
 ## Current Status
 
-**Current stable: v0.3.3** (2026-08-10). Phase 0, Phase 1, Lore (v0.2), and
-DDC (V1 + multi-region edge nodes) are all complete. Ops logging (`--verbose` /
-`FABRICA_LOG_LEVEL`) ships in this release.
+**Current stable: v0.3.4** (2026-08-10). Phase 0, Phase 1, Lore (v0.2), and
+DDC (V1 + multi-region edge nodes) are all complete. Export V2 covers all 8
+modules (state backend, Horde, Perforce, Lore, DDC, Workstation, CI, Deploy).
+Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release.
 
 | Module | Commands | Status |
 |--------|----------|--------|

@@ -7,9 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-08-10
+
 ### Added
 
 - **Export V2** — `fabrica export` now covers all modules: DDC (home + edge regions, S3 bucket, IAM role/profile), Workstation (SG + EC2), CI (IAM role, CodeBuild project), and Deploy (IAM role, GameLift alias/fleet/build). Metadata version updated to "v2". (#255)
+
+### Fixed
+
+- **CI destroy** — `ci destroy` now includes `AWS::EC2::SecurityGroup` in the deletion sequence (project → SG → role), preventing orphaned VPC security groups. (#258)
+- **Workstation default CIDR** — `DefaultAllowedCIDR` changed from `0.0.0.0/0` to `10.0.0.0/8`, enforcing private-CIDR-only posture on DCV port 8443 by default. (#258)
+- **Export defaults** — CodeBuild artifacts set to `NO_ARTIFACTS` to match production; workstation root device name `/dev/sda1` via `deviceNameForModule`; SG default CIDRs aligned with each module's actual create defaults via `moduleDefaultCIDR`. (#257, #258)
+
+### Changed
+
+- **Dependencies** — AWS SDK v2 group (11 packages) and CodeQL action (4.37.4 → 4.37.6) bumped to latest. (#247, #248, #249, #250)
 
 ## [0.3.3] - 2026-08-10
 
@@ -214,7 +226,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/jpvelasco/fabrica/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/jpvelasco/fabrica/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/jpvelasco/fabrica/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/jpvelasco/fabrica/compare/v0.3.0...v0.3.1
