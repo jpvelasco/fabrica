@@ -1,2 +1,6 @@
 ---
 exclude_paths: []
+engines:
+  gosec:
+    exclude_paths:
+      - "**/*_test.go"

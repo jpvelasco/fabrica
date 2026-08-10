@@ -122,11 +122,19 @@ func WithRegion(region string) *slog.Logger {
 	return defaultLogger.With(slog.String("region", region))
 }
 
-// Redact replaces secret-shaped values with "[redacted]".
+// WithResourceAndRegion returns a logger pre-bound with resource type, identifier, and region.
+func WithResourceAndRegion(typeName, id, region string) *slog.Logger {
+	return defaultLogger.With(
+		slog.String("resource_type", typeName),
+		slog.String("resource_id", id),
+		slog.String("region", region),
+	)
+}
+
+// Redact replaces any non-empty value with "[redacted]".
 //
-// Use this for any log attribute value that might contain passwords, tokens,
-// API keys, raw UserData, or IAM policy documents with embedded secrets.
-// An empty string is returned as-is (not redacted).
+// Use this for attributes that may carry secrets (passwords, tokens,
+// raw UserData, IAM policy documents). An empty string is returned as-is.
 func Redact(s string) string {
 	if s == "" {
 		return s

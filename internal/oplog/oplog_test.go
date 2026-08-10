@@ -232,3 +232,22 @@ func TestInitZeroLevel(t *testing.T) {
 		t.Fatal("Logger() is nil after Init")
 	}
 }
+
+func TestWithResourceAndRegion(t *testing.T) {
+	var buf bytes.Buffer
+	ResetForTest()
+	InitWithWriter(slog.LevelInfo, true, &buf)
+
+	WithResourceAndRegion("AWS::EC2::Instance", "i-123", "us-east-1").Info("test message")
+
+	output := buf.String()
+	if !strings.Contains(output, "resource_type=AWS::EC2::Instance") {
+		t.Errorf("expected resource_type in output, got: %s", output)
+	}
+	if !strings.Contains(output, "resource_id=i-123") {
+		t.Errorf("expected resource_id in output, got: %s", output)
+	}
+	if !strings.Contains(output, "region=us-east-1") {
+		t.Errorf("expected region in output, got: %s", output)
+	}
+}

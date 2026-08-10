@@ -173,7 +173,7 @@ func TestReadStateOrNew_ReadError_ErrorLog(t *testing.T) {
 	}
 	// Create a directory at the state file path — ReadFile on a directory
 	// returns an error that is NOT IsNotExist, exercising the read-error log.
-	if err := os.Mkdir(stateFile, 0o755); err != nil {
+	if err := os.Mkdir(stateFile, 0755); err != nil {
 		t.Fatalf("setup mkdir for state file: %v", err)
 	}
 
