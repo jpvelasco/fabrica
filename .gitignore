@@ -48,6 +48,13 @@ dist/
 /c
 /cov
 /cov_*
+/coverage
+/coverage_*
+/coverage_funcs.txt
+/coverage_state
+/drift_cov
+/io_cov
+/state_cov
 /miss*
 /ddc_cov
 /func_cov.txt

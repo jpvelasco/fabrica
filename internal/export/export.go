@@ -451,7 +451,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		if vs, ok := props["__volumeSize"]; ok {
 			props["BlockDeviceMappings"] = []map[string]any{
 				{
-					"DeviceName": "/dev/sdf",
+					"DeviceName": deviceNameForModule(moduleName),
 					"Ebs": map[string]any{
 						"VolumeSize":          vs,
 						"VolumeType":          "gp3",
@@ -525,7 +525,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		// before applying (e.g. arn:aws:iam::<account>:role/fabrica-ci-codebuild).
 		if _, ok := props["Artifacts"]; !ok {
 			props["Artifacts"] = map[string]any{
-				"Type": "S3",
+				"Type": "NO_ARTIFACTS",
 			}
 		}
 		if _, ok := props["Environment"]; !ok {
@@ -553,6 +553,15 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 	}
 
 	return props
+}
+
+// deviceNameForModule returns the EBS device name for a module.
+// Workstation uses /dev/sda1 (root EBS); all other modules use /dev/sdf.
+func deviceNameForModule(module string) string {
+	if module == "workstation" {
+		return "/dev/sda1"
+	}
+	return "/dev/sdf"
 }
 
 // instanceTypeForModule returns the default instance type for a module from config.
