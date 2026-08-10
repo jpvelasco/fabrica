@@ -112,13 +112,15 @@ func (c command) buildTeardown() teardown.Command {
 }
 
 // ciResourceOrder returns the deletion-ordered resources for the CI module:
-// CodeBuild project first, then IAM role.
+// CodeBuild project first, then security group, then IAM role.
 func ciResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
-	var project, role *fabricastate.ModuleResource
+	var project, sg, role *fabricastate.ModuleResource
 	for i := range m.Resources {
 		switch m.Resources[i].TypeName {
 		case ci.TypeAWSCodeBuildProject:
 			project = &m.Resources[i]
+		case cloud.TypeAWSEC2SecurityGroup:
+			sg = &m.Resources[i]
 		case ci.TypeAWSIAMRole:
 			role = &m.Resources[i]
 		}
@@ -126,6 +128,9 @@ func ciResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 	var out []cloud.Resource
 	if project != nil {
 		out = append(out, cloud.Resource{TypeName: project.TypeName, Identifier: project.Identifier})
+	}
+	if sg != nil {
+		out = append(out, cloud.Resource{TypeName: sg.TypeName, Identifier: sg.Identifier})
 	}
 	if role != nil {
 		out = append(out, cloud.Resource{TypeName: role.TypeName, Identifier: role.Identifier})

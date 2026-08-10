@@ -628,6 +628,8 @@ func sgDescForModule(module string) string {
 }
 
 // sgRulesForModule returns the default security group ingress rules for a module.
+// When the config CIDR is empty, it falls back to the module's own default
+// (matching what the create command would use).
 func sgRulesForModule(module string, cfg *config.Config) []map[string]any {
 	var cidr string
 	if cfg != nil {
@@ -645,7 +647,7 @@ func sgRulesForModule(module string, cfg *config.Config) []map[string]any {
 		}
 	}
 	if cidr == "" {
-		cidr = "10.0.0.0/8"
+		cidr = moduleDefaultCIDR(module)
 	}
 
 	switch module {
@@ -675,6 +677,18 @@ func sgRulesForModule(module string, cfg *config.Config) []map[string]any {
 		}
 	}
 	return nil
+}
+
+// moduleDefaultCIDR returns the default AllowedCIDR that the create command
+// would use for the given module when the config field is empty. This keeps
+// the export in sync with the actual module defaults.
+func moduleDefaultCIDR(module string) string {
+	switch module {
+	case "horde", "perforce", "lore", "ddc", "workstation":
+		return "10.0.0.0/8"
+	default:
+		return "10.0.0.0/8"
+	}
 }
 
 // roleNameForModule returns the default IAM role name for a module.

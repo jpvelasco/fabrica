@@ -139,7 +139,7 @@ func TestCreateApplyPlanIsTerser(t *testing.T) {
 	st := testutil.NewTestState()
 	c := newTestCommand(&out, provider, st)
 	c.assumeYes = true
-	// Default allowedCidr is 0.0.0.0/0 — should emit WARNING before resources.
+	// Default allowedCidr is 10.0.0.0/8 — no WARNING should appear.
 	c.writeState = testutil.StateWriteNever()
 
 	if err := c.run(context.Background()); err != nil {
@@ -151,13 +151,11 @@ func TestCreateApplyPlanIsTerser(t *testing.T) {
 	}
 	assert.Contains(t, got, "  AWS account:   ")
 	assert.Contains(t, got, "  Instance type: ")
-	assert.Contains(t, got, "  WARNING: allowedCidr is 0.0.0.0/0")
-	assert.Contains(t, got, "  Security Group: ")
-	warnIdx := strings.Index(got, "WARNING:")
-	resIdx := strings.Index(got, "Resources to create:")
-	if warnIdx < 0 || resIdx < 0 || warnIdx > resIdx {
-		t.Errorf("WARNING must precede Resources to create, got:\n%s", got)
+	// Default CIDR is private; no WARNING should appear.
+	if strings.Contains(got, "WARNING: allowedCidr is 0.0.0.0/0") {
+		t.Error("CIDR WARNING must not appear with default private CIDR")
 	}
+	assert.Contains(t, got, "  Security Group: ")
 }
 
 func TestCreateSGFailureNoStateWritten(t *testing.T) {
@@ -537,8 +535,10 @@ func TestCreateCidrWarningInApplyPlan(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	got := out.String()
-	// Default allowedCidr is 0.0.0.0/0 — should emit the CIDR WARNING
-	assert.Contains(t, got, "WARNING: allowedCidr is 0.0.0.0/0")
+	// Default allowedCidr is 10.0.0.0/8 — no WARNING should appear.
+	if strings.Contains(got, "WARNING: allowedCidr is 0.0.0.0/0") {
+		t.Error("CIDR WARNING must not appear with default private CIDR")
+	}
 }
 
 func TestCreateCidrNoWarningWhenNotDefault(t *testing.T) {

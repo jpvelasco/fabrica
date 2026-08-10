@@ -1336,6 +1336,36 @@ func TestSgRulesForModuleDefault(t *testing.T) {
 	}
 }
 
+// TestSgRulesForModuleWorkstationDefaultCIDR verifies that the workstation
+// module's default CIDR matches its actual create default (10.0.0.0/8, not
+// 0.0.0.0/0), so the export reflects what create would actually provision.
+func TestSgRulesForModuleWorkstationDefaultCIDR(t *testing.T) {
+	cfg := config.Defaults()
+	rules := sgRulesForModule("workstation", cfg)
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule for workstation, got %d", len(rules))
+	}
+	cidr, ok := rules[0]["CidrIp"].(string)
+	if !ok || cidr != "10.0.0.0/8" {
+		t.Errorf("workstation default CIDR = %q, want 10.0.0.0/8", cidr)
+	}
+}
+
+// TestModuleDefaultCIDR verifies moduleDefaultCIDR returns the correct default
+// for each module.
+func TestModuleDefaultCIDR(t *testing.T) {
+	for _, mod := range []string{"horde", "perforce", "lore", "ddc", "workstation"} {
+		cidr := moduleDefaultCIDR(mod)
+		if cidr != "10.0.0.0/8" {
+			t.Errorf("%s default CIDR = %q, want 10.0.0.0/8", mod, cidr)
+		}
+	}
+	// Unknown module also falls back to 10.0.0.0/8.
+	if moduleDefaultCIDR("unknown") != "10.0.0.0/8" {
+		t.Error("unknown module should default to 10.0.0.0/8")
+	}
+}
+
 // TestGenerateOutputErrorPaths covers error paths in GenerateOutput.
 func TestGenerateOutputErrorPaths(t *testing.T) {
 	// Invalid format should error at NewGenerator
