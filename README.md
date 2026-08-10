@@ -48,7 +48,7 @@ affected.
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | Complete |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | Complete |
 | `cost` | `report`, `forecast`, `alerts` | Complete |
-| `export` | `--format cloudformation\|terraform` | Complete (V1) |
+| `export` | `--format cloudformation\|terraform` | Complete (V2) |
 | `destroy --all` | full-stack teardown | Complete |
 
 ## Requirements
@@ -477,7 +477,7 @@ Prints version, commit hash, Go toolchain version, and platform.
 
 Generates infrastructure-as-code templates from Fabrica's recorded local state and configuration. Reads `.fabrica/state.json` and `fabrica.yaml`, then produces CloudFormation YAML or Terraform HCL for the resources Fabrica manages. No live AWS calls — all data comes from local state.
 
-V1 covers the state backend (S3 bucket, DynamoDB table) and the Horde, Perforce, and Lore modules. DDC, Workstation, CI, and Deploy are deferred to V2.
+V2 covers all modules: state backend (S3 bucket, DynamoDB table), Horde, Perforce, Lore, DDC (home + edge regions), Workstation, CI, and Deploy.
 
 ```bash
 # Export as CloudFormation YAML to stdout:

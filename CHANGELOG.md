@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Export V2** — `fabrica export` now covers all modules: DDC (home + edge regions, S3 bucket, IAM role/profile), Workstation (SG + EC2), CI (IAM role, CodeBuild project), and Deploy (IAM role, GameLift alias/fleet/build). Metadata version updated to "v2". (#255)
+
 ## [0.3.3] - 2026-08-10
 
 ### Added
