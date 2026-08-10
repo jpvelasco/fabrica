@@ -1269,6 +1269,31 @@ func TestTerraformHclScalar(t *testing.T) {
 	}
 }
 
+// TestTerraformResourceName covers CamelCase→snake_case conversion for logical IDs.
+func TestTerraformResourceName(t *testing.T) {
+	gen := &terraformGenerator{}
+
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"HordeSecurityGroupI", "horde_security_group_i"},
+		{"HordeInstanceI", "horde_instance_i"},
+		{"my_resource", "my_resource"},
+		{"I", "i"},
+		{"", ""},
+		{"HordeInstance1", "horde_instance1"},
+		{"SGI", "s_g_i"},
+	}
+
+	for _, tc := range tests {
+		got := gen.tfResourceName(tc.input)
+		if got != tc.expected {
+			t.Errorf("tfResourceName(%q) = %q, want %q", tc.input, got, tc.expected)
+		}
+	}
+}
+
 // TestTerraformAttributeNameDefault covers the snake_case conversion fallback.
 func TestTerraformAttributeNameDefault(t *testing.T) {
 	gen := &terraformGenerator{}
