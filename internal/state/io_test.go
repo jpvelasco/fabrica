@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -252,5 +253,37 @@ func TestWriteState_Success_DebugLog(t *testing.T) {
 	logOutput := buf.String()
 	if !strings.Contains(logOutput, "state written") {
 		t.Errorf("expected debug log 'state written', got:\n%s", logOutput)
+	}
+}
+
+func TestWriteState_MarshalIndentError_ErrorLog(t *testing.T) {
+	oplog.ResetForTest()
+	var buf bytes.Buffer
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
+
+	t.Chdir(t.TempDir())
+	// #nosec G301 -- directory needs execute for traversal
+	if err := os.MkdirAll(".fabrica", 0700); err != nil {
+		t.Fatalf("setup mkdir: %v", err)
+	}
+
+	// Inject MarshalIndent failure via seam.
+	orig := marshalIndent
+	marshalIndent = func(v any, indent, newline string) ([]byte, error) {
+		return nil, fmt.Errorf("simulated marshal failure")
+	}
+	t.Cleanup(func() { marshalIndent = orig })
+
+	err := WriteState(NewState("acct", "region"))
+	if err == nil {
+		t.Fatal("expected error from MarshalIndent failure, got nil")
+	}
+	if !strings.Contains(err.Error(), "serializing state") {
+		t.Fatalf("expected 'serializing state' in error, got: %v", err)
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "failed to serialize state") {
+		t.Errorf("expected error log 'failed to serialize state', got:\n%s", logOutput)
 	}
 }
