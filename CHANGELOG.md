@@ -7,13 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-08-10
+
 ### Added
 
 - **DDC live edge probes** — `fabrica ddc status` now probes edge regions live via region-scoped Cloud Control queries and optional HTTP `/health/ready` health probes. Edge status reports `ready`, `unreachable`, `stopped`, `terminated`, or `missing` per region. Operators outside the VPC get graceful `unreachable`/`missing` states without command failure. (#260)
 
 ### Fixed
 
-- **Perforce state AMI fidelity** — `fabrica perforce create` now records the resolved AMI ID (`ami-…`) in instance `Properties.imageId` instead of the Helix version string (`2024.2`). This fixes false `fabrica drift` mismatches (version vs AMI) and ensures `fabrica export` emits the correct AMI in CloudFormation/Terraform output. The Helix version string is preserved in `ModuleState.Version` for human-readable status display. Drift comparison reads `Properties.imageId` first, falling back to `ModuleState.Version` for backward compatibility with Horde/Lore/DDC.
+- **Perforce state AMI fidelity** — `fabrica perforce create` now records the resolved AMI ID (`ami-…`) in instance `Properties.imageId` instead of the Helix version string (`2024.2`). This fixes false `fabrica drift` mismatches (version vs AMI) and ensures `fabrica export` emits the correct AMI in CloudFormation/Terraform output. The Helix version string is preserved in `ModuleState.Version` for human-readable status display. Drift comparison reads `Properties.imageId` first, falling back to `ModuleState.Version` for backward compatibility with Horde/Lore/DDC. (#264)
 
 ## [0.3.4] - 2026-08-10
 
@@ -234,7 +236,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/jpvelasco/fabrica/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/jpvelasco/fabrica/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/jpvelasco/fabrica/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/jpvelasco/fabrica/compare/v0.3.1...v0.3.2
