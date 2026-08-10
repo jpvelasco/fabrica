@@ -5,5 +5,5 @@ const (
 	DefaultVolumeSize         = 100
 	DefaultDCVPort            = 8443
 	DefaultIdleTimeoutMinutes = 60
-	DefaultAllowedCIDR        = "0.0.0.0/0"
+	DefaultAllowedCIDR        = "10.0.0.0/8"
 )
