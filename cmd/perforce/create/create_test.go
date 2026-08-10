@@ -240,13 +240,17 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 		t.Fatalf("final state has %d resources, want 4", len(m.Resources))
 	}
 	// The instance record carries cost-relevant Properties so cost report can
-	// read the deployed shape from state, not just config.
+	// read the deployed shape from state, not just config. Also verify the
+	// resolved AMI ID is recorded for drift/export fidelity.
 	inst, ok := final.GetModuleResource("perforce", "AWS::EC2::Instance")
 	if !ok {
 		t.Fatal("instance resource missing from final state")
 	}
 	if inst.Properties["instanceType"] == "" || inst.Properties["volumeSize"] == "" {
 		t.Errorf("instance Properties missing cost metadata: %+v", inst.Properties)
+	}
+	if !strings.HasPrefix(inst.Properties["imageId"], "ami-") {
+		t.Errorf("instance Properties.imageId = %q, want ami-*", inst.Properties["imageId"])
 	}
 }
 
@@ -535,4 +539,45 @@ func TestCreateWriteStateError(t *testing.T) {
 		t.Fatal("expected error when writeState fails")
 	}
 	assert.Contains(t, err.Error(), "writing state")
+}
+
+// TestCreateAMIRecordedInState verifies the resolved AMI ID is recorded in
+// instance Properties (not the version string), so drift and export work correctly.
+func TestCreateAMIRecordedInState(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
+	capture := &testutil.StateWriteCapture{}
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.version = "2024.2"
+	c.writeState = capture.WriteFunc()
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	final := capture.Last()
+	m := final.GetModule("perforce")
+	if m == nil {
+		t.Fatal("perforce module not in state")
+	}
+
+	// ModuleState.Version should be the Helix version string (human-readable).
+	if m.Version != "2024.2" {
+		t.Errorf("ModuleState.Version = %q, want 2024.2", m.Version)
+	}
+
+	// Instance Properties.imageId should be the resolved AMI ID.
+	inst, ok := final.GetModuleResource("perforce", "AWS::EC2::Instance")
+	if !ok {
+		t.Fatal("instance resource missing from state")
+	}
+	if !strings.HasPrefix(inst.Properties["imageId"], "ami-") {
+		t.Errorf("Properties.imageId = %q, want ami-*", inst.Properties["imageId"])
+	}
+	// Must NOT be the version string.
+	if inst.Properties["imageId"] == "2024.2" {
+		t.Error("Properties.imageId must not be the version string")
+	}
 }

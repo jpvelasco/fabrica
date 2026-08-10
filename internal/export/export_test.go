@@ -645,6 +645,73 @@ func TestBuildPerforceModule(t *testing.T) {
 	}
 }
 
+func TestBuildPerforceModuleWithImageId(t *testing.T) {
+	// Perforce with imageId in Properties should export the real AMI.
+	ms := state.ModuleState{
+		Name:   "perforce",
+		Status: "ready",
+		Resources: []state.ModuleResource{
+			{
+				TypeName:   "AWS::EC2::SecurityGroup",
+				Identifier: "sg-p4",
+				Properties: map[string]string{},
+			},
+			{
+				TypeName:   "AWS::EC2::Instance",
+				Identifier: "i-p4",
+				Properties: map[string]string{
+					"instanceType": "m5.xlarge",
+					"volumeSize":   "500",
+					"imageId":      "ami-resolved123",
+				},
+			},
+		},
+	}
+	cfg := config.Defaults()
+
+	mod := buildPerforceModule(ms, cfg)
+	if mod.Name != "perforce" {
+		t.Errorf("unexpected module name: %s", mod.Name)
+	}
+
+	// Find the instance resource and verify ImageId is the resolved AMI.
+	var found bool
+	for _, r := range mod.Resources {
+		if r.TypeName == "AWS::EC2::Instance" {
+			found = true
+			if imgID, ok := r.Properties["ImageId"]; !ok || imgID != "ami-resolved123" {
+				t.Errorf("Instance ImageId = %v, want ami-resolved123", imgID)
+			}
+		}
+	}
+	if !found {
+		t.Error("AWS::EC2::Instance not found in export resources")
+	}
+}
+
+func TestExtractPropertiesImageIdMapping(t *testing.T) {
+	// Verify imageId → ImageId normalization in extractProperties.
+	r := state.ModuleResource{
+		TypeName:   "AWS::EC2::Instance",
+		Identifier: "i-test",
+		Properties: map[string]string{
+			"instanceType": "m5.xlarge",
+			"imageId":      "ami-abc",
+			"volumeSize":   "100",
+		},
+	}
+	cfg := config.Defaults()
+	props := extractProperties("perforce", r, cfg)
+
+	if props["ImageId"] != "ami-abc" {
+		t.Errorf("ImageId = %v, want ami-abc", props["ImageId"])
+	}
+	// The lowercase key should not appear.
+	if _, ok := props["imageId"]; ok {
+		t.Error("lowercase imageId should not appear in output")
+	}
+}
+
 func TestBuildLoreModule(t *testing.T) {
 	ms := state.ModuleState{
 		Name:   "lore",

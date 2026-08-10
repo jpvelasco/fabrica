@@ -493,6 +493,82 @@ func TestRun_AMIMismatchFromVersion(t *testing.T) {
 	}
 }
 
+func TestRun_PerforceImageIdInProperties(t *testing.T) {
+	// Perforce records AMI in Properties["imageId"] — drift should read it
+	// from there and report in-sync when it matches the live instance.
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("perforce", "2024.2", "ready", []state.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-p4", Properties: map[string]string{
+			"instanceType": "m5.xlarge",
+			"imageId":      "ami-abc123",
+		}},
+	})
+
+	engine := &Engine{
+		State: st,
+		ResourceGet: func(_ context.Context, r *cloud.Resource) error {
+			r.ActualState = json.RawMessage(`{"State":{"Name":"running"},"InstanceType":"m5.xlarge","ImageId":"ami-abc123"}`)
+			return nil
+		},
+	}
+
+	report := engine.Run(context.Background())
+	if report.InSync != 1 {
+		t.Errorf("expected 1 inSync for Perforce with matching imageId, got InSync=%d, Mismatch=%d", report.InSync, report.Mismatch)
+	}
+}
+
+func TestRun_PerforceImageIdMismatch(t *testing.T) {
+	// Perforce Properties["imageId"] differs from live ImageId — should report mismatch.
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("perforce", "2024.2", "ready", []state.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-p4", Properties: map[string]string{
+			"instanceType": "m5.xlarge",
+			"imageId":      "ami-expected",
+		}},
+	})
+
+	engine := &Engine{
+		State: st,
+		ResourceGet: func(_ context.Context, r *cloud.Resource) error {
+			r.ActualState = json.RawMessage(`{"State":{"Name":"running"},"InstanceType":"m5.xlarge","ImageId":"ami-different"}`)
+			return nil
+		},
+	}
+
+	report := engine.Run(context.Background())
+	if report.Mismatch != 1 {
+		t.Errorf("expected 1 mismatch for Perforce AMI drift, got %d", report.Mismatch)
+	}
+	if !strings.Contains(report.Modules[0].Resources[0].Details, "ImageId") {
+		t.Errorf("expected ImageId in mismatch details, got: %s", report.Modules[0].Resources[0].Details)
+	}
+}
+
+func TestRun_ImageIdPropertiesFallbackToVersion(t *testing.T) {
+	// When Properties["imageId"] is absent, drift falls back to ModuleState.Version.
+	// This is the legacy path for Horde/Lore/DDC where AMI is stored as version.
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-legacy", "ready", []state.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-h", Properties: map[string]string{
+			"instanceType": "m7i.2xlarge",
+		}},
+	})
+
+	engine := &Engine{
+		State: st,
+		ResourceGet: func(_ context.Context, r *cloud.Resource) error {
+			r.ActualState = json.RawMessage(`{"State":{"Name":"running"},"InstanceType":"m7i.2xlarge","ImageId":"ami-legacy"}`)
+			return nil
+		},
+	}
+
+	report := engine.Run(context.Background())
+	if report.InSync != 1 {
+		t.Errorf("expected 1 inSync for fallback to Version, got InSync=%d, Mismatch=%d", report.InSync, report.Mismatch)
+	}
+}
+
 func TestRun_ExtraResource(t *testing.T) {
 	st := state.NewState("123456789012", "us-east-1")
 	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{

@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **DDC live edge probes** — `fabrica ddc status` now probes edge regions live via region-scoped Cloud Control queries and optional HTTP `/health/ready` health probes. Edge status reports `ready`, `unreachable`, `stopped`, `terminated`, or `missing` per region. Operators outside the VPC get graceful `unreachable`/`missing` states without command failure. (#260)
 
+### Fixed
+
+- **Perforce state AMI fidelity** — `fabrica perforce create` now records the resolved AMI ID (`ami-…`) in instance `Properties.imageId` instead of the Helix version string (`2024.2`). This fixes false `fabrica drift` mismatches (version vs AMI) and ensures `fabrica export` emits the correct AMI in CloudFormation/Terraform output. The Helix version string is preserved in `ModuleState.Version` for human-readable status display. Drift comparison reads `Properties.imageId` first, falling back to `ModuleState.Version` for backward compatibility with Horde/Lore/DDC.
+
 ## [0.3.4] - 2026-08-10
 
 ### Added
