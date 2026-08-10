@@ -220,6 +220,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		Properties: map[string]string{
 			"instanceType": plan.InstanceType,
 			"volumeSize":   strconv.Itoa(plan.VolumeSize),
+			"imageId":      imageID,
 		},
 	}, moduleName, plan.HelixVersion, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {

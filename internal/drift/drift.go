@@ -398,11 +398,18 @@ func (e *Engine) checkEC2Instance(res DriftResult, m *state.ModuleState, recorde
 		}
 	}
 
-	// AMI is stored in ModuleState.Version (not Properties) — compare it
-	// against the live ImageId.
-	if m.Version != "" && actual.ImageID != "" {
-		if m.Version != actual.ImageID {
-			mismatches = append(mismatches, fmt.Sprintf("ImageId: recorded=%s, live=%s", m.Version, actual.ImageID))
+	// AMI is stored in Properties["imageId"] when available (Perforce V0.4+),
+	// otherwise falls back to ModuleState.Version (Horde, Lore, DDC).
+	recordedAMI := ""
+	if recorded.Properties != nil {
+		recordedAMI = recorded.Properties["imageId"]
+	}
+	if recordedAMI == "" && m.Version != "" {
+		recordedAMI = m.Version
+	}
+	if recordedAMI != "" && actual.ImageID != "" {
+		if recordedAMI != actual.ImageID {
+			mismatches = append(mismatches, fmt.Sprintf("ImageId: recorded=%s, live=%s", recordedAMI, actual.ImageID))
 		}
 	}
 

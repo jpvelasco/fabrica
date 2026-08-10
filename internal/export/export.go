@@ -429,6 +429,8 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		switch k {
 		case "instanceType":
 			props["InstanceType"] = v
+		case "imageId":
+			props["ImageId"] = v
 		case "volumeSize":
 			// Do NOT store volumeSize as a top-level property — it maps to
 			// BlockDeviceMappings below. Store it temporarily under a private
