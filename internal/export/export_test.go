@@ -236,9 +236,14 @@ func TestBuildModulesUnsupportedModule(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// DDC is not supported in V1, so only state-backend should be exported
-	if len(modules) != 1 {
-		t.Errorf("expected 1 module (state-backend only), got %d", len(modules))
+	// DDC is now supported in V2 — state-backend + ddc should be exported
+	if len(modules) != 2 {
+		t.Errorf("expected 2 modules (state-backend + ddc), got %d", len(modules))
+	}
+	if len(modules) >= 2 {
+		if modules[1].Name != "ddc" {
+			t.Errorf("expected ddc module, got %s", modules[1].Name)
+		}
 	}
 }
 
@@ -442,6 +447,14 @@ func TestSGNameForModule(t *testing.T) {
 func TestRoleNameForModule(t *testing.T) {
 	if roleNameForModule("horde") != "fabrica-horde-role" {
 		t.Errorf("unexpected role name: %s", roleNameForModule("horde"))
+	}
+	// CI uses fabrica-ci-codebuild (not fabrica-ci-role)
+	if roleNameForModule("ci") != "fabrica-ci-codebuild" {
+		t.Errorf("unexpected CI role name: %s", roleNameForModule("ci"))
+	}
+	// Deploy uses fabrica-deploy-gamelift (not fabrica-deploy-role)
+	if roleNameForModule("deploy") != "fabrica-deploy-gamelift" {
+		t.Errorf("unexpected Deploy role name: %s", roleNameForModule("deploy"))
 	}
 }
 
@@ -1025,12 +1038,21 @@ func TestBuildModulesUnsupportedModuleDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Only state-backend should be exported; workstation, ci, deploy are skipped
-	if len(modules) != 1 {
-		t.Errorf("expected 1 module (state-backend), got %d", len(modules))
+	// V2: state-backend + workstation + ci + deploy = 4 modules
+	if len(modules) != 4 {
+		t.Errorf("expected 4 modules (state-backend + workstation + ci + deploy), got %d", len(modules))
 	}
-	if modules[0].Name != "state-backend" {
-		t.Errorf("expected state-backend, got %s", modules[0].Name)
+	// Verify module names
+	expectedNames := map[string]bool{"state-backend": false, "workstation": false, "ci": false, "deploy": false}
+	for _, m := range modules {
+		if _, ok := expectedNames[m.Name]; ok {
+			expectedNames[m.Name] = true
+		}
+	}
+	for name, found := range expectedNames {
+		if !found {
+			t.Errorf("expected module %s not found", name)
+		}
 	}
 }
 
@@ -1505,6 +1527,37 @@ func TestToLogicalIDEmpty(t *testing.T) {
 	}
 }
 
+// TestToLogicalIDNoCollision verifies that multiple resources of the same type
+// within one module get distinct logical IDs (DDC home+edge, Deploy fleets).
+func TestToLogicalIDNoCollision(t *testing.T) {
+	// DDC home and edge security groups should have distinct IDs
+	homeSG := toLogicalID("ddc", "AWS::EC2::SecurityGroup", "sg-ddc123")
+	edgeSG := toLogicalID("ddc", "AWS::EC2::SecurityGroup", "sg-edge456")
+	if homeSG == edgeSG {
+		t.Errorf("DDC home and edge SGs should have distinct IDs: both %s", homeSG)
+	}
+
+	// DDC home and edge instances should have distinct IDs
+	homeInst := toLogicalID("ddc", "AWS::EC2::Instance", "i-home123")
+	edgeInst := toLogicalID("ddc", "AWS::EC2::Instance", "i-edge456")
+	if homeInst == edgeInst {
+		t.Errorf("DDC home and edge instances should have distinct IDs: both %s", homeInst)
+	}
+
+	// Deploy fleets should have distinct IDs
+	fleet1 := toLogicalID("deploy", "AWS::GameLift::Fleet", "fleet-abc123")
+	fleet2 := toLogicalID("deploy", "AWS::GameLift::Fleet", "fleet-def456")
+	if fleet1 == fleet2 {
+		t.Errorf("Deploy fleets should have distinct IDs: both %s", fleet1)
+	}
+
+	// Long identifiers should be truncated to 12 chars
+	longID := toLogicalID("deploy", "AWS::GameLift::Fleet", "fleet-verylongidentifier12345")
+	if len(longID) > len("DEPLOYFleet")+12 {
+		t.Errorf("long ID should be truncated: %s (len %d)", longID, len(longID))
+	}
+}
+
 // TestHclPolicyDocNonEC2 covers hclPolicyDoc with a non-EC2 policy document.
 func TestHclPolicyDocNonEC2(t *testing.T) {
 	gen := &terraformGenerator{}
@@ -1577,5 +1630,1204 @@ func TestHclStringList(t *testing.T) {
 	}
 	if !strings.Contains(out, "sts:DecodeAuthorizationMessage") {
 		t.Error("hclStringList should include second action")
+	}
+}
+
+// ---- V2 module builder tests ----
+
+func testConfigWithDDC() *config.Config {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = "123456789012"
+	cfg.DDC.AmiID = "ami-ddc123"
+	cfg.DDC.InstanceType = "m5.xlarge"
+	cfg.DDC.AllowedCIDR = "10.0.0.0/8"
+	return cfg
+}
+
+func testConfigWithWorkstation() *config.Config {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = "123456789012"
+	cfg.Workstation.AmiID = "ami-ws123"
+	cfg.Workstation.InstanceType = "g4dn.xlarge"
+	cfg.Workstation.AllowedCIDR = "10.0.0.0/8"
+	return cfg
+}
+
+func testConfigWithCI() *config.Config {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = "123456789012"
+	cfg.CI.ProjectName = "fabrica-ci"
+	cfg.CI.ComputeType = "BUILD_GENERAL1_SMALL"
+	cfg.CI.Image = "aws/codebuild/standard:7.0"
+	return cfg
+}
+
+func testConfigWithDeploy() *config.Config {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = "123456789012"
+	cfg.Deploy.AliasName = "fabrica-deploy"
+	return cfg
+}
+
+func TestBuildDDCModule(t *testing.T) {
+	ms := state.ModuleState{
+		Name:   "ddc",
+		Status: "ready",
+		Resources: []state.ModuleResource{
+			{
+				TypeName:   "AWS::EC2::SecurityGroup",
+				Identifier: "sg-ddc123",
+				Properties: map[string]string{
+					"GroupName": "fabrica-ddc-sg",
+					"VpcId":     "vpc-0abc123",
+				},
+			},
+			{
+				TypeName:   "AWS::EC2::Instance",
+				Identifier: "i-ddc-coord",
+				Properties: map[string]string{
+					"instanceType": "m5.xlarge",
+					"volumeSize":   "500",
+					"role":         "coordinator",
+				},
+			},
+			{
+				TypeName:   "AWS::S3::Bucket",
+				Identifier: "fabrica-ddc-bucket-123",
+				Properties: map[string]string{
+					"BucketName": "fabrica-ddc-bucket-123",
+				},
+			},
+			{
+				TypeName:   "AWS::IAM::Role",
+				Identifier: "fabrica-ddc-role",
+				Properties: map[string]string{
+					"RoleName": "fabrica-ddc-role",
+				},
+			},
+			{
+				TypeName:   "AWS::IAM::InstanceProfile",
+				Identifier: "fabrica-ddc-profile",
+				Properties: map[string]string{
+					"InstanceProfileName": "fabrica-ddc-profile",
+				},
+			},
+		},
+	}
+	cfg := testConfigWithDDC()
+	mod := buildDDCModule(ms, cfg)
+	if mod.Name != "ddc" {
+		t.Errorf("unexpected module name: %s", mod.Name)
+	}
+	if mod.Status != "ready" {
+		t.Errorf("unexpected status: %s", mod.Status)
+	}
+	if len(mod.Resources) != 5 {
+		t.Errorf("expected 5 resources, got %d", len(mod.Resources))
+	}
+
+	// Verify S3 bucket is included
+	foundBucket := false
+	for _, r := range mod.Resources {
+		if r.TypeName == "AWS::S3::Bucket" {
+			foundBucket = true
+			if r.Properties["BucketName"] != "fabrica-ddc-bucket-123" {
+				t.Errorf("unexpected bucket name: %v", r.Properties["BucketName"])
+			}
+		}
+	}
+	if !foundBucket {
+		t.Error("expected S3 bucket resource")
+	}
+}
+
+func TestBuildDDCModuleEmpty(t *testing.T) {
+	ms := state.ModuleState{
+		Name:      "ddc",
+		Status:    "ready",
+		Resources: []state.ModuleResource{},
+	}
+	cfg := testConfigWithDDC()
+	mod := buildDDCModule(ms, cfg)
+	if mod.Name != "ddc" {
+		t.Errorf("unexpected module name: %s", mod.Name)
+	}
+	if len(mod.Resources) != 0 {
+		t.Errorf("expected 0 resources, got %d", len(mod.Resources))
+	}
+}
+
+func TestBuildWorkstationModule(t *testing.T) {
+	ms := state.ModuleState{
+		Name:   "workstation",
+		Status: "ready",
+		Resources: []state.ModuleResource{
+			{
+				TypeName:   "AWS::EC2::SecurityGroup",
+				Identifier: "sg-ws123",
+				Properties: map[string]string{
+					"GroupName": "fabrica-workstation-sg",
+					"VpcId":     "vpc-0abc123",
+				},
+			},
+			{
+				TypeName:   "AWS::EC2::Instance",
+				Identifier: "i-ws123",
+				Properties: map[string]string{
+					"instanceType": "g4dn.xlarge",
+					"volumeSize":   "100",
+				},
+			},
+		},
+	}
+	cfg := testConfigWithWorkstation()
+	mod := buildWorkstationModule(ms, cfg)
+	if mod.Name != "workstation" {
+		t.Errorf("unexpected module name: %s", mod.Name)
+	}
+	if len(mod.Resources) != 2 {
+		t.Errorf("expected 2 resources, got %d", len(mod.Resources))
+	}
+}
+
+func TestBuildWorkstationModuleEmpty(t *testing.T) {
+	ms := state.ModuleState{
+		Name:      "workstation",
+		Status:    "ready",
+		Resources: []state.ModuleResource{},
+	}
+	mod := buildWorkstationModule(ms, testConfigWithWorkstation())
+	if len(mod.Resources) != 0 {
+		t.Errorf("expected 0 resources, got %d", len(mod.Resources))
+	}
+}
+
+func TestBuildCIModule(t *testing.T) {
+	ms := state.ModuleState{
+		Name:   "ci",
+		Status: "ready",
+		Resources: []state.ModuleResource{
+			{
+				TypeName:   "AWS::IAM::Role",
+				Identifier: "fabrica-ci-codebuild",
+				Properties: map[string]string{
+					"RoleName": "fabrica-ci-codebuild",
+				},
+			},
+			{
+				TypeName:   "AWS::CodeBuild::Project",
+				Identifier: "fabrica-ci",
+				Properties: map[string]string{
+					"Name": "fabrica-ci",
+				},
+			},
+		},
+	}
+	cfg := testConfigWithCI()
+	mod := buildCIModule(ms, cfg)
+	if mod.Name != "ci" {
+		t.Errorf("unexpected module name: %s", mod.Name)
+	}
+	if len(mod.Resources) != 2 {
+		t.Errorf("expected 2 resources, got %d", len(mod.Resources))
+	}
+
+	// Verify CodeBuild project
+	foundProject := false
+	for _, r := range mod.Resources {
+		if r.TypeName == "AWS::CodeBuild::Project" {
+			foundProject = true
+			if r.Properties["Name"] != "fabrica-ci" {
+				t.Errorf("unexpected project name: %v", r.Properties["Name"])
+			}
+		}
+	}
+	if !foundProject {
+		t.Error("expected CodeBuild project resource")
+	}
+}
+
+func TestBuildCIModuleEmpty(t *testing.T) {
+	ms := state.ModuleState{
+		Name:      "ci",
+		Status:    "ready",
+		Resources: []state.ModuleResource{},
+	}
+	mod := buildCIModule(ms, testConfigWithCI())
+	if len(mod.Resources) != 0 {
+		t.Errorf("expected 0 resources, got %d", len(mod.Resources))
+	}
+}
+
+func TestBuildDeployModule(t *testing.T) {
+	ms := state.ModuleState{
+		Name:   "deploy",
+		Status: "ready",
+		Resources: []state.ModuleResource{
+			{
+				TypeName:   "AWS::IAM::Role",
+				Identifier: "fabrica-deploy-gamelift",
+				Properties: map[string]string{
+					"RoleName": "fabrica-deploy-gamelift",
+				},
+			},
+			{
+				TypeName:   "AWS::GameLift::Alias",
+				Identifier: "alias-1",
+				Properties: map[string]string{
+					"Name": "fabrica-deploy",
+				},
+			},
+			{
+				TypeName:   "AWS::GameLift::Fleet",
+				Identifier: "fleet-1",
+				Properties: map[string]string{
+					"Name": "fabrica-deploy-fleet",
+					"role": "active",
+				},
+			},
+			{
+				TypeName:   "AWS::GameLift::Build",
+				Identifier: "build-1",
+				Properties: map[string]string{
+					"Name": "fabrica-deploy-build",
+				},
+			},
+		},
+	}
+	cfg := testConfigWithDeploy()
+	mod := buildDeployModule(ms, cfg)
+	if mod.Name != "deploy" {
+		t.Errorf("unexpected module name: %s", mod.Name)
+	}
+	if len(mod.Resources) != 4 {
+		t.Errorf("expected 4 resources, got %d", len(mod.Resources))
+	}
+
+	// Verify GameLift alias
+	foundAlias := false
+	for _, r := range mod.Resources {
+		if r.TypeName == "AWS::GameLift::Alias" {
+			foundAlias = true
+		}
+	}
+	if !foundAlias {
+		t.Error("expected GameLift alias resource")
+	}
+}
+
+func TestBuildDeployModuleEmpty(t *testing.T) {
+	ms := state.ModuleState{
+		Name:      "deploy",
+		Status:    "ready",
+		Resources: []state.ModuleResource{},
+	}
+	mod := buildDeployModule(ms, testConfigWithDeploy())
+	if len(mod.Resources) != 0 {
+		t.Errorf("expected 0 resources, got %d", len(mod.Resources))
+	}
+}
+
+// TestExtractPropertiesCodeBuild verifies CodeBuild project property extraction.
+func TestExtractPropertiesCodeBuild(t *testing.T) {
+	res := state.ModuleResource{
+		TypeName:   "AWS::CodeBuild::Project",
+		Identifier: "fabrica-ci",
+		Properties: map[string]string{
+			"Name": "fabrica-ci",
+		},
+	}
+	cfg := testConfigWithCI()
+	props := extractProperties("ci", res, cfg)
+
+	if props["Name"] != "fabrica-ci" {
+		t.Errorf("unexpected project name: %v", props["Name"])
+	}
+	// ServiceRole is intentionally omitted — the ARN is account-specific
+	// and not reconstructible from local state.
+	if props["ServiceRole"] != nil {
+		t.Error("ServiceRole should be omitted (account-specific ARN)")
+	}
+	if props["Environment"] == nil {
+		t.Error("expected Environment to be set")
+	}
+	if props["Artifacts"] == nil {
+		t.Error("expected Artifacts to be set")
+	}
+}
+
+// TestExtractPropertiesGameLiftAlias verifies GameLift alias property extraction.
+func TestExtractPropertiesGameLiftAlias(t *testing.T) {
+	res := state.ModuleResource{
+		TypeName:   "AWS::GameLift::Alias",
+		Identifier: "alias-1",
+		Properties: map[string]string{},
+	}
+	cfg := testConfigWithDeploy()
+	props := extractProperties("deploy", res, cfg)
+
+	if props["Name"] != "fabrica-deploy" {
+		t.Errorf("unexpected alias name: %v", props["Name"])
+	}
+}
+
+// TestExtractPropertiesGameLiftFleet verifies GameLift fleet property extraction.
+func TestExtractPropertiesGameLiftFleet(t *testing.T) {
+	res := state.ModuleResource{
+		TypeName:   "AWS::GameLift::Fleet",
+		Identifier: "fleet-1",
+		Properties: map[string]string{
+			"role": "active",
+		},
+	}
+	props := extractProperties("deploy", res, config.Defaults())
+
+	if props["Name"] != "fabrica-deploy-fleet" {
+		t.Errorf("unexpected fleet name: %v", props["Name"])
+	}
+	if props["Tags"] == nil {
+		t.Error("expected Tags to be set")
+	}
+}
+
+// TestExtractPropertiesGameLiftBuild verifies GameLift build property extraction.
+func TestExtractPropertiesGameLiftBuild(t *testing.T) {
+	res := state.ModuleResource{
+		TypeName:   "AWS::GameLift::Build",
+		Identifier: "build-1",
+		Properties: map[string]string{},
+	}
+	props := extractProperties("deploy", res, config.Defaults())
+
+	if props["Name"] != "fabrica-deploy-build" {
+		t.Errorf("unexpected build name: %v", props["Name"])
+	}
+}
+
+// TestExtractPropertiesS3Bucket verifies S3 bucket property extraction (DDC).
+func TestExtractPropertiesS3Bucket(t *testing.T) {
+	res := state.ModuleResource{
+		TypeName:   "AWS::S3::Bucket",
+		Identifier: "fabrica-ddc-bucket-123",
+		Properties: map[string]string{
+			"BucketName": "fabrica-ddc-bucket-123",
+		},
+	}
+	props := extractProperties("ddc", res, config.Defaults())
+
+	if props["BucketName"] != "fabrica-ddc-bucket-123" {
+		t.Errorf("unexpected bucket name: %v", props["BucketName"])
+	}
+	if props["Tags"] == nil {
+		t.Error("expected Tags to be set")
+	}
+}
+
+// TestExtractPropertiesS3BucketDefault verifies default bucket name when not in state.
+func TestExtractPropertiesS3BucketDefault(t *testing.T) {
+	res := state.ModuleResource{
+		TypeName:   "AWS::S3::Bucket",
+		Identifier: "some-bucket",
+		Properties: map[string]string{},
+	}
+	props := extractProperties("ddc", res, config.Defaults())
+
+	if props["BucketName"] != "fabrica-ddc-bucket" {
+		t.Errorf("unexpected default bucket name: %v", props["BucketName"])
+	}
+}
+
+// TestDDCRedaction verifies UserData is redacted for DDC instances.
+func TestDDCRedaction(t *testing.T) {
+	ms := state.ModuleState{
+		Name:   "ddc",
+		Status: "ready",
+		Resources: []state.ModuleResource{
+			{
+				TypeName:   "AWS::EC2::Instance",
+				Identifier: "i-ddc",
+				Properties: map[string]string{
+					"instanceType": "m5.xlarge",
+					"UserData":     strings.Repeat("A", 300),
+				},
+			},
+		},
+	}
+	mod := buildDDCModule(ms, testConfigWithDDC())
+	for _, r := range mod.Resources {
+		if r.TypeName == "AWS::EC2::Instance" {
+			if u, ok := r.Properties["UserData"].(string); ok && strings.HasPrefix(u, "# REDACTED") {
+				return
+			}
+			t.Error("UserData should be redacted in DDC export")
+		}
+	}
+}
+
+// TestWorkstationRedaction verifies UserData is redacted for Workstation instances.
+func TestWorkstationRedaction(t *testing.T) {
+	ms := state.ModuleState{
+		Name:   "workstation",
+		Status: "ready",
+		Resources: []state.ModuleResource{
+			{
+				TypeName:   "AWS::EC2::Instance",
+				Identifier: "i-ws",
+				Properties: map[string]string{
+					"instanceType": "g4dn.xlarge",
+					"UserData":     strings.Repeat("B", 300),
+				},
+			},
+		},
+	}
+	mod := buildWorkstationModule(ms, testConfigWithWorkstation())
+	for _, r := range mod.Resources {
+		if r.TypeName == "AWS::EC2::Instance" {
+			if u, ok := r.Properties["UserData"].(string); ok && strings.HasPrefix(u, "# REDACTED") {
+				return
+			}
+			t.Error("UserData should be redacted in Workstation export")
+		}
+	}
+}
+
+// TestMixedV1V2CloudFormation verifies a mixed V1+V2 state produces valid CFN output.
+func TestMixedV1V2CloudFormation(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	// V1 module
+	st.UpsertModule("horde", "ami-0abc123def456", "ready", []state.ModuleResource{
+		{
+			TypeName:   "AWS::EC2::SecurityGroup",
+			Identifier: "sg-0a1b2c3d4e5f67890",
+			Properties: map[string]string{"GroupName": "fabrica-horde-sg", "VpcId": "vpc-0abc123"},
+		},
+		{
+			TypeName:   "AWS::EC2::Instance",
+			Identifier: "i-0abc123def456",
+			Properties: map[string]string{"instanceType": "m7i.2xlarge", "volumeSize": "100"},
+		},
+	})
+	// V2 module — DDC
+	st.UpsertModule("ddc", "ami-ddc", "ready", []state.ModuleResource{
+		{
+			TypeName:   "AWS::EC2::Instance",
+			Identifier: "i-ddc-coord",
+			Properties: map[string]string{"instanceType": "m5.xlarge", "volumeSize": "500", "role": "coordinator"},
+		},
+		{
+			TypeName:   "AWS::S3::Bucket",
+			Identifier: "fabrica-ddc-bucket-123",
+			Properties: map[string]string{"BucketName": "fabrica-ddc-bucket-123"},
+		},
+	})
+	// V2 module — CI
+	st.UpsertModule("ci", "fabrica-ci", "ready", []state.ModuleResource{
+		{
+			TypeName:   "AWS::IAM::Role",
+			Identifier: "fabrica-ci-codebuild",
+			Properties: map[string]string{"RoleName": "fabrica-ci-codebuild"},
+		},
+		{
+			TypeName:   "AWS::CodeBuild::Project",
+			Identifier: "fabrica-ci",
+			Properties: map[string]string{"Name": "fabrica-ci"},
+		},
+	})
+
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = "123456789012"
+	cfg.Horde.AmiID = "ami-0abc123def456"
+	cfg.Horde.InstanceType = "m7i.2xlarge"
+	cfg.DDC.AmiID = "ami-ddc"
+	cfg.DDC.InstanceType = "m5.xlarge"
+	cfg.CI.ProjectName = "fabrica-ci"
+
+	data, err := GenerateOutput(CloudFormation, st, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var tmpl map[string]any
+	if err := yaml.Unmarshal(data, &tmpl); err != nil {
+		t.Fatalf("invalid YAML output: %v\n%s", err, string(data))
+	}
+
+	resources := tmpl["Resources"].(map[string]any)
+
+	// Should have state backend + horde + ddc + ci resources
+	if len(resources) < 8 {
+		t.Errorf("expected at least 8 resources, got %d", len(resources))
+	}
+
+	// Check V1 resources
+	if _, ok := resources["FabricaStateBucket"]; !ok {
+		t.Error("missing FabricaStateBucket resource")
+	}
+	if _, ok := resources["FabricaStateLockTable"]; !ok {
+		t.Error("missing FabricaStateLockTable resource")
+	}
+
+	// Check V2 DDC resources
+	foundDDC := false
+	for _, res := range resources {
+		rm := res.(map[string]any)
+		if typ, ok := rm["Type"].(string); ok {
+			if typ == "AWS::EC2::Instance" || typ == "AWS::S3::Bucket" {
+				// DDC has instances and buckets
+				if props, ok := rm["Properties"].(map[string]any); ok {
+					if bn, ok := props["BucketName"].(string); ok && strings.Contains(bn, "ddc") {
+						foundDDC = true
+					}
+				}
+			}
+		}
+	}
+	if !foundDDC {
+		t.Error("expected DDC resources in output")
+	}
+
+	// Check V2 CI resources
+	foundCodeBuild := false
+	for _, res := range resources {
+		rm := res.(map[string]any)
+		if typ, ok := rm["Type"].(string); ok && typ == "AWS::CodeBuild::Project" {
+			foundCodeBuild = true
+		}
+	}
+	if !foundCodeBuild {
+		t.Error("expected CodeBuild project in output")
+	}
+
+	// Verify metadata version is v2
+	metadata := tmpl["Metadata"].(map[string]any)
+	fabricaExport := metadata["FabricaExport"].(map[string]any)
+	if fabricaExport["Version"] != "v2" {
+		t.Errorf("expected version v2, got %v", fabricaExport["Version"])
+	}
+}
+
+// TestMixedV1V2Terraform verifies a mixed V1+V2 state produces valid TF output.
+func TestMixedV1V2Terraform(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	// V1 module
+	st.UpsertModule("perforce", "v23.2", "ready", []state.ModuleResource{
+		{
+			TypeName:   "AWS::EC2::SecurityGroup",
+			Identifier: "sg-p4",
+			Properties: map[string]string{"GroupName": "fabrica-perforce-sg", "VpcId": "vpc-0abc123"},
+		},
+		{
+			TypeName:   "AWS::EC2::Instance",
+			Identifier: "i-p4",
+			Properties: map[string]string{"instanceType": "c5.2xlarge", "volumeSize": "500"},
+		},
+	})
+	// V2 module — Deploy
+	st.UpsertModule("deploy", "v1.0.0", "ready", []state.ModuleResource{
+		{
+			TypeName:   "AWS::GameLift::Alias",
+			Identifier: "alias-1",
+			Properties: map[string]string{"Name": "fabrica-deploy"},
+		},
+		{
+			TypeName:   "AWS::GameLift::Fleet",
+			Identifier: "fleet-1",
+			Properties: map[string]string{"Name": "fabrica-deploy-fleet", "role": "active"},
+		},
+	})
+
+	cfg := config.Defaults()
+	cfg.Perforce.InstanceType = "c5.2xlarge"
+	cfg.Deploy.AliasName = "fabrica-deploy"
+
+	data, err := GenerateOutput(Terraform, st, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := string(data)
+
+	// V1 resources
+	if !strings.Contains(output, `resource "aws_instance"`) {
+		t.Error("missing aws_instance resource")
+	}
+	if !strings.Contains(output, `resource "aws_s3_bucket"`) {
+		t.Error("missing aws_s3_bucket resource")
+	}
+
+	// V2 resources
+	if !strings.Contains(output, `resource "aws_gamelift_alias"`) {
+		t.Error("missing aws_gamelift_alias resource")
+	}
+	if !strings.Contains(output, `resource "aws_gamelift_fleet"`) {
+		t.Error("missing aws_gamelift_fleet resource")
+	}
+
+	// No ${} interpolation
+	if strings.Contains(output, "${") {
+		t.Error("Terraform output must not contain ${} interpolation")
+	}
+
+	// V2 header
+	if !strings.Contains(output, "(V2)") {
+		t.Error("expected V2 in header comment")
+	}
+}
+
+// TestDDCTerraformOutput verifies DDC resources in Terraform output.
+func TestDDCTerraformOutput(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("ddc", "ami-ddc", "ready", []state.ModuleResource{
+		{
+			TypeName:   "AWS::EC2::Instance",
+			Identifier: "i-ddc-coord",
+			Properties: map[string]string{"instanceType": "m5.xlarge", "volumeSize": "500"},
+		},
+		{
+			TypeName:   "AWS::S3::Bucket",
+			Identifier: "fabrica-ddc-bucket-123",
+			Properties: map[string]string{"BucketName": "fabrica-ddc-bucket-123"},
+		},
+		{
+			TypeName:   "AWS::IAM::Role",
+			Identifier: "fabrica-ddc-role",
+			Properties: map[string]string{"RoleName": "fabrica-ddc-role"},
+		},
+	})
+
+	cfg := testConfigWithDDC()
+	data, err := GenerateOutput(Terraform, st, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := string(data)
+
+	if !strings.Contains(output, `resource "aws_s3_bucket"`) {
+		t.Error("missing aws_s3_bucket resource for DDC")
+	}
+	if !strings.Contains(output, `resource "aws_instance"`) {
+		t.Error("missing aws_instance resource for DDC")
+	}
+	if !strings.Contains(output, `resource "aws_iam_role"`) {
+		t.Error("missing aws_iam_role resource for DDC")
+	}
+}
+
+// TestCITerraformOutput verifies CI resources in Terraform output.
+func TestCITerraformOutput(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("ci", "fabrica-ci", "ready", []state.ModuleResource{
+		{
+			TypeName:   "AWS::IAM::Role",
+			Identifier: "fabrica-ci-codebuild",
+			Properties: map[string]string{"RoleName": "fabrica-ci-codebuild"},
+		},
+		{
+			TypeName:   "AWS::CodeBuild::Project",
+			Identifier: "fabrica-ci",
+			Properties: map[string]string{"Name": "fabrica-ci"},
+		},
+	})
+
+	cfg := testConfigWithCI()
+	data, err := GenerateOutput(Terraform, st, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := string(data)
+
+	if !strings.Contains(output, `resource "aws_codebuild_project"`) {
+		t.Error("missing aws_codebuild_project resource")
+	}
+	if !strings.Contains(output, `resource "aws_iam_role"`) {
+		t.Error("missing aws_iam_role resource")
+	}
+	// Verify CodeBuild environment block
+	if !strings.Contains(output, "environment {") {
+		t.Error("missing CodeBuild environment block")
+	}
+	if !strings.Contains(output, "compute_type") {
+		t.Error("missing compute_type in CodeBuild environment")
+	}
+}
+
+// TestDeployTerraformOutput verifies Deploy resources in Terraform output.
+func TestDeployTerraformOutput(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("deploy", "v1.0.0", "ready", []state.ModuleResource{
+		{
+			TypeName:   "AWS::GameLift::Alias",
+			Identifier: "alias-1",
+			Properties: map[string]string{"Name": "fabrica-deploy"},
+		},
+		{
+			TypeName:   "AWS::GameLift::Fleet",
+			Identifier: "fleet-1",
+			Properties: map[string]string{"Name": "fabrica-deploy-fleet"},
+		},
+		{
+			TypeName:   "AWS::GameLift::Build",
+			Identifier: "build-1",
+			Properties: map[string]string{"Name": "fabrica-deploy-build"},
+		},
+	})
+
+	cfg := testConfigWithDeploy()
+	data, err := GenerateOutput(Terraform, st, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := string(data)
+
+	if !strings.Contains(output, `resource "aws_gamelift_alias"`) {
+		t.Error("missing aws_gamelift_alias resource")
+	}
+	if !strings.Contains(output, `resource "aws_gamelift_fleet"`) {
+		t.Error("missing aws_gamelift_fleet resource")
+	}
+	if !strings.Contains(output, `resource "aws_gamelift_build"`) {
+		t.Error("missing aws_gamelift_build resource")
+	}
+}
+
+// TestWorkstationTerraformOutput verifies Workstation resources in Terraform output.
+func TestWorkstationTerraformOutput(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("workstation", "ami-ws", "ready", []state.ModuleResource{
+		{
+			TypeName:   "AWS::EC2::SecurityGroup",
+			Identifier: "sg-ws123",
+			Properties: map[string]string{"GroupName": "fabrica-workstation-sg", "VpcId": "vpc-0abc123"},
+		},
+		{
+			TypeName:   "AWS::EC2::Instance",
+			Identifier: "i-ws123",
+			Properties: map[string]string{"instanceType": "g4dn.xlarge", "volumeSize": "100"},
+		},
+	})
+
+	cfg := testConfigWithWorkstation()
+	data, err := GenerateOutput(Terraform, st, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := string(data)
+
+	if !strings.Contains(output, `resource "aws_instance"`) {
+		t.Error("missing aws_instance resource for Workstation")
+	}
+	if !strings.Contains(output, `resource "aws_security_group"`) {
+		t.Error("missing aws_security_group resource for Workstation")
+	}
+}
+
+// TestDDCCloudFormationOutput verifies DDC resources in CFN output.
+func TestDDCCloudFormationOutput(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("ddc", "ami-ddc", "ready", []state.ModuleResource{
+		{
+			TypeName:   "AWS::EC2::Instance",
+			Identifier: "i-ddc-coord",
+			Properties: map[string]string{"instanceType": "m5.xlarge", "volumeSize": "500"},
+		},
+		{
+			TypeName:   "AWS::S3::Bucket",
+			Identifier: "fabrica-ddc-bucket-123",
+			Properties: map[string]string{"BucketName": "fabrica-ddc-bucket-123"},
+		},
+	})
+
+	cfg := testConfigWithDDC()
+	data, err := GenerateOutput(CloudFormation, st, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var tmpl map[string]any
+	if err := yaml.Unmarshal(data, &tmpl); err != nil {
+		t.Fatalf("invalid YAML: %v\n%s", err, string(data))
+	}
+
+	resources := tmpl["Resources"].(map[string]any)
+
+	// Should have state backend + DDC resources
+	if len(resources) < 4 {
+		t.Errorf("expected at least 4 resources, got %d", len(resources))
+	}
+
+	// Check DDC bucket output — look for any bucket output that's not StateBucketName
+	outputs := tmpl["Outputs"].(map[string]any)
+	foundDDCBucket := false
+	for name := range outputs {
+		if strings.Contains(name, "Bucket") && name != "StateBucketName" {
+			foundDDCBucket = true
+		}
+	}
+	if !foundDDCBucket {
+		t.Error("expected DDC bucket output")
+	}
+}
+
+// TestInstanceTypeForModuleDDC verifies DDC instance type resolution.
+func TestInstanceTypeForModuleDDC(t *testing.T) {
+	cfg := testConfigWithDDC()
+	if instanceTypeForModule("ddc", cfg) != "m5.xlarge" {
+		t.Errorf("unexpected DDC instance type: %s", instanceTypeForModule("ddc", cfg))
+	}
+
+	cfg2 := config.Defaults()
+	if instanceTypeForModule("ddc", cfg2) != "m5.xlarge" {
+		t.Errorf("unexpected default DDC instance type: %s", instanceTypeForModule("ddc", cfg2))
+	}
+}
+
+// TestInstanceTypeForModuleWorkstation verifies Workstation instance type resolution.
+func TestInstanceTypeForModuleWorkstation(t *testing.T) {
+	cfg := testConfigWithWorkstation()
+	if instanceTypeForModule("workstation", cfg) != "g4dn.xlarge" {
+		t.Errorf("unexpected workstation instance type: %s", instanceTypeForModule("workstation", cfg))
+	}
+
+	cfg2 := config.Defaults()
+	if instanceTypeForModule("workstation", cfg2) != "g4dn.xlarge" {
+		t.Errorf("unexpected default workstation instance type: %s", instanceTypeForModule("workstation", cfg2))
+	}
+}
+
+// TestSGRulesForModuleDDC verifies DDC SG rules.
+func TestSGRulesForModuleDDC(t *testing.T) {
+	cfg := testConfigWithDDC()
+	rules := sgRulesForModule("ddc", cfg)
+	if len(rules) != 2 {
+		t.Errorf("expected 2 rules for DDC, got %d", len(rules))
+	}
+	// Verify correct default ports (80 public, 8080 internal — not 6670/6699).
+	if rules[0]["FromPort"] != 80 && rules[0]["FromPort"] != float64(80) {
+		t.Errorf("expected public port 80, got %v", rules[0]["FromPort"])
+	}
+	if rules[1]["FromPort"] != 8080 && rules[1]["FromPort"] != float64(8080) {
+		t.Errorf("expected internal port 8080, got %v", rules[1]["FromPort"])
+	}
+}
+
+// TestSGRulesForModuleWorkstation verifies Workstation SG rules.
+func TestSGRulesForModuleWorkstation(t *testing.T) {
+	cfg := testConfigWithWorkstation()
+	rules := sgRulesForModule("workstation", cfg)
+	if len(rules) != 1 {
+		t.Errorf("expected 1 rule for workstation, got %d", len(rules))
+	}
+	// FromPort is an int in the map, but YAML unmarshals to float64
+	fromPort := rules[0]["FromPort"]
+	if fromPort != 8443 && fromPort != float64(8443) {
+		t.Errorf("expected port 8443, got %v (type %T)", fromPort, fromPort)
+	}
+}
+
+// TestAssumeRolePolicyForModule verifies module-specific trust policies.
+func TestAssumeRolePolicyForModule(t *testing.T) {
+	// EC2-based modules should use ec2.amazonaws.com
+	for _, mod := range []string{"perforce", "ddc", "horde", "lore", "workstation"} {
+		policy := assumeRolePolicyForModule(mod)
+		stmts, ok := policy["Statement"].([]map[string]any)
+		if !ok || len(stmts) == 0 {
+			t.Fatalf("module %s: no statements in policy", mod)
+		}
+		principal, _ := stmts[0]["Principal"].(map[string]any)
+		service, _ := principal["Service"].(string)
+		if service != "ec2.amazonaws.com" {
+			t.Errorf("module %s: expected ec2.amazonaws.com, got %s", mod, service)
+		}
+	}
+
+	// CI should use codebuild.amazonaws.com
+	policy := assumeRolePolicyForModule("ci")
+	stmts, _ := policy["Statement"].([]map[string]any)
+	principal, _ := stmts[0]["Principal"].(map[string]any)
+	service, _ := principal["Service"].(string)
+	if service != "codebuild.amazonaws.com" {
+		t.Errorf("ci: expected codebuild.amazonaws.com, got %s", service)
+	}
+
+	// Deploy should use gamelift.amazonaws.com
+	policy = assumeRolePolicyForModule("deploy")
+	stmts, _ = policy["Statement"].([]map[string]any)
+	principal, _ = stmts[0]["Principal"].(map[string]any)
+	service, _ = principal["Service"].(string)
+	if service != "gamelift.amazonaws.com" {
+		t.Errorf("deploy: expected gamelift.amazonaws.com, got %s", service)
+	}
+}
+
+// TestManagedPolicyARNsForModule verifies which modules get SSM managed policies.
+func TestManagedPolicyARNsForModule(t *testing.T) {
+	// EC2-based modules should get SSM policy
+	for _, mod := range []string{"perforce", "ddc"} {
+		arns := managedPolicyARNsForModule(mod)
+		if arns == nil {
+			t.Errorf("module %s: expected SSM managed policy ARN", mod)
+			continue
+		}
+		if arns[0]["arn"] != "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" {
+			t.Errorf("module %s: unexpected ARN: %v", mod, arns[0]["arn"])
+		}
+	}
+
+	// CI and Deploy should NOT get SSM managed policy
+	for _, mod := range []string{"ci", "deploy", "horde", "workstation"} {
+		arns := managedPolicyARNsForModule(mod)
+		if arns != nil {
+			t.Errorf("module %s: expected nil managed policy ARNs, got %v", mod, arns)
+		}
+	}
+}
+
+// TestTerraformResourceTypeNewTypes verifies TF resource type mappings for new types.
+func TestTerraformResourceTypeNewTypes(t *testing.T) {
+	gen := &terraformGenerator{}
+
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"AWS::CodeBuild::Project", "aws_codebuild_project"},
+		{"AWS::GameLift::Alias", "aws_gamelift_alias"},
+		{"AWS::GameLift::Fleet", "aws_gamelift_fleet"},
+		{"AWS::GameLift::Build", "aws_gamelift_build"},
+	}
+
+	for _, tc := range tests {
+		got := gen.tfResourceType(tc.input)
+		if got != tc.expected {
+			t.Errorf("tfResourceType(%q) = %q, want %q", tc.input, got, tc.expected)
+		}
+	}
+}
+
+// TestHclCodeBuildEnv verifies CodeBuild environment HCL output.
+func TestHclCodeBuildEnv(t *testing.T) {
+	gen := &terraformGenerator{}
+	env := map[string]any{
+		"ComputeType": "BUILD_GENERAL1_SMALL",
+		"Image":       "aws/codebuild/standard:7.0",
+		"Type":        "LINUX_CONTAINER",
+	}
+	out := gen.hclCodeBuildEnv(env)
+	if !strings.Contains(out, "compute_type") {
+		t.Error("expected compute_type in output")
+	}
+	if !strings.Contains(out, "BUILD_GENERAL1_SMALL") {
+		t.Error("expected BUILD_GENERAL1_SMALL in output")
+	}
+	if !strings.Contains(out, "aws/codebuild/standard:7.0") {
+		t.Error("expected image in output")
+	}
+}
+
+// TestHclCodeBuildArtifacts verifies CodeBuild artifacts HCL output.
+func TestHclCodeBuildArtifacts(t *testing.T) {
+	gen := &terraformGenerator{}
+	art := map[string]any{"Type": "S3"}
+	out := gen.hclCodeBuildArtifacts(art)
+	if !strings.Contains(out, "artifacts") {
+		t.Error("expected artifacts block")
+	}
+	if !strings.Contains(out, "S3") {
+		t.Error("expected S3 type")
+	}
+}
+
+// TestHclCodeBuildEnvWrongType verifies hclCodeBuildEnv with wrong type.
+func TestHclCodeBuildEnvWrongType(t *testing.T) {
+	gen := &terraformGenerator{}
+	if gen.hclCodeBuildEnv("not a map") != "" {
+		t.Error("hclCodeBuildEnv should return empty for wrong type")
+	}
+}
+
+// TestHclCodeBuildArtifactsWrongType verifies hclCodeBuildArtifacts with wrong type.
+func TestHclCodeBuildArtifactsWrongType(t *testing.T) {
+	gen := &terraformGenerator{}
+	if gen.hclCodeBuildArtifacts("not a map") != "" {
+		t.Error("hclCodeBuildArtifacts should return empty for wrong type")
+	}
+}
+
+// TestCFNVersionV2 verifies CloudFormation metadata version is v2.
+func TestCFNVersionV2(t *testing.T) {
+	st := testStateWithHorde()
+	cfg := testConfigWithHorde()
+
+	data, err := GenerateOutput(CloudFormation, st, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var tmpl map[string]any
+	if err := yaml.Unmarshal(data, &tmpl); err != nil {
+		t.Fatalf("invalid YAML: %v", err)
+	}
+
+	metadata := tmpl["Metadata"].(map[string]any)
+	fabricaExport := metadata["FabricaExport"].(map[string]any)
+	if fabricaExport["Version"] != "v2" {
+		t.Errorf("expected version v2, got %v", fabricaExport["Version"])
+	}
+
+	// Description should contain V2
+	desc := tmpl["Description"].(string)
+	if !strings.Contains(desc, "V2") {
+		t.Error("expected V2 in description")
+	}
+}
+
+// TestTFVersionV2 verifies Terraform header version is V2.
+func TestTFVersionV2(t *testing.T) {
+	st := testStateWithHorde()
+	cfg := testConfigWithHorde()
+
+	data, err := GenerateOutput(Terraform, st, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := string(data)
+	if !strings.Contains(output, "(V2)") {
+		t.Error("expected V2 in Terraform header comment")
+	}
+}
+
+// TestCiProjectNameForModule verifies CI project name resolution.
+func TestCiProjectNameForModule(t *testing.T) {
+	cfg := testConfigWithCI()
+	if ciProjectNameForModule("ci", cfg) != "fabrica-ci" {
+		t.Errorf("unexpected CI project name: %s", ciProjectNameForModule("ci", cfg))
+	}
+
+	// Default when not set
+	cfg2 := config.Defaults()
+	if ciProjectNameForModule("ci", cfg2) != "fabrica-ci" {
+		t.Errorf("unexpected default CI project name: %s", ciProjectNameForModule("ci", cfg2))
+	}
+}
+
+// TestCiRoleNameForModule verifies CI role name.
+func TestCiRoleNameForModule(t *testing.T) {
+	if ciRoleNameForModule("ci") != "fabrica-ci-codebuild" {
+		t.Errorf("unexpected CI role name: %s", ciRoleNameForModule("ci"))
+	}
+}
+
+// TestDeployAliasNameForModule verifies deploy alias name resolution.
+func TestDeployAliasNameForModule(t *testing.T) {
+	cfg := testConfigWithDeploy()
+	if deployAliasNameForModule("deploy", cfg) != "fabrica-deploy" {
+		t.Errorf("unexpected deploy alias name: %s", deployAliasNameForModule("deploy", cfg))
+	}
+
+	// Default when not set
+	cfg2 := config.Defaults()
+	if deployAliasNameForModule("deploy", cfg2) != "fabrica-deploy-alias" {
+		t.Errorf("unexpected default deploy alias name: %s", deployAliasNameForModule("deploy", cfg2))
+	}
+}
+
+// TestAmiIDForModuleDDC verifies DDC AMI ID resolution.
+func TestAmiIDForModuleDDC(t *testing.T) {
+	cfg := testConfigWithDDC()
+	if amiIDForModule("ddc", cfg) != "ami-ddc123" {
+		t.Errorf("unexpected DDC AMI ID: %s", amiIDForModule("ddc", cfg))
+	}
+}
+
+// TestAmiIDForModuleWorkstation verifies Workstation AMI ID resolution.
+func TestAmiIDForModuleWorkstation(t *testing.T) {
+	cfg := testConfigWithWorkstation()
+	if amiIDForModule("workstation", cfg) != "ami-ws123" {
+		t.Errorf("unexpected Workstation AMI ID: %s", amiIDForModule("workstation", cfg))
+	}
+}
+
+// TestExportAllV2ModulesInBuildModules verifies all V2 modules are wired into buildModules.
+func TestExportAllV2ModulesInBuildModules(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("ddc", "ami", "ready", []state.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-ddc", Properties: map[string]string{"instanceType": "m5.xlarge"}},
+	})
+	st.UpsertModule("workstation", "ami", "ready", []state.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-ws", Properties: map[string]string{"instanceType": "g4dn.xlarge"}},
+	})
+	st.UpsertModule("ci", "v1", "ready", []state.ModuleResource{
+		{TypeName: "AWS::CodeBuild::Project", Identifier: "fabrica-ci", Properties: map[string]string{"Name": "fabrica-ci"}},
+	})
+	st.UpsertModule("deploy", "v1", "ready", []state.ModuleResource{
+		{TypeName: "AWS::GameLift::Alias", Identifier: "alias-1", Properties: map[string]string{"Name": "fabrica-deploy"}},
+	})
+
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = "123456789012"
+
+	modules, err := buildModules(st, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// state-backend + ddc + workstation + ci + deploy = 5
+	if len(modules) != 5 {
+		t.Fatalf("expected 5 modules, got %d", len(modules))
+	}
+
+	expectedNames := map[string]bool{
+		"state-backend": false,
+		"ddc":           false,
+		"workstation":   false,
+		"ci":            false,
+		"deploy":        false,
+	}
+	for _, m := range modules {
+		if _, ok := expectedNames[m.Name]; ok {
+			expectedNames[m.Name] = true
+		}
+	}
+	for name, found := range expectedNames {
+		if !found {
+			t.Errorf("expected module %s not found", name)
+		}
+	}
+}
+
+// TestCfPolicyArns verifies CloudFormation policy ARN conversion.
+func TestCfPolicyArns(t *testing.T) {
+	// Map slice input
+	arns := []map[string]any{
+		{"arn": "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"},
+		{"arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"},
+	}
+	result := cfPolicyArns(arns)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 ARNs, got %d", len(result))
+	}
+	if result[0] != "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" {
+		t.Errorf("unexpected ARN[0]: %s", result[0])
+	}
+
+	// String slice input
+	strArns := []string{"arn:aws:iam::aws:policy/AdministratorAccess"}
+	result = cfPolicyArns(strArns)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 ARN, got %d", len(result))
+	}
+	if result[0] != "arn:aws:iam::aws:policy/AdministratorAccess" {
+		t.Errorf("unexpected ARN: %s", result[0])
+	}
+
+	// Nil input
+	result = cfPolicyArns(nil)
+	if result != nil {
+		t.Errorf("expected nil for nil input, got %v", result)
 	}
 }

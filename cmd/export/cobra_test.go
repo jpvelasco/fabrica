@@ -324,3 +324,189 @@ func TestExportCobraYAMLParse(t *testing.T) {
 		}
 	}
 }
+
+// ---- V2 module cobra tests ----
+
+// testStateWithDDC returns a state with a DDC module for export testing.
+func testStateWithDDC() *fabricastate.State {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("ddc", "ami-ddc123", "ready", []fabricastate.ModuleResource{
+		{
+			TypeName:   "AWS::EC2::SecurityGroup",
+			Identifier: "sg-ddc123",
+			Properties: map[string]string{"GroupName": "fabrica-ddc-sg", "VpcId": "vpc-0abc123"},
+		},
+		{
+			TypeName:   "AWS::EC2::Instance",
+			Identifier: "i-ddc-coord",
+			Properties: map[string]string{"instanceType": "m5.xlarge", "volumeSize": "500"},
+		},
+		{
+			TypeName:   "AWS::S3::Bucket",
+			Identifier: "fabrica-ddc-bucket-123",
+			Properties: map[string]string{"BucketName": "fabrica-ddc-bucket-123"},
+		},
+	})
+	return st
+}
+
+// testStateWithCI returns a state with a CI module for export testing.
+func testStateWithCI() *fabricastate.State {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("ci", "fabrica-ci", "ready", []fabricastate.ModuleResource{
+		{
+			TypeName:   "AWS::IAM::Role",
+			Identifier: "fabrica-ci-codebuild",
+			Properties: map[string]string{"RoleName": "fabrica-ci-codebuild"},
+		},
+		{
+			TypeName:   "AWS::CodeBuild::Project",
+			Identifier: "fabrica-ci",
+			Properties: map[string]string{"Name": "fabrica-ci"},
+		},
+	})
+	return st
+}
+
+// testStateWithDeploy returns a state with a Deploy module for export testing.
+func testStateWithDeploy() *fabricastate.State {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("deploy", "v1.0.0", "ready", []fabricastate.ModuleResource{
+		{
+			TypeName:   "AWS::GameLift::Alias",
+			Identifier: "alias-1",
+			Properties: map[string]string{"Name": "fabrica-deploy"},
+		},
+		{
+			TypeName:   "AWS::GameLift::Fleet",
+			Identifier: "fleet-1",
+			Properties: map[string]string{"Name": "fabrica-deploy-fleet", "role": "active"},
+		},
+	})
+	return st
+}
+
+// TestExportCobraDDC verifies DDC module exports via CLI.
+func TestExportCobraDDC(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeStateFile(t, testStateWithDDC())
+	cfg := config.Defaults()
+	got, err := runExportCmd(t, newTestRuntime(cfg), "--format", "cloudformation")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should have DDC resources, not only state backend
+	assert.Contains(t, got, "DDC")
+	assert.Contains(t, got, "FabricaStateBucket")
+}
+
+// TestExportCobraDDCTerraform verifies DDC module exports as Terraform.
+func TestExportCobraDDCTerraform(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeStateFile(t, testStateWithDDC())
+	cfg := config.Defaults()
+	got, err := runExportCmd(t, newTestRuntime(cfg), "--format", "terraform")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assert.Contains(t, got, `resource "aws_s3_bucket"`)
+	assert.Contains(t, got, `resource "aws_instance"`)
+	assert.Contains(t, got, `resource "aws_security_group"`)
+}
+
+// TestExportCobraCI verifies CI module exports via CLI.
+func TestExportCobraCI(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeStateFile(t, testStateWithCI())
+	cfg := config.Defaults()
+	got, err := runExportCmd(t, newTestRuntime(cfg), "--format", "cloudformation")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assert.Contains(t, got, "CodeBuild")
+	assert.Contains(t, got, "FabricaStateBucket")
+}
+
+// TestExportCobraCITerraform verifies CI module exports as Terraform.
+func TestExportCobraCITerraform(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeStateFile(t, testStateWithCI())
+	cfg := config.Defaults()
+	got, err := runExportCmd(t, newTestRuntime(cfg), "--format", "terraform")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assert.Contains(t, got, `resource "aws_codebuild_project"`)
+	assert.Contains(t, got, `resource "aws_iam_role"`)
+}
+
+// TestExportCobraDeploy verifies Deploy module exports via CLI.
+func TestExportCobraDeploy(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeStateFile(t, testStateWithDeploy())
+	cfg := config.Defaults()
+	got, err := runExportCmd(t, newTestRuntime(cfg), "--format", "cloudformation")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assert.Contains(t, got, "GameLift")
+	assert.Contains(t, got, "FabricaStateBucket")
+}
+
+// TestExportCobraDeployTerraform verifies Deploy module exports as Terraform.
+func TestExportCobraDeployTerraform(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeStateFile(t, testStateWithDeploy())
+	cfg := config.Defaults()
+	got, err := runExportCmd(t, newTestRuntime(cfg), "--format", "terraform")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assert.Contains(t, got, `resource "aws_gamelift_alias"`)
+	assert.Contains(t, got, `resource "aws_gamelift_fleet"`)
+}
+
+// TestExportCobraMixedV1V2 verifies mixed V1+V2 modules export correctly.
+func TestExportCobraMixedV1V2(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-0abc123def456", "ready", []fabricastate.ModuleResource{
+		{
+			TypeName:   "AWS::EC2::Instance",
+			Identifier: "i-0abc123def456",
+			Properties: map[string]string{"instanceType": "m7i.2xlarge"},
+		},
+	})
+	st.UpsertModule("ddc", "ami-ddc", "ready", []fabricastate.ModuleResource{
+		{
+			TypeName:   "AWS::EC2::Instance",
+			Identifier: "i-ddc",
+			Properties: map[string]string{"instanceType": "m5.xlarge"},
+		},
+		{
+			TypeName:   "AWS::S3::Bucket",
+			Identifier: "fabrica-ddc-bucket-123",
+			Properties: map[string]string{"BucketName": "fabrica-ddc-bucket-123"},
+		},
+	})
+	writeStateFile(t, st)
+	cfg := config.Defaults()
+	cfg.Horde.AmiID = "ami-0abc123def456"
+	got, err := runExportCmd(t, newTestRuntime(cfg), "--format", "cloudformation")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// V1 resources
+	assert.Contains(t, got, "HORDE")
+	// V2 resources
+	assert.Contains(t, got, "DDC")
+	// State backend
+	assert.Contains(t, got, "FabricaStateBucket")
+}

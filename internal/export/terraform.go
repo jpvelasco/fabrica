@@ -13,7 +13,7 @@ func (g *terraformGenerator) Generate(modules []ExportModule) ([]byte, error) {
 	var sb strings.Builder
 
 	sb.WriteString("# Fabrica-managed infrastructure — exported from local state.\n")
-	fmt.Fprintf(&sb, "# Modules: %s (V1)\n", moduleNames(modules))
+	fmt.Fprintf(&sb, "# Modules: %s (V2)\n", moduleNames(modules))
 	sb.WriteString("#\n")
 	sb.WriteString("# Generated from Fabrica local state — review before applying.\n")
 	sb.WriteString("# UserData and credentials are redacted.\n")
@@ -94,6 +94,10 @@ func (g *terraformGenerator) resourceToHCL(res ExportResource) (string, error) {
 			sb.WriteString(g.hclMetadataOptions(v))
 		case "Roles":
 			sb.WriteString(g.hclRoles(v))
+		case "Environment":
+			sb.WriteString(g.hclCodeBuildEnv(v))
+		case "Artifacts":
+			sb.WriteString(g.hclCodeBuildArtifacts(v))
 		default:
 			sb.WriteString(g.hclScalar(k, v))
 		}
@@ -120,6 +124,14 @@ func (g *terraformGenerator) tfResourceType(cfType string) string {
 		return "aws_s3_bucket"
 	case "AWS::DynamoDB::Table":
 		return "aws_dynamodb_table"
+	case "AWS::CodeBuild::Project":
+		return "aws_codebuild_project"
+	case "AWS::GameLift::Alias":
+		return "aws_gamelift_alias"
+	case "AWS::GameLift::Fleet":
+		return "aws_gamelift_fleet"
+	case "AWS::GameLift::Build":
+		return "aws_gamelift_build"
 	default:
 		// Generic conversion: AWS::Service::Resource → aws_service_resource
 		parts := strings.Split(cfType, "::")
@@ -399,6 +411,42 @@ func (g *terraformGenerator) hclRoles(v any) string {
 	return sb.String()
 }
 
+// hclCodeBuildEnv converts CodeBuild environment config to HCL format.
+func (g *terraformGenerator) hclCodeBuildEnv(v any) string {
+	env, ok := v.(map[string]any)
+	if !ok {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("  environment {\n")
+	if compute, ok := env["ComputeType"].(string); ok {
+		fmt.Fprintf(&sb, "    compute_type = %q\n", compute)
+	}
+	if image, ok := env["Image"].(string); ok {
+		fmt.Fprintf(&sb, "    image = %q\n", image)
+	}
+	if typ, ok := env["Type"].(string); ok {
+		fmt.Fprintf(&sb, "    type = %q\n", typ)
+	}
+	sb.WriteString("  }\n")
+	return sb.String()
+}
+
+// hclCodeBuildArtifacts converts CodeBuild artifacts config to HCL format.
+func (g *terraformGenerator) hclCodeBuildArtifacts(v any) string {
+	art, ok := v.(map[string]any)
+	if !ok {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("  artifacts {\n")
+	if typ, ok := art["Type"].(string); ok {
+		fmt.Fprintf(&sb, "    type = %q\n", typ)
+	}
+	sb.WriteString("  }\n")
+	return sb.String()
+}
+
 // hclScalar converts a scalar property to HCL format.
 func (g *terraformGenerator) hclScalar(k string, v any) string {
 	hclKey := g.tfAttributeName(k)
@@ -508,9 +556,15 @@ func (g *terraformGenerator) addOutputHCL(sb *strings.Builder, res ExportResourc
 		value = fmt.Sprintf("%s.%s.id", g.tfResourceType(res.TypeName), g.tfResourceName(res.LogicalID))
 		desc = fmt.Sprintf("%s security group ID", moduleName)
 	case "AWS::S3::Bucket":
-		outputName = "state_bucket_name"
-		value = "aws_s3_bucket.fabrica_state_bucket.id"
-		desc = "Fabrica state S3 bucket name"
+		if res.Module == "state-backend" {
+			outputName = "state_bucket_name"
+			value = "aws_s3_bucket.fabrica_state_bucket.id"
+			desc = "Fabrica state S3 bucket name"
+		} else {
+			outputName = g.tfResourceName(res.LogicalID) + "_name"
+			value = fmt.Sprintf("%s.%s.id", g.tfResourceType(res.TypeName), g.tfResourceName(res.LogicalID))
+			desc = fmt.Sprintf("%s S3 bucket name", moduleName)
+		}
 	case "AWS::DynamoDB::Table":
 		outputName = "state_lock_table_name"
 		value = "aws_dynamodb_table.fabrica_state_lock_table.id"
@@ -519,6 +573,22 @@ func (g *terraformGenerator) addOutputHCL(sb *strings.Builder, res ExportResourc
 		outputName = g.tfResourceName(res.LogicalID) + "_arn"
 		value = fmt.Sprintf("%s.%s.arn", g.tfResourceType(res.TypeName), g.tfResourceName(res.LogicalID))
 		desc = fmt.Sprintf("%s IAM role ARN", moduleName)
+	case "AWS::CodeBuild::Project":
+		outputName = g.tfResourceName(res.LogicalID) + "_name"
+		value = fmt.Sprintf("%s.%s.name", g.tfResourceType(res.TypeName), g.tfResourceName(res.LogicalID))
+		desc = fmt.Sprintf("%s CodeBuild project name", moduleName)
+	case "AWS::GameLift::Alias":
+		outputName = g.tfResourceName(res.LogicalID) + "_id"
+		value = fmt.Sprintf("%s.%s.id", g.tfResourceType(res.TypeName), g.tfResourceName(res.LogicalID))
+		desc = fmt.Sprintf("%s GameLift alias ID", moduleName)
+	case "AWS::GameLift::Fleet":
+		outputName = g.tfResourceName(res.LogicalID) + "_id"
+		value = fmt.Sprintf("%s.%s.id", g.tfResourceType(res.TypeName), g.tfResourceName(res.LogicalID))
+		desc = fmt.Sprintf("%s GameLift fleet ID", moduleName)
+	case "AWS::GameLift::Build":
+		outputName = g.tfResourceName(res.LogicalID) + "_id"
+		value = fmt.Sprintf("%s.%s.id", g.tfResourceType(res.TypeName), g.tfResourceName(res.LogicalID))
+		desc = fmt.Sprintf("%s GameLift build ID", moduleName)
 	default:
 		return
 	}

@@ -2,8 +2,8 @@
 // recorded state and configuration. It converts Fabrica's internal plan and
 // state data into CloudFormation YAML and Terraform HCL formats.
 //
-// V1 scope: Horde, Perforce, Lore modules plus the state backend (S3 bucket +
-// DynamoDB table). DDC, Workstation, CI, and Deploy are deferred to V2.
+// V2 scope: all modules — state backend (S3 bucket + DynamoDB table), Horde,
+// Perforce, Lore, DDC (home + edge), Workstation, CI, and Deploy.
 //
 // The package is pure generation logic with no AWS SDK imports. It reads from
 // state.State and config.Config, applies redaction for credential-like fields,
@@ -120,8 +120,15 @@ func buildModules(st *state.State, cfg *config.Config) ([]ExportModule, error) {
 			mod = buildPerforceModule(ms, cfg)
 		case "lore":
 			mod = buildLoreModule(ms, cfg)
+		case "ddc":
+			mod = buildDDCModule(ms, cfg)
+		case "workstation":
+			mod = buildWorkstationModule(ms, cfg)
+		case "ci":
+			mod = buildCIModule(ms, cfg)
+		case "deploy":
+			mod = buildDeployModule(ms, cfg)
 		default:
-			// DDC, workstation, CI, deploy — not yet supported in V1.
 			continue
 		}
 		if len(mod.Resources) > 0 {
@@ -172,7 +179,10 @@ func looksLikeBase64Blob(s string) bool {
 }
 
 // toLogicalID converts a resource identifier to a valid CloudFormation logical ID
-// (alphanumeric, no spaces or special chars).
+// (alphanumeric, no spaces or special chars). It uses the full sanitized
+// identifier (truncated to 12 chars) so that multiple resources of the same
+// type within one module get distinct IDs — e.g. DDC home vs. edge SGs,
+// or Deploy fleets and builds.
 func toLogicalID(module, typeName, identifier string) string {
 	id := strings.ReplaceAll(identifier, "-", "")
 	id = strings.ReplaceAll(id, "_", "")
@@ -182,14 +192,14 @@ func toLogicalID(module, typeName, identifier string) string {
 		id = "X"
 	}
 
-	if len(id) > 16 {
-		id = id[:16]
+	if len(id) > 12 {
+		id = id[:12]
 	}
 
 	return fmt.Sprintf("%s%s%s",
 		strings.ToTitle(module),
 		typeNameShort(typeName),
-		strings.ToUpper(id[:1]))
+		strings.ToUpper(id))
 }
 
 // typeNameShort returns a short form of a CloudFormation type name for logical IDs.
@@ -212,6 +222,7 @@ func buildStateBackendModule(st *state.State, cfg *config.Config) (*ExportModule
 			{
 				TypeName:  "AWS::S3::Bucket",
 				LogicalID: "FabricaStateBucket",
+				Module:    "state-backend",
 				Properties: map[string]any{
 					"BucketName": names.Bucket,
 					"VersioningConfiguration": map[string]any{
@@ -241,6 +252,7 @@ func buildStateBackendModule(st *state.State, cfg *config.Config) (*ExportModule
 			{
 				TypeName:  "AWS::DynamoDB::Table",
 				LogicalID: "FabricaStateLockTable",
+				Module:    "state-backend",
 				Properties: map[string]any{
 					"TableName": names.Table,
 					"KeySchema": []map[string]any{
@@ -307,6 +319,87 @@ func buildPerforceModule(ms state.ModuleState, cfg *config.Config) ExportModule 
 
 // buildLoreModule generates export resources for the Lore module.
 func buildLoreModule(ms state.ModuleState, cfg *config.Config) ExportModule {
+	mod := ExportModule{
+		Name:   ms.Name,
+		Status: ms.Status,
+	}
+
+	for _, r := range ms.Resources {
+		res := ExportResource{
+			TypeName:   r.TypeName,
+			LogicalID:  toLogicalID(ms.Name, r.TypeName, r.Identifier),
+			Properties: sanitize(extractProperties(ms.Name, r, cfg)),
+			Module:     ms.Name,
+		}
+		mod.Resources = append(mod.Resources, res)
+	}
+	return mod
+}
+
+// buildDDCModule generates export resources for the DDC module.
+// Covers home-region resources (IAM role, instance profile, S3 bucket, SG,
+// EC2 instances) plus any edge-region SGs and instances recorded in state.
+func buildDDCModule(ms state.ModuleState, cfg *config.Config) ExportModule {
+	mod := ExportModule{
+		Name:   ms.Name,
+		Status: ms.Status,
+	}
+
+	for _, r := range ms.Resources {
+		res := ExportResource{
+			TypeName:   r.TypeName,
+			LogicalID:  toLogicalID(ms.Name, r.TypeName, r.Identifier),
+			Properties: sanitize(extractProperties(ms.Name, r, cfg)),
+			Module:     ms.Name,
+		}
+		mod.Resources = append(mod.Resources, res)
+	}
+	return mod
+}
+
+// buildWorkstationModule generates export resources for the Workstation module.
+// Covers SG + EC2 instance (NICE DCV).
+func buildWorkstationModule(ms state.ModuleState, cfg *config.Config) ExportModule {
+	mod := ExportModule{
+		Name:   ms.Name,
+		Status: ms.Status,
+	}
+
+	for _, r := range ms.Resources {
+		res := ExportResource{
+			TypeName:   r.TypeName,
+			LogicalID:  toLogicalID(ms.Name, r.TypeName, r.Identifier),
+			Properties: sanitize(extractProperties(ms.Name, r, cfg)),
+			Module:     ms.Name,
+		}
+		mod.Resources = append(mod.Resources, res)
+	}
+	return mod
+}
+
+// buildCIModule generates export resources for the CI module.
+// Covers IAM role (Cloud Control) and CodeBuild project (SDK-backed).
+func buildCIModule(ms state.ModuleState, cfg *config.Config) ExportModule {
+	mod := ExportModule{
+		Name:   ms.Name,
+		Status: ms.Status,
+	}
+
+	for _, r := range ms.Resources {
+		res := ExportResource{
+			TypeName:   r.TypeName,
+			LogicalID:  toLogicalID(ms.Name, r.TypeName, r.Identifier),
+			Properties: sanitize(extractProperties(ms.Name, r, cfg)),
+			Module:     ms.Name,
+		}
+		mod.Resources = append(mod.Resources, res)
+	}
+	return mod
+}
+
+// buildDeployModule generates export resources for the Deploy module.
+// Covers IAM role, GameLift alias, fleets, and builds as recorded in state.
+func buildDeployModule(ms state.ModuleState, cfg *config.Config) ExportModule {
 	mod := ExportModule{
 		Name:   ms.Name,
 		Status: ms.Status,
@@ -395,11 +488,13 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			props["RoleName"] = roleNameForModule(moduleName)
 		}
 		if _, ok := props["AssumeRolePolicyDocument"]; !ok {
-			props["AssumeRolePolicyDocument"] = defaultAssumeRolePolicy()
+			props["AssumeRolePolicyDocument"] = assumeRolePolicyForModule(moduleName)
 		}
+		// Only attach SSM managed policy for EC2-based modules (perforce, ddc).
+		// CI uses inline policies; Deploy uses GameLift-managed permissions.
 		if _, ok := props["ManagedPolicyArns"]; !ok {
-			props["ManagedPolicyArns"] = []map[string]any{
-				{"arn": "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"},
+			if managedPolicyARNs := managedPolicyARNsForModule(moduleName); managedPolicyARNs != nil {
+				props["ManagedPolicyArns"] = managedPolicyARNs
 			}
 		}
 		if _, ok := props["Tags"]; !ok {
@@ -411,6 +506,49 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		}
 		if _, ok := props["Roles"]; !ok {
 			props["Roles"] = []string{roleNameForModule(moduleName)}
+		}
+	case "AWS::S3::Bucket":
+		// DDC bucket — properties come from state; enrich with config defaults.
+		if _, ok := props["BucketName"]; !ok {
+			props["BucketName"] = "fabrica-" + moduleName + "-bucket"
+		}
+		if _, ok := props["Tags"]; !ok {
+			props["Tags"] = defaultTags(moduleName)
+		}
+	case "AWS::CodeBuild::Project":
+		// CI CodeBuild project — SDK-backed, so state may have limited properties.
+		if _, ok := props["Name"]; !ok {
+			props["Name"] = ciProjectNameForModule(moduleName, cfg)
+		}
+		// NOTE: ServiceRole omitted — the ARN is account-specific and not
+		// reconstructible from local state. Add the ServiceRole ARN manually
+		// before applying (e.g. arn:aws:iam::<account>:role/fabrica-ci-codebuild).
+		if _, ok := props["Artifacts"]; !ok {
+			props["Artifacts"] = map[string]any{
+				"Type": "S3",
+			}
+		}
+		if _, ok := props["Environment"]; !ok {
+			props["Environment"] = map[string]any{
+				"ComputeType": ciComputeTypeForModule(cfg),
+				"Image":       ciImageForModule(cfg),
+				"Type":        "LINUX_CONTAINER",
+			}
+		}
+	case "AWS::GameLift::Alias":
+		if _, ok := props["Name"]; !ok {
+			props["Name"] = deployAliasNameForModule(moduleName, cfg)
+		}
+	case "AWS::GameLift::Fleet":
+		if _, ok := props["Name"]; !ok {
+			props["Name"] = "fabrica-" + moduleName + "-fleet"
+		}
+		if _, ok := props["Tags"]; !ok {
+			props["Tags"] = defaultTags(moduleName)
+		}
+	case "AWS::GameLift::Build":
+		if _, ok := props["Name"]; !ok {
+			props["Name"] = "fabrica-" + moduleName + "-build"
 		}
 	}
 
@@ -438,6 +576,16 @@ func instanceTypeForModule(module string, cfg *config.Config) string {
 			return cfg.Lore.InstanceType
 		}
 		return "m5.xlarge"
+	case "ddc":
+		if cfg.DDC.InstanceType != "" {
+			return cfg.DDC.InstanceType
+		}
+		return "m5.xlarge"
+	case "workstation":
+		if cfg.Workstation.InstanceType != "" {
+			return cfg.Workstation.InstanceType
+		}
+		return "g4dn.xlarge"
 	}
 	return ""
 }
@@ -452,6 +600,10 @@ func amiIDForModule(module string, cfg *config.Config) string {
 		return cfg.Horde.AmiID
 	case "lore":
 		return cfg.Lore.AmiID
+	case "ddc":
+		return cfg.DDC.AmiID
+	case "workstation":
+		return cfg.Workstation.AmiID
 	}
 	return ""
 }
@@ -477,6 +629,10 @@ func sgRulesForModule(module string, cfg *config.Config) []map[string]any {
 			cidr = cfg.Perforce.AllowedCIDR
 		case "lore":
 			cidr = cfg.Lore.AllowedCIDR
+		case "ddc":
+			cidr = cfg.DDC.AllowedCIDR
+		case "workstation":
+			cidr = cfg.Workstation.AllowedCIDR
 		}
 	}
 	if cidr == "" {
@@ -499,12 +655,29 @@ func sgRulesForModule(module string, cfg *config.Config) []map[string]any {
 			{"IpProtocol": "udp", "FromPort": 41337, "ToPort": 41337, "CidrIp": cidr, "Description": "Lore QUIC"},
 			{"IpProtocol": "tcp", "FromPort": 41339, "ToPort": 41339, "CidrIp": cidr, "Description": "Lore HTTP health"},
 		}
+	case "ddc":
+		return []map[string]any{
+			{"IpProtocol": "tcp", "FromPort": 80, "ToPort": 80, "CidrIp": cidr, "Description": "DDC public API"},
+			{"IpProtocol": "tcp", "FromPort": 8080, "ToPort": 8080, "CidrIp": cidr, "Description": "DDC internal API"},
+		}
+	case "workstation":
+		return []map[string]any{
+			{"IpProtocol": "tcp", "FromPort": 8443, "ToPort": 8443, "CidrIp": cidr, "Description": "NICE DCV HTTPS"},
+		}
 	}
 	return nil
 }
 
 // roleNameForModule returns the default IAM role name for a module.
+// CI uses fabrica-ci-codebuild and Deploy uses fabrica-deploy-gamelift
+// to match the production identifiers; all other modules use fabrica-<mod>-role.
 func roleNameForModule(module string) string {
+	switch module {
+	case "ci":
+		return "fabrica-ci-codebuild"
+	case "deploy":
+		return "fabrica-deploy-gamelift"
+	}
 	return "fabrica-" + module + "-role"
 }
 
@@ -529,6 +702,44 @@ func defaultAssumeRolePolicy() map[string]any {
 	}
 }
 
+// assumeRolePolicyForModule returns the trust policy document for a module's
+// IAM role. EC2-based modules (perforce, ddc) trust ec2.amazonaws.com;
+// CI trusts codebuild.amazonaws.com; Deploy trusts gamelift.amazonaws.com.
+func assumeRolePolicyForModule(module string) map[string]any {
+	service := "ec2.amazonaws.com"
+	switch module {
+	case "ci":
+		service = "codebuild.amazonaws.com"
+	case "deploy":
+		service = "gamelift.amazonaws.com"
+	}
+	return map[string]any{
+		"Version": "2012-10-17",
+		"Statement": []map[string]any{
+			{
+				"Effect": "Allow",
+				"Principal": map[string]any{
+					"Service": service,
+				},
+				"Action": "sts:AssumeRole",
+			},
+		},
+	}
+}
+
+// managedPolicyARNsForModule returns the managed policy ARNs for a module's
+// IAM role. Only EC2-based modules (perforce, ddc) attach SSM managed policies.
+// CI and Deploy use inline policies instead, so this returns nil for them.
+func managedPolicyARNsForModule(module string) []map[string]any {
+	switch module {
+	case "perforce", "ddc":
+		return []map[string]any{
+			{"arn": "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"},
+		}
+	}
+	return nil
+}
+
 // defaultTags returns the default tag list for a module resource.
 func defaultTags(module string) []map[string]string {
 	return []map[string]string{
@@ -536,4 +747,41 @@ func defaultTags(module string) []map[string]string {
 		{"Key": "Name", "Value": "fabrica-" + module},
 		{"Key": "FabricaModule", "Value": module},
 	}
+}
+
+// ciProjectNameForModule returns the CodeBuild project name for the CI module.
+func ciProjectNameForModule(module string, cfg *config.Config) string {
+	if cfg != nil && cfg.CI.ProjectName != "" {
+		return cfg.CI.ProjectName
+	}
+	return "fabrica-" + module
+}
+
+// ciRoleNameForModule returns the CI IAM role name.
+func ciRoleNameForModule(module string) string {
+	return "fabrica-" + module + "-codebuild"
+}
+
+// ciComputeTypeForModule returns the CI compute type from config.
+func ciComputeTypeForModule(cfg *config.Config) string {
+	if cfg != nil && cfg.CI.ComputeType != "" {
+		return cfg.CI.ComputeType
+	}
+	return "BUILD_GENERAL1_SMALL"
+}
+
+// ciImageForModule returns the CI Docker image from config.
+func ciImageForModule(cfg *config.Config) string {
+	if cfg != nil && cfg.CI.Image != "" {
+		return cfg.CI.Image
+	}
+	return "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
+}
+
+// deployAliasNameForModule returns the GameLift alias name for the deploy module.
+func deployAliasNameForModule(module string, cfg *config.Config) string {
+	if cfg != nil && cfg.Deploy.AliasName != "" {
+		return cfg.Deploy.AliasName
+	}
+	return "fabrica-" + module + "-alias"
 }

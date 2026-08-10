@@ -3,9 +3,8 @@
 // state (.fabrica/state.json) and config (fabrica.yaml), then produces
 // CloudFormation YAML or Terraform HCL for the resources Fabrica manages.
 //
-// V1 covers the state backend (S3 bucket, DynamoDB table) and the Horde,
-// Perforce, and Lore modules. DDC, Workstation, CI, and Deploy are deferred
-// to V2.
+// V2 covers all modules: state backend (S3 bucket, DynamoDB table), Horde,
+// Perforce, Lore, DDC (home + edge regions), Workstation, CI, and Deploy.
 package export
 
 import (
@@ -40,8 +39,8 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 configuration. Reads local state (.fabrica/state.json) and config (fabrica.yaml),
 then produces CloudFormation YAML or Terraform HCL for the resources Fabrica manages.
 
-V1 covers the state backend (S3 bucket, DynamoDB table) and the Horde, Perforce,
-and Lore modules. DDC, Workstation, CI, and Deploy are deferred to V2.
+V2 covers all modules: state backend (S3 bucket, DynamoDB table), Horde, Perforce,
+Lore, DDC (home + edge regions), Workstation, CI, and Deploy.
 
 No live AWS calls are required — all data comes from local state.`,
 		Example: `  # Export as CloudFormation YAML to stdout:

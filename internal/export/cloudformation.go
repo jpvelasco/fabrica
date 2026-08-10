@@ -35,10 +35,10 @@ type cfExport struct {
 func (g *cloudFormationGenerator) Generate(modules []ExportModule) ([]byte, error) {
 	tmpl := cfTemplate{
 		AWSTemplateFormatVersion: "2010-09-09",
-		Description:              fmt.Sprintf("Fabrica-managed infrastructure — exported from local state. Modules: %s (V1)", moduleNames(modules)),
+		Description:              fmt.Sprintf("Fabrica-managed infrastructure — exported from local state. Modules: %s (V2)", moduleNames(modules)),
 		Metadata: map[string]any{
 			"FabricaExport": map[string]any{
-				"Version":    "v1",
+				"Version":    "v2",
 				"Modules":    moduleNames(modules),
 				"Disclaimer": "Generated from Fabrica local state — verify before applying. UserData and credentials are redacted.",
 			},
@@ -252,9 +252,15 @@ func (g *cloudFormationGenerator) addOutput(t *cfTemplate, r ExportResource, mod
 		value = map[string]any{"Ref": r.LogicalID}
 		desc = fmt.Sprintf("%s security group ID", moduleName)
 	case "AWS::S3::Bucket":
-		outputName = "StateBucketName"
-		value = map[string]any{"Ref": r.LogicalID}
-		desc = "Fabrica state S3 bucket name"
+		if r.Module == "state-backend" {
+			outputName = "StateBucketName"
+			value = map[string]any{"Ref": r.LogicalID}
+			desc = "Fabrica state S3 bucket name"
+		} else {
+			outputName = r.LogicalID + "BucketName"
+			value = map[string]any{"Ref": r.LogicalID}
+			desc = fmt.Sprintf("%s S3 bucket name", moduleName)
+		}
 	case "AWS::DynamoDB::Table":
 		outputName = "StateLockTableName"
 		value = map[string]any{"Ref": r.LogicalID}
@@ -263,6 +269,22 @@ func (g *cloudFormationGenerator) addOutput(t *cfTemplate, r ExportResource, mod
 		outputName = r.LogicalID + "RoleARN"
 		value = map[string]any{"Fn::GetAtt": []any{r.LogicalID, "Arn"}}
 		desc = fmt.Sprintf("%s IAM role ARN", moduleName)
+	case "AWS::CodeBuild::Project":
+		outputName = r.LogicalID + "ProjectName"
+		value = map[string]any{"Ref": r.LogicalID}
+		desc = fmt.Sprintf("%s CodeBuild project name", moduleName)
+	case "AWS::GameLift::Alias":
+		outputName = r.LogicalID + "AliasID"
+		value = map[string]any{"Ref": r.LogicalID}
+		desc = fmt.Sprintf("%s GameLift alias ID", moduleName)
+	case "AWS::GameLift::Fleet":
+		outputName = r.LogicalID + "FleetID"
+		value = map[string]any{"Ref": r.LogicalID}
+		desc = fmt.Sprintf("%s GameLift fleet ID", moduleName)
+	case "AWS::GameLift::Build":
+		outputName = r.LogicalID + "BuildID"
+		value = map[string]any{"Ref": r.LogicalID}
+		desc = fmt.Sprintf("%s GameLift build ID", moduleName)
 	default:
 		return
 	}

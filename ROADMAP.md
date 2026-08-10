@@ -49,7 +49,7 @@ DDC (V1 + multi-region edge nodes) are all complete. Ops logging (`--verbose` /
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | ✅ Complete — GameLift blue/green deploy orchestration |
 | `cost` | `report`, `forecast`, `alerts` | ✅ Complete — offline config-derived report/forecast + local budget alerts |
 | `destroy --all` | clean teardown | ✅ Complete — tears down all modules (deploy→ci→workstation→ddc→horde→lore→perforce) then the state backend; backend deleted only on full success |
-| `export` | `--format cloudformation\|terraform` | ✅ Complete (V1) — CloudFormation YAML and Terraform HCL from local state; state backend + Horde/Perforce/Lore; secrets redacted |
+| `export` | `--format cloudformation\|terraform` | ✅ Complete (V2) — CloudFormation YAML and Terraform HCL from local state; all modules (state backend, Horde, Perforce, Lore, DDC, Workstation, CI, Deploy); secrets redacted |
 | `mcp` | `mcp` | ✅ Complete — stdio MCP server (6 read-only tools) |
 | Ops logging | `--verbose`, `FABRICA_LOG_LEVEL` | ✅ Complete (V1) — stdlib `log/slog` via `internal/oplog`; stderr diagnostics for state I/O, Cloud Control errors, drift --fix, destroy milestones, bootstrap failures; secrets never logged |
 
@@ -58,7 +58,6 @@ DDC (V1 + multi-region edge nodes) are all complete. Ops logging (`--verbose` /
 - Deeper day-2 operations: scheduled Perforce backups, DR rehydrate, attach-role migration for pre-SSM stacks
 - Lore follow-ups: S3-backed store, `lore ami build`, JWT/CA TLS
 - DDC: OIDC, production Scylla, replication-peer automation, live edge probes
-- More export coverage (DDC, Workstation, CI, Deploy in V2)
 - MCP server V2: destructive tools, streaming, resource management
 - Optional observability: monitoring, alerts, operational dashboards
 - Multi-cloud / provider extensibility (GCP/Azure against the existing `cloud.Provider` interface)
