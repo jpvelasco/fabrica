@@ -62,24 +62,10 @@ CI (`.github/workflows/ci.yml`) runs lint + build + test cross-platform
 (ubuntu/windows/macos) plus a `goreleaser build --snapshot` validation job on
 every push/PR to `main`.
 
-**Private-repo GitHub Actions spending limit.** While this repo is **private**,
-GitHub Actions minutes are metered and the account's spending limit can leave
-them **disabled** — jobs then appear to "fail" instantly with no steps and
-unreadable logs (the job never ran; it is *not* a code failure). Public repos
-get free unlimited Actions. The workaround to run CI without paying:
-
-1. Flip the repo **public** (`gh repo edit --visibility public --accept-visibility-change-consequences`).
-2. Push / open the PR and let CI run to green.
-3. Flip it back **private** (`gh repo edit --visibility private --accept-visibility-change-consequences`).
-
-Verify the code locally first (`go test ./... && golangci-lint run ./...`) — a
-blank-log "failure" means billing, not a bug, so don't burn attempts "fixing"
-the workflow. With no branch protection on a private repo, such a check is
-merely advisory (`UNSTABLE`, not `BLOCKED`) and a normal merge still works.
-
-**This is a temporary constraint.** It disappears the moment Fabrica goes public
-for its open-source release — public repos get free unlimited Actions, so the
-flip-to-run dance is only needed while the repo is private pre-release.
+**CI troubleshooting:** If a job fails instantly with blank logs and no steps,
+the job was never scheduled — check GitHub Actions billing/minutes for your
+account. Verify the code locally first (`go test ./... && golangci-lint run ./...`)
+before pushing.
 
 ## Releasing
 
