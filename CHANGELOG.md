@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Ops logging** — stdlib `log/slog` via `internal/oplog`: stderr operational diagnostics for state I/O, Cloud Control errors, drift `--fix`, destroy-all milestones, and bootstrap failures. Enable with `--verbose` or `FABRICA_LOG_LEVEL=debug`. Default remains quiet; no third-party log libraries. Secrets are never logged. (#246)
+
 ## [0.3.2] - 2026-08-08
 
 ### Changed

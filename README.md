@@ -26,12 +26,16 @@ status, tear down — with typed-phrase confirmations and recoverable partial st
 
 ## Current Status
 
-**Current stable: v0.3.0.** Phase 0, Phase 1, Lore (v0.2), and DDC (V1 +
+**Current stable: v0.3.2.** Phase 0, Phase 1, Lore (v0.2), and DDC (V1 +
 multi-region edge nodes) are complete: Perforce, Horde, Lore, Distributed DDC
 (home + edge regions), Workstation, CI, Deploy, Cost, drift detection with
 auto-remediation (`--fix`), MCP server, IaC export, full-stack `destroy --all`,
 offline cost visibility, and a CLI E2E suite. Install via `npm install -g fabrica-cli` or
 GitHub Releases. See [ROADMAP.md](ROADMAP.md) for status and what's next.
+
+Operational diagnostics are available on **stderr** via `--verbose` or
+`FABRICA_LOG_LEVEL=debug` — normal stdout output (including `--json`) is not
+affected.
 
 | Module | Commands | Status |
 |--------|----------|--------|
@@ -177,7 +181,7 @@ Creates the state backend for this account: the S3 bucket (versioning, encryptio
 
 #### `fabrica status`
 
-Read-only aggregate overview of every provisioned module plus the state backend: a one-line health summary, per-module status with `[OK]`/`[WARN]` indicators and resource counts, and context-aware next steps. `--json` for scripts; `--probe` adds TCP readiness checks (requires VPN / in-VPC reachability).
+Read-only aggregate overview of every provisioned module plus the state backend: a one-line health summary, per-module status with `[OK]`/`[WARN]` indicators and resource counts, and context-aware next steps. `--json` for scripts; `--probe` adds TCP readiness checks (requires VPN / in-VPC reachability). Use `--verbose` or `FABRICA_LOG_LEVEL=debug` to enable operational diagnostics on **stderr** (normal stdout output is unaffected).
 
 #### `fabrica drift`
 

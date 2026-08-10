@@ -30,8 +30,9 @@ These govern every structural decision and carry across all phases.
 
 ## Current Status
 
-**Current stable: v0.3.0** (2026-08-07). Phase 0, Phase 1, Lore (v0.2), and
-DDC (V1 + multi-region edge nodes) are all complete.
+**Current stable: v0.3.2** (2026-08-08). Phase 0, Phase 1, Lore (v0.2), and
+DDC (V1 + multi-region edge nodes) are all complete. Ops logging (`--verbose` /
+`FABRICA_LOG_LEVEL`) is on main pending the next tag.
 
 | Module | Commands | Status |
 |--------|----------|--------|

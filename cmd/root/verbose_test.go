@@ -3,6 +3,7 @@ package root_test
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -15,7 +16,7 @@ func TestVerboseStderrJSONStdoutPurity(t *testing.T) {
 
 	// Capture oplog output to a separate buffer.
 	var logBuf bytes.Buffer
-	oplog.InitWithWriter(0, true, &logBuf)
+	oplog.InitWithWriter(slog.LevelInfo, true, &logBuf)
 
 	// Capture stdout.
 	var stdoutBuf bytes.Buffer
@@ -44,7 +45,7 @@ func TestVerboseStderrJSONStdoutPurity(t *testing.T) {
 func TestDefaultNoVerbose(t *testing.T) {
 	oplog.ResetForTest()
 	var logBuf bytes.Buffer
-	oplog.InitWithWriter(0, false, &logBuf)
+	oplog.InitWithWriter(slog.LevelInfo, false, &logBuf)
 
 	var stdoutBuf bytes.Buffer
 	cmd := root.New(&stdoutBuf)
@@ -67,7 +68,7 @@ func TestDefaultNoVerbose(t *testing.T) {
 func TestVerboseEnablesDebugLevel(t *testing.T) {
 	oplog.ResetForTest()
 	var buf bytes.Buffer
-	oplog.InitWithWriter(0, true, &buf)
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
 
 	oplog.Logger().Debug("debug should appear")
 	oplog.Logger().Info("info should appear")
@@ -84,7 +85,7 @@ func TestVerboseEnablesDebugLevel(t *testing.T) {
 func TestNonVerboseHidesDebug(t *testing.T) {
 	oplog.ResetForTest()
 	var buf bytes.Buffer
-	oplog.InitWithWriter(0, false, &buf)
+	oplog.InitWithWriter(slog.LevelInfo, false, &buf)
 
 	oplog.Logger().Debug("debug should not appear")
 	oplog.Logger().Info("info should appear")
@@ -111,7 +112,7 @@ func TestRootPersistentPreRunERuns(t *testing.T) {
 	// (Init is idempotent). The test proves ExecuteContext runs the full
 	// command chain including PersistentPreRunE.
 	var logBuf bytes.Buffer
-	oplog.InitWithWriter(0, true, &logBuf)
+	oplog.InitWithWriter(slog.LevelInfo, true, &logBuf)
 
 	var stdoutBuf bytes.Buffer
 	cmd := root.New(&stdoutBuf)
@@ -142,7 +143,7 @@ func TestRootVerboseFlagParsed(t *testing.T) {
 	oplog.ResetForTest()
 
 	var logBuf bytes.Buffer
-	oplog.InitWithWriter(0, true, &logBuf)
+	oplog.InitWithWriter(slog.LevelInfo, true, &logBuf)
 
 	var stdoutBuf bytes.Buffer
 	cmd := root.New(&stdoutBuf)
@@ -159,5 +160,43 @@ func TestRootVerboseFlagParsed(t *testing.T) {
 	stdout := stdoutBuf.String()
 	if !strings.Contains(stdout, "Fabrica") {
 		t.Errorf("stdout should contain 'Fabrica', got: %s", stdout)
+	}
+}
+
+// TestVerboseThroughExecuteContext verifies that running `fabrica --verbose version`
+// through root.New + ExecuteContext produces correct output and does not
+// pollute stdout with slog lines. This test does NOT pre-init the logger,
+// so root's PersistentPreRunE owns the Init call. Note: because oplog uses
+// sync.Once, the logger writes to stderr (not a test buffer), so we cannot
+// capture the log output here — we verify stdout purity and command success.
+func TestVerboseThroughExecuteContext(t *testing.T) {
+	oplog.ResetForTest()
+
+	var stdoutBuf bytes.Buffer
+	cmd := root.New(&stdoutBuf)
+	cmd.SetOut(&stdoutBuf)
+	cmd.SetErr(&bytes.Buffer{}) // capture cobra errors away from stderr
+	cmd.SetArgs([]string{"--verbose", "version"})
+
+	ctx := context.Background()
+	err := cmd.ExecuteContext(ctx)
+	if err != nil {
+		t.Fatalf("ExecuteContext: %v", err)
+	}
+
+	// Command should succeed and produce version output.
+	stdout := stdoutBuf.String()
+	if !strings.Contains(stdout, "Fabrica") {
+		t.Errorf("stdout should contain 'Fabrica', got: %s", stdout)
+	}
+
+	// stdout must not contain slog contamination.
+	if strings.Contains(stdout, "level=") {
+		t.Errorf("stdout should not contain slog lines, got: %s", stdout)
+	}
+
+	// Verify the logger is functional after PersistentPreRunE ran Init.
+	if oplog.Logger() == nil {
+		t.Fatal("Logger() is nil after ExecuteContext")
 	}
 }
