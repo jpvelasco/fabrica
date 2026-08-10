@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
 	"github.com/aws/aws-sdk-go-v2/service/cloudcontrol/types"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 )
 
 var _ fabricac.ResourceClient = (*resourceClients)(nil)
@@ -30,6 +31,7 @@ func (c *resourceClients) Create(ctx context.Context, r *fabricac.Resource) erro
 		DesiredState: aws.String(string(r.DesiredState)),
 	})
 	if err != nil {
+		oplog.WithResourceAndRegion(r.TypeName, "", c.awsCfg.region).Error("cloud control create failed", "error", err)
 		return fmt.Errorf("creating %s: %w", r.TypeName, err)
 	}
 
@@ -49,6 +51,7 @@ func (c *resourceClients) Create(ctx context.Context, r *fabricac.Resource) erro
 			// If no identifier is present, we cannot recover — return the error.
 			id := aws.ToString(result.ProgressEvent.Identifier)
 			if id != "" {
+				oplog.WithResourceAndRegion(r.TypeName, id, c.awsCfg.region).Debug("resource already exists, recovering from partial failure")
 				r.Identifier = id
 				return nil
 			}
@@ -141,8 +144,10 @@ func (c *resourceClients) Get(ctx context.Context, r *fabricac.Resource) error {
 	})
 	if err != nil {
 		if isNotFound(err) {
+			oplog.WithResourceAndRegion(r.TypeName, r.Identifier, c.awsCfg.region).Debug("resource not found")
 			return fabricac.ErrResourceNotFound
 		}
+		oplog.WithResourceAndRegion(r.TypeName, r.Identifier, c.awsCfg.region).Error("cloud control get failed", "error", err)
 		return fmt.Errorf("getting %s %s: %w", r.TypeName, r.Identifier, err)
 	}
 
@@ -166,6 +171,7 @@ func (c *resourceClients) Update(ctx context.Context, r *fabricac.Resource) erro
 		PatchDocument: aws.String(string(r.DesiredState)),
 	})
 	if err != nil {
+		oplog.WithResourceAndRegion(r.TypeName, r.Identifier, c.awsCfg.region).Error("cloud control update failed", "error", err)
 		return fmt.Errorf("updating %s %s: %w", r.TypeName, r.Identifier, err)
 	}
 
@@ -196,8 +202,10 @@ func (c *resourceClients) Delete(ctx context.Context, r *fabricac.Resource) erro
 	})
 	if err != nil {
 		if isNotFound(err) {
+			oplog.WithResourceAndRegion(r.TypeName, r.Identifier, c.awsCfg.region).Debug("resource already deleted")
 			return fabricac.ErrResourceNotFound
 		}
+		oplog.WithResourceAndRegion(r.TypeName, r.Identifier, c.awsCfg.region).Error("cloud control delete failed", "error", err)
 		return fmt.Errorf("deleting %s %s: %w", r.TypeName, r.Identifier, err)
 	}
 

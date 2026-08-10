@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/jpvelasco/fabrica/internal/oplog"
 )
 
 const stateFile = ".fabrica/state.json"
@@ -15,13 +17,16 @@ const stateFile = ".fabrica/state.json"
 func ReadStateOrNew(account, region string) (*State, error) {
 	data, err := os.ReadFile(stateFile)
 	if os.IsNotExist(err) {
+		oplog.Logger().Debug("state file not found, creating new state", "file", stateFile)
 		return NewState(account, region), nil
 	}
 	if err != nil {
+		oplog.Logger().Error("failed to read state file", "file", stateFile, "error", err)
 		return nil, fmt.Errorf("reading state file: %w", err)
 	}
 	var st State
 	if err := json.Unmarshal(data, &st); err != nil {
+		oplog.Logger().Error("failed to parse state file", "file", stateFile, "error", err)
 		return nil, fmt.Errorf("parsing state file: %w", err)
 	}
 	return &st, nil
@@ -31,11 +36,18 @@ func ReadStateOrNew(account, region string) (*State, error) {
 func WriteState(st *State) error {
 	// #nosec G301 -- directory needs execute for traversal
 	if err := os.MkdirAll(".fabrica", 0700); err != nil {
+		oplog.Logger().Error("failed to create .fabrica directory", "error", err)
 		return fmt.Errorf("creating .fabrica directory: %w", err)
 	}
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
+		oplog.Logger().Error("failed to serialize state", "error", err)
 		return fmt.Errorf("serializing state: %w", err)
 	}
-	return os.WriteFile(stateFile, data, 0600)
+	if err := os.WriteFile(stateFile, data, 0600); err != nil {
+		oplog.Logger().Error("failed to write state file", "file", stateFile, "error", err)
+		return fmt.Errorf("writing state file: %w", err)
+	}
+	oplog.Logger().Debug("state written", "file", stateFile)
+	return nil
 }

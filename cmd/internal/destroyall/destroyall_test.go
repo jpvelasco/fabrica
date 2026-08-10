@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 )
 
 func okTeardown(ids ...string) ModuleTeardown {
@@ -362,4 +364,119 @@ func (tableErrorBackend) DeleteStateBucket(_ context.Context, b string) (cloud.S
 }
 func (tableErrorBackend) DeleteStateLockTable(_ context.Context, t string) (cloud.StateBackendDeleteResult, error) {
 	return cloud.StateBackendDeleteResult{Identifier: t}, errors.New("table locked")
+}
+
+// TestRunOplogInstrumentation verifies that the destroy-all engine emits
+// debug-level operational logs for module teardown milestones and error-level
+// logs for failures. This proves that --verbose surfaces diagnostic content
+// while default runs stay quiet.
+func TestRunOplogInstrumentation(t *testing.T) {
+	oplog.ResetForTest()
+	var logBuf bytes.Buffer
+	oplog.InitWithWriter(slog.LevelInfo, true, &logBuf) // verbose enables debug
+
+	var out bytes.Buffer
+	be := &fakeBackend{}
+	e := baseEngine(&out, be, []Module{
+		{Name: "deploy", Teardown: okTeardown("fleet-1")},
+		{Name: "ci", Teardown: failTeardown("codebuild stuck")},
+		{Name: "perforce", Teardown: okTeardown("i-1", "sg-1")},
+	})
+	err := e.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected an error when a module fails")
+	}
+
+	logOutput := logBuf.String()
+
+	// Debug diagnostics: successful teardowns should log start and complete.
+	if !strings.Contains(logOutput, "deploy") {
+		t.Errorf("log should mention 'deploy' module, got:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, "starting module teardown") {
+		t.Errorf("log should contain 'starting module teardown', got:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, "module teardown complete") {
+		t.Errorf("log should contain 'module teardown complete', got:\n%s", logOutput)
+	}
+
+	// Error level: failed teardown should log at error level.
+	if !strings.Contains(logOutput, "module teardown failed") {
+		t.Errorf("log should contain 'module teardown failed', got:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, "codebuild stuck") {
+		t.Errorf("log should contain the error message 'codebuild stuck', got:\n%s", logOutput)
+	}
+
+	// stdout JSON should be clean — no slog contamination.
+	if e.JSONOut {
+		t.Skip("JSONOut not set in this test")
+	}
+	if strings.Contains(out.String(), "level=") {
+		t.Errorf("stdout should not contain slog lines, got:\n%s", out.String())
+	}
+}
+
+// TestRunOplogQuietDefault verifies that without verbose, debug-level
+// diagnostics do not appear in the log output.
+func TestRunOplogQuietDefault(t *testing.T) {
+	oplog.ResetForTest()
+	var logBuf bytes.Buffer
+	oplog.InitWithWriter(slog.LevelInfo, false, &logBuf) // verbose=false, info level
+
+	var out bytes.Buffer
+	be := &fakeBackend{}
+	e := baseEngine(&out, be, []Module{
+		{Name: "deploy", Teardown: okTeardown("fleet-1")},
+	})
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	logOutput := logBuf.String()
+
+	// Debug messages should NOT appear at info level.
+	if strings.Contains(logOutput, "starting module teardown") {
+		t.Errorf("debug 'starting module teardown' should not appear without --verbose, got:\n%s", logOutput)
+	}
+	if strings.Contains(logOutput, "module teardown complete") {
+		t.Errorf("debug 'module teardown complete' should not appear without --verbose, got:\n%s", logOutput)
+	}
+}
+
+// TestRunOplogJSONStdoutPurity verifies that --json output on stdout is clean
+// JSON without any slog contamination, while oplog diagnostics go to the
+// separate log writer (stderr).
+func TestRunOplogJSONStdoutPurity(t *testing.T) {
+	oplog.ResetForTest()
+	var logBuf bytes.Buffer
+	oplog.InitWithWriter(slog.LevelInfo, true, &logBuf) // verbose, capture logs separately
+
+	var out bytes.Buffer
+	be := &fakeBackend{}
+	e := baseEngine(&out, be, []Module{
+		{Name: "deploy", Teardown: okTeardown("fleet-1")},
+		{Name: "perforce", Teardown: okTeardown("i-1")},
+	})
+	e.JSONOut = true
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// stdout must be valid JSON.
+	var res Result
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, out.String())
+	}
+
+	// stdout must not contain any slog text.
+	if strings.Contains(out.String(), "level=") {
+		t.Errorf("stdout should not contain slog 'level=' lines, got:\n%s", out.String())
+	}
+
+	// Log buffer should have debug diagnostics (verbose is on).
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "module teardown complete") {
+		t.Errorf("log should contain debug diagnostics, got:\n%s", logOutput)
+	}
 }

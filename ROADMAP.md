@@ -50,6 +50,7 @@ DDC (V1 + multi-region edge nodes) are all complete.
 | `destroy --all` | clean teardown | ✅ Complete — tears down all modules (deploy→ci→workstation→ddc→horde→lore→perforce) then the state backend; backend deleted only on full success |
 | `export` | `--format cloudformation\|terraform` | ✅ Complete (V1) — CloudFormation YAML and Terraform HCL from local state; state backend + Horde/Perforce/Lore; secrets redacted |
 | `mcp` | `mcp` | ✅ Complete — stdio MCP server (6 read-only tools) |
+| Ops logging | `--verbose`, `FABRICA_LOG_LEVEL` | ✅ Complete (V1) — stdlib `log/slog` via `internal/oplog`; stderr diagnostics for state I/O, Cloud Control errors, drift --fix, destroy milestones, bootstrap failures; secrets never logged |
 
 ## Possible Future Work
 
@@ -67,7 +68,8 @@ DDC (V1 + multi-region edge nodes) are all complete.
 - **IaC:** AWS Cloud Control API — no Terraform, Pulumi, or external binaries
 - **Module path:** `github.com/jpvelasco/fabrica`
 - **Go version:** 1.25.12
-- **Config:** Viper + YAML, scoped inside `internal/config` only; `fmt.Print*` for output, no logging library
+- **Config:** Viper + YAML, scoped inside `internal/config` only
+- **Output:** dual streams — human output via `fmt.Print*` to stdout; operational diagnostics via `internal/oplog` (stdlib `log/slog`) to stderr
 - **State:** S3 bucket (`fabrica-state-<account-id>`) + DynamoDB lock table (`fabrica-state-lock`); local `.fabrica/state.json` cache
 - **Cost:** estimators registered by resource `TypeName`, provider-agnostic
 

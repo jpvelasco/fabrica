@@ -1,10 +1,15 @@
 package state
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/oplog"
+	"log/slog"
 )
 
 func TestReadStateOrNew_FileMissing_ReturnsNew(t *testing.T) {
@@ -105,5 +110,147 @@ func TestWriteState_DirPathOccupiedByFile_ReturnsError(t *testing.T) {
 
 	if err := WriteState(NewState("acct", "region")); err == nil {
 		t.Fatal("expected error when .fabrica is a file, got nil")
+	}
+}
+
+func TestReadStateOrNew_FileMissing_DebugLog(t *testing.T) {
+	oplog.ResetForTest()
+	var buf bytes.Buffer
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf) // verbose enables debug
+
+	t.Chdir(t.TempDir())
+
+	st, err := ReadStateOrNew("123456789012", "us-east-1")
+	if err != nil {
+		t.Fatalf("ReadStateOrNew returned error: %v", err)
+	}
+	if st == nil {
+		t.Fatal("expected non-nil state")
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "state file not found") {
+		t.Errorf("expected debug log 'state file not found', got:\n%s", logOutput)
+	}
+}
+
+func TestReadStateOrNew_ParseError_ErrorLog(t *testing.T) {
+	oplog.ResetForTest()
+	var buf bytes.Buffer
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// #nosec G301 -- directory needs execute for traversal
+	if err := os.MkdirAll(".fabrica", 0700); err != nil {
+		t.Fatalf("setup mkdir: %v", err)
+	}
+	if err := os.WriteFile(stateFile, []byte("{not valid json"), 0600); err != nil {
+		t.Fatalf("setup write: %v", err)
+	}
+
+	_, err := ReadStateOrNew("", "")
+	if err == nil {
+		t.Fatal("expected error for corrupted JSON, got nil")
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "failed to parse state file") {
+		t.Errorf("expected error log 'failed to parse state file', got:\n%s", logOutput)
+	}
+}
+
+func TestReadStateOrNew_ReadError_ErrorLog(t *testing.T) {
+	oplog.ResetForTest()
+	var buf bytes.Buffer
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// #nosec G301 -- directory needs execute for traversal
+	if err := os.MkdirAll(".fabrica", 0700); err != nil {
+		t.Fatalf("setup mkdir: %v", err)
+	}
+	// Create a directory at the state file path — ReadFile on a directory
+	// returns an error that is NOT IsNotExist, exercising the read-error log.
+	if err := os.Mkdir(stateFile, 0o700); err != nil {
+		t.Fatalf("setup mkdir for state file: %v", err)
+	}
+
+	_, err := ReadStateOrNew("", "")
+	if err == nil {
+		t.Fatal("expected error when state file is a directory, got nil")
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "failed to read state file") {
+		t.Errorf("expected error log 'failed to read state file', got:\n%s", logOutput)
+	}
+}
+
+func TestWriteState_MkdirAllError_ErrorLog(t *testing.T) {
+	oplog.ResetForTest()
+	var buf bytes.Buffer
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Occupy ".fabrica" with a regular file so MkdirAll fails.
+	if err := os.WriteFile(filepath.Join(dir, ".fabrica"), []byte("x"), 0600); err != nil {
+		t.Fatalf("setup write: %v", err)
+	}
+
+	err := WriteState(NewState("acct", "region"))
+	if err == nil {
+		t.Fatal("expected error when .fabrica is a file, got nil")
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "failed to create .fabrica directory") {
+		t.Errorf("expected error log 'failed to create .fabrica directory', got:\n%s", logOutput)
+	}
+}
+
+func TestWriteState_WriteFileError_ErrorLog(t *testing.T) {
+	oplog.ResetForTest()
+	var buf bytes.Buffer
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// #nosec G301 -- directory needs execute for traversal
+	if err := os.MkdirAll(".fabrica", 0700); err != nil {
+		t.Fatalf("setup mkdir: %v", err)
+	}
+	// Pre-create the state file as read-only so WriteFile fails.
+	if err := os.WriteFile(stateFile, []byte("existing"), 0444); err != nil {
+		t.Fatalf("setup write: %v", err)
+	}
+
+	err := WriteState(NewState("acct", "region"))
+	if err == nil {
+		t.Fatal("expected error when state file is read-only, got nil")
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "failed to write state file") {
+		t.Errorf("expected error log 'failed to write state file', got:\n%s", logOutput)
+	}
+}
+
+func TestWriteState_Success_DebugLog(t *testing.T) {
+	oplog.ResetForTest()
+	var buf bytes.Buffer
+	oplog.InitWithWriter(slog.LevelInfo, true, &buf) // verbose enables debug
+
+	t.Chdir(t.TempDir())
+
+	if err := WriteState(NewState("acct", "region")); err != nil {
+		t.Fatalf("WriteState returned error: %v", err)
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "state written") {
+		t.Errorf("expected debug log 'state written', got:\n%s", logOutput)
 	}
 }

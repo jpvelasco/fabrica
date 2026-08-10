@@ -14,6 +14,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/drift"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
@@ -140,6 +141,7 @@ func (c *command) runFix(ctx context.Context, dryRun bool, st *fabricastate.Stat
 	plan := drift.PlanRemediation(report, st, c.runtime.Config)
 
 	if len(plan.Actions) == 0 {
+		oplog.WithModule("drift").Debug("no drift found, nothing to fix")
 		if c.jsonOut {
 			return c.printFixJSON(nil, plan, nil)
 		}
@@ -148,6 +150,10 @@ func (c *command) runFix(ctx context.Context, dryRun bool, st *fabricastate.Stat
 	}
 
 	if dryRun {
+		oplog.WithModule("drift").Debug("drift fix dry-run, showing plan", "actions", len(plan.Actions))
+		for _, a := range plan.Actions {
+			oplog.WithModule("drift").Debug("plan action", "module", a.Module, "type", a.TypeName, "id", a.Identifier, "kind", a.Kind, "reason", a.Reason)
+		}
 		if c.jsonOut {
 			return c.printFixJSON(nil, plan, nil)
 		}
@@ -159,17 +165,40 @@ func (c *command) runFix(ctx context.Context, dryRun bool, st *fabricastate.Stat
 	if !c.assumeYes && c.confirm != nil {
 		msg := fmt.Sprintf("Fix %d missing resource(s) — %d will be recreated, %d report-only", plan.ToFix, plan.ToFix, plan.ToSkip)
 		if !c.confirm(msg) {
+			oplog.WithModule("drift").Debug("drift fix aborted by user")
 			fmt.Fprintln(c.out, "Aborted — no changes made.")
 			return nil
 		}
+		oplog.WithModule("drift").Debug("drift fix confirmed by user")
+	} else if c.assumeYes {
+		oplog.WithModule("drift").Debug("drift fix proceeding without confirmation (--yes flag set)")
+	}
+
+	// Log plan actions at debug level.
+	for _, a := range plan.Actions {
+		oplog.WithModule("drift").Debug("plan action", "module", a.Module, "type", a.TypeName, "id", a.Identifier, "kind", a.Kind, "reason", a.Reason)
 	}
 
 	// Apply remediation.
+	oplog.WithModule("drift").Debug("applying drift remediation", "actions", len(plan.Actions))
 	result := drift.ApplyRemediation(ctx, plan, st, c.createResource)
+
+	// Log result actions.
+	for _, a := range result.Applied {
+		oplog.WithModule("drift").Debug("applied", "module", a.Module, "type", a.TypeName, "id", a.Identifier)
+	}
+	for _, a := range result.Skipped {
+		oplog.WithModule("drift").Debug("skipped", "module", a.Module, "type", a.TypeName, "id", a.Identifier, "reason", a.Reason)
+	}
+	for _, a := range result.Failed {
+		oplog.WithModule("drift").Error("failed", "module", a.Module, "type", a.TypeName, "id", a.Identifier)
+	}
 
 	// Write updated state if anything was applied.
 	if len(result.Applied) > 0 && c.writeState != nil {
+		oplog.WithModule("drift").Debug("writing state after drift fix", "applied", len(result.Applied))
 		if err := c.writeState(st); err != nil {
+			oplog.WithModule("drift").Error("failed to write state after drift fix", "error", err)
 			return fmt.Errorf("writing state after fix: %w", err)
 		}
 	}

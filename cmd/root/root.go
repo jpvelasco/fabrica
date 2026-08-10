@@ -26,6 +26,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/workstation"
 	_ "github.com/jpvelasco/fabrica/internal/cloud/aws"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 	"github.com/spf13/cobra"
 )
 
@@ -47,6 +48,11 @@ func New(out io.Writer) *cobra.Command {
 		SilenceUsage: true,
 		Short:        "Studio infrastructure as code — AWS",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// Initialise operational logging before any other setup so that
+			// bootstrap failures are captured. Logs go to stderr; stdout
+			// remains pure for --json output.
+			logLevel := oplog.ParseLevel(os.Getenv("FABRICA_LOG_LEVEL"))
+			oplog.Init(logLevel, opts.Verbose)
 			return runtimeStore.Init(config.Path(cfgFile, opts.Profile))
 		},
 	}

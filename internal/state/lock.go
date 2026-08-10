@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+
+	"github.com/jpvelasco/fabrica/internal/oplog"
 )
 
 // LockStore is the DynamoDB-backed distributed lock.
@@ -79,9 +81,11 @@ func (s *LockStore) Acquire(ctx context.Context, resourceID, holder string) (str
 		},
 	})
 	if err != nil {
+		oplog.WithResource("DynamoDB:Lock", resourceID).Error("failed to acquire lock", "error", err)
 		return "", fmt.Errorf("acquiring lock %s: %w", resourceID, err)
 	}
 
+	oplog.WithResource("DynamoDB:Lock", resourceID).Debug("lock acquired")
 	return token, nil
 }
 
@@ -101,8 +105,10 @@ func (s *LockStore) Release(ctx context.Context, resourceID, token string) error
 		},
 	})
 	if err != nil {
+		oplog.WithResource("DynamoDB:Lock", resourceID).Error("failed to release lock", "error", err)
 		return fmt.Errorf("releasing lock %s: %w", resourceID, err)
 	}
+	oplog.WithResource("DynamoDB:Lock", resourceID).Debug("lock released")
 	return nil
 }
 
