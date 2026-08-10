@@ -58,7 +58,7 @@ Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release.
 
 - Deeper day-2 operations: scheduled Perforce backups, DR rehydrate, attach-role migration for pre-SSM stacks
 - Lore follow-ups: S3-backed store, `lore ami build`, JWT/CA TLS
-- DDC: OIDC, production Scylla, replication-peer automation, live edge probes
+- DDC: OIDC, production Scylla, replication-peer automation
 - MCP server V2: destructive tools, streaming, resource management
 - Optional observability: monitoring, alerts, operational dashboards
 - Multi-cloud / provider extensibility (GCP/Azure against the existing `cloud.Provider` interface)

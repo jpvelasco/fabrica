@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **DDC live edge probes** — `fabrica ddc status` now probes edge regions live via region-scoped Cloud Control queries and optional HTTP `/health/ready` health probes. Edge status reports `ready`, `unreachable`, `stopped`, `terminated`, or `missing` per region. Operators outside the VPC get graceful `unreachable`/`missing` states without command failure. (#260)
+
 ## [0.3.4] - 2026-08-10
 
 ### Added

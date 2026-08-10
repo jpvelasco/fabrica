@@ -1,6 +1,7 @@
 package status
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/ddc"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
@@ -20,11 +22,15 @@ const (
 
 // EdgeOutput is the JSON view of one additional (edge) DDC region.
 type EdgeOutput struct {
-	Region       string `json:"region"`
-	InstanceID   string `json:"instanceId"`
-	SGID         string `json:"sgId"`
-	InstanceType string `json:"instanceType"`
-	Status       string `json:"status"`
+	Region        string `json:"region"`
+	InstanceID    string `json:"instanceId"`
+	SGID          string `json:"sgId"`
+	InstanceType  string `json:"instanceType,omitempty"`
+	InstanceState string `json:"instanceState,omitempty"`
+	PrivateIP     string `json:"privateIp,omitempty"`
+	Status        string `json:"status"`
+	ProbeStatus   string `json:"probeStatus,omitempty"`
+	ProbeError    string `json:"probeError,omitempty"`
 }
 
 // StatusOutput is the JSON view of DDC status (home + edge regions).
@@ -37,9 +43,11 @@ type StatusOutput struct {
 }
 
 type renderer struct {
-	publicPort int
-	backend    string
-	readState  func() (*fabricastate.State, error)
+	publicPort    int
+	backend       string
+	provider      cloud.Provider
+	readState     func() (*fabricastate.State, error)
+	getEdgeStatus func(ctx context.Context, edges []ddc.EdgeResource, provider cloud.Provider) []ddc.EdgeStatus
 }
 
 // New returns the "ddc status" subcommand.
@@ -50,8 +58,11 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 coordinator/edge host plus any additional edge regions from 'ddc region add'.
 
 Reads local module state, queries the home DDC EC2 instance, and optionally
-probes HTTP GET /health/ready on the public API port. Edge regions are listed
-from local state; live probes for edges are not available in this release.`,
+probes HTTP GET /health/ready on the public API port. Edge regions are probed
+live using region-scoped Cloud Control queries and health probes when the
+provider supports multi-region access. When an edge is unreachable (e.g. the
+operator is outside the VPC), its status is reported gracefully as
+'unreachable' or 'missing' without failing the command.`,
 		ModuleName:  moduleName,
 		DisplayName: "DDC",
 		Resolve: func(rt globals.Runtime) modstatus.RuntimeSpec {
@@ -68,7 +79,11 @@ from local state; live probes for edges are not available in this release.`,
 			r := renderer{
 				publicPort: port,
 				backend:    backend,
+				provider:   rt.Provider,
 				readState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				getEdgeStatus: func(ctx context.Context, edges []ddc.EdgeResource, p cloud.Provider) []ddc.EdgeStatus {
+					return ddc.ProbeEdges(ctx, edges, p, ddc.ProbeEdgesOptions{PublicPort: port})
+				},
 			}
 			return modstatus.RuntimeSpec{
 				ProbePort: port,
@@ -107,9 +122,10 @@ func (r renderer) homeSGID(info modstatus.Info) string {
 	return info.SGID
 }
 
-// edgeOutputs returns the sorted edge region list from state, or nil when no
-// state is available.
-func (r renderer) edgeOutputs() []EdgeOutput {
+// edgeOutputs returns the sorted edge region list from state with live probe
+// data, or nil when no state is available. When the provider is nil or the
+// getEdgeStatus seam is not set, it falls back to state-only data.
+func (r renderer) edgeOutputs(ctx context.Context) []EdgeOutput {
 	if r.readState == nil {
 		return nil
 	}
@@ -125,17 +141,65 @@ func (r renderer) edgeOutputs() []EdgeOutput {
 	if len(edges) == 0 {
 		return nil
 	}
+
+	// Probe edges live when possible.
+	var statuses []ddc.EdgeStatus
+	if r.getEdgeStatus != nil {
+		statuses = r.getEdgeStatus(ctx, edges, r.provider)
+	}
+
 	out := make([]EdgeOutput, 0, len(edges))
-	for _, e := range edges {
-		out = append(out, EdgeOutput{
+	for i, e := range edges {
+		o := EdgeOutput{
 			Region:       e.Region,
 			InstanceID:   e.InstanceID,
 			SGID:         e.SGID,
 			InstanceType: e.InstanceType,
-			Status:       "provisioned",
-		})
+		}
+		if len(statuses) > i {
+			s := statuses[i]
+			if s.InstanceState != "" {
+				o.InstanceState = s.InstanceState
+			}
+			if s.InstanceType != "" {
+				o.InstanceType = s.InstanceType
+			}
+			if s.PrivateIP != "" {
+				o.PrivateIP = s.PrivateIP
+			}
+			if s.ProbeStatus != "" {
+				o.ProbeStatus = s.ProbeStatus
+			}
+			if s.ProbeError != "" {
+				o.ProbeError = s.ProbeError
+			}
+			o.Status = edgeCompositeStatus(s)
+		} else {
+			o.Status = "provisioned"
+		}
+		out = append(out, o)
 	}
 	return out
+}
+
+// edgeCompositeStatus derives a single status string from an EdgeStatus.
+func edgeCompositeStatus(s ddc.EdgeStatus) string {
+	switch s.ProbeStatus {
+	case "ready":
+		return "ready"
+	case "unreachable":
+		return "unreachable"
+	case "skipped":
+		if s.InstanceState != "" {
+			return s.InstanceState
+		}
+		return "provisioned"
+	default:
+		if s.InstanceState != "" {
+			return s.InstanceState
+		}
+		return "provisioned"
+	}
 }
 
 func (r renderer) printText(out io.Writer, info modstatus.Info) {
@@ -150,14 +214,11 @@ func (r renderer) printText(out io.Writer, info modstatus.Info) {
 	}
 	modstatus.WriteSecurityGroup(out, r.homeSGID(info))
 	modstatus.WriteProbeStatusText(out, info, "DDC", "")
-	r.printEdgesText(out)
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "  Note: edge nodes are listed from local state; live probes")
-	fmt.Fprintln(out, "  and cross-region replication checks are not available in this release.")
+	r.printEdgesText(out, info)
 }
 
-func (r renderer) printEdgesText(out io.Writer) {
-	edges := r.edgeOutputs()
+func (r renderer) printEdgesText(out io.Writer, info modstatus.Info) {
+	edges := r.edgeOutputs(context.Background())
 	if len(edges) == 0 {
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, "  Edge regions:  none (single home-region deployment)")
@@ -168,16 +229,28 @@ func (r renderer) printEdgesText(out io.Writer) {
 	for _, e := range edges {
 		fmt.Fprintf(out, "    %s:\n", e.Region)
 		fmt.Fprintf(out, "      Instance ID:   %s\n", e.InstanceID)
+		if e.InstanceState != "" {
+			fmt.Fprintf(out, "      Instance state: %s\n", e.InstanceState)
+		}
 		fmt.Fprintf(out, "      Security Group: %s\n", e.SGID)
 		if e.InstanceType != "" {
 			fmt.Fprintf(out, "      Instance type: %s\n", e.InstanceType)
 		}
+		if e.PrivateIP != "" {
+			fmt.Fprintf(out, "      Private IP:    %s\n", e.PrivateIP)
+		}
 		fmt.Fprintf(out, "      Status:        %s\n", e.Status)
+		if e.ProbeStatus != "" && e.ProbeStatus != "skipped" {
+			fmt.Fprintf(out, "      Health:        %s\n", e.ProbeStatus)
+		}
+		if e.ProbeError != "" {
+			fmt.Fprintf(out, "      Probe error:   %s\n", e.ProbeError)
+		}
 	}
 }
 
 func (r renderer) printJSON(out io.Writer, info modstatus.Info) {
-	o := StatusOutput{Backend: r.backend, Edges: r.edgeOutputs()}
+	o := StatusOutput{Backend: r.backend, Edges: r.edgeOutputs(context.Background())}
 	o.BaseStatusOutput = modstatus.NewBaseStatusOutput(info)
 	o.SGID = r.homeSGID(info)
 	if info.PrivateIP != "" {

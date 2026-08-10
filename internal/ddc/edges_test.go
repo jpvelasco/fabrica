@@ -2,6 +2,11 @@ package ddc
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -9,6 +14,72 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/state"
 )
+
+// fakeRegionProvider is a test double for cloud.RegionProvider that returns
+// configurable RegionViews per region.
+type fakeRegionProvider struct {
+	// regionViews maps region name to the RegionView returned by WithRegion.
+	regionViews map[string]cloud.RegionView
+	// withRegionErr is returned by WithRegion when non-nil.
+	withRegionErr error
+}
+
+func (f *fakeRegionProvider) Name() string { return "fake" }
+
+func (f *fakeRegionProvider) Identity(_ context.Context) (string, string, string, error) {
+	return "123456789012", "", "us-east-1", nil
+}
+
+func (f *fakeRegionProvider) Resources() cloud.ResourceClient { return nil }
+
+func (f *fakeRegionProvider) WithRegion(_ context.Context, region string) (cloud.RegionView, error) {
+	if f.withRegionErr != nil {
+		return cloud.RegionView{}, f.withRegionErr
+	}
+	if f.regionViews == nil {
+		return cloud.RegionView{}, nil
+	}
+	return f.regionViews[region], nil
+}
+
+// fakeResourceClient is a simple ResourceClient that returns a pre-configured
+// resource for Get calls.
+type fakeResourceClient struct {
+	getResult *cloud.Resource
+	getErr    error
+}
+
+func (f *fakeResourceClient) Create(_ context.Context, _ *cloud.Resource) error { return nil }
+
+func (f *fakeResourceClient) Get(_ context.Context, res *cloud.Resource) error {
+	if f.getErr != nil {
+		return f.getErr
+	}
+	if f.getResult != nil && res != nil {
+		res.ActualState = f.getResult.ActualState
+	}
+	return nil
+}
+
+func (f *fakeResourceClient) Update(_ context.Context, _ *cloud.Resource) error { return nil }
+
+func (f *fakeResourceClient) Delete(_ context.Context, _ *cloud.Resource) error { return nil }
+
+func (f *fakeResourceClient) List(_ context.Context, _ string) ([]cloud.Resource, error) {
+	return nil, nil
+}
+
+// makeInstanceActualState builds a Cloud Control ActualState JSON for an EC2
+// instance with the given state name, private IP, and instance type.
+func makeInstanceActualState(stateName, privateIP, instanceType string) json.RawMessage {
+	m := map[string]any{
+		"InstanceType":     instanceType,
+		"PrivateIpAddress": privateIP,
+		"State":            map[string]string{"Name": stateName},
+	}
+	b, _ := json.Marshal(m)
+	return b
+}
 
 func TestNewEdgePlanDefaults(t *testing.T) {
 	plan, err := NewEdgePlan(context.Background(), config.DDCConfig{
@@ -230,5 +301,341 @@ func TestEdgePlanPropertyHelpers(t *testing.T) {
 	}
 	if atoiOrZero("") != 0 || atoiOrZero("abc") != 0 || atoiOrZero("42") != 42 {
 		t.Fatal("atoiOrZero mishandled input")
+	}
+}
+
+func TestProbeEdgesEmpty(t *testing.T) {
+	result := ProbeEdges(context.Background(), nil, &fakeRegionProvider{}, ProbeEdgesOptions{})
+	if result != nil {
+		t.Fatalf("expected nil for empty edges, got %d", len(result))
+	}
+	result = ProbeEdges(context.Background(), []EdgeResource{}, &fakeRegionProvider{}, ProbeEdgesOptions{})
+	if result != nil {
+		t.Fatalf("expected nil for empty edges, got %d", len(result))
+	}
+}
+
+func TestProbeEdgesNoRegionProvider(t *testing.T) {
+	// Use a provider that does NOT implement RegionProvider.
+	edges := []EdgeResource{{Region: "eu-west-1", InstanceID: "i-eu"}}
+	// cloud.TestVPCResolver does not implement RegionProvider.
+	provider := &noRegionProvider{}
+	result := ProbeEdges(context.Background(), edges, provider, ProbeEdgesOptions{})
+	if len(result) != 1 {
+		t.Fatalf("expected 1 status, got %d", len(result))
+	}
+	if result[0].ProbeStatus != "skipped" {
+		t.Fatalf("ProbeStatus = %q, want skipped", result[0].ProbeStatus)
+	}
+}
+
+// noRegionProvider is a provider that deliberately does NOT implement RegionProvider.
+type noRegionProvider struct{}
+
+func (n *noRegionProvider) Name() string { return "fake" }
+func (n *noRegionProvider) Identity(_ context.Context) (string, string, string, error) {
+	return "123456789012", "", "us-east-1", nil
+}
+func (n *noRegionProvider) Resources() cloud.ResourceClient { return nil }
+
+func TestProbeEdgesRunningAndUnreachable(t *testing.T) {
+	// Running instance with private IP should attempt probe; since 127.0.0.1:80
+	// won't respond with 200, the probe result is "unreachable".
+	actualState := makeInstanceActualState("running", "127.0.0.1", "m7i.large")
+	provider := &fakeRegionProvider{
+		regionViews: map[string]cloud.RegionView{
+			"eu-west-1": {
+				Resources: &fakeResourceClient{
+					getResult: &cloud.Resource{ActualState: actualState},
+				},
+			},
+		},
+	}
+
+	edges := []EdgeResource{{Region: "eu-west-1", InstanceID: "i-eu"}}
+	result := ProbeEdges(context.Background(), edges, provider, ProbeEdgesOptions{PublicPort: 80})
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 status, got %d", len(result))
+	}
+	s := result[0]
+	if s.Region != "eu-west-1" {
+		t.Fatalf("Region = %q", s.Region)
+	}
+	if s.InstanceID != "i-eu" {
+		t.Fatalf("InstanceID = %q", s.InstanceID)
+	}
+	if s.InstanceState != "running" {
+		t.Fatalf("InstanceState = %q, want running", s.InstanceState)
+	}
+	if s.InstanceType != "m7i.large" {
+		t.Fatalf("InstanceType = %q, want m7i.large", s.InstanceType)
+	}
+	if s.PrivateIP != "127.0.0.1" {
+		t.Fatalf("PrivateIP = %q, want 127.0.0.1", s.PrivateIP)
+	}
+	if s.ProbeStatus != "unreachable" {
+		t.Fatalf("ProbeStatus = %q, want unreachable", s.ProbeStatus)
+	}
+}
+
+func TestProbeEdgesRunningAndReadyWithServer(t *testing.T) {
+	// Set up a test server that returns 200 for /health/ready.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health/ready" {
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+
+	// Parse the server address so we can inject host and port separately.
+	host, portStr, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("SplitHostPort: %v", err)
+	}
+	var port int
+	_, _ = fmt.Sscanf(portStr, "%d", &port)
+
+	actualState := makeInstanceActualState("running", host, "m7i.large")
+	provider := &fakeRegionProvider{
+		regionViews: map[string]cloud.RegionView{
+			"eu-west-1": {
+				Resources: &fakeResourceClient{
+					getResult: &cloud.Resource{ActualState: actualState},
+				},
+			},
+		},
+	}
+
+	edges := []EdgeResource{{Region: "eu-west-1", InstanceID: "i-eu"}}
+	result := ProbeEdges(context.Background(), edges, provider, ProbeEdgesOptions{PublicPort: port})
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 status, got %d", len(result))
+	}
+	s := result[0]
+	if s.InstanceState != "running" {
+		t.Fatalf("InstanceState = %q, want running", s.InstanceState)
+	}
+	if s.ProbeStatus != "ready" {
+		t.Fatalf("ProbeStatus = %q, want ready", s.ProbeStatus)
+	}
+}
+
+func TestProbeEdgesStopped(t *testing.T) {
+	actualState := makeInstanceActualState("stopped", "10.0.1.5", "m7i.large")
+	provider := &fakeRegionProvider{
+		regionViews: map[string]cloud.RegionView{
+			"eu-west-1": {
+				Resources: &fakeResourceClient{
+					getResult: &cloud.Resource{ActualState: actualState},
+				},
+			},
+		},
+	}
+
+	edges := []EdgeResource{{Region: "eu-west-1", InstanceID: "i-eu"}}
+	result := ProbeEdges(context.Background(), edges, provider, ProbeEdgesOptions{PublicPort: 80})
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 status, got %d", len(result))
+	}
+	s := result[0]
+	if s.InstanceState != "stopped" {
+		t.Fatalf("InstanceState = %q, want stopped", s.InstanceState)
+	}
+	if s.ProbeStatus != "skipped" {
+		t.Fatalf("ProbeStatus = %q, want skipped for stopped instance", s.ProbeStatus)
+	}
+}
+
+func TestProbeEdgesTerminated(t *testing.T) {
+	actualState := makeInstanceActualState("terminated", "", "m7i.large")
+	provider := &fakeRegionProvider{
+		regionViews: map[string]cloud.RegionView{
+			"eu-west-1": {
+				Resources: &fakeResourceClient{
+					getResult: &cloud.Resource{ActualState: actualState},
+				},
+			},
+		},
+	}
+
+	edges := []EdgeResource{{Region: "eu-west-1", InstanceID: "i-eu"}}
+	result := ProbeEdges(context.Background(), edges, provider, ProbeEdgesOptions{PublicPort: 80})
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 status, got %d", len(result))
+	}
+	s := result[0]
+	if s.InstanceState != "terminated" {
+		t.Fatalf("InstanceState = %q, want terminated", s.InstanceState)
+	}
+	if s.ProbeStatus != "skipped" {
+		t.Fatalf("ProbeStatus = %q, want skipped for terminated instance", s.ProbeStatus)
+	}
+}
+
+func TestProbeEdgesMissingInstance(t *testing.T) {
+	provider := &fakeRegionProvider{
+		regionViews: map[string]cloud.RegionView{
+			"eu-west-1": {
+				Resources: &fakeResourceClient{
+					getErr: cloud.ErrResourceNotFound,
+				},
+			},
+		},
+	}
+
+	edges := []EdgeResource{{Region: "eu-west-1", InstanceID: "i-missing"}}
+	result := ProbeEdges(context.Background(), edges, provider, ProbeEdgesOptions{PublicPort: 80})
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 status, got %d", len(result))
+	}
+	s := result[0]
+	if s.InstanceState != "missing" {
+		t.Fatalf("InstanceState = %q, want missing", s.InstanceState)
+	}
+	if s.ProbeStatus != "skipped" {
+		t.Fatalf("ProbeStatus = %q, want skipped for missing instance", s.ProbeStatus)
+	}
+	if !strings.Contains(s.ProbeError, "Cloud Control Get failed") {
+		t.Fatalf("ProbeError = %q, want Cloud Control Get failed", s.ProbeError)
+	}
+}
+
+func TestProbeEdgesWithRegionError(t *testing.T) {
+	provider := &fakeRegionProvider{withRegionErr: cloud.ErrResourceNotFound}
+
+	edges := []EdgeResource{{Region: "eu-west-1", InstanceID: "i-eu"}}
+	result := ProbeEdges(context.Background(), edges, provider, ProbeEdgesOptions{PublicPort: 80})
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 status, got %d", len(result))
+	}
+	s := result[0]
+	if s.ProbeStatus != "skipped" {
+		t.Fatalf("ProbeStatus = %q, want skipped", s.ProbeStatus)
+	}
+	if !strings.Contains(s.ProbeError, "cannot reach region") {
+		t.Fatalf("ProbeError = %q, want cannot reach region", s.ProbeError)
+	}
+}
+
+func TestProbeEdgesNilResources(t *testing.T) {
+	provider := &fakeRegionProvider{
+		regionViews: map[string]cloud.RegionView{
+			"eu-west-1": {}, // Resources is nil
+		},
+	}
+
+	edges := []EdgeResource{{Region: "eu-west-1", InstanceID: "i-eu"}}
+	result := ProbeEdges(context.Background(), edges, provider, ProbeEdgesOptions{PublicPort: 80})
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 status, got %d", len(result))
+	}
+	s := result[0]
+	if s.ProbeStatus != "skipped" {
+		t.Fatalf("ProbeStatus = %q, want skipped", s.ProbeStatus)
+	}
+	if !strings.Contains(s.ProbeError, "no resource client") {
+		t.Fatalf("ProbeError = %q, want no resource client", s.ProbeError)
+	}
+}
+
+func TestProbeEdgesMultipleEdges(t *testing.T) {
+	// One running, one stopped, one missing.
+	runningState := makeInstanceActualState("running", "10.0.1.1", "m7i.large")
+	stoppedState := makeInstanceActualState("stopped", "10.0.2.1", "m5.xlarge")
+
+	provider := &fakeRegionProvider{
+		regionViews: map[string]cloud.RegionView{
+			"eu-west-1": {
+				Resources: &fakeResourceClient{getResult: &cloud.Resource{ActualState: runningState}},
+			},
+			"ap-southeast-2": {
+				Resources: &fakeResourceClient{getResult: &cloud.Resource{ActualState: stoppedState}},
+			},
+			"us-west-2": {
+				Resources: &fakeResourceClient{getErr: cloud.ErrResourceNotFound},
+			},
+		},
+	}
+
+	edges := []EdgeResource{
+		{Region: "ap-southeast-2", InstanceID: "i-ap"},
+		{Region: "eu-west-1", InstanceID: "i-eu"},
+		{Region: "us-west-2", InstanceID: "i-us"},
+	}
+	result := ProbeEdges(context.Background(), edges, provider, ProbeEdgesOptions{PublicPort: 80})
+
+	if len(result) != 3 {
+		t.Fatalf("expected 3 statuses, got %d", len(result))
+	}
+	// ap-southeast-2: stopped
+	if result[0].InstanceState != "stopped" || result[0].ProbeStatus != "skipped" {
+		t.Fatalf("ap-southeast-2: %+v", result[0])
+	}
+	// eu-west-1: running, probe attempted
+	if result[1].InstanceState != "running" || result[1].ProbeStatus != "unreachable" {
+		t.Fatalf("eu-west-1: %+v", result[1])
+	}
+	// us-west-2: missing
+	if result[2].InstanceState != "missing" || result[2].ProbeStatus != "skipped" {
+		t.Fatalf("us-west-2: %+v", result[2])
+	}
+}
+
+func TestProbeEdgeHealth(t *testing.T) {
+	client := &http.Client{Timeout: edgeProbeTimeout}
+
+	// Test with a server that returns 200.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	host, portStr, _ := net.SplitHostPort(server.Listener.Addr().String())
+	var port int
+	_, _ = fmt.Sscanf(portStr, "%d", &port)
+	result := probeEdgeHealth(client, host, port)
+	if result != "ready" {
+		t.Fatalf("probeEdgeHealth = %q, want ready", result)
+	}
+
+	// Test with a server that returns 500.
+	server500 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server500.Close()
+	host500, portStr500, _ := net.SplitHostPort(server500.Listener.Addr().String())
+	var port500 int
+	_, _ = fmt.Sscanf(portStr500, "%d", &port500)
+	result500 := probeEdgeHealth(client, host500, port500)
+	if result500 != "unreachable" {
+		t.Fatalf("probeEdgeHealth = %q, want unreachable for 500", result500)
+	}
+}
+
+func TestParseEdgeActualStateInvalidJSON(t *testing.T) {
+	s := EdgeStatus{Region: "eu-west-1", InstanceID: "i-eu"}
+	r := &cloud.Resource{ActualState: json.RawMessage(`not valid json`)}
+	parseEdgeActualState(r, &s)
+	// Should silently ignore invalid JSON.
+	if s.InstanceState != "" {
+		t.Fatalf("InstanceState should be empty for invalid JSON, got %q", s.InstanceState)
+	}
+	if s.PrivateIP != "" {
+		t.Fatalf("PrivateIP should be empty for invalid JSON, got %q", s.PrivateIP)
+	}
+}
+
+func TestParseEdgeActualStateNil(t *testing.T) {
+	s := EdgeStatus{Region: "eu-west-1", InstanceID: "i-eu"}
+	r := &cloud.Resource{ActualState: nil}
+	parseEdgeActualState(r, &s)
+	if s.InstanceState != "" {
+		t.Fatalf("InstanceState should be empty for nil ActualState, got %q", s.InstanceState)
 	}
 }

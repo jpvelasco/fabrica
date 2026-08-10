@@ -2,9 +2,12 @@ package ddc
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"regexp"
 	"sort"
+	"time"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
@@ -12,6 +15,8 @@ import (
 	"github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
+
+const edgeProbeTimeout = 3 * time.Second
 
 // EdgeOptions overrides an edge region's plan defaults. Empty/zero values fall
 // back to the ddc config (or module defaults), matching setup behavior.
@@ -211,4 +216,137 @@ func atoiOrZero(s string) int {
 	n := 0
 	_, _ = fmt.Sscanf(s, "%d", &n)
 	return n
+}
+
+// EdgeStatus is the live status result for one edge node, produced by
+// ProbeEdges. It carries instance state from Cloud Control and an optional
+// health probe result.
+type EdgeStatus struct {
+	// Region is the AWS region where this edge runs.
+	Region string
+	// InstanceID is the EC2 instance identifier from state.
+	InstanceID string
+	// InstanceState is the EC2 lifecycle state from Cloud Control
+	// (running, stopped, terminated, missing, or empty on error).
+	InstanceState string
+	// InstanceType is the instance type from Cloud Control (may be empty).
+	InstanceType string
+	// PrivateIP is the instance private IP from Cloud Control (may be empty).
+	PrivateIP string
+	// ProbeStatus describes the health probe outcome:
+	//   "ready"       — HTTP 200 from /health/ready
+	//   "unreachable" — instance running but probe failed/timed out
+	//   "skipped"     — probe not attempted (no private IP, not running, etc.)
+	ProbeStatus string
+	// ProbeError is a short error summary when the probe failed (empty otherwise).
+	ProbeError string
+}
+
+// ProbeEdgesOptions configures edge probing behavior.
+type ProbeEdgesOptions struct {
+	// PublicPort is the HTTP port for the /health/ready probe.
+	PublicPort int
+	// HTTPClient is the client used for health probes. Nil uses a default
+	// client with edgeProbeTimeout.
+	HTTPClient *http.Client
+}
+
+// ProbeEdges probes each edge recorded in state using region-scoped Cloud
+// Control Get and an optional HTTP health probe. It returns one EdgeStatus
+// per edge, preserving the sorted order of EdgeRegions. Failures per edge
+// are soft — one edge's failure does not block others.
+func ProbeEdges(ctx context.Context, edges []EdgeResource, provider cloud.Provider, opts ProbeEdgesOptions) []EdgeStatus {
+	if len(edges) == 0 {
+		return nil
+	}
+
+	regionProvider, canProbe := provider.(cloud.RegionProvider)
+	client := opts.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: edgeProbeTimeout}
+	}
+
+	statuses := make([]EdgeStatus, 0, len(edges))
+	for _, e := range edges {
+		s := EdgeStatus{Region: e.Region, InstanceID: e.InstanceID}
+
+		if !canProbe {
+			s.ProbeStatus = "skipped"
+			statuses = append(statuses, s)
+			continue
+		}
+
+		rv, err := regionProvider.WithRegion(ctx, e.Region)
+		if err != nil {
+			s.ProbeStatus = "skipped"
+			s.ProbeError = fmt.Sprintf("cannot reach region %s: %v", e.Region, err)
+			statuses = append(statuses, s)
+			continue
+		}
+
+		if rv.Resources == nil {
+			s.ProbeStatus = "skipped"
+			s.ProbeError = "region provider has no resource client"
+			statuses = append(statuses, s)
+			continue
+		}
+
+		// Describe the instance via Cloud Control Get.
+		res := &cloud.Resource{TypeName: "AWS::EC2::Instance", Identifier: e.InstanceID}
+		if err := rv.Resources.Get(ctx, res); err != nil {
+			s.InstanceState = "missing"
+			s.ProbeStatus = "skipped"
+			s.ProbeError = fmt.Sprintf("Cloud Control Get failed: %v", err)
+			statuses = append(statuses, s)
+			continue
+		}
+
+		// Parse ActualState for instance details.
+		parseEdgeActualState(res, &s)
+
+		// Probe health if running and private IP is available.
+		if s.InstanceState == "running" && s.PrivateIP != "" {
+			s.ProbeStatus = probeEdgeHealth(client, s.PrivateIP, opts.PublicPort)
+		} else {
+			s.ProbeStatus = "skipped"
+		}
+
+		statuses = append(statuses, s)
+	}
+	return statuses
+}
+
+// parseEdgeActualState extracts instance fields from Cloud Control ActualState.
+func parseEdgeActualState(r *cloud.Resource, s *EdgeStatus) {
+	if len(r.ActualState) == 0 {
+		return
+	}
+	var actual struct {
+		InstanceType     string `json:"InstanceType"`
+		PrivateIPAddress string `json:"PrivateIpAddress"`
+		State            struct {
+			Name string `json:"Name"`
+		} `json:"State"`
+	}
+	if err := json.Unmarshal(r.ActualState, &actual); err != nil {
+		return
+	}
+	s.InstanceType = actual.InstanceType
+	s.PrivateIP = actual.PrivateIPAddress
+	s.InstanceState = actual.State.Name
+}
+
+// probeEdgeHealth performs an HTTP GET /health/ready against the edge instance.
+// Returns "ready" on HTTP 200, "unreachable" otherwise.
+func probeEdgeHealth(client *http.Client, privateIP string, port int) string {
+	url := fmt.Sprintf("http://%s:%d/health/ready", privateIP, port)
+	resp, err := client.Get(url)
+	if err != nil {
+		return "unreachable"
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		return "ready"
+	}
+	return "unreachable"
 }
