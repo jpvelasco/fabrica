@@ -38,10 +38,8 @@ jobs:
   build:
     name: Build
     strategy:
-      # Full 3-OS matrix on push to main; PRs skip macOS (10x minutes on the
-      # free tier) — Linux + Windows already cover the cross-platform risk.
       matrix:
-        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -55,9 +53,8 @@ jobs:
     name: Test
     strategy:
       fail-fast: false
-      # Full 3-OS matrix on push to main; PRs skip macOS to conserve minutes.
       matrix:
-        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     # OIDC; lets each leg mint the Codecov upload token
     permissions:
