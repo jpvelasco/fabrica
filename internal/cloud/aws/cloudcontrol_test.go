@@ -110,6 +110,63 @@ func TestCreate_WaiterFailure(t *testing.T) {
 	assertStringContains(t, err.Error(), "waiting for AWS::EC2::SecurityGroup creation")
 }
 
+func TestCreate_WaiterFailure_StatusMessageFromPoll(t *testing.T) {
+	client := &fakeCCClient{
+		createOut: &cloudcontrol.CreateResourceOutput{
+			ProgressEvent: &types.ProgressEvent{RequestToken: awssdk.String("tok")},
+		},
+		statusOuts: []*cloudcontrol.GetResourceRequestStatusOutput{
+			{
+				ProgressEvent: &types.ProgressEvent{
+					OperationStatus: types.OperationStatusFailed,
+					ErrorCode:       types.HandlerErrorCodeInvalidRequest,
+					StatusMessage:   awssdk.String("Security Group with fabrica-horde-agents-sg already exists"),
+				},
+			},
+		},
+	}
+	waiter := &fakeCCWaiter{err: fmt.Errorf("waiter state transitioned to Failure")}
+	rc := newCCTestClients(client, waiter)
+
+	r := &fabricac.Resource{TypeName: "AWS::EC2::SecurityGroup", DesiredState: json.RawMessage(`{}`)}
+	err := rc.Create(context.Background(), r)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertStringContains(t, err.Error(), "Security Group with fabrica-horde-agents-sg already exists")
+	assertStringContains(t, err.Error(), "InvalidRequest")
+}
+
+func TestCreate_WaiterFailure_AlreadyExistsRecovery(t *testing.T) {
+	existingID := "sg-recovered"
+	client := &fakeCCClient{
+		createOut: &cloudcontrol.CreateResourceOutput{
+			ProgressEvent: &types.ProgressEvent{RequestToken: awssdk.String("tok")},
+		},
+		statusOuts: []*cloudcontrol.GetResourceRequestStatusOutput{
+			{
+				ProgressEvent: &types.ProgressEvent{
+					OperationStatus: types.OperationStatusFailed,
+					ErrorCode:       types.HandlerErrorCodeAlreadyExists,
+					Identifier:      awssdk.String(existingID),
+					StatusMessage:   awssdk.String("Resource already exists"),
+				},
+			},
+		},
+	}
+	waiter := &fakeCCWaiter{err: fmt.Errorf("waiter state transitioned to Failure")}
+	rc := newCCTestClients(client, waiter)
+
+	r := &fabricac.Resource{TypeName: "AWS::EC2::SecurityGroup", DesiredState: json.RawMessage(`{}`)}
+	err := rc.Create(context.Background(), r)
+	if err != nil {
+		t.Fatalf("Create should recover from AlreadyExists via waiter error path: %v", err)
+	}
+	if r.Identifier != existingID {
+		t.Errorf("Identifier = %q, want %q", r.Identifier, existingID)
+	}
+}
+
 func TestCreate_FailedStatus_IncludesStatusMessage(t *testing.T) {
 	client := &fakeCCClient{
 		createOut: &cloudcontrol.CreateResourceOutput{
@@ -285,6 +342,33 @@ func TestUpdate_WaiterFailure(t *testing.T) {
 	assertStringContains(t, err.Error(), "waiting for AWS::EC2::SecurityGroup update")
 }
 
+func TestUpdate_WaiterFailure_StatusMessageFromPoll(t *testing.T) {
+	client := &fakeCCClient{
+		updateOut: &cloudcontrol.UpdateResourceOutput{
+			ProgressEvent: &types.ProgressEvent{RequestToken: awssdk.String("tok")},
+		},
+		statusOuts: []*cloudcontrol.GetResourceRequestStatusOutput{
+			{
+				ProgressEvent: &types.ProgressEvent{
+					OperationStatus: types.OperationStatusFailed,
+					ErrorCode:       types.HandlerErrorCodeGeneralServiceException,
+					StatusMessage:   awssdk.String("update conflict"),
+				},
+			},
+		},
+	}
+	waiter := &fakeCCWaiter{err: fmt.Errorf("waiter state transitioned to Failure")}
+	rc := newCCTestClients(client, waiter)
+
+	r := &fabricac.Resource{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-abc123", DesiredState: json.RawMessage(`[]`)}
+	err := rc.Update(context.Background(), r)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertStringContains(t, err.Error(), "update conflict")
+	assertStringContains(t, err.Error(), "GeneralServiceException")
+}
+
 // --- Delete ---
 
 func TestDelete_Success(t *testing.T) {
@@ -336,6 +420,82 @@ func TestDelete_WaiterFailure(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	assertStringContains(t, err.Error(), "waiting for AWS::EC2::SecurityGroup deletion")
+}
+
+func TestDelete_WaiterFailure_NotFoundFromPoll(t *testing.T) {
+	client := &fakeCCClient{
+		deleteOut: &cloudcontrol.DeleteResourceOutput{
+			ProgressEvent: &types.ProgressEvent{RequestToken: awssdk.String("tok")},
+		},
+		statusOuts: []*cloudcontrol.GetResourceRequestStatusOutput{
+			{
+				ProgressEvent: &types.ProgressEvent{
+					OperationStatus: types.OperationStatusFailed,
+					ErrorCode:       types.HandlerErrorCodeNotFound,
+					StatusMessage:   awssdk.String("Resource not found"),
+				},
+			},
+		},
+	}
+	waiter := &fakeCCWaiter{err: fmt.Errorf("waiter state transitioned to Failure")}
+	rc := newCCTestClients(client, waiter)
+
+	r := &fabricac.Resource{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-abc123"}
+	err := rc.Delete(context.Background(), r)
+	if !errors.Is(err, fabricac.ErrResourceNotFound) {
+		t.Fatalf("error = %v, want ErrResourceNotFound", err)
+	}
+}
+
+func TestDelete_WaiterFailure_AlreadyExistsFromPoll(t *testing.T) {
+	client := &fakeCCClient{
+		deleteOut: &cloudcontrol.DeleteResourceOutput{
+			ProgressEvent: &types.ProgressEvent{RequestToken: awssdk.String("tok")},
+		},
+		statusOuts: []*cloudcontrol.GetResourceRequestStatusOutput{
+			{
+				ProgressEvent: &types.ProgressEvent{
+					OperationStatus: types.OperationStatusFailed,
+					ErrorCode:       types.HandlerErrorCodeAlreadyExists,
+					StatusMessage:   awssdk.String("Resource already exists"),
+				},
+			},
+		},
+	}
+	waiter := &fakeCCWaiter{err: fmt.Errorf("waiter state transitioned to Failure")}
+	rc := newCCTestClients(client, waiter)
+
+	r := &fabricac.Resource{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-abc123"}
+	err := rc.Delete(context.Background(), r)
+	if !errors.Is(err, fabricac.ErrResourceNotFound) {
+		t.Fatalf("error = %v, want ErrResourceNotFound", err)
+	}
+}
+
+func TestDelete_WaiterFailure_StatusMessageFromPoll(t *testing.T) {
+	client := &fakeCCClient{
+		deleteOut: &cloudcontrol.DeleteResourceOutput{
+			ProgressEvent: &types.ProgressEvent{RequestToken: awssdk.String("tok")},
+		},
+		statusOuts: []*cloudcontrol.GetResourceRequestStatusOutput{
+			{
+				ProgressEvent: &types.ProgressEvent{
+					OperationStatus: types.OperationStatusFailed,
+					ErrorCode:       types.HandlerErrorCodeGeneralServiceException,
+					StatusMessage:   awssdk.String("delete dependency violation"),
+				},
+			},
+		},
+	}
+	waiter := &fakeCCWaiter{err: fmt.Errorf("waiter state transitioned to Failure")}
+	rc := newCCTestClients(client, waiter)
+
+	r := &fabricac.Resource{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-abc123"}
+	err := rc.Delete(context.Background(), r)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertStringContains(t, err.Error(), "delete dependency violation")
 }
 
 func TestDelete_FailedStatus_IncludesStatusMessage(t *testing.T) {

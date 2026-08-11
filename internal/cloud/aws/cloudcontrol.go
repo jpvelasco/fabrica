@@ -40,6 +40,28 @@ func (c *resourceClients) Create(ctx context.Context, r *fabricac.Resource) erro
 		RequestToken: aws.String(token),
 	}, c.timeout())
 	if err != nil {
+		// The waiter returns an error on failure. Try to get a better message
+		// from the result or by polling directly — including AlreadyExists recovery.
+		ev := getProgressEvent(result)
+		if ev == nil && c.cc != nil {
+			statusOut, statusErr := c.cc.GetResourceRequestStatus(ctx, &cloudcontrol.GetResourceRequestStatusInput{
+				RequestToken: aws.String(token),
+			})
+			if statusErr == nil {
+				ev = statusOut.ProgressEvent
+			}
+		}
+		if ev != nil && ev.OperationStatus == types.OperationStatusFailed {
+			if ev.ErrorCode == types.HandlerErrorCodeAlreadyExists {
+				id := aws.ToString(ev.Identifier)
+				if id != "" {
+					oplog.WithResourceAndRegion(r.TypeName, id, c.awsCfg.region).Debug("resource already exists, recovering from partial failure")
+					r.Identifier = id
+					return nil
+				}
+			}
+			return progressEventError(r.TypeName, ev)
+		}
 		return fmt.Errorf("waiting for %s creation: %w", r.TypeName, err)
 	}
 
@@ -180,6 +202,18 @@ func (c *resourceClients) Update(ctx context.Context, r *fabricac.Resource) erro
 		RequestToken: aws.String(token),
 	}, c.timeout())
 	if err != nil {
+		ev := getProgressEvent(result)
+		if ev == nil && c.cc != nil {
+			statusOut, statusErr := c.cc.GetResourceRequestStatus(ctx, &cloudcontrol.GetResourceRequestStatusInput{
+				RequestToken: aws.String(token),
+			})
+			if statusErr == nil {
+				ev = statusOut.ProgressEvent
+			}
+		}
+		if ev != nil && ev.OperationStatus == types.OperationStatusFailed {
+			return progressEventError(r.TypeName, ev)
+		}
 		return fmt.Errorf("waiting for %s update: %w", r.TypeName, err)
 	}
 
@@ -214,6 +248,22 @@ func (c *resourceClients) Delete(ctx context.Context, r *fabricac.Resource) erro
 		RequestToken: aws.String(token),
 	}, c.timeout())
 	if err != nil {
+		ev := getProgressEvent(result)
+		if ev == nil && c.cc != nil {
+			statusOut, statusErr := c.cc.GetResourceRequestStatus(ctx, &cloudcontrol.GetResourceRequestStatusInput{
+				RequestToken: aws.String(token),
+			})
+			if statusErr == nil {
+				ev = statusOut.ProgressEvent
+			}
+		}
+		if ev != nil && ev.OperationStatus == types.OperationStatusFailed {
+			if ev.ErrorCode == types.HandlerErrorCodeNotFound ||
+				ev.ErrorCode == types.HandlerErrorCodeAlreadyExists {
+				return fabricac.ErrResourceNotFound
+			}
+			return progressEventError(r.TypeName, ev)
+		}
 		return fmt.Errorf("waiting for %s deletion: %w", r.TypeName, err)
 	}
 
@@ -297,6 +347,14 @@ func (c *resourceClients) ensureClient(ctx context.Context) error {
 	c.waiter = newWaiter(c.cc)
 
 	return nil
+}
+
+// getProgressEvent extracts the ProgressEvent from a waiter result, or nil.
+func getProgressEvent(result *cloudcontrol.GetResourceRequestStatusOutput) *types.ProgressEvent {
+	if result == nil || result.ProgressEvent == nil {
+		return nil
+	}
+	return result.ProgressEvent
 }
 
 func (c *resourceClients) timeout() time.Duration {
