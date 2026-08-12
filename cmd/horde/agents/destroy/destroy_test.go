@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -253,7 +254,7 @@ func TestDeleteOneResource_AlreadyDeleted(t *testing.T) {
 	}
 }
 
-func TestDeleteOneResource_DeleteError(t *testing.T) {
+func TestDeleteOneResource_NotFound(t *testing.T) {
 	c := command{
 		out: &bytes.Buffer{},
 		deleteResource: func(ctx context.Context, r *cloud.Resource) error {
@@ -275,7 +276,6 @@ func TestDeleteOneResource_DeleteError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Already deleted path should not return an error.
 }
 
 func TestApply_NoProvider(t *testing.T) {
@@ -458,5 +458,117 @@ func TestRun_ConfirmationAccepted(t *testing.T) {
 	}
 	if len(deleted) != 1 {
 		t.Errorf("want 1 delete call, got %d", len(deleted))
+	}
+}
+
+func TestApply_WriteStateError(t *testing.T) {
+	var out bytes.Buffer
+	var deleted []cloud.Resource
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	m := &fabricastate.ModuleState{
+		Version: "v1",
+		Status:  "ready",
+	}
+	resources := []cloud.Resource{{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent"}}
+
+	c := command{
+		out: &out,
+		deleteResource: func(ctx context.Context, r *cloud.Resource) error {
+			deleted = append(deleted, *r)
+			return nil
+		},
+		writeState: func(st *fabricastate.State) error {
+			return fmt.Errorf("write failed")
+		},
+	}
+
+	err := c.apply(context.Background(), st, m, resources)
+	if err != nil {
+		t.Fatalf("unexpected error: apply should not fail on writeState warning: %v", err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("Warning")) {
+		t.Error("expected 'Warning' in output for writeState error")
+	}
+}
+
+func TestApply_JSONOutput(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	m := &fabricastate.ModuleState{}
+	resources := []cloud.Resource{{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent"}}
+
+	c := command{
+		out:            &out,
+		jsonOut:        true,
+		deleteResource: func(ctx context.Context, r *cloud.Resource) error { return nil },
+		writeState:     func(st *fabricastate.State) error { return nil },
+	}
+
+	err := c.apply(context.Background(), st, m, resources)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// JSON output should not print the "destroyed" message.
+	if bytes.Contains(out.Bytes(), []byte("Horde build agent pool destroyed")) {
+		t.Error("JSON output should not print 'destroyed' message")
+	}
+}
+
+func TestDeleteOneResource_WriteStateError(t *testing.T) {
+	var out bytes.Buffer
+	c := command{
+		out: &out,
+		deleteResource: func(ctx context.Context, r *cloud.Resource) error {
+			return nil
+		},
+		writeState: func(st *fabricastate.State) error {
+			return fmt.Errorf("write failed")
+		},
+	}
+
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	m := &fabricastate.ModuleState{
+		Version: "v1",
+		Status:  "ready",
+		Resources: []fabricastate.ModuleResource{
+			{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent", Properties: map[string]string{"role": "agent"}},
+		},
+	}
+	st.UpsertModule("horde", m.Version, m.Status, m.Resources)
+
+	res := cloud.Resource{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent"}
+	err := c.deleteOneResource(context.Background(), st, m, res)
+	if err != nil {
+		t.Fatalf("unexpected error: deleteOneResource should not fail on writeState warning: %v", err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("Warning")) {
+		t.Error("expected 'Warning' in output for writeState error")
+	}
+}
+
+func TestDeleteOneResource_DeleteError(t *testing.T) {
+	c := command{
+		out: &bytes.Buffer{},
+		deleteResource: func(ctx context.Context, r *cloud.Resource) error {
+			return fmt.Errorf("access denied")
+		},
+		writeState: func(st *fabricastate.State) error { return nil },
+	}
+
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	m := &fabricastate.ModuleState{
+		Resources: []fabricastate.ModuleResource{
+			{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent", Properties: map[string]string{"role": "agent"}},
+		},
+	}
+	st.UpsertModule("horde", "v1", "ready", m.Resources)
+
+	res := cloud.Resource{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent"}
+	err := c.deleteOneResource(context.Background(), st, m, res)
+	if err == nil {
+		t.Fatal("expected error for non-not-found delete error")
+	}
+	if !strings.Contains(err.Error(), "access denied") {
+		t.Errorf("error = %q, want 'access denied'", err.Error())
 	}
 }
