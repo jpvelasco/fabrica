@@ -20,8 +20,7 @@ import (
 )
 
 const (
-	moduleName  = "horde"
-	passwordLen = 24
+	moduleName = "horde"
 )
 
 type command struct {
@@ -127,7 +126,7 @@ func (c command) run(ctx context.Context) error {
 	if c.instanceType != "" {
 		agentsCfg.InstanceType = c.instanceType
 	}
-	if c.minSize >= 0 && c.desiredCap > 0 {
+	if c.desiredCap > 0 {
 		agentsCfg.DesiredCapacity = c.desiredCap
 	}
 	if c.maxSize > 0 {
