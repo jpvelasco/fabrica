@@ -10,6 +10,7 @@ import (
 
 // AgentsCostResources returns the cost inputs for the Horde agents module.
 // Cost is estimated as desiredCapacity × instance type hourly rate × 730 hours.
+// When scaling is enabled, two CloudWatch alarms are added to the cost model.
 func AgentsCostResources(cfg config.HordeAgentsConfig) []cost.Resource {
 	instanceType := cfg.InstanceType
 	if instanceType == "" {
@@ -21,10 +22,17 @@ func AgentsCostResources(cfg config.HordeAgentsConfig) []cost.Resource {
 		desired = 1
 	}
 
-	// Report as ASG resource type so the ASG estimator handles the ×N pricing.
-	return []cost.Resource{
+	resources := []cost.Resource{
 		{TypeName: cloud.TypeAWSAutoScalingAutoScalingGroup, Name: fmt.Sprintf("%s x%d", instanceType, desired)},
 	}
+
+	// When queue scaling is enabled, add the two CloudWatch alarms to the cost model.
+	if cfg.Scaling.Enabled {
+		resources = append(resources, cost.Resource{TypeName: cloud.TypeAWSCloudWatchAlarm, Name: "Scale-out alarm"})
+		resources = append(resources, cost.Resource{TypeName: cloud.TypeAWSCloudWatchAlarm, Name: "Scale-in alarm"})
+	}
+
+	return resources
 }
 
 // asgEstimator provides cost estimates for ASG-managed EC2 instances.
@@ -57,4 +65,17 @@ func (asgEstimator) Estimate(r cost.Resource) (cost.Monthly, error) {
 
 func init() {
 	cost.Global.Register(cloud.TypeAWSAutoScalingAutoScalingGroup, asgEstimator{})
+	cost.Global.Register(cloud.TypeAWSCloudWatchAlarm, cloudWatchAlarmEstimator{})
+}
+
+// cloudWatchAlarmEstimator provides cost estimates for CloudWatch alarms.
+// Standard CloudWatch alarms are ~$0.02/month each (free tier covers 10 alarms).
+type cloudWatchAlarmEstimator struct{}
+
+func (cloudWatchAlarmEstimator) Estimate(r cost.Resource) (cost.Monthly, error) {
+	return cost.Monthly{
+		Amount:     0.02,
+		Confidence: cost.High,
+		Note:       fmt.Sprintf("%s (CloudWatch alarm, free tier covers 10)", r.Name),
+	}, nil
 }

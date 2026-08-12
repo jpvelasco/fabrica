@@ -11,6 +11,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/horde"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
@@ -359,5 +360,335 @@ func TestApplyCreate_UserDataError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "generating agent user data") {
 		t.Errorf("error = %q, want 'generating agent user data'", err.Error())
+	}
+}
+
+func TestApplyCreate_WithScaling(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+	})
+	plan := &horde.AgentsCreatePlan{
+		ASGName:              "asg-test",
+		LaunchTemplateName:   "lt-test",
+		InstanceProfileName:  "profile-test",
+		RoleName:             "role-test",
+		SGName:               "sg-test",
+		CoordinatorPrivateIP: "10.0.1.50",
+		CoordinatorPort:      5000,
+		AmiID:                "ami-123",
+		InstanceType:         "c7i.xlarge",
+		MinSize:              0,
+		DesiredCapacity:      1,
+		MaxSize:              2,
+		// Scaling resources
+		ScalingEnabled:     true,
+		ScaleOutThreshold:  10.0,
+		ScaleInThreshold:   2.0,
+		ScaleInCooldown:    120,
+		MetricName:         "ASGQueueDepth",
+		MetricNamespace:    "Fabrica/HordeAgents",
+		ScaleOutAlarmName:  "alarm-out",
+		ScaleInAlarmName:   "alarm-in",
+		ScaleOutPolicyName: "policy-out",
+		ScaleInPolicyName:  "policy-in",
+	}
+	callCount := 0
+	c := command{
+		out: &out,
+		createResource: func(ctx context.Context, r *cloud.Resource) error {
+			callCount++
+			r.Identifier = fmt.Sprintf("resource-%d", callCount)
+			return nil
+		},
+		writeState: func(st *fabricastate.State) error { return nil },
+	}
+	err := c.applyCreate(context.Background(), st, plan)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 5 base resources + 4 scaling resources (2 policies + 2 alarms) = 9 total
+	if callCount != 9 {
+		t.Errorf("want 9 create calls (5 base + 4 scaling), got %d", callCount)
+	}
+}
+
+func newScalingPlan() *horde.AgentsCreatePlan {
+	return &horde.AgentsCreatePlan{
+		ASGName:              "asg-test",
+		LaunchTemplateName:   "lt-test",
+		InstanceProfileName:  "profile-test",
+		RoleName:             "role-test",
+		SGName:               "sg-test",
+		CoordinatorPrivateIP: "10.0.1.50",
+		CoordinatorPort:      5000,
+		AmiID:                "ami-123",
+		InstanceType:         "c7i.xlarge",
+		MinSize:              0,
+		DesiredCapacity:      1,
+		MaxSize:              2,
+		ScalingEnabled:       true,
+		ScaleOutThreshold:    10.0,
+		ScaleInThreshold:     2.0,
+		ScaleInCooldown:      120,
+		MetricName:           "ASGQueueDepth",
+		MetricNamespace:      "Fabrica/HordeAgents",
+		ScaleOutAlarmName:    "alarm-out",
+		ScaleInAlarmName:     "alarm-in",
+		ScaleOutPolicyName:   "policy-out",
+		ScaleInPolicyName:    "policy-in",
+	}
+}
+
+func newScalingState() *fabricastate.State {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+	})
+	return st
+}
+
+func TestApplyCreate_ScalingErrors(t *testing.T) {
+	tests := []struct {
+		name          string
+		failOnCall    int
+		wantErrSubstr string
+	}{
+		{"scale-out-policy", 6, "scale-out policy"},
+		{"scale-in-policy", 7, "scale-in policy"},
+		{"scale-out-alarm", 8, "scale-out alarm"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			plan := newScalingPlan()
+			callCount := 0
+			c := command{
+				out: &out,
+				createResource: func(ctx context.Context, r *cloud.Resource) error {
+					callCount++
+					if callCount == tc.failOnCall {
+						return fmt.Errorf("create failed")
+					}
+					r.Identifier = fmt.Sprintf("resource-%d", callCount)
+					return nil
+				},
+				writeState: func(st *fabricastate.State) error { return nil },
+			}
+			err := c.applyCreate(context.Background(), newScalingState(), plan)
+			if err == nil {
+				t.Fatalf("expected error when %s creation fails", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantErrSubstr) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tc.wantErrSubstr)
+			}
+		})
+	}
+}
+
+func TestApplyCreate_WithoutScaling(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+	})
+	plan := &horde.AgentsCreatePlan{
+		ASGName:              "asg-test",
+		LaunchTemplateName:   "lt-test",
+		InstanceProfileName:  "profile-test",
+		RoleName:             "role-test",
+		SGName:               "sg-test",
+		CoordinatorPrivateIP: "10.0.1.50",
+		CoordinatorPort:      5000,
+		AmiID:                "ami-123",
+		InstanceType:         "c7i.xlarge",
+		MinSize:              0,
+		DesiredCapacity:      1,
+		MaxSize:              2,
+		ScalingEnabled:       false,
+	}
+	callCount := 0
+	c := command{
+		out: &out,
+		createResource: func(ctx context.Context, r *cloud.Resource) error {
+			callCount++
+			r.Identifier = fmt.Sprintf("resource-%d", callCount)
+			return nil
+		},
+		writeState: func(st *fabricastate.State) error { return nil },
+	}
+	err := c.applyCreate(context.Background(), st, plan)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Only 5 base resources when scaling is disabled
+	if callCount != 5 {
+		t.Errorf("want 5 create calls (base only), got %d", callCount)
+	}
+}
+
+func TestPrintDryRun_WithScaling(t *testing.T) {
+	var out bytes.Buffer
+	plan := &horde.AgentsCreatePlan{
+		ASGName:              "asg-test",
+		LaunchTemplateName:   "lt-test",
+		InstanceProfileName:  "profile-test",
+		RoleName:             "role-test",
+		SGName:               "sg-test",
+		CoordinatorPrivateIP: "10.0.1.50",
+		CoordinatorPort:      5000,
+		AmiID:                "ami-123",
+		InstanceType:         "c7i.xlarge",
+		MinSize:              0,
+		DesiredCapacity:      1,
+		MaxSize:              2,
+		ScalingEnabled:       true,
+		ScaleOutThreshold:    10.0,
+		ScaleInThreshold:     2.0,
+		ScaleInCooldown:      120,
+		MetricName:           "ASGQueueDepth",
+		MetricNamespace:      "Fabrica/HordeAgents",
+		ScaleOutAlarmName:    "alarm-out",
+		ScaleInAlarmName:     "alarm-in",
+		ScaleOutPolicyName:   "policy-out",
+		ScaleInPolicyName:    "policy-in",
+	}
+	c := command{
+		out:   &out,
+		costs: fabricacost.Global,
+	}
+	c.printDryRun(plan)
+
+	got := out.String()
+	if !strings.Contains(got, "Scaling enabled") {
+		t.Error("dry run output should mention 'Scaling enabled'")
+	}
+	if !strings.Contains(got, "Scale-out threshold") {
+		t.Error("dry run output should mention 'Scale-out threshold'")
+	}
+	if !strings.Contains(got, "Scale-in threshold") {
+		t.Error("dry run output should mention 'Scale-in threshold'")
+	}
+	if !strings.Contains(got, "Scale-out Policy") {
+		t.Error("dry run output should list 'Scale-out Policy'")
+	}
+	if !strings.Contains(got, "Scale-in Policy") {
+		t.Error("dry run output should list 'Scale-in Policy'")
+	}
+	if !strings.Contains(got, "Scale-out Alarm") {
+		t.Error("dry run output should list 'Scale-out Alarm'")
+	}
+	if !strings.Contains(got, "Scale-in Alarm") {
+		t.Error("dry run output should list 'Scale-in Alarm'")
+	}
+}
+
+func TestPrintDryRun_WithoutScaling(t *testing.T) {
+	var out bytes.Buffer
+	plan := &horde.AgentsCreatePlan{
+		ASGName:              "asg-test",
+		LaunchTemplateName:   "lt-test",
+		InstanceProfileName:  "profile-test",
+		RoleName:             "role-test",
+		SGName:               "sg-test",
+		CoordinatorPrivateIP: "10.0.1.50",
+		CoordinatorPort:      5000,
+		AmiID:                "ami-123",
+		InstanceType:         "c7i.xlarge",
+		MinSize:              0,
+		DesiredCapacity:      1,
+		MaxSize:              2,
+		ScalingEnabled:       false,
+	}
+	c := command{
+		out:   &out,
+		costs: fabricacost.Global,
+	}
+	c.printDryRun(plan)
+
+	got := out.String()
+	if strings.Contains(got, "Scaling enabled") {
+		t.Error("dry run output should not mention scaling when disabled")
+	}
+	if strings.Contains(got, "Scale-out Policy") {
+		t.Error("dry run output should not list scaling policy when disabled")
+	}
+}
+
+func TestPrintApplyPlan(t *testing.T) {
+	var out bytes.Buffer
+	plan := &horde.AgentsCreatePlan{
+		ASGName:              "asg-test",
+		LaunchTemplateName:   "lt-test",
+		InstanceProfileName:  "profile-test",
+		RoleName:             "role-test",
+		SGName:               "sg-test",
+		CoordinatorPrivateIP: "10.0.1.50",
+		CoordinatorPort:      5000,
+		AmiID:                "ami-123",
+		InstanceType:         "c7i.xlarge",
+		MinSize:              0,
+		DesiredCapacity:      1,
+		MaxSize:              2,
+	}
+	c := command{out: &out}
+	c.printApplyPlan(plan)
+
+	got := out.String()
+	if !strings.Contains(got, "asg-test") {
+		t.Error("apply plan should mention ASG name")
+	}
+	if !strings.Contains(got, "0/1/2") {
+		t.Error("apply plan should show capacity")
+	}
+}
+
+func TestPrintPostCreate(t *testing.T) {
+	var out bytes.Buffer
+	plan := &horde.AgentsCreatePlan{
+		ASGName:              "asg-test",
+		LaunchTemplateName:   "lt-test",
+		CoordinatorPrivateIP: "10.0.1.50",
+		CoordinatorPort:      5000,
+		MinSize:              0,
+		DesiredCapacity:      1,
+		MaxSize:              2,
+	}
+	c := command{out: &out}
+	c.printPostCreate(plan, "asg-created")
+
+	got := out.String()
+	if !strings.Contains(got, "asg-created") {
+		t.Error("post create should mention ASG ID")
+	}
+	if !strings.Contains(got, "Systems Manager") {
+		t.Error("post create should mention SSM access")
+	}
+}
+
+func TestPrintPostCreate_WithScaling(t *testing.T) {
+	var out bytes.Buffer
+	plan := &horde.AgentsCreatePlan{
+		ASGName:              "asg-test",
+		LaunchTemplateName:   "lt-test",
+		CoordinatorPrivateIP: "10.0.1.50",
+		CoordinatorPort:      5000,
+		MinSize:              0,
+		DesiredCapacity:      1,
+		MaxSize:              2,
+		ScalingEnabled:       true,
+		MetricName:           "ASGQueueDepth",
+		MetricNamespace:      "Fabrica/HordeAgents",
+	}
+	c := command{out: &out}
+	c.printPostCreate(plan, "asg-created")
+
+	got := out.String()
+	if !strings.Contains(got, "Queue scaling") {
+		t.Error("post create should mention queue scaling when enabled")
+	}
+	if !strings.Contains(got, "ASGQueueDepth") {
+		t.Error("post create should mention metric name")
 	}
 }

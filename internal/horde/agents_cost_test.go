@@ -168,3 +168,50 @@ func TestASGEstimator_UnknownInstanceType(t *testing.T) {
 		t.Fatal("expected error for unknown instance type")
 	}
 }
+
+func TestAgentsCostResources_ScalingEnabled(t *testing.T) {
+	resources := AgentsCostResources(config.HordeAgentsConfig{
+		Scaling: config.HordeAgentsScalingConfig{Enabled: true},
+	})
+	if len(resources) != 3 {
+		t.Fatalf("want 3 resources (ASG + 2 alarms), got %d", len(resources))
+	}
+	if resources[0].TypeName != cloud.TypeAWSAutoScalingAutoScalingGroup {
+		t.Errorf("[0] TypeName = %q, want ASG", resources[0].TypeName)
+	}
+	if resources[1].TypeName != cloud.TypeAWSCloudWatchAlarm {
+		t.Errorf("[1] TypeName = %q, want CloudWatch Alarm", resources[1].TypeName)
+	}
+	if resources[2].TypeName != cloud.TypeAWSCloudWatchAlarm {
+		t.Errorf("[2] TypeName = %q, want CloudWatch Alarm", resources[2].TypeName)
+	}
+}
+
+func TestAgentsCostResources_ScalingDisabled(t *testing.T) {
+	resources := AgentsCostResources(config.HordeAgentsConfig{
+		Scaling: config.HordeAgentsScalingConfig{Enabled: false},
+	})
+	if len(resources) != 1 {
+		t.Fatalf("want 1 resource (ASG only), got %d", len(resources))
+	}
+}
+
+func TestCloudWatchAlarmEstimator(t *testing.T) {
+	est := cloudWatchAlarmEstimator{}
+	monthly, err := est.Estimate(cost.Resource{
+		TypeName: cloud.TypeAWSCloudWatchAlarm,
+		Name:     "Scale-out alarm",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if monthly.Amount != 0.02 {
+		t.Errorf("Amount = %.2f, want 0.02", monthly.Amount)
+	}
+	if monthly.Confidence != cost.High {
+		t.Errorf("Confidence = %v, want High", monthly.Confidence)
+	}
+	if monthly.Note == "" {
+		t.Error("Note should not be empty")
+	}
+}

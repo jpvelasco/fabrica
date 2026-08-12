@@ -32,8 +32,11 @@ func isAgentResource(r fabricastate.ModuleResource) bool {
 
 // agentsToDelete returns agent resources in deletion order.
 func agentsToDelete(m *fabricastate.ModuleState) []cloud.Resource {
-	// ASG → LT → instance profile → role → SG.
+	// Scaling policy → alarms → ASG → LT → instance profile → role → SG.
+	// Scaling resources must be deleted before the ASG they reference.
 	order := []string{
+		"AWS::AutoScaling::ScalingPolicy",
+		"AWS::CloudWatch::Alarm",
 		"AWS::AutoScaling::AutoScalingGroup",
 		"AWS::EC2::LaunchTemplate",
 		"AWS::IAM::InstanceProfile",
@@ -82,11 +85,13 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Long: `Permanently delete the Horde build agent pool and all its AWS resources.
 
 Resources are deleted in reverse-creation order to respect dependencies:
-  1. Auto Scaling Group (scaled to 0 and deleted first)
-  2. Launch Template
-  3. IAM Instance Profile
-  4. IAM Role
-  5. Security Group
+  1. Scaling Policies (scale-out and scale-in, if enabled)
+  2. CloudWatch Alarms (scale-out and scale-in, if enabled)
+  3. Auto Scaling Group (scaled to 0 and deleted)
+  4. Launch Template
+  5. IAM Instance Profile
+  6. IAM Role
+  7. Security Group
 
 This removes only the agent pool resources. The Horde coordinator and its
 resources are not affected. Use 'fabrica horde destroy' to remove the

@@ -197,3 +197,165 @@ func TestASGDesiredState(t *testing.T) {
 		t.Errorf("LaunchTemplateId = %v, want lt-12345", lt["LaunchTemplateId"])
 	}
 }
+
+func newTestScalingPlan() *AgentsCreatePlan {
+	p := newTestAgentsPlan()
+	p.ScalingEnabled = true
+	p.ScaleOutThreshold = 10.0
+	p.ScaleInThreshold = 2.0
+	p.ScaleInCooldown = 120
+	p.MetricName = "ASGQueueDepth"
+	p.MetricNamespace = "Fabrica/HordeAgents"
+	p.ScaleOutAlarmName = "fabrica-horde-agents-scale-out"
+	p.ScaleInAlarmName = "fabrica-horde-agents-scale-in"
+	p.ScaleOutPolicyName = "fabrica-horde-agents-scale-out-policy"
+	p.ScaleInPolicyName = "fabrica-horde-agents-scale-in-policy"
+	return p
+}
+
+func TestScaleOutPolicyDesiredState(t *testing.T) {
+	plan := newTestScalingPlan()
+	ds, err := ScaleOutPolicyDesiredState(plan)
+	if err != nil {
+		t.Fatalf("ScaleOutPolicyDesiredState: %v", err)
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(ds, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if doc["AutoScalingGroupName"] != plan.ASGName {
+		t.Errorf("AutoScalingGroupName = %v, want %s", doc["AutoScalingGroupName"], plan.ASGName)
+	}
+	if doc["PolicyName"] != plan.ScaleOutPolicyName {
+		t.Errorf("PolicyName = %v, want %s", doc["PolicyName"], plan.ScaleOutPolicyName)
+	}
+	if doc["PolicyType"] != "SimpleScaling" {
+		t.Errorf("PolicyType = %v, want SimpleScaling", doc["PolicyType"])
+	}
+	if doc["ScalingAdjustment"] != float64(1) {
+		t.Errorf("ScalingAdjustment = %v, want 1", doc["ScalingAdjustment"])
+	}
+	if doc["AdjustmentType"] != "ChangeInCapacity" {
+		t.Errorf("AdjustmentType = %v, want ChangeInCapacity", doc["AdjustmentType"])
+	}
+	if doc["Cooldown"] != float64(plan.ScaleInCooldown) {
+		t.Errorf("Cooldown = %v, want %d", doc["Cooldown"], plan.ScaleInCooldown)
+	}
+}
+
+func TestScaleInPolicyDesiredState(t *testing.T) {
+	plan := newTestScalingPlan()
+	ds, err := ScaleInPolicyDesiredState(plan)
+	if err != nil {
+		t.Fatalf("ScaleInPolicyDesiredState: %v", err)
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(ds, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if doc["AutoScalingGroupName"] != plan.ASGName {
+		t.Errorf("AutoScalingGroupName = %v, want %s", doc["AutoScalingGroupName"], plan.ASGName)
+	}
+	if doc["PolicyName"] != plan.ScaleInPolicyName {
+		t.Errorf("PolicyName = %v, want %s", doc["PolicyName"], plan.ScaleInPolicyName)
+	}
+	if doc["PolicyType"] != "SimpleScaling" {
+		t.Errorf("PolicyType = %v, want SimpleScaling", doc["PolicyType"])
+	}
+	if doc["ScalingAdjustment"] != float64(-1) {
+		t.Errorf("ScalingAdjustment = %v, want -1", doc["ScalingAdjustment"])
+	}
+	if doc["AdjustmentType"] != "ChangeInCapacity" {
+		t.Errorf("AdjustmentType = %v, want ChangeInCapacity", doc["AdjustmentType"])
+	}
+}
+
+func TestScaleOutAlarmDesiredState(t *testing.T) {
+	plan := newTestScalingPlan()
+	testPolicyARN := "arn:aws:autoscaling:us-east-1:123456789012:scalingPolicy:a1b2c3d4-e5f6-7890-abcd-ef1234567890:autoScalingGroupName/fabrica-horde-agents-asg:policyName/fabrica-horde-agents-scale-out-policy"
+	ds, err := ScaleOutAlarmDesiredState(plan, testPolicyARN)
+	if err != nil {
+		t.Fatalf("ScaleOutAlarmDesiredState: %v", err)
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(ds, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if doc["AlarmName"] != plan.ScaleOutAlarmName {
+		t.Errorf("AlarmName = %v, want %s", doc["AlarmName"], plan.ScaleOutAlarmName)
+	}
+	if doc["MetricName"] != plan.MetricName {
+		t.Errorf("MetricName = %v, want %s", doc["MetricName"], plan.MetricName)
+	}
+	if doc["Namespace"] != plan.MetricNamespace {
+		t.Errorf("Namespace = %v, want %s", doc["Namespace"], plan.MetricNamespace)
+	}
+	if doc["Threshold"] != plan.ScaleOutThreshold {
+		t.Errorf("Threshold = %v, want %g", doc["Threshold"], plan.ScaleOutThreshold)
+	}
+	if doc["ComparisonOperator"] != "GreaterThanThreshold" {
+		t.Errorf("ComparisonOperator = %v, want GreaterThanThreshold", doc["ComparisonOperator"])
+	}
+	if doc["TreatMissingData"] != "notBreaching" {
+		t.Errorf("TreatMissingData = %v, want notBreaching", doc["TreatMissingData"])
+	}
+
+	// AlarmActions must contain the exact policy ARN passed to the builder.
+	actions, ok := doc["AlarmActions"].([]any)
+	if !ok || len(actions) != 1 {
+		t.Fatalf("expected 1 AlarmAction, got %d", len(actions))
+	}
+	actionARN, ok := actions[0].(string)
+	if !ok {
+		t.Fatal("AlarmAction is not a string")
+	}
+	if actionARN != testPolicyARN {
+		t.Errorf("AlarmAction ARN = %q, want %q", actionARN, testPolicyARN)
+	}
+}
+
+func TestScaleInAlarmDesiredState(t *testing.T) {
+	plan := newTestScalingPlan()
+	testPolicyARN := "arn:aws:autoscaling:us-east-1:123456789012:scalingPolicy:deadbeef-1234-5678-9abc-def012345678:autoScalingGroupName/fabrica-horde-agents-asg:policyName/fabrica-horde-agents-scale-in-policy"
+	ds, err := ScaleInAlarmDesiredState(plan, testPolicyARN)
+	if err != nil {
+		t.Fatalf("ScaleInAlarmDesiredState: %v", err)
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(ds, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if doc["AlarmName"] != plan.ScaleInAlarmName {
+		t.Errorf("AlarmName = %v, want %s", doc["AlarmName"], plan.ScaleInAlarmName)
+	}
+	if doc["MetricName"] != plan.MetricName {
+		t.Errorf("MetricName = %v, want %s", doc["MetricName"], plan.MetricName)
+	}
+	if doc["Threshold"] != plan.ScaleInThreshold {
+		t.Errorf("Threshold = %v, want %g", doc["Threshold"], plan.ScaleInThreshold)
+	}
+	if doc["ComparisonOperator"] != "LessThanThreshold" {
+		t.Errorf("ComparisonOperator = %v, want LessThanThreshold", doc["ComparisonOperator"])
+	}
+
+	// AlarmActions must contain the exact policy ARN passed to the builder.
+	actions, ok := doc["AlarmActions"].([]any)
+	if !ok || len(actions) != 1 {
+		t.Fatalf("expected 1 AlarmAction, got %d", len(actions))
+	}
+	actionARN, ok := actions[0].(string)
+	if !ok {
+		t.Fatal("AlarmAction is not a string")
+	}
+	if actionARN != testPolicyARN {
+		t.Errorf("AlarmAction ARN = %q, want %q", actionARN, testPolicyARN)
+	}
+}

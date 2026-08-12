@@ -138,3 +138,83 @@ func ASGDesiredState(plan *AgentsCreatePlan, ltID string) (json.RawMessage, erro
 
 	return json.Marshal(doc)
 }
+
+// ScaleOutPolicyDesiredState returns Cloud Control desired-state for the
+// scale-out SimpleScaling policy. When triggered by the scale-out alarm,
+// it adds one instance to the ASG. The ASG's MinSize/MaxSize act as hard bounds.
+func ScaleOutPolicyDesiredState(plan *AgentsCreatePlan) (json.RawMessage, error) {
+	doc := map[string]any{
+		"AutoScalingGroupName": plan.ASGName,
+		"PolicyName":           plan.ScaleOutPolicyName,
+		"PolicyType":           "SimpleScaling",
+		"ScalingAdjustment":    1,
+		"Cooldown":             plan.ScaleInCooldown,
+		"AdjustmentType":       "ChangeInCapacity",
+	}
+
+	return json.Marshal(doc)
+}
+
+// ScaleInPolicyDesiredState returns Cloud Control desired-state for the
+// scale-in SimpleScaling policy. When triggered by the scale-in alarm,
+// it removes one instance from the ASG. The ASG's MinSize/MaxSize act as hard bounds.
+func ScaleInPolicyDesiredState(plan *AgentsCreatePlan) (json.RawMessage, error) {
+	doc := map[string]any{
+		"AutoScalingGroupName": plan.ASGName,
+		"PolicyName":           plan.ScaleInPolicyName,
+		"PolicyType":           "SimpleScaling",
+		"ScalingAdjustment":    -1,
+		"Cooldown":             plan.ScaleInCooldown,
+		"AdjustmentType":       "ChangeInCapacity",
+	}
+
+	return json.Marshal(doc)
+}
+
+// ScaleOutAlarmDesiredState returns Cloud Control desired-state for the scale-out
+// CloudWatch alarm. This alarm fires when the queue depth metric exceeds the
+// configured scale-out threshold, triggering the scale-out scaling policy to
+// add instances. The policyARN is the real ARN returned by Cloud Control after
+// creating the scaling policy.
+func ScaleOutAlarmDesiredState(plan *AgentsCreatePlan, policyARN string) (json.RawMessage, error) {
+	doc := map[string]any{
+		"AlarmName":          plan.ScaleOutAlarmName,
+		"AlarmDescription":   "Scale out Horde agent pool when queue depth exceeds threshold",
+		"MetricName":         plan.MetricName,
+		"Namespace":          plan.MetricNamespace,
+		"Statistic":          "Average",
+		"Dimensions":         []map[string]any{{"Name": "AutoScalingGroupName", "Value": plan.ASGName}},
+		"Period":             300,
+		"EvaluationPeriods":  2,
+		"Threshold":          plan.ScaleOutThreshold,
+		"ComparisonOperator": "GreaterThanThreshold",
+		"AlarmActions":       []string{policyARN},
+		"TreatMissingData":   "notBreaching",
+	}
+
+	return json.Marshal(doc)
+}
+
+// ScaleInAlarmDesiredState returns Cloud Control desired-state for the scale-in
+// CloudWatch alarm. This alarm fires when the queue depth metric drops below the
+// configured scale-in threshold, triggering the scale-in scaling policy to
+// remove instances. The policyARN is the real ARN returned by Cloud Control after
+// creating the scaling policy.
+func ScaleInAlarmDesiredState(plan *AgentsCreatePlan, policyARN string) (json.RawMessage, error) {
+	doc := map[string]any{
+		"AlarmName":          plan.ScaleInAlarmName,
+		"AlarmDescription":   "Scale in Horde agent pool when queue depth drops below threshold",
+		"MetricName":         plan.MetricName,
+		"Namespace":          plan.MetricNamespace,
+		"Statistic":          "Average",
+		"Dimensions":         []map[string]any{{"Name": "AutoScalingGroupName", "Value": plan.ASGName}},
+		"Period":             300,
+		"EvaluationPeriods":  2,
+		"Threshold":          plan.ScaleInThreshold,
+		"ComparisonOperator": "LessThanThreshold",
+		"AlarmActions":       []string{policyARN},
+		"TreatMissingData":   "notBreaching",
+	}
+
+	return json.Marshal(doc)
+}

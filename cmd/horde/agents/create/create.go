@@ -32,9 +32,14 @@ type command struct {
 	minSize      int
 	desiredCap   int
 	maxSize      int
-	out          io.Writer
-	costs        *fabricacost.Registry
-	confirm      func(string, string) bool
+	// Scaling flags
+	scalingEnabled    bool
+	scaleOutThreshold float64
+	scaleInThreshold  float64
+	scaleInCooldown   int
+	out               io.Writer
+	costs             *fabricacost.Registry
+	confirm           func(string, string) bool
 
 	// seams for testing
 	readState      func() (*fabricastate.State, error)
@@ -51,6 +56,10 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 	var minSize int
 	var desiredCap int
 	var maxSize int
+	var scalingEnabled bool
+	var scaleOutThreshold float64
+	var scaleInThreshold float64
+	var scaleInCooldown int
 
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -75,6 +84,12 @@ Creates five resources in order:
   4. Launch Template — agent AMI, instance type, user data, profile, SG
   5. Auto Scaling Group — min/desired/max capacity, subnets, LT
 
+With --scaling-enabled, provisions two CloudWatch alarms and two
+SimpleScaling policies (one for scale-out, one for scale-in) for
+queue-based autoscaling. The metric (default: ASGQueueDepth
+in namespace Fabrica/HordeAgents) must be published by the agent or a sidecar.
+Min/Max capacity act as hard bounds on scaling. See docs/horde-scaling.md.
+
 Prerequisites:
   - 'fabrica horde create' must have been run first (coordinator required)
   - horde.agents.amiId must be set in fabrica.yaml or passed via --ami-id
@@ -89,17 +104,21 @@ without making any AWS calls.`,
 			opts := optionsSource()
 
 			c := command{
-				runtime:      rt,
-				dryRun:       opts.DryRun,
-				assumeYes:    opts.AssumeYes,
-				amiID:        amiID,
-				instanceType: instanceType,
-				minSize:      minSize,
-				desiredCap:   desiredCap,
-				maxSize:      maxSize,
-				out:          out,
-				costs:        fabricacost.Global,
-				confirm:      prompt.ConfirmExact,
+				runtime:           rt,
+				dryRun:            opts.DryRun,
+				assumeYes:         opts.AssumeYes,
+				amiID:             amiID,
+				instanceType:      instanceType,
+				minSize:           minSize,
+				desiredCap:        desiredCap,
+				maxSize:           maxSize,
+				scalingEnabled:    scalingEnabled,
+				scaleOutThreshold: scaleOutThreshold,
+				scaleInThreshold:  scaleInThreshold,
+				scaleInCooldown:   scaleInCooldown,
+				out:               out,
+				costs:             fabricacost.Global,
+				confirm:           prompt.ConfirmExact,
 			}
 			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
 			c.writeState = fabricastate.WriteState
@@ -117,6 +136,10 @@ without making any AWS calls.`,
 	cmd.Flags().IntVar(&minSize, "min-size", 0, "Minimum ASG size (default: 0)")
 	cmd.Flags().IntVar(&desiredCap, "desired-capacity", 0, "Desired ASG capacity (default: 1)")
 	cmd.Flags().IntVar(&maxSize, "max-size", 0, "Maximum ASG size (default: 2)")
+	cmd.Flags().BoolVar(&scalingEnabled, "scaling-enabled", false, "Enable queue-based autoscaling (CloudWatch alarms + scaling policy)")
+	cmd.Flags().Float64Var(&scaleOutThreshold, "scale-out-threshold", 0, "Queue depth threshold to scale out (default: 5.0)")
+	cmd.Flags().Float64Var(&scaleInThreshold, "scale-in-threshold", 0, "Queue depth threshold to scale in (default: 1.0)")
+	cmd.Flags().IntVar(&scaleInCooldown, "scale-in-cooldown", 0, "Scale-in cooldown in seconds (default: 300, minimum: 60)")
 	return cmd
 }
 
@@ -141,6 +164,20 @@ func (c command) run(ctx context.Context) error {
 	}
 	if c.minSize > 0 {
 		agentsCfg.MinSize = c.minSize
+	}
+
+	// Apply scaling flags — CLI flags override config.
+	if c.scalingEnabled {
+		agentsCfg.Scaling.Enabled = true
+	}
+	if c.scaleOutThreshold > 0 {
+		agentsCfg.Scaling.ScaleOutThreshold = c.scaleOutThreshold
+	}
+	if c.scaleInThreshold > 0 {
+		agentsCfg.Scaling.ScaleInThreshold = c.scaleInThreshold
+	}
+	if c.scaleInCooldown > 0 {
+		agentsCfg.Scaling.ScaleInCooldown = c.scaleInCooldown
 	}
 
 	// Resolve coordinator details from state + Cloud Control.
@@ -349,36 +386,143 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		return fmt.Errorf("creating auto scaling group: %w", err)
 	}
 
+	// 6-9. Queue-based scaling resources (policies then alarms) — only when enabled.
+	// Policies are created before alarms because AlarmActions reference the policy ARN.
+	if plan.ScalingEnabled {
+		resources, err = c.applyScalingResources(ctx, plan, resources, st, ver)
+		if err != nil {
+			return fmt.Errorf("creating scaling resources: %w", err)
+		}
+	}
+
 	c.printPostCreate(plan, resources[len(resources)-1].Identifier)
 	return nil
 }
 
+func (c command) applyScalingResources(ctx context.Context, plan *horde.AgentsCreatePlan, resources []fabricastate.ModuleResource, st *fabricastate.State, ver string) ([]fabricastate.ModuleResource, error) {
+	// 6. Scale-out policy (created before alarms so AlarmActions can reference its ARN)
+	fmt.Fprintf(c.out, "Creating scale-out policy %s...\n", plan.ScaleOutPolicyName)
+	var err error
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:    "Scale-out policy",
+		TypeName: cloud.TypeAWSAutoScalingScalingPolicy,
+		BuildDesiredState: func() ([]byte, error) {
+			return horde.ScaleOutPolicyDesiredState(plan)
+		},
+		Properties: map[string]string{
+			"role":              "agent",
+			"scalingPolicy":     "scale-out",
+			"scaleOutThreshold": fmt.Sprintf("%g", plan.ScaleOutThreshold),
+		},
+	}, moduleName, ver, "ready", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return resources, fmt.Errorf("creating scale-out policy: %w", err)
+	}
+	scaleOutPolicyARN := resources[len(resources)-1].Identifier
+
+	// 7. Scale-in policy
+	fmt.Fprintf(c.out, "Creating scale-in policy %s...\n", plan.ScaleInPolicyName)
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:    "Scale-in policy",
+		TypeName: cloud.TypeAWSAutoScalingScalingPolicy,
+		BuildDesiredState: func() ([]byte, error) {
+			return horde.ScaleInPolicyDesiredState(plan)
+		},
+		Properties: map[string]string{
+			"role":             "agent",
+			"scalingPolicy":    "scale-in",
+			"cooldown":         fmt.Sprintf("%d", plan.ScaleInCooldown),
+			"scaleInThreshold": fmt.Sprintf("%g", plan.ScaleInThreshold),
+		},
+	}, moduleName, ver, "ready", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return resources, fmt.Errorf("creating scale-in policy: %w", err)
+	}
+	scaleInPolicyARN := resources[len(resources)-1].Identifier
+
+	// 8. Scale-out alarm — uses the real policy ARN from Cloud Control.
+	fmt.Fprintf(c.out, "Creating scale-out alarm %s...\n", plan.ScaleOutAlarmName)
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:    "Scale-out alarm",
+		TypeName: cloud.TypeAWSCloudWatchAlarm,
+		BuildDesiredState: func() ([]byte, error) {
+			return horde.ScaleOutAlarmDesiredState(plan, scaleOutPolicyARN)
+		},
+		Properties: map[string]string{
+			"role":         "agent",
+			"scalingAlarm": "scale-out",
+			"threshold":    fmt.Sprintf("%g", plan.ScaleOutThreshold),
+			"metricName":   plan.MetricName,
+			"metricNs":     plan.MetricNamespace,
+		},
+	}, moduleName, ver, "ready", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return resources, fmt.Errorf("creating scale-out alarm: %w", err)
+	}
+
+	// 9. Scale-in alarm — uses the real policy ARN from Cloud Control.
+	fmt.Fprintf(c.out, "Creating scale-in alarm %s...\n", plan.ScaleInAlarmName)
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:    "Scale-in alarm",
+		TypeName: cloud.TypeAWSCloudWatchAlarm,
+		BuildDesiredState: func() ([]byte, error) {
+			return horde.ScaleInAlarmDesiredState(plan, scaleInPolicyARN)
+		},
+		Properties: map[string]string{
+			"role":         "agent",
+			"scalingAlarm": "scale-in",
+			"threshold":    fmt.Sprintf("%g", plan.ScaleInThreshold),
+			"metricName":   plan.MetricName,
+			"metricNs":     plan.MetricNamespace,
+		},
+	}, moduleName, ver, "ready", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return resources, fmt.Errorf("creating scale-in alarm: %w", err)
+	}
+
+	return resources, nil
+}
+
 func (c command) printDryRun(plan *horde.AgentsCreatePlan) {
+	extraFields := []provision.PlanField{
+		{Key: "Agent AMI ID", Value: plan.AmiID},
+		{Key: "Coordinator IP", Value: plan.CoordinatorPrivateIP},
+		{Key: "Coordinator port", Value: fmt.Sprintf("%d", plan.CoordinatorPort)},
+		{Key: "Min size", Value: fmt.Sprintf("%d", plan.MinSize)},
+		{Key: "Desired capacity", Value: fmt.Sprintf("%d", plan.DesiredCapacity)},
+		{Key: "Max size", Value: fmt.Sprintf("%d", plan.MaxSize)},
+	}
+	if plan.ScalingEnabled {
+		extraFields = append(extraFields,
+			provision.PlanField{Key: "Scaling enabled", Value: "yes"},
+			provision.PlanField{Key: "Scale-out threshold", Value: fmt.Sprintf("%g", plan.ScaleOutThreshold)},
+			provision.PlanField{Key: "Scale-in threshold", Value: fmt.Sprintf("%g", plan.ScaleInThreshold)},
+			provision.PlanField{Key: "Scale-in cooldown", Value: fmt.Sprintf("%ds", plan.ScaleInCooldown)},
+			provision.PlanField{Key: "Metric", Value: fmt.Sprintf("%s/%s", plan.MetricNamespace, plan.MetricName)},
+		)
+	}
+
+	resources := []string{
+		"Agent Security Group:   " + plan.SGName,
+		"Agent IAM Role:         " + plan.RoleName,
+		"Agent Instance Profile: " + plan.InstanceProfileName,
+		"Launch Template:        " + plan.LaunchTemplateName,
+		"Auto Scaling Group:     " + plan.ASGName,
+	}
+	if plan.ScalingEnabled {
+		resources = append(resources,
+			"Scale-out Policy:     "+plan.ScaleOutPolicyName,
+			"Scale-in Policy:      "+plan.ScaleInPolicyName,
+			"Scale-out Alarm:      "+plan.ScaleOutAlarmName,
+			"Scale-in Alarm:       "+plan.ScaleInAlarmName,
+		)
+	}
+
 	provision.DryRun(c.out, provision.DryRunSpec{
-		Title: "Horde build agent pool",
-		Info: provision.PlanInfo{
-			Account:      plan.Account,
-			Region:       plan.Region,
-			InstanceType: plan.InstanceType,
-			VolumeSize:   0,
-			VPCID:        plan.VPCID,
-			DefaultVPC:   plan.DefaultVPC,
-		},
-		ExtraFields: []provision.PlanField{
-			{Key: "Agent AMI ID", Value: plan.AmiID},
-			{Key: "Coordinator IP", Value: plan.CoordinatorPrivateIP},
-			{Key: "Coordinator port", Value: fmt.Sprintf("%d", plan.CoordinatorPort)},
-			{Key: "Min size", Value: fmt.Sprintf("%d", plan.MinSize)},
-			{Key: "Desired capacity", Value: fmt.Sprintf("%d", plan.DesiredCapacity)},
-			{Key: "Max size", Value: fmt.Sprintf("%d", plan.MaxSize)},
-		},
-		Resources: []string{
-			"Agent Security Group:   " + plan.SGName,
-			"Agent IAM Role:         " + plan.RoleName,
-			"Agent Instance Profile: " + plan.InstanceProfileName,
-			"Launch Template:        " + plan.LaunchTemplateName,
-			"Auto Scaling Group:     " + plan.ASGName,
-		},
+		Title:         "Horde build agent pool",
+		Info:          provision.PlanInfo{},
+		ExtraFields:   extraFields,
+		Resources:     resources,
 		CostResources: plan.CostResources,
 		Costs:         c.costs,
 	})
@@ -404,15 +548,23 @@ func (c command) printApplyPlan(plan *horde.AgentsCreatePlan) {
 }
 
 func (c command) printPostCreate(plan *horde.AgentsCreatePlan, asgID string) {
+	details := []provision.PlanField{
+		{Key: "Coordinator", Value: fmt.Sprintf("%s:%d", plan.CoordinatorPrivateIP, plan.CoordinatorPort)},
+		{Key: "Capacity", Value: fmt.Sprintf("%d/%d/%d (min/desired/max)", plan.MinSize, plan.DesiredCapacity, plan.MaxSize)},
+		{Key: "Launch Template", Value: plan.LaunchTemplateName},
+	}
+	if plan.ScalingEnabled {
+		details = append(details,
+			provision.PlanField{Key: "Scaling", Value: "enabled (queue-based)"},
+			provision.PlanField{Key: "Metric", Value: fmt.Sprintf("%s/%s", plan.MetricNamespace, plan.MetricName)},
+		)
+	}
+
 	provision.PostCreate(c.out, provision.PostCreateSpec{
 		Title:        "Horde agent pool",
 		InstanceID:   asgID,
 		StatusDetail: fmt.Sprintf("provisioning (%d desired instances launching)", plan.DesiredCapacity),
-		Details: []provision.PlanField{
-			{Key: "Coordinator", Value: fmt.Sprintf("%s:%d", plan.CoordinatorPrivateIP, plan.CoordinatorPort)},
-			{Key: "Capacity", Value: fmt.Sprintf("%d/%d/%d (min/desired/max)", plan.MinSize, plan.DesiredCapacity, plan.MaxSize)},
-			{Key: "Launch Template", Value: plan.LaunchTemplateName},
-		},
+		Details:      details,
 		NextSteps: []string{
 			"fabrica horde agents status    Check agent pool status",
 			"fabrica horde status           Check coordinator health",
@@ -424,6 +576,11 @@ func (c command) printPostCreate(plan *horde.AgentsCreatePlan, asgID string) {
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, "  If agents don't enroll within 5 minutes, check:")
 			fmt.Fprintln(w, "    /var/log/fabrica-horde-agent-init.log  on each agent instance")
+			if plan.ScalingEnabled {
+				fmt.Fprintln(w)
+				fmt.Fprintln(w, "  Queue scaling is active. Ensure your agents publish the")
+				fmt.Fprintf(w, "  %s/%s metric to CloudWatch for scaling to work.\n", plan.MetricNamespace, plan.MetricName)
+			}
 		},
 	})
 }

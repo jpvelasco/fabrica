@@ -209,6 +209,187 @@ func TestNewAgentsCreatePlanVPCResolution(t *testing.T) {
 	}
 }
 
+func TestNewAgentsCreatePlanScalingEnabled(t *testing.T) {
+	cfg := config.HordeAgentsConfig{
+		AmiID: "ami-agent123",
+		Scaling: config.HordeAgentsScalingConfig{
+			Enabled:           true,
+			ScaleOutThreshold: 10.0,
+			ScaleInThreshold:  2.0,
+			ScaleInCooldown:   120,
+		},
+	}
+	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
+	plan, err := NewAgentsCreatePlan(context.Background(), cfg, "10.0.1.10", 5000, "sg-coord", "123456789012", "us-east-1", resolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !plan.ScalingEnabled {
+		t.Error("ScalingEnabled should be true")
+	}
+	if plan.ScaleOutThreshold != 10.0 {
+		t.Errorf("ScaleOutThreshold = %g, want 10.0", plan.ScaleOutThreshold)
+	}
+	if plan.ScaleInThreshold != 2.0 {
+		t.Errorf("ScaleInThreshold = %g, want 2.0", plan.ScaleInThreshold)
+	}
+	if plan.ScaleInCooldown != 120 {
+		t.Errorf("ScaleInCooldown = %d, want 120", plan.ScaleInCooldown)
+	}
+	if plan.MetricName != "ASGQueueDepth" {
+		t.Errorf("MetricName = %q, want ASGQueueDepth (default)", plan.MetricName)
+	}
+	if plan.MetricNamespace != "Fabrica/HordeAgents" {
+		t.Errorf("MetricNamespace = %q, want Fabrica/HordeAgents (default)", plan.MetricNamespace)
+	}
+	if plan.ScaleOutAlarmName != "fabrica-horde-agents-scale-out" {
+		t.Errorf("ScaleOutAlarmName = %q", plan.ScaleOutAlarmName)
+	}
+	if plan.ScaleInAlarmName != "fabrica-horde-agents-scale-in" {
+		t.Errorf("ScaleInAlarmName = %q", plan.ScaleInAlarmName)
+	}
+	if plan.ScaleOutPolicyName != "fabrica-horde-agents-scale-out-policy" {
+		t.Errorf("ScaleOutPolicyName = %q", plan.ScaleOutPolicyName)
+	}
+	if plan.ScaleInPolicyName != "fabrica-horde-agents-scale-in-policy" {
+		t.Errorf("ScaleInPolicyName = %q", plan.ScaleInPolicyName)
+	}
+}
+
+func TestNewAgentsCreatePlanScalingDisabledByDefault(t *testing.T) {
+	cfg := config.HordeAgentsConfig{AmiID: "ami-agent123"}
+	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
+	plan, err := NewAgentsCreatePlan(context.Background(), cfg, "10.0.1.10", 5000, "sg-coord", "123456789012", "us-east-1", resolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if plan.ScalingEnabled {
+		t.Error("ScalingEnabled should be false by default")
+	}
+}
+
+func TestNewAgentsCreatePlanScalingCustomMetric(t *testing.T) {
+	cfg := config.HordeAgentsConfig{
+		AmiID: "ami-agent123",
+		Scaling: config.HordeAgentsScalingConfig{
+			Enabled:           true,
+			ScaleOutThreshold: 5.0,
+			ScaleInThreshold:  1.0,
+			MetricName:        "CustomQueueDepth",
+			MetricNamespace:   "MyApp/Horde",
+		},
+	}
+	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
+	plan, err := NewAgentsCreatePlan(context.Background(), cfg, "10.0.1.10", 5000, "sg-coord", "123456789012", "us-east-1", resolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if plan.MetricName != "CustomQueueDepth" {
+		t.Errorf("MetricName = %q, want CustomQueueDepth", plan.MetricName)
+	}
+	if plan.MetricNamespace != "MyApp/Horde" {
+		t.Errorf("MetricNamespace = %q, want MyApp/Horde", plan.MetricNamespace)
+	}
+}
+
+func TestNewAgentsCreatePlanScalingZeroThreshold(t *testing.T) {
+	// Zero thresholds default to 5.0/1.0 when scaling is enabled.
+	cfg := config.HordeAgentsConfig{
+		AmiID: "ami-agent123",
+		Scaling: config.HordeAgentsScalingConfig{
+			Enabled:           true,
+			ScaleOutThreshold: 0,
+			ScaleInThreshold:  0,
+		},
+	}
+	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
+	plan, err := NewAgentsCreatePlan(context.Background(), cfg, "10.0.1.10", 5000, "sg-coord", "123456789012", "us-east-1", resolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if plan.ScaleOutThreshold != 5.0 {
+		t.Errorf("ScaleOutThreshold = %g, want 5.0 (default)", plan.ScaleOutThreshold)
+	}
+	if plan.ScaleInThreshold != 1.0 {
+		t.Errorf("ScaleInThreshold = %g, want 1.0 (default)", plan.ScaleInThreshold)
+	}
+}
+
+func TestNewAgentsCreatePlanScalingNegativeThreshold(t *testing.T) {
+	// Negative thresholds default to 5.0/1.0 when scaling is enabled.
+	cfg := config.HordeAgentsConfig{
+		AmiID: "ami-agent123",
+		Scaling: config.HordeAgentsScalingConfig{
+			Enabled:           true,
+			ScaleOutThreshold: 5.0,
+			ScaleInThreshold:  -1.0,
+		},
+	}
+	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
+	plan, err := NewAgentsCreatePlan(context.Background(), cfg, "10.0.1.10", 5000, "sg-coord", "123456789012", "us-east-1", resolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Negative scaleInThreshold defaults to 1.0.
+	if plan.ScaleInThreshold != 1.0 {
+		t.Errorf("ScaleInThreshold = %g, want 1.0 (default for negative)", plan.ScaleInThreshold)
+	}
+	// Positive scaleOutThreshold is preserved.
+	if plan.ScaleOutThreshold != 5.0 {
+		t.Errorf("ScaleOutThreshold = %g, want 5.0", plan.ScaleOutThreshold)
+	}
+}
+
+func TestNewAgentsCreatePlanScalingEnabledNoThresholds(t *testing.T) {
+	// --scaling-enabled alone should apply defaults for thresholds.
+	cfg := config.HordeAgentsConfig{
+		AmiID: "ami-agent123",
+		Scaling: config.HordeAgentsScalingConfig{
+			Enabled: true,
+		},
+	}
+	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
+	plan, err := NewAgentsCreatePlan(context.Background(), cfg, "10.0.1.10", 5000, "sg-coord", "123456789012", "us-east-1", resolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !plan.ScalingEnabled {
+		t.Error("ScalingEnabled should be true")
+	}
+	if plan.ScaleOutThreshold != 5.0 {
+		t.Errorf("ScaleOutThreshold = %g, want 5.0 (default)", plan.ScaleOutThreshold)
+	}
+	if plan.ScaleInThreshold != 1.0 {
+		t.Errorf("ScaleInThreshold = %g, want 1.0 (default)", plan.ScaleInThreshold)
+	}
+	if plan.ScaleInCooldown != 300 {
+		t.Errorf("ScaleInCooldown = %d, want 300 (default)", plan.ScaleInCooldown)
+	}
+	if plan.MetricName != "ASGQueueDepth" {
+		t.Errorf("MetricName = %q, want ASGQueueDepth (default)", plan.MetricName)
+	}
+	if plan.MetricNamespace != "Fabrica/HordeAgents" {
+		t.Errorf("MetricNamespace = %q, want Fabrica/HordeAgents (default)", plan.MetricNamespace)
+	}
+}
+
+func TestNewAgentsCreatePlanScalingCooldownTooLow(t *testing.T) {
+	cfg := config.HordeAgentsConfig{
+		AmiID: "ami-agent123",
+		Scaling: config.HordeAgentsScalingConfig{
+			Enabled:           true,
+			ScaleOutThreshold: 5.0,
+			ScaleInThreshold:  1.0,
+			ScaleInCooldown:   30,
+		},
+	}
+	_, err := NewAgentsCreatePlan(context.Background(), cfg, "10.0.1.10", 5000, "sg-coord", "123456789012", "us-east-1", nil)
+	if err == nil {
+		t.Fatal("expected error when cooldown < 60")
+	}
+	assert.Contains(t, err.Error(), "scaleInCooldown")
+}
+
 // testutilVPCResolver implements cloud.VPCResolver for plan tests.
 type testutilVPCResolver struct {
 	vpcID    string
