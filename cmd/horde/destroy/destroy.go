@@ -40,6 +40,8 @@ func hordeResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 	}
 
 	phases := []phase{
+		{"scaling-policy", func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::AutoScaling::ScalingPolicy" }},
+		{"alarm", func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::CloudWatch::Alarm" }},
 		{"asg", func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::AutoScaling::AutoScalingGroup" }},
 		{"lt", func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::EC2::LaunchTemplate" }},
 		{"instance", func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::EC2::Instance" }},
