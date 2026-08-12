@@ -4,7 +4,7 @@ This document tracks what Fabrica ships today and where it's headed next.
 The `README.md` describes how to use what exists; this file tracks status and
 sequencing. When they disagree, this file wins.
 
-Last updated: 2026-08-10.
+Last updated: 2026-08-11.
 
 ## What Fabrica Is
 
@@ -30,8 +30,8 @@ These govern every structural decision and carry across all phases.
 
 ## Current Status
 
-**Current stable: v0.3.5** (2026-08-10). Phase 0, Phase 1, Lore (v0.2), and
-DDC (V1 + multi-region edge nodes with live edge probes) are all complete. Export V2 covers all 8
+**Current stable: v0.4.0** (2026-08-11). Phase 0, Phase 1, Lore (v0.2), DDC
+(V1 + multi-region edge nodes with live edge probes), and Horde Agents V1 are all complete. Export V2 covers all 8
 modules (state backend, Horde, Perforce, Lore, DDC, Workstation, CI, Deploy).
 Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release.
 
