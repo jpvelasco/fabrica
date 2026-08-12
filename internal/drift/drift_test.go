@@ -569,6 +569,86 @@ func TestRun_ImageIdPropertiesFallbackToVersion(t *testing.T) {
 	}
 }
 
+func TestRun_LoreS3StoreInSync(t *testing.T) {
+	// Lore with S3 store backend includes S3 bucket, IAM role, instance profile, and instance.
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("lore", "ami-lore123", "ready", []state.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-lore"},
+		{TypeName: "AWS::S3::Bucket", Identifier: "fabrica-lore-store-123456789012-us-east-1"},
+		{TypeName: "AWS::IAM::Role", Identifier: "fabrica-lore-role"},
+		{TypeName: "AWS::IAM::InstanceProfile", Identifier: "fabrica-lore-profile"},
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-lore", Properties: map[string]string{
+			"instanceType": "m5.xlarge",
+		}},
+	})
+
+	engine := &Engine{
+		State: st,
+		ResourceGet: func(_ context.Context, r *cloud.Resource) error {
+			// All resources exist and are in sync.
+			if r.TypeName == "AWS::EC2::Instance" {
+				r.ActualState = json.RawMessage(`{"State":{"Name":"running"},"InstanceType":"m5.xlarge","ImageId":"ami-lore123"}`)
+			}
+			return nil
+		},
+	}
+
+	report := engine.Run(context.Background())
+
+	if report.Checked != 5 {
+		t.Errorf("expected 5 checked, got %d", report.Checked)
+	}
+	if report.InSync != 5 {
+		t.Errorf("expected 5 inSync, got %d", report.InSync)
+	}
+	if report.Missing != 0 {
+		t.Errorf("expected 0 missing, got %d", report.Missing)
+	}
+}
+
+func TestRun_LoreS3BucketMissing(t *testing.T) {
+	// Lore S3 bucket missing from live AWS — should report as Missing.
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("lore", "ami-lore123", "ready", []state.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-lore"},
+		{TypeName: "AWS::S3::Bucket", Identifier: "fabrica-lore-store-123456789012-us-east-1"},
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-lore", Properties: map[string]string{
+			"instanceType": "m5.xlarge",
+		}},
+	})
+
+	engine := &Engine{
+		State: st,
+		ResourceGet: func(_ context.Context, r *cloud.Resource) error {
+			if r.TypeName == "AWS::S3::Bucket" {
+				return cloud.ErrResourceNotFound
+			}
+			if r.TypeName == "AWS::EC2::Instance" {
+				r.ActualState = json.RawMessage(`{"State":{"Name":"running"},"InstanceType":"m5.xlarge","ImageId":"ami-lore123"}`)
+			}
+			return nil
+		},
+	}
+
+	report := engine.Run(context.Background())
+
+	if report.Missing != 1 {
+		t.Errorf("expected 1 missing (S3 bucket), got %d", report.Missing)
+	}
+	// Find the missing S3 bucket in the report.
+	foundMissing := false
+	for _, md := range report.Modules {
+		for _, r := range md.Resources {
+			if r.Status == Missing && r.TypeName == "AWS::S3::Bucket" {
+				foundMissing = true
+			}
+		}
+	}
+	if !foundMissing {
+		t.Error("expected S3 bucket to be reported as Missing in drift report")
+	}
+}
+
 func TestRun_ExtraResource(t *testing.T) {
 	st := state.NewState("123456789012", "us-east-1")
 	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{

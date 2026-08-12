@@ -129,8 +129,8 @@ type LoreConfig struct {
 }
 
 // LoreTLSConfig holds optional TLS settings for the Lore server.
-// When enabled, Fabrica configures the loreserver to use the specified
-// certificate and key paths at boot time.
+// The fields are parsed from fabrica.yaml but are not yet wired into
+// cloud-init. Setting tls.enabled is a no-op until V2 implementation.
 type LoreTLSConfig struct {
 	Enabled  bool   `mapstructure:"enabled"  yaml:"enabled"`
 	CertPath string `mapstructure:"certPath" yaml:"certPath"`
