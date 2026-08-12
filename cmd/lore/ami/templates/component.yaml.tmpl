@@ -1,0 +1,53 @@
+schemaVersion: 1.0
+name: {{ .Name }}
+description: Installs loreserver {{ .Version }} for use with fabrica lore create.
+
+phases:
+  - name: build
+    steps:
+      - name: InstallLoreServer
+        action: ExecuteBash
+        inputs:
+          commands:
+            - set -euo pipefail
+            - mkdir -p /opt/loreserver /etc/loreserver
+            - aws s3 sync s3://REPLACE_WITH_YOUR_BUCKET/loreserver-bin/ /opt/loreserver/ --exact-timestamps
+            - chmod +x /opt/loreserver/loreserver
+            - ln -sf /opt/loreserver/loreserver /usr/local/bin/loreserver
+            - |
+              cat >/etc/systemd/system/loreserver.service <<'UNIT'
+              [Unit]
+              Description=Epic Lore Version Control Server
+              After=network-online.target
+              Wants=network-online.target
+
+              [Service]
+              Type=simple
+              ExecStart=/opt/loreserver/loreserver --config /etc/loreserver
+              Restart=always
+              RestartSec=10
+              StandardOutput=journal
+              StandardError=journal
+
+              [Install]
+              WantedBy=multi-user.target
+              UNIT
+            - systemctl daemon-reload
+            - systemctl enable loreserver
+
+  - name: validate
+    steps:
+      - name: VerifyUnitsEnabled
+        action: ExecuteBash
+        inputs:
+          commands:
+            - set -euo pipefail
+            - systemctl is-enabled loreserver
+
+  - name: test
+    steps:
+      - name: LoreUnitDiscoverable
+        action: ExecuteBash
+        inputs:
+          commands:
+            - systemctl cat loreserver >/dev/null

@@ -42,7 +42,7 @@ Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. A dedicat
 | `perforce` | `create`, `status`, `destroy`, `backup`, `backup list`, `backup delete`, `restore` | ✅ Complete — EBS backup/restore via SSM; optional S3 export |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | ✅ Complete |
 | `horde agents` | `create`, `status`, `destroy` | ✅ Complete (V1) — managed agent pool (ASG + Launch Template); private subnets, SSM-only access, coordinator enrollment via private IP; dedicated agent AMI build guide in `docs/horde-agent-ami.md`; manual min/desired/max capacity |
-| `lore` | `create`, `status`, `destroy` | ✅ Complete (v0.2) — AMI-first loreserver; parallel to Perforce |
+| `lore` | `create`, `status`, `destroy`, `ami build` | ✅ Complete (v0.3) — AMI-first loreserver; S3 store backend (opt-in); TLS config hooks; `ami build` generates Image Builder artifacts; parallel to Perforce |
 | `ddc` | `setup`, `status`, `destroy`, `region add` | ✅ Complete — home-region Unreal Cloud DDC + additional edge regions; no replication-peer automation (operator-managed) |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | ✅ Complete |
 | `status` (aggregate) | `status` (`--probe`, `--json`) | ✅ Complete — read-only health overview across all modules |
@@ -58,7 +58,8 @@ Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. A dedicat
 ## Possible Future Work
 
 - Deeper day-2 operations: scheduled Perforce backups, DR rehydrate, attach-role migration for pre-SSM stacks
-- Lore follow-ups: S3-backed store, `lore ami build`, JWT/CA TLS
+- Lore follow-ups (shipped): S3-backed store, `lore ami build`, TLS config foundation
+- Lore V2: JWT/CA TLS with certificate provisioning, ACM integration, HTTPS health probe
 - DDC: OIDC, production Scylla, replication-peer automation
 - MCP server V2: destructive tools, streaming, resource management
 - Optional observability: monitoring, alerts, operational dashboards
