@@ -17,6 +17,12 @@ var tagUnsupportedTypes = map[string]struct{}{
 	// the plan layer sets this correctly. The generic injector would add
 	// tags without it, causing Cloud Control validation errors.
 	"AWS::AutoScaling::AutoScalingGroup": {},
+	// AWS::AutoScaling::ScalingPolicy has no "Tags" property in the Cloud
+	// Control schema — injecting Tags causes validation rejection.
+	"AWS::AutoScaling::ScalingPolicy": {},
+	// AWS::CloudWatch::Alarm has no "Tags" property in the Cloud Control
+	// schema — injecting Tags causes validation rejection.
+	"AWS::CloudWatch::Alarm": {},
 }
 
 // injectFabricaTags merges standard Fabrica tags into the desired state of a

@@ -3186,6 +3186,50 @@ func TestExtractPropertiesLaunchTemplate(t *testing.T) {
 	}
 }
 
+func TestExtractPropertiesScalingPolicyFallback(t *testing.T) {
+	res := state.ModuleResource{
+		TypeName:   "AWS::AutoScaling::ScalingPolicy",
+		Identifier: "arn:aws:autoscaling:us-east-1:123456789012:scalingPolicy:abc123",
+		Properties: map[string]string{
+			"role":          "agent",
+			"scalingPolicy": "scale-out",
+		},
+	}
+	cfg := config.Defaults()
+
+	props := extractProperties("horde", res, cfg)
+	// PolicyName falls back to default since it's not in state properties.
+	if props["PolicyName"] != "fabrica-horde-agents-scaling-policy" {
+		t.Errorf("PolicyName = %v, want fabrica-horde-agents-scaling-policy (default fallback)", props["PolicyName"])
+	}
+	// AutoScalingGroupName falls back to default since it's not in state properties.
+	if props["AutoScalingGroupName"] != "fabrica-horde-agents-asg" {
+		t.Errorf("AutoScalingGroupName = %v, want fabrica-horde-agents-asg (default fallback)", props["AutoScalingGroupName"])
+	}
+}
+
+func TestExtractPropertiesAlarmFallback(t *testing.T) {
+	res := state.ModuleResource{
+		TypeName:   "AWS::CloudWatch::Alarm",
+		Identifier: "my-alarm-name",
+		Properties: map[string]string{
+			"role":         "agent",
+			"scalingAlarm": "scale-out",
+		},
+	}
+	cfg := config.Defaults()
+
+	props := extractProperties("horde", res, cfg)
+	// AlarmName falls back to identifier since it's not in state properties.
+	if props["AlarmName"] != "my-alarm-name" {
+		t.Errorf("AlarmName = %v, want my-alarm-name (derived from identifier)", props["AlarmName"])
+	}
+	// AutoScalingGroupName falls back to default since it's not in state properties.
+	if props["AutoScalingGroupName"] != "fabrica-horde-agents-asg" {
+		t.Errorf("AutoScalingGroupName = %v, want fabrica-horde-agents-asg (default fallback)", props["AutoScalingGroupName"])
+	}
+}
+
 func TestExportHordeWithAgents(t *testing.T) {
 	st := state.NewState("123456789012", "us-east-1")
 	st.UpsertModule("horde", "ami-coord123", "ready", []state.ModuleResource{
@@ -3252,8 +3296,8 @@ func TestExportHordeAgentsWithScaling(t *testing.T) {
 		{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent123", Properties: map[string]string{"role": "agent", "minSize": "0", "desiredCapacity": "2", "maxSize": "4"}},
 		{TypeName: "AWS::AutoScaling::ScalingPolicy", Identifier: "arn:aws:autoscaling:us-east-1:123456789012:scalingPolicy:abc123:autoScalingGroupName/fabrica-horde-agents-asg:policyName/fabrica-horde-agents-scale-out-policy", Properties: map[string]string{"role": "agent", "scalingPolicy": "scale-out", "PolicyName": "fabrica-horde-agents-scale-out-policy", "AutoScalingGroupName": "fabrica-horde-agents-asg"}},
 		{TypeName: "AWS::AutoScaling::ScalingPolicy", Identifier: "arn:aws:autoscaling:us-east-1:123456789012:scalingPolicy:def456:autoScalingGroupName/fabrica-horde-agents-asg:policyName/fabrica-horde-agents-scale-in-policy", Properties: map[string]string{"role": "agent", "scalingPolicy": "scale-in", "PolicyName": "fabrica-horde-agents-scale-in-policy", "AutoScalingGroupName": "fabrica-horde-agents-asg"}},
-		{TypeName: "AWS::CloudWatch::Alarm", Identifier: "fabrica-horde-agents-scale-out", Properties: map[string]string{"role": "agent", "scalingAlarm": "scale-out"}},
-		{TypeName: "AWS::CloudWatch::Alarm", Identifier: "fabrica-horde-agents-scale-in", Properties: map[string]string{"role": "agent", "scalingAlarm": "scale-in"}},
+		{TypeName: "AWS::CloudWatch::Alarm", Identifier: "fabrica-horde-agents-scale-out", Properties: map[string]string{"role": "agent", "scalingAlarm": "scale-out", "AlarmName": "fabrica-horde-agents-scale-out", "AutoScalingGroupName": "fabrica-horde-agents-asg"}},
+		{TypeName: "AWS::CloudWatch::Alarm", Identifier: "fabrica-horde-agents-scale-in", Properties: map[string]string{"role": "agent", "scalingAlarm": "scale-in", "AlarmName": "fabrica-horde-agents-scale-in", "AutoScalingGroupName": "fabrica-horde-agents-asg"}},
 	})
 
 	cfg := testConfigWithHorde()

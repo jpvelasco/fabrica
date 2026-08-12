@@ -131,7 +131,7 @@ import requests
 
 cloudwatch = boto3.client("cloudwatch")
 
-def publish_queue_depth():
+def publish_queue_depth(asg_name):
     # Query Horde for pending job count
     resp = requests.get("http://<horde-coordinator>:5000/api/v1/jobs")
     pending = len([j for j in resp.json() if j["status"] == "pending"])
@@ -143,10 +143,20 @@ def publish_queue_depth():
                 "MetricName": "ASGQueueDepth",
                 "Value": pending,
                 "Unit": "Count",
+                "Dimensions": [
+                    {
+                        "Name": "AutoScalingGroupName",
+                        "Value": asg_name,
+                    },
+                ],
             },
         ],
     )
 ```
+
+The `Dimensions` field **must match** the alarm dimensions — the default ASG
+name is `fabrica-horde-agents-asg`. Without matching dimensions, the CloudWatch
+metric series will never match the alarm filter and scaling will not trigger.
 
 Run this as a periodic task (e.g., every 60 seconds) on the coordinator or any
 agent that can reach both the Horde API and CloudWatch.

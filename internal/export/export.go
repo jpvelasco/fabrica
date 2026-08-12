@@ -446,7 +446,14 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		}
 	case "AWS::CloudWatch::Alarm":
 		// Horde agent scaling alarm — properties come from state.
-		// Alarm name and metric details are stored in state properties.
+		if _, ok := props["AlarmName"]; !ok {
+			// Derive alarm name from identifier (Cloud Control returns the
+			// alarm name as the resource identifier).
+			props["AlarmName"] = r.Identifier
+		}
+		if _, ok := props["AutoScalingGroupName"]; !ok {
+			props["AutoScalingGroupName"] = "fabrica-" + moduleName + "-agents-asg"
+		}
 	}
 
 	return props

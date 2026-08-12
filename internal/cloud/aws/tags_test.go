@@ -100,6 +100,22 @@ func TestInjectFabricaTags(t *testing.T) {
 			version:  "0.1.0",
 			wantTags: nil,
 		},
+		{
+			name:     "ScalingPolicy denylist skips tags",
+			typeName: "AWS::AutoScaling::ScalingPolicy",
+			state:    `{"PolicyName":"test-policy","AutoScalingGroupName":"test-asg"}`,
+			module:   "horde",
+			version:  "0.1.0",
+			wantTags: nil,
+		},
+		{
+			name:     "CloudWatchAlarm denylist skips tags",
+			typeName: "AWS::CloudWatch::Alarm",
+			state:    `{"AlarmName":"test-alarm","MetricName":"CPUUtilization"}`,
+			module:   "horde",
+			version:  "0.1.0",
+			wantTags: nil,
+		},
 	}
 
 	for _, tt := range tests {
