@@ -2,6 +2,7 @@ package horde
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/assert"
@@ -136,6 +137,7 @@ func TestNewAgentsCreatePlanMinExceedsMax(t *testing.T) {
 }
 
 func TestNewAgentsCreatePlanMinExceedsMaxDirect(t *testing.T) {
+	// minSize == desiredCapacity > maxSize — desiredCapacity > maxSize fires first.
 	cfg := config.HordeAgentsConfig{
 		AmiID:           "ami-agent123",
 		MinSize:         3,
@@ -144,10 +146,37 @@ func TestNewAgentsCreatePlanMinExceedsMaxDirect(t *testing.T) {
 	}
 	_, err := NewAgentsCreatePlan(context.Background(), cfg, "10.0.1.10", 5000, "sg-coord", "123456789012", "us-east-1", nil)
 	if err == nil {
-		t.Fatal("expected error when minSize > maxSize")
+		t.Fatal("expected error when desiredCapacity > maxSize")
 	}
 	// desiredCapacity > maxSize fires first (3 > 2)
 	assert.Contains(t, err.Error(), "desiredCapacity")
+}
+
+func TestNewAgentsCreatePlanNegativeMinSize(t *testing.T) {
+	cfg := config.HordeAgentsConfig{
+		AmiID:           "ami-agent123",
+		MinSize:         -1,
+		DesiredCapacity: 2,
+		MaxSize:         4,
+	}
+	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
+	plan, err := NewAgentsCreatePlan(context.Background(), cfg, "10.0.1.10", 5000, "sg-coord", "123456789012", "us-east-1", resolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Negative minSize should be clamped to 0.
+	if plan.MinSize != 0 {
+		t.Errorf("MinSize = %d, want 0 (clamped from negative)", plan.MinSize)
+	}
+}
+
+func TestNewAgentsCreatePlanVPCError(t *testing.T) {
+	cfg := config.HordeAgentsConfig{AmiID: "ami-agent123"}
+	resolver := &testutilVPCResolver{err: fmt.Errorf("vpc not found")}
+	_, err := NewAgentsCreatePlan(context.Background(), cfg, "10.0.1.10", 5000, "sg-coord", "123456789012", "us-east-1", resolver)
+	if err == nil {
+		t.Fatal("expected error when VPC resolution fails")
+	}
 }
 
 func TestNewAgentsCreatePlanDefaultPort(t *testing.T) {

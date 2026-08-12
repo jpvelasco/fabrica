@@ -2,9 +2,12 @@ package status
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
 func TestParseIntProp_Valid(t *testing.T) {
@@ -131,5 +134,171 @@ func TestLineWidthDash(t *testing.T) {
 	dash := lineWidthDash()
 	if len(dash) != lineWidth {
 		t.Errorf("dash length = %d, want %d", len(dash), lineWidth)
+	}
+}
+
+func TestPrintText_Pending(t *testing.T) {
+	var out bytes.Buffer
+	c := &command{out: &out}
+	o := StatusOutput{
+		Provisioned:     true,
+		ASGID:           "asg-agent123",
+		MinSize:         0,
+		DesiredCapacity: 2,
+		MaxSize:         4,
+		Status:          "ready",
+		ASGHealth:       "0/2 InService (2 pending, 0 terminating)",
+		Pending:         2,
+	}
+	c.printText(o)
+	got := out.String()
+	if !bytes.Contains(out.Bytes(), []byte("Pending")) {
+		t.Errorf("expected 'Pending' in output: %s", got)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("2")) {
+		t.Errorf("expected '2' pending count in output: %s", got)
+	}
+}
+
+func TestPrintText_Terminating(t *testing.T) {
+	var out bytes.Buffer
+	c := &command{out: &out}
+	o := StatusOutput{
+		Provisioned:     true,
+		ASGID:           "asg-agent123",
+		MinSize:         0,
+		DesiredCapacity: 2,
+		MaxSize:         4,
+		Status:          "ready",
+		ASGHealth:       "1/2 InService (0 pending, 1 terminating)",
+		Terminating:     1,
+	}
+	c.printText(o)
+	got := out.String()
+	if !bytes.Contains(out.Bytes(), []byte("Terminating")) {
+		t.Errorf("expected 'Terminating' in output: %s", got)
+	}
+}
+
+func TestPrintText_Full(t *testing.T) {
+	var out bytes.Buffer
+	c := &command{out: &out}
+	o := StatusOutput{
+		Provisioned:         true,
+		ASGID:               "asg-agent123",
+		LaunchTemplate:      "lt-agent123",
+		MinSize:             0,
+		DesiredCapacity:     2,
+		MaxSize:             4,
+		InstanceType:        "c7i.xlarge",
+		AmiID:               "ami-12345",
+		CoordinatorIP:       "10.0.1.50",
+		CoordinatorPort:     5000,
+		Status:              "ready",
+		LiveDesiredCapacity: 2,
+		ASGHealth:           "2/2 InService",
+	}
+	c.printText(o)
+	got := out.String()
+	if !bytes.Contains(out.Bytes(), []byte("c7i.xlarge")) {
+		t.Errorf("expected instance type in output: %s", got)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("ami-12345")) {
+		t.Errorf("expected AMI in output: %s", got)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("10.0.1.50:5000")) {
+		t.Errorf("expected coordinator in output: %s", got)
+	}
+}
+
+func TestRun_ReadStateError(t *testing.T) {
+	c := &command{
+		readState: func() (*fabricastate.State, error) {
+			return nil, fmt.Errorf("state error")
+		},
+	}
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error for readState failure")
+	}
+}
+
+func TestRun_NoModule(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	c := &command{
+		out:       &out,
+		readState: func() (*fabricastate.State, error) { return st, nil },
+	}
+	err := c.run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("not provisioned")) {
+		t.Errorf("expected 'not provisioned': %s", out.String())
+	}
+}
+
+func TestRun_NoASG(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+	})
+	c := &command{
+		out:       &out,
+		readState: func() (*fabricastate.State, error) { return st, nil },
+	}
+	err := c.run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("not provisioned")) {
+		t.Errorf("expected 'not provisioned': %s", out.String())
+	}
+}
+
+func TestRun_DescribeASGError(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+		{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent", Properties: map[string]string{"minSize": "0", "desiredCapacity": "2", "maxSize": "4"}},
+	})
+	c := &command{
+		out:       &out,
+		readState: func() (*fabricastate.State, error) { return st, nil },
+		describeASG: func(ctx context.Context, name string) (cloud.ASGInfo, error) {
+			return cloud.ASGInfo{}, fmt.Errorf("access denied")
+		},
+	}
+	err := c.run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: describeASG error should not fail run: %v", err)
+	}
+	// ASG query error is silently ignored — status still shows without live data.
+	if bytes.Contains(out.Bytes(), []byte("access denied")) {
+		t.Error("describeASG error should not appear in output")
+	}
+}
+
+func TestRun_JSONOutput(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+		{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent", Properties: map[string]string{"minSize": "0", "desiredCapacity": "2", "maxSize": "4"}},
+	})
+	c := &command{
+		out:       &out,
+		jsonOut:   true,
+		readState: func() (*fabricastate.State, error) { return st, nil },
+	}
+	err := c.run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"provisioned": true`)) {
+		t.Errorf("expected JSON provisioned: %s", out.String())
 	}
 }

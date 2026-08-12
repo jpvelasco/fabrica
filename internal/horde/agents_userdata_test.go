@@ -71,3 +71,25 @@ func TestAgentUserDataMissingCoordinatorPort(t *testing.T) {
 		t.Fatal("expected error when CoordinatorPort is 0")
 	}
 }
+
+func TestAgentUserDataBase64Error(t *testing.T) {
+	cfg := AgentUserDataConfig{
+		CoordinatorIP:   "",
+		CoordinatorPort: 0,
+	}
+	_, err := AgentUserData(cfg)
+	if err == nil {
+		t.Fatal("expected error from AgentUserData when validation fails")
+	}
+}
+
+func TestAgentUserDataRawMissingPort(t *testing.T) {
+	cfg := AgentUserDataConfig{
+		CoordinatorIP:   "10.0.1.10",
+		CoordinatorPort: -1,
+	}
+	_, err := AgentUserDataRaw(cfg)
+	if err == nil {
+		t.Fatal("expected error when CoordinatorPort is negative")
+	}
+}

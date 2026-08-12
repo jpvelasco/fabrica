@@ -161,3 +161,19 @@ func TestAutoScalingClient_CustomFactory(t *testing.T) {
 		t.Fatal("expected custom factory client to be returned")
 	}
 }
+
+func TestDescribeASG_ConfigError(t *testing.T) {
+	p := &awsProvider{
+		awsCfg: awsConfig{region: "us-east-1"},
+		loadConfig: func(ctx context.Context, region, profile string) (awssdk.Config, error) {
+			return awssdk.Config{}, errors.New("config not found")
+		},
+	}
+	_, err := p.DescribeASG(context.Background(), "my-asg")
+	if err == nil {
+		t.Fatal("expected error when config loading fails")
+	}
+	if !strings.Contains(err.Error(), "config not found") {
+		t.Fatalf("error = %q, want 'config not found'", err.Error())
+	}
+}
