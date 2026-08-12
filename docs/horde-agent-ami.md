@@ -123,8 +123,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=/etc/horde/coordinator.conf
-ExecStart=/opt/horde-agent/horde-agent --coordinator-host ${HORDE_COORDINATOR_HOST} --coordinator-port ${HORDE_COORDINATOR_PORT}
+ExecStart=/opt/horde-agent/horde-agent
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -134,21 +133,21 @@ StandardError=journal
 WantedBy=multi-user.target
 ```
 
-> **Note:** The `EnvironmentFile` directive reads key-value pairs. Fabrica writes
-> `/etc/horde/coordinator.conf` in INI format, but systemd's `EnvironmentFile`
-> expects `KEY=VALUE` lines. The cloud-init script writes the INI format for
-> the agent binary to read directly. If your systemd unit needs `EnvironmentFile`,
-> adjust the unit to parse the INI format or use `ExecStartPre` to extract values.
->
-> **Alternative** — set environment variables directly in the unit:
+The agent binary reads `/etc/horde/coordinator.conf` (INI format) and/or
+`HORDE_COORDINATOR_HOST`/`HORDE_COORDINATOR_PORT` environment variables at
+startup. Fabrica's cloud-init writes the config file and exports the env vars
+before starting the service. Do **not** use `EnvironmentFile` — systemd's
+`EnvironmentFile` expects `KEY=VALUE` lines, but Fabrica writes INI format
+(`[coordinator]` / `host = ...` / `port = ...`). The agent binary parses the
+INI file directly.
+
+> **Note:** If your agent binary uses command-line flags instead of reading the
+> config file, use `ExecStartPre` to extract values from the INI:
 > ```ini
 > [Service]
-> Environment="HORDE_COORDINATOR_HOST=PLACEHOLDER"
-> Environment="HORDE_COORDINATOR_PORT=5000"
+> ExecStartPre=/bin/bash -c 'HOST=$(grep "^host" /etc/horde/coordinator.conf | cut -d= -f2 | tr -d " "); PORT=$(grep "^port" /etc/horde/coordinator.conf | cut -d= -f2 | tr -d " "); exec /opt/horde-agent/horde-agent --coordinator-host "$HOST" --coordinator-port "$PORT"'
+> ExecStart=/opt/horde-agent/horde-agent
 > ```
-> Fabrica's cloud-init writes the actual values to `/etc/horde/coordinator.conf`;
-> the agent binary should read from there. The systemd unit above is a template —
-> adapt it to match your agent binary's actual command-line flags.
 
 #### Step 4: Enable the service
 
