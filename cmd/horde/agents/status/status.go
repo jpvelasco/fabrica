@@ -45,6 +45,17 @@ type StatusOutput struct {
 	Pending             int    `json:"pending"`
 	Terminating         int    `json:"terminating"`
 	ASGHealth           string `json:"asgHealth,omitempty"`
+	// Scaling policy fields — populated when scaling resources exist in state.
+	ScalingEnabled    bool   `json:"scalingEnabled"`
+	ScaleOutThreshold string `json:"scaleOutThreshold,omitempty"`
+	ScaleInThreshold  string `json:"scaleInThreshold,omitempty"`
+	ScaleInCooldown   string `json:"scaleInCooldown,omitempty"`
+	MetricName        string `json:"metricName,omitempty"`
+	MetricNamespace   string `json:"metricNamespace,omitempty"`
+	ScaleOutAlarmID   string `json:"scaleOutAlarmId,omitempty"`
+	ScaleInAlarmID    string `json:"scaleInAlarmId,omitempty"`
+	ScaleOutPolicyID  string `json:"scaleOutPolicyId,omitempty"`
+	ScaleInPolicyID   string `json:"scaleInPolicyId,omitempty"`
 }
 
 type command struct {
@@ -180,6 +191,9 @@ func (c *command) run(ctx context.Context) error {
 		o.CoordinatorPort = c.runtime.Config.Horde.Port
 	}
 
+	// Populate scaling policy info from state.
+	o.populateScaling(m)
+
 	if c.jsonOut {
 		enc := json.NewEncoder(c.out)
 		enc.SetIndent("", "  ")
@@ -221,6 +235,29 @@ func (c *command) printText(o StatusOutput) {
 	if o.CoordinatorIP != "" {
 		fmt.Fprintf(c.out, "  Coordinator:      %s:%d\n", o.CoordinatorIP, o.CoordinatorPort)
 	}
+
+	// Show scaling policy summary when enabled.
+	if o.ScalingEnabled {
+		fmt.Fprintln(c.out)
+		fmt.Fprintln(c.out, "  Queue Scaling:")
+		fmt.Fprintf(c.out, "    Enabled:          yes\n")
+		fmt.Fprintf(c.out, "    Metric:           %s/%s\n", o.MetricNamespace, o.MetricName)
+		fmt.Fprintf(c.out, "    Scale-out at:     %s\n", o.ScaleOutThreshold)
+		fmt.Fprintf(c.out, "    Scale-in at:      %s\n", o.ScaleInThreshold)
+		fmt.Fprintf(c.out, "    Cooldown:         %s\n", o.ScaleInCooldown)
+		if o.ScaleOutPolicyID != "" {
+			fmt.Fprintf(c.out, "    Scale-out policy: %s\n", o.ScaleOutPolicyID)
+		}
+		if o.ScaleInPolicyID != "" {
+			fmt.Fprintf(c.out, "    Scale-in policy:  %s\n", o.ScaleInPolicyID)
+		}
+		if o.ScaleOutAlarmID != "" {
+			fmt.Fprintf(c.out, "    Scale-out alarm:  %s\n", o.ScaleOutAlarmID)
+		}
+		if o.ScaleInAlarmID != "" {
+			fmt.Fprintf(c.out, "    Scale-in alarm:   %s\n", o.ScaleInAlarmID)
+		}
+	}
 }
 
 func (c *command) printNotProvisioned() {
@@ -260,4 +297,46 @@ func parseIntProp(props map[string]string, key string) int {
 	var n int
 	_, _ = fmt.Sscanf(v, "%d", &n)
 	return n
+}
+
+// populateScaling reads scaling resources from module state and fills the
+// corresponding fields in the status output.
+func (o *StatusOutput) populateScaling(m *fabricastate.ModuleState) {
+	if m == nil {
+		return
+	}
+
+	for _, r := range m.Resources {
+		if r.Properties == nil {
+			continue
+		}
+		// Only look at agent-role resources.
+		if r.Properties["role"] != "agent" {
+			continue
+		}
+
+		switch r.TypeName {
+		case cloud.TypeAWSAutoScalingScalingPolicy:
+			o.ScalingEnabled = true
+			policyType := r.Properties["scalingPolicy"]
+			switch policyType {
+			case "scale-out":
+				o.ScaleOutPolicyID = r.Identifier
+				o.ScaleOutThreshold = r.Properties["scaleOutThreshold"]
+			case "scale-in":
+				o.ScaleInPolicyID = r.Identifier
+				o.ScaleInThreshold = r.Properties["scaleInThreshold"]
+				o.ScaleInCooldown = r.Properties["cooldown"] + "s"
+			}
+		case cloud.TypeAWSCloudWatchAlarm:
+			if r.Properties["scalingAlarm"] == "scale-out" {
+				o.ScaleOutAlarmID = r.Identifier
+				o.MetricName = r.Properties["metricName"]
+				o.MetricNamespace = r.Properties["metricNs"]
+			}
+			if r.Properties["scalingAlarm"] == "scale-in" {
+				o.ScaleInAlarmID = r.Identifier
+			}
+		}
+	}
 }

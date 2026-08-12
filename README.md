@@ -280,6 +280,8 @@ Provisions a pool of Horde build agents on AWS. Creates an Auto Scaling Group wi
 
 Creates five resources: agent security group (no inbound from internet), IAM role (SSM only), instance profile, launch template, and auto scaling group. CLI flags `--instance-type`, `--min-size`, `--desired-capacity`, and `--max-size` override config defaults. `--dry-run` shows the plan and cost estimate.
 
+**Queue-based autoscaling** — add `--scaling-enabled` to provision two CloudWatch alarms and two SimpleScaling policies (one for scale-out, one for scale-in) that adjust the ASG based on a custom queue-depth metric. Configure thresholds with `--scale-out-threshold`, `--scale-in-threshold`, and `--scale-in-cooldown`. Min/max capacity act as hard bounds. See [docs/horde-scaling.md](docs/horde-scaling.md) for details.
+
 #### `fabrica horde agents status`
 
 Shows agent pool status: ASG capacity (min/desired/max), launch template, instance type, agent AMI, and coordinator endpoint. `--json` for machine-readable output.
@@ -537,6 +539,17 @@ perforce:
 horde:
   instance_type: m7i.2xlarge
   ami_id: ami-xxxxxxxxxxxxxxxxx   # job-capable Docker compose AMI (MongoDB, Redis, Horde with jobs API)
+  agents:
+    amiId: ami-yyyyyyyyyyyyyyyyy  # dedicated agent AMI (see docs/horde-agent-ami.md)
+    instanceType: m7i.xlarge
+    minSize: 2
+    desiredCapacity: 3
+    maxSize: 10
+    scaling:                      # optional — queue-based autoscaling
+      enabled: false
+      scaleOutThreshold: 5.0
+      scaleInThreshold: 1.0
+      scaleInCooldown: 300
 
 lore:
   amiId: ami-xxxxxxxxxxxxxxxxx    # must contain loreserver (see docs/lore-ami.md)

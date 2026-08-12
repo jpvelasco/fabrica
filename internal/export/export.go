@@ -436,6 +436,17 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		if _, ok := props["LaunchTemplateName"]; !ok {
 			props["LaunchTemplateName"] = "fabrica-" + moduleName + "-agents-lt"
 		}
+	case "AWS::AutoScaling::ScalingPolicy":
+		// Horde agent scaling policy — properties come from state.
+		if _, ok := props["PolicyName"]; !ok {
+			props["PolicyName"] = "fabrica-" + moduleName + "-agents-scaling-policy"
+		}
+		if _, ok := props["AutoScalingGroupName"]; !ok {
+			props["AutoScalingGroupName"] = "fabrica-" + moduleName + "-agents-asg"
+		}
+	case "AWS::CloudWatch::Alarm":
+		// Horde agent scaling alarm — properties come from state.
+		// Alarm name and metric details are stored in state properties.
 	}
 
 	return props

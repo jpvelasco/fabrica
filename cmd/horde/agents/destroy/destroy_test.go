@@ -93,13 +93,53 @@ func TestAgentsToDelete_Order(t *testing.T) {
 			{TypeName: "AWS::IAM::InstanceProfile", Identifier: "profile-agent", Properties: map[string]string{"role": "agent"}},
 			{TypeName: "AWS::EC2::LaunchTemplate", Identifier: "lt-agent", Properties: map[string]string{"role": "agent"}},
 			{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent", Properties: map[string]string{"role": "agent"}},
+			{TypeName: "AWS::AutoScaling::ScalingPolicy", Identifier: "policy-out", Properties: map[string]string{"role": "agent", "scalingPolicy": "scale-out"}},
+			{TypeName: "AWS::AutoScaling::ScalingPolicy", Identifier: "policy-in", Properties: map[string]string{"role": "agent", "scalingPolicy": "scale-in"}},
+			{TypeName: "AWS::CloudWatch::Alarm", Identifier: "alarm-out", Properties: map[string]string{"role": "agent", "scalingAlarm": "scale-out"}},
+			{TypeName: "AWS::CloudWatch::Alarm", Identifier: "alarm-in", Properties: map[string]string{"role": "agent", "scalingAlarm": "scale-in"}},
+			{TypeName: "AWS::EC2::Instance", Identifier: "i-coord", Properties: map[string]string{"role": "coordinator"}},
+		},
+	}
+
+	resources := agentsToDelete(m)
+	if len(resources) != 9 {
+		t.Fatalf("want 9 agent resources, got %d", len(resources))
+	}
+
+	// Verify deletion order: policies → alarms → ASG → LT → profile → role → SG
+	wantOrder := []string{
+		"AWS::AutoScaling::ScalingPolicy",
+		"AWS::AutoScaling::ScalingPolicy",
+		"AWS::CloudWatch::Alarm",
+		"AWS::CloudWatch::Alarm",
+		"AWS::AutoScaling::AutoScalingGroup",
+		"AWS::EC2::LaunchTemplate",
+		"AWS::IAM::InstanceProfile",
+		"AWS::IAM::Role",
+		"AWS::EC2::SecurityGroup",
+	}
+	for i, want := range wantOrder {
+		if resources[i].TypeName != want {
+			t.Errorf("[%d] TypeName = %q, want %q", i, resources[i].TypeName, want)
+		}
+	}
+}
+
+func TestAgentsToDelete_WithoutScaling(t *testing.T) {
+	m := &fabricastate.ModuleState{
+		Resources: []fabricastate.ModuleResource{
+			{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-agent", Properties: map[string]string{"role": "agent"}},
+			{TypeName: "AWS::IAM::Role", Identifier: "role-agent", Properties: map[string]string{"role": "agent"}},
+			{TypeName: "AWS::IAM::InstanceProfile", Identifier: "profile-agent", Properties: map[string]string{"role": "agent"}},
+			{TypeName: "AWS::EC2::LaunchTemplate", Identifier: "lt-agent", Properties: map[string]string{"role": "agent"}},
+			{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent", Properties: map[string]string{"role": "agent"}},
 			{TypeName: "AWS::EC2::Instance", Identifier: "i-coord", Properties: map[string]string{"role": "coordinator"}},
 		},
 	}
 
 	resources := agentsToDelete(m)
 	if len(resources) != 5 {
-		t.Fatalf("want 5 agent resources, got %d", len(resources))
+		t.Fatalf("want 5 agent resources (no scaling), got %d", len(resources))
 	}
 
 	// Verify deletion order: ASG → LT → profile → role → SG

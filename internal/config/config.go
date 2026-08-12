@@ -101,11 +101,25 @@ type HordeConfig struct {
 // Used by `fabrica horde agents create` to provision an Auto Scaling Group
 // of Horde build agents.
 type HordeAgentsConfig struct {
-	AmiID           string `mapstructure:"amiId"           yaml:"amiId"`
-	InstanceType    string `mapstructure:"instanceType"    yaml:"instanceType"`
-	MinSize         int    `mapstructure:"minSize"         yaml:"minSize"`
-	DesiredCapacity int    `mapstructure:"desiredCapacity" yaml:"desiredCapacity"`
-	MaxSize         int    `mapstructure:"maxSize"         yaml:"maxSize"`
+	AmiID           string                   `mapstructure:"amiId"           yaml:"amiId"`
+	InstanceType    string                   `mapstructure:"instanceType"    yaml:"instanceType"`
+	MinSize         int                      `mapstructure:"minSize"         yaml:"minSize"`
+	DesiredCapacity int                      `mapstructure:"desiredCapacity" yaml:"desiredCapacity"`
+	MaxSize         int                      `mapstructure:"maxSize"         yaml:"maxSize"`
+	Scaling         HordeAgentsScalingConfig `mapstructure:"scaling"        yaml:"scaling"`
+}
+
+// HordeAgentsScalingConfig holds queue-based autoscaling settings for the
+// Horde agent pool. When Enabled is true, the create path provisions a
+// CloudWatch alarm pair and a target-tracking scaling policy attached to the
+// ASG. Min/Max from the parent config act as hard bounds.
+type HordeAgentsScalingConfig struct {
+	Enabled           bool    `mapstructure:"enabled"           yaml:"enabled"`
+	ScaleOutThreshold float64 `mapstructure:"scaleOutThreshold" yaml:"scaleOutThreshold"`
+	ScaleInThreshold  float64 `mapstructure:"scaleInThreshold"  yaml:"scaleInThreshold"`
+	ScaleInCooldown   int     `mapstructure:"scaleInCooldown"   yaml:"scaleInCooldown"`
+	MetricName        string  `mapstructure:"metricName"        yaml:"metricName"`
+	MetricNamespace   string  `mapstructure:"metricNamespace"   yaml:"metricNamespace"`
 }
 
 // LoreConfig holds the lore: section of fabrica.yaml.

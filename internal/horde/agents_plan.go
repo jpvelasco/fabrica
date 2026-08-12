@@ -41,6 +41,20 @@ type AgentsCreatePlan struct {
 	LaunchTemplateName  string
 	ASGName             string
 
+	// Scaling fields — queue-based autoscaling for the agent pool.
+	// Uses two SimpleScaling policies: one for scale-out (+1) and one for scale-in (-1).
+	// Each CloudWatch alarm triggers its corresponding policy.
+	ScalingEnabled     bool
+	ScaleOutThreshold  float64
+	ScaleInThreshold   float64
+	ScaleInCooldown    int
+	MetricName         string
+	MetricNamespace    string
+	ScaleOutAlarmName  string
+	ScaleInAlarmName   string
+	ScaleOutPolicyName string
+	ScaleInPolicyName  string
+
 	CostResources []cost.Resource
 }
 
@@ -95,6 +109,31 @@ func NewAgentsCreatePlan(ctx context.Context, cfg config.HordeAgentsConfig, coor
 		return nil, err
 	}
 
+	// Apply scaling defaults and validate.
+	scaling := cfg.Scaling
+	if scaling.Enabled {
+		// Default thresholds if not set.
+		if scaling.ScaleOutThreshold <= 0 {
+			scaling.ScaleOutThreshold = 5.0
+		}
+		if scaling.ScaleInThreshold <= 0 {
+			scaling.ScaleInThreshold = 1.0
+		}
+		if scaling.ScaleInCooldown <= 0 {
+			// Default cooldown: 300 seconds (5 minutes).
+			scaling.ScaleInCooldown = 300
+		}
+		if scaling.ScaleInCooldown < 60 {
+			return nil, fmt.Errorf("agents scaling.scaleInCooldown must be at least 60 seconds (got %d)", scaling.ScaleInCooldown)
+		}
+		if scaling.MetricName == "" {
+			scaling.MetricName = "ASGQueueDepth"
+		}
+		if scaling.MetricNamespace == "" {
+			scaling.MetricNamespace = "Fabrica/HordeAgents"
+		}
+	}
+
 	return &AgentsCreatePlan{
 		Account:              account,
 		Region:               region,
@@ -114,6 +153,17 @@ func NewAgentsCreatePlan(ctx context.Context, cfg config.HordeAgentsConfig, coor
 		InstanceProfileName:  "fabrica-horde-agents-profile",
 		LaunchTemplateName:   "fabrica-horde-agents-lt",
 		ASGName:              "fabrica-horde-agents-asg",
-		CostResources:        AgentsCostResources(cfg),
+		// Scaling
+		ScalingEnabled:     scaling.Enabled,
+		ScaleOutThreshold:  scaling.ScaleOutThreshold,
+		ScaleInThreshold:   scaling.ScaleInThreshold,
+		ScaleInCooldown:    scaling.ScaleInCooldown,
+		MetricName:         scaling.MetricName,
+		MetricNamespace:    scaling.MetricNamespace,
+		ScaleOutAlarmName:  "fabrica-horde-agents-scale-out",
+		ScaleInAlarmName:   "fabrica-horde-agents-scale-in",
+		ScaleOutPolicyName: "fabrica-horde-agents-scale-out-policy",
+		ScaleInPolicyName:  "fabrica-horde-agents-scale-in-policy",
+		CostResources:      AgentsCostResources(cfg),
 	}, nil
 }

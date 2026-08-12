@@ -361,3 +361,148 @@ func TestApplyCreate_UserDataError(t *testing.T) {
 		t.Errorf("error = %q, want 'generating agent user data'", err.Error())
 	}
 }
+
+func TestApplyCreate_WithScaling(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+	})
+	plan := &horde.AgentsCreatePlan{
+		ASGName:              "asg-test",
+		LaunchTemplateName:   "lt-test",
+		InstanceProfileName:  "profile-test",
+		RoleName:             "role-test",
+		SGName:               "sg-test",
+		CoordinatorPrivateIP: "10.0.1.50",
+		CoordinatorPort:      5000,
+		AmiID:                "ami-123",
+		InstanceType:         "c7i.xlarge",
+		MinSize:              0,
+		DesiredCapacity:      1,
+		MaxSize:              2,
+		// Scaling resources
+		ScalingEnabled:     true,
+		ScaleOutThreshold:  10.0,
+		ScaleInThreshold:   2.0,
+		ScaleInCooldown:    120,
+		MetricName:         "ASGQueueDepth",
+		MetricNamespace:    "Fabrica/HordeAgents",
+		ScaleOutAlarmName:  "alarm-out",
+		ScaleInAlarmName:   "alarm-in",
+		ScaleOutPolicyName: "policy-out",
+		ScaleInPolicyName:  "policy-in",
+	}
+	callCount := 0
+	c := command{
+		out: &out,
+		createResource: func(ctx context.Context, r *cloud.Resource) error {
+			callCount++
+			r.Identifier = fmt.Sprintf("resource-%d", callCount)
+			return nil
+		},
+		writeState: func(st *fabricastate.State) error { return nil },
+	}
+	err := c.applyCreate(context.Background(), st, plan)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 5 base resources + 4 scaling resources (2 policies + 2 alarms) = 9 total
+	if callCount != 9 {
+		t.Errorf("want 9 create calls (5 base + 4 scaling), got %d", callCount)
+	}
+}
+
+func TestApplyCreate_ScalingAlarmError(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+	})
+	plan := &horde.AgentsCreatePlan{
+		ASGName:              "asg-test",
+		LaunchTemplateName:   "lt-test",
+		InstanceProfileName:  "profile-test",
+		RoleName:             "role-test",
+		SGName:               "sg-test",
+		CoordinatorPrivateIP: "10.0.1.50",
+		CoordinatorPort:      5000,
+		AmiID:                "ami-123",
+		InstanceType:         "c7i.xlarge",
+		MinSize:              0,
+		DesiredCapacity:      1,
+		MaxSize:              2,
+		ScalingEnabled:       true,
+		ScaleOutThreshold:    10.0,
+		ScaleInThreshold:     2.0,
+		ScaleInCooldown:      120,
+		MetricName:           "ASGQueueDepth",
+		MetricNamespace:      "Fabrica/HordeAgents",
+		ScaleOutAlarmName:    "alarm-out",
+		ScaleInAlarmName:     "alarm-in",
+		ScaleOutPolicyName:   "policy-out",
+		ScaleInPolicyName:    "policy-in",
+	}
+	callCount := 0
+	c := command{
+		out: &out,
+		createResource: func(ctx context.Context, r *cloud.Resource) error {
+			callCount++
+			// Fail on the 8th call (scale-out alarm: calls 6,7 are policies; 8 is alarm-out)
+			if callCount == 8 {
+				return fmt.Errorf("alarm create failed")
+			}
+			r.Identifier = fmt.Sprintf("resource-%d", callCount)
+			return nil
+		},
+		writeState: func(st *fabricastate.State) error { return nil },
+	}
+	err := c.applyCreate(context.Background(), st, plan)
+	if err == nil {
+		t.Fatal("expected error when scale-out alarm creation fails")
+	}
+	if !strings.Contains(err.Error(), "scale-out alarm") {
+		t.Errorf("error = %q, want 'scale-out alarm'", err.Error())
+	}
+}
+
+func TestApplyCreate_WithoutScaling(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+	})
+	plan := &horde.AgentsCreatePlan{
+		ASGName:              "asg-test",
+		LaunchTemplateName:   "lt-test",
+		InstanceProfileName:  "profile-test",
+		RoleName:             "role-test",
+		SGName:               "sg-test",
+		CoordinatorPrivateIP: "10.0.1.50",
+		CoordinatorPort:      5000,
+		AmiID:                "ami-123",
+		InstanceType:         "c7i.xlarge",
+		MinSize:              0,
+		DesiredCapacity:      1,
+		MaxSize:              2,
+		ScalingEnabled:       false,
+	}
+	callCount := 0
+	c := command{
+		out: &out,
+		createResource: func(ctx context.Context, r *cloud.Resource) error {
+			callCount++
+			r.Identifier = fmt.Sprintf("resource-%d", callCount)
+			return nil
+		},
+		writeState: func(st *fabricastate.State) error { return nil },
+	}
+	err := c.applyCreate(context.Background(), st, plan)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Only 5 base resources when scaling is disabled
+	if callCount != 5 {
+		t.Errorf("want 5 create calls (base only), got %d", callCount)
+	}
+}

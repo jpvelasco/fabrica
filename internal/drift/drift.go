@@ -378,6 +378,22 @@ func (e *Engine) checkAttributes(res DriftResult, m *state.ModuleState, recorded
 		// IAM instance profile existence is sufficient for V1 drift.
 		res.Status = InSync
 		return res
+	case cloud.TypeAWSAutoScalingScalingPolicy:
+		// Scaling policy existence is sufficient for V1 drift.
+		res.Status = InSync
+		return res
+	case cloud.TypeAWSCloudWatchAlarm:
+		// CloudWatch alarm existence is sufficient for V1 drift.
+		res.Status = InSync
+		return res
+	case cloud.TypeAWSAutoScalingAutoScalingGroup:
+		// ASG existence is sufficient for V1 drift (capacity is dynamic).
+		res.Status = InSync
+		return res
+	case cloud.TypeAWSEC2LaunchTemplate:
+		// Launch template existence is sufficient for V1 drift.
+		res.Status = InSync
+		return res
 	default:
 		// For unknown types, existence is the only check we can do.
 		res.Status = InSync

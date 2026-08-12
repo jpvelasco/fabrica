@@ -302,3 +302,143 @@ func TestRun_JSONOutput(t *testing.T) {
 		t.Errorf("expected JSON provisioned: %s", out.String())
 	}
 }
+
+func TestPopulateScaling_WithScalingResources(t *testing.T) {
+	m := &fabricastate.ModuleState{
+		Resources: []fabricastate.ModuleResource{
+			{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent", Properties: map[string]string{"role": "agent"}},
+			{TypeName: "AWS::AutoScaling::ScalingPolicy", Identifier: "policy-out", Properties: map[string]string{
+				"role":              "agent",
+				"scalingPolicy":     "scale-out",
+				"scaleOutThreshold": "10",
+			}},
+			{TypeName: "AWS::AutoScaling::ScalingPolicy", Identifier: "policy-in", Properties: map[string]string{
+				"role":             "agent",
+				"scalingPolicy":    "scale-in",
+				"scaleInThreshold": "2",
+				"cooldown":         "120",
+			}},
+			{TypeName: "AWS::CloudWatch::Alarm", Identifier: "alarm-out", Properties: map[string]string{
+				"role":         "agent",
+				"scalingAlarm": "scale-out",
+				"metricName":   "ASGQueueDepth",
+				"metricNs":     "Fabrica/HordeAgents",
+			}},
+			{TypeName: "AWS::CloudWatch::Alarm", Identifier: "alarm-in", Properties: map[string]string{
+				"role":         "agent",
+				"scalingAlarm": "scale-in",
+			}},
+		},
+	}
+
+	o := StatusOutput{}
+	o.populateScaling(m)
+
+	if !o.ScalingEnabled {
+		t.Error("ScalingEnabled should be true")
+	}
+	if o.ScaleOutPolicyID != "policy-out" {
+		t.Errorf("ScaleOutPolicyID = %q, want policy-out", o.ScaleOutPolicyID)
+	}
+	if o.ScaleInPolicyID != "policy-in" {
+		t.Errorf("ScaleInPolicyID = %q, want policy-in", o.ScaleInPolicyID)
+	}
+	if o.ScaleOutThreshold != "10" {
+		t.Errorf("ScaleOutThreshold = %q, want 10", o.ScaleOutThreshold)
+	}
+	if o.ScaleInThreshold != "2" {
+		t.Errorf("ScaleInThreshold = %q, want 2", o.ScaleInThreshold)
+	}
+	if o.ScaleInCooldown != "120s" {
+		t.Errorf("ScaleInCooldown = %q, want 120s", o.ScaleInCooldown)
+	}
+	if o.MetricName != "ASGQueueDepth" {
+		t.Errorf("MetricName = %q, want ASGQueueDepth", o.MetricName)
+	}
+	if o.MetricNamespace != "Fabrica/HordeAgents" {
+		t.Errorf("MetricNamespace = %q, want Fabrica/HordeAgents", o.MetricNamespace)
+	}
+	if o.ScaleOutAlarmID != "alarm-out" {
+		t.Errorf("ScaleOutAlarmID = %q, want alarm-out", o.ScaleOutAlarmID)
+	}
+	if o.ScaleInAlarmID != "alarm-in" {
+		t.Errorf("ScaleInAlarmID = %q, want alarm-in", o.ScaleInAlarmID)
+	}
+}
+
+func TestPopulateScaling_WithoutScalingResources(t *testing.T) {
+	m := &fabricastate.ModuleState{
+		Resources: []fabricastate.ModuleResource{
+			{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent", Properties: map[string]string{"role": "agent"}},
+		},
+	}
+
+	o := StatusOutput{}
+	o.populateScaling(m)
+
+	if o.ScalingEnabled {
+		t.Error("ScalingEnabled should be false when no scaling resources")
+	}
+}
+
+func TestPopulateScaling_NilModule(t *testing.T) {
+	o := StatusOutput{}
+	o.populateScaling(nil)
+
+	if o.ScalingEnabled {
+		t.Error("ScalingEnabled should be false for nil module")
+	}
+}
+
+func TestPopulateScaling_NonAgentResources(t *testing.T) {
+	m := &fabricastate.ModuleState{
+		Resources: []fabricastate.ModuleResource{
+			{TypeName: "AWS::AutoScaling::ScalingPolicy", Identifier: "policy-123", Properties: map[string]string{
+				"role":              "coordinator",
+				"scalingPolicy":     "scale-out",
+				"scaleOutThreshold": "10",
+			}},
+		},
+	}
+
+	o := StatusOutput{}
+	o.populateScaling(m)
+
+	if o.ScalingEnabled {
+		t.Error("ScalingEnabled should be false for non-agent resources")
+	}
+}
+
+func TestPrintText_ScalingEnabled(t *testing.T) {
+	var out bytes.Buffer
+	c := &command{out: &out}
+	o := StatusOutput{
+		Provisioned:       true,
+		ASGID:             "asg-agent123",
+		MinSize:           0,
+		DesiredCapacity:   2,
+		MaxSize:           4,
+		Status:            "ready",
+		ScalingEnabled:    true,
+		MetricName:        "ASGQueueDepth",
+		MetricNamespace:   "Fabrica/HordeAgents",
+		ScaleOutThreshold: "10",
+		ScaleInThreshold:  "2",
+		ScaleInCooldown:   "120s",
+		ScaleOutPolicyID:  "policy-out",
+		ScaleInPolicyID:   "policy-in",
+		ScaleOutAlarmID:   "alarm-out",
+		ScaleInAlarmID:    "alarm-in",
+	}
+	c.printText(o)
+	got := out.String()
+	if !bytes.Contains(out.Bytes(), []byte("Queue Scaling")) {
+		t.Errorf("expected 'Queue Scaling' in output: %s", got)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("ASGQueueDepth")) {
+		t.Errorf("expected metric name in output: %s", got)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("Fabrica/HordeAgents")) {
+		t.Errorf("expected metric namespace in output: %s", got)
+	}
+}

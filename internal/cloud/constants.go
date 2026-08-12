@@ -16,4 +16,6 @@ const (
 
 	TypeAWSEC2LaunchTemplate           = "AWS::EC2::LaunchTemplate"
 	TypeAWSAutoScalingAutoScalingGroup = "AWS::AutoScaling::AutoScalingGroup"
+	TypeAWSAutoScalingScalingPolicy    = "AWS::AutoScaling::ScalingPolicy"
+	TypeAWSCloudWatchAlarm             = "AWS::CloudWatch::Alarm"
 )
