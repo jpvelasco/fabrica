@@ -3,6 +3,7 @@ package ami
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 )
@@ -147,5 +148,111 @@ func TestPlanVerb(t *testing.T) {
 	}
 	if got := planVerb(false); got != "Writing" {
 		t.Errorf("planVerb(false) = %q, want %q", got, "Writing")
+	}
+}
+
+func TestBuildRunMkdirError(t *testing.T) {
+	var out bytes.Buffer
+	b := &buildCommand{
+		out: &out,
+		cfg: BuildConfig{
+			Version:   "5.5.0",
+			BaseImage: defaultBaseImage,
+			Region:    defaultRegion,
+			Name:      "fabrica-lore-5.5.0",
+			OutputDir: "/nonexistent/impossible/path",
+		},
+		mkdirAll: func(path string, perm os.FileMode) error {
+			return fmt.Errorf("permission denied")
+		},
+	}
+	err := b.run()
+	if err == nil {
+		t.Error("expected error for mkdirAll failure, got nil")
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("creating --output-dir")) {
+		t.Errorf("expected 'creating --output-dir' in error, got: %v", err)
+	}
+}
+
+func TestBuildRunWriteError(t *testing.T) {
+	var out bytes.Buffer
+	b := &buildCommand{
+		out: &out,
+		cfg: BuildConfig{
+			Version:   "5.5.0",
+			BaseImage: defaultBaseImage,
+			Region:    defaultRegion,
+			Name:      "fabrica-lore-5.5.0",
+			OutputDir: "out",
+		},
+		mkdirAll: func(path string, perm os.FileMode) error { return nil },
+		writeFile: func(path string, data []byte, perm os.FileMode) error {
+			return fmt.Errorf("disk full")
+		},
+	}
+	err := b.run()
+	if err == nil {
+		t.Error("expected error for writeFile failure, got nil")
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("writing")) {
+		t.Errorf("expected 'writing' in error, got: %v", err)
+	}
+}
+
+func TestBuildRunInvalidTemplate(t *testing.T) {
+	var out bytes.Buffer
+	b := &buildCommand{
+		out: &out,
+		cfg: BuildConfig{
+			Version:   "5.5.0",
+			BaseImage: defaultBaseImage,
+			Region:    defaultRegion,
+			Name:      "fabrica-lore-5.5.0",
+			OutputDir: "out",
+		},
+		mkdirAll:  func(path string, perm os.FileMode) error { return nil },
+		writeFile: func(path string, data []byte, perm os.FileMode) error { return nil },
+	}
+	// Force invalid JSON validation by using a bad base image that breaks the template
+	b.cfg.BaseImage = ""
+	err := b.run()
+	if err == nil {
+		t.Error("expected validation error for empty base image, got nil")
+	}
+}
+
+func TestBuildRunWithPacker(t *testing.T) {
+	var out bytes.Buffer
+	var writtenFiles []string
+	b := &buildCommand{
+		out: &out,
+		cfg: BuildConfig{
+			Version:       "5.5.0",
+			BaseImage:     defaultBaseImage,
+			Region:        defaultRegion,
+			Name:          "fabrica-lore-5.5.0",
+			OutputDir:     "out",
+			IncludePacker: true,
+		},
+		mkdirAll: func(path string, perm os.FileMode) error { return nil },
+		writeFile: func(path string, data []byte, perm os.FileMode) error {
+			writtenFiles = append(writtenFiles, path)
+			return nil
+		},
+	}
+	err := b.run()
+	if err != nil {
+		t.Fatalf("run() unexpected error: %v", err)
+	}
+
+	// Should have written 4 files (recipe, component, packer, build-guide)
+	if len(writtenFiles) != 4 {
+		t.Errorf("expected 4 files written, got %d: %v", len(writtenFiles), writtenFiles)
+	}
+
+	got := out.String()
+	if !bytes.Contains([]byte(got), []byte("packer.pkr.hcl")) {
+		t.Errorf("expected packer.pkr.hcl in output, got:\n%s", got)
 	}
 }
