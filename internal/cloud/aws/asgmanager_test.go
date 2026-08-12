@@ -153,7 +153,7 @@ func TestAutoScalingClient_Default(t *testing.T) {
 func TestAutoScalingClient_CustomFactory(t *testing.T) {
 	fake := &fakeAutoScalingClient{}
 	p := &awsProvider{
-		awsCfg: awsConfig{region: "us-east-1"},
+		awsCfg:               awsConfig{region: "us-east-1"},
 		newAutoScalingClient: func(awssdk.Config) autoScalingClient { return fake },
 	}
 	client := p.autoScalingClient(awssdk.Config{})
