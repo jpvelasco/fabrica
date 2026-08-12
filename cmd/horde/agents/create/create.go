@@ -410,9 +410,11 @@ func (c command) applyScalingResources(ctx context.Context, plan *horde.AgentsCr
 			return horde.ScaleOutPolicyDesiredState(plan)
 		},
 		Properties: map[string]string{
-			"role":              "agent",
-			"scalingPolicy":     "scale-out",
-			"scaleOutThreshold": fmt.Sprintf("%g", plan.ScaleOutThreshold),
+			"role":                 "agent",
+			"scalingPolicy":        "scale-out",
+			"scaleOutThreshold":    fmt.Sprintf("%g", plan.ScaleOutThreshold),
+			"PolicyName":           plan.ScaleOutPolicyName,
+			"AutoScalingGroupName": plan.ASGName,
 		},
 	}, moduleName, ver, "ready", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
@@ -429,10 +431,12 @@ func (c command) applyScalingResources(ctx context.Context, plan *horde.AgentsCr
 			return horde.ScaleInPolicyDesiredState(plan)
 		},
 		Properties: map[string]string{
-			"role":             "agent",
-			"scalingPolicy":    "scale-in",
-			"cooldown":         fmt.Sprintf("%d", plan.ScaleInCooldown),
-			"scaleInThreshold": fmt.Sprintf("%g", plan.ScaleInThreshold),
+			"role":                 "agent",
+			"scalingPolicy":        "scale-in",
+			"cooldown":             fmt.Sprintf("%d", plan.ScaleInCooldown),
+			"scaleInThreshold":     fmt.Sprintf("%g", plan.ScaleInThreshold),
+			"PolicyName":           plan.ScaleInPolicyName,
+			"AutoScalingGroupName": plan.ASGName,
 		},
 	}, moduleName, ver, "ready", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
@@ -449,11 +453,13 @@ func (c command) applyScalingResources(ctx context.Context, plan *horde.AgentsCr
 			return horde.ScaleOutAlarmDesiredState(plan, scaleOutPolicyARN)
 		},
 		Properties: map[string]string{
-			"role":         "agent",
-			"scalingAlarm": "scale-out",
-			"threshold":    fmt.Sprintf("%g", plan.ScaleOutThreshold),
-			"metricName":   plan.MetricName,
-			"metricNs":     plan.MetricNamespace,
+			"role":                 "agent",
+			"scalingAlarm":         "scale-out",
+			"threshold":            fmt.Sprintf("%g", plan.ScaleOutThreshold),
+			"metricName":           plan.MetricName,
+			"metricNs":             plan.MetricNamespace,
+			"AlarmName":            plan.ScaleOutAlarmName,
+			"AutoScalingGroupName": plan.ASGName,
 		},
 	}, moduleName, ver, "ready", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
@@ -469,11 +475,13 @@ func (c command) applyScalingResources(ctx context.Context, plan *horde.AgentsCr
 			return horde.ScaleInAlarmDesiredState(plan, scaleInPolicyARN)
 		},
 		Properties: map[string]string{
-			"role":         "agent",
-			"scalingAlarm": "scale-in",
-			"threshold":    fmt.Sprintf("%g", plan.ScaleInThreshold),
-			"metricName":   plan.MetricName,
-			"metricNs":     plan.MetricNamespace,
+			"role":                 "agent",
+			"scalingAlarm":         "scale-in",
+			"threshold":            fmt.Sprintf("%g", plan.ScaleInThreshold),
+			"metricName":           plan.MetricName,
+			"metricNs":             plan.MetricNamespace,
+			"AlarmName":            plan.ScaleInAlarmName,
+			"AutoScalingGroupName": plan.ASGName,
 		},
 	}, moduleName, ver, "ready", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {

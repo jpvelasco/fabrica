@@ -2,6 +2,7 @@ package horde
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -240,8 +241,8 @@ func TestScaleOutPolicyDesiredState(t *testing.T) {
 	if doc["AdjustmentType"] != "ChangeInCapacity" {
 		t.Errorf("AdjustmentType = %v, want ChangeInCapacity", doc["AdjustmentType"])
 	}
-	if doc["Cooldown"] != float64(plan.ScaleInCooldown) {
-		t.Errorf("Cooldown = %v, want %d", doc["Cooldown"], plan.ScaleInCooldown)
+	if doc["Cooldown"] != fmt.Sprintf("%d", plan.ScaleInCooldown) {
+		t.Errorf("Cooldown = %v, want %d (string)", doc["Cooldown"], plan.ScaleInCooldown)
 	}
 }
 

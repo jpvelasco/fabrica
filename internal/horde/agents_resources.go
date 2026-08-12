@@ -143,12 +143,15 @@ func ASGDesiredState(plan *AgentsCreatePlan, ltID string) (json.RawMessage, erro
 // scale-out SimpleScaling policy. When triggered by the scale-out alarm,
 // it adds one instance to the ASG. The ASG's MinSize/MaxSize act as hard bounds.
 func ScaleOutPolicyDesiredState(plan *AgentsCreatePlan) (json.RawMessage, error) {
+	// Cloud Control schema for AWS::AutoScaling::ScalingPolicy:
+	// - Cooldown is a String property (not an integer).
+	// - ScalingAdjustment is an integer.
 	doc := map[string]any{
 		"AutoScalingGroupName": plan.ASGName,
 		"PolicyName":           plan.ScaleOutPolicyName,
 		"PolicyType":           "SimpleScaling",
 		"ScalingAdjustment":    1,
-		"Cooldown":             plan.ScaleInCooldown,
+		"Cooldown":             fmt.Sprintf("%d", plan.ScaleInCooldown),
 		"AdjustmentType":       "ChangeInCapacity",
 	}
 
@@ -159,12 +162,15 @@ func ScaleOutPolicyDesiredState(plan *AgentsCreatePlan) (json.RawMessage, error)
 // scale-in SimpleScaling policy. When triggered by the scale-in alarm,
 // it removes one instance from the ASG. The ASG's MinSize/MaxSize act as hard bounds.
 func ScaleInPolicyDesiredState(plan *AgentsCreatePlan) (json.RawMessage, error) {
+	// Cloud Control schema for AWS::AutoScaling::ScalingPolicy:
+	// - Cooldown is a String property (not an integer).
+	// - ScalingAdjustment is an integer.
 	doc := map[string]any{
 		"AutoScalingGroupName": plan.ASGName,
 		"PolicyName":           plan.ScaleInPolicyName,
 		"PolicyType":           "SimpleScaling",
 		"ScalingAdjustment":    -1,
-		"Cooldown":             plan.ScaleInCooldown,
+		"Cooldown":             fmt.Sprintf("%d", plan.ScaleInCooldown),
 		"AdjustmentType":       "ChangeInCapacity",
 	}
 
