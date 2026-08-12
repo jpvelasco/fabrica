@@ -7,12 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-11
+
 ### Added
 
 - **Horde agents V1** — `fabrica horde agents create|status|destroy` provisions a managed agent pool on AWS. Creates an Auto Scaling Group with a Launch Template that launches agent instances in private subnets. Agents enroll against the existing Horde coordinator via private IP. Resources: agent SG (coordinator SG source, no internet inbound), IAM role (SSM only), instance profile, launch template, ASG. Config: `horde.agents.amiId`, `instanceType`, `minSize`, `desiredCapacity`, `maxSize`. CLI flags override config. `--dry-run` shows plan + cost estimate. (#265)
 - **Drift ASG exclusion** — `fabrica drift` now excludes ASG-managed instances (tagged `FabricaRole=agent`) from Extra resource detection, preventing false positives for dynamically launched agent instances. (#265)
 - **Horde destroy includes agents** — `fabrica horde destroy` and `fabrica destroy --all` now tear down agent resources (ASG → LT → IAM → SG) before the coordinator instance, preventing orphaned resources. (#265)
 - **Export ASG + LaunchTemplate** — `fabrica export` now includes Auto Scaling Group and Launch Template resources when the horde module contains agent resources. (#265)
+- **Agent AMI documentation** — `docs/horde-agent-ami.md` documents dedicated agent AMI requirements for production use.
+
+### Fixed
+
+- **c7i instance prices** — added c7i.xlarge, c7i.2xlarge, and c7i.4xlarge on-demand prices for agent cost estimation. `horde agents create --dry-run` now shows accurate cost estimates instead of `$0.00`. (#267)
+- **Cloud Control waiter StatusMessage** — when a Cloud Control operation fails, the waiter now surfaces the actual StatusMessage from the ProgressEvent instead of the generic "waiter state transitioned to Failure" message. (#268)
 
 ## [0.3.5] - 2026-08-10
 
@@ -243,7 +251,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/jpvelasco/fabrica/compare/v0.3.5...v0.4.0
 [0.3.5]: https://github.com/jpvelasco/fabrica/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/jpvelasco/fabrica/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/jpvelasco/fabrica/compare/v0.3.2...v0.3.3
