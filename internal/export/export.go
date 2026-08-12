@@ -629,11 +629,11 @@ func assumeRolePolicyForModule(module string) map[string]any {
 }
 
 // managedPolicyARNsForModule returns the managed policy ARNs for a module's
-// IAM role. Only EC2-based modules (perforce, ddc) attach SSM managed policies.
-// CI and Deploy use inline policies instead, so this returns nil for them.
+// IAM role. EC2-based modules (perforce, horde, lore, ddc) attach SSM managed
+// policies. CI and Deploy use inline policies instead, so this returns nil.
 func managedPolicyARNsForModule(module string) []map[string]any {
 	switch module {
-	case "perforce", "ddc":
+	case "perforce", "horde", "lore", "ddc":
 		return []map[string]any{
 			{"arn": "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"},
 		}

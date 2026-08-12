@@ -1,10 +1,11 @@
 # Lore TLS — Design Note
 
-**Status:** Foundation only (V1). Config hooks wired; full TLS support deferred to V2.
+**Status:** Hooks only (V1). Config fields exist; cloud-init wiring deferred to V2.
 
 ## What Exists Today
 
-The `LoreTLSConfig` struct is wired into `fabrica.yaml` and the Lore plan layer:
+The `LoreTLSConfig` struct is defined in `internal/config/config.go` and is
+readable from `fabrica.yaml`:
 
 ```yaml
 lore:
@@ -14,13 +15,15 @@ lore:
     keyPath:  /etc/loreserver/certs/server.key
 ```
 
-The cloud-init template reads these fields and passes them to the `loreserver`
-startup command when `tls.enabled` is true. The config struct lives in
-`internal/config/config.go` and is consumed by `internal/lore/userdata.go`.
+**These fields are not yet wired into cloud-init.** The `UserDataConfig` struct
+in `internal/lore/userdata.go` has `TLSEnabled`, `CertPath`, and `KeyPath`
+fields, but the cloud-init template does not reference them and `lore create`
+does not pass them through. Setting `tls.enabled: true` is currently a no-op —
+the fields exist as placeholders for V2 implementation.
 
-## What This Enables
+## What Will Be Enabled (V2)
 
-When `tls.enabled: true`, the cloud-init script will:
+When TLS wiring is implemented, the cloud-init script will:
 
 1. Verify the certificate and key files exist at the specified paths
 2. Start loreserver with TLS flags pointing to those paths
@@ -70,10 +73,13 @@ All Lore traffic flows through private IPs within the VPC. The health check
 endpoint (`:41339`) remains unencrypted in V1 — this is acceptable as it
 exposes only a health status string, not credentials or game data.
 
-## Usage
+## Usage (V2 — not yet active)
+
+The following config is accepted by the parser but has no effect until V2
+wires TLS into cloud-init:
 
 ```yaml
-# fabrica.yaml
+# fabrica.yaml (accepted but no-op until V2)
 lore:
   amiId: ami-lore-123
   instanceType: m7i.xlarge
@@ -84,8 +90,8 @@ lore:
     keyPath:  /etc/loreserver/certs/server.key
 ```
 
-The AMI must contain the certificate files at the specified paths before
-Fabrica provisions the instance.
+When V2 ships, the AMI must contain the certificate files at the specified
+paths before Fabrica provisions the instance.
 
 ## Future Work
 

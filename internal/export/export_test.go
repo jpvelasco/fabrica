@@ -746,6 +746,96 @@ func TestBuildLoreModule(t *testing.T) {
 	}
 }
 
+func TestBuildLoreModuleWithS3Store(t *testing.T) {
+	// Lore with S3 store backend includes S3 bucket, IAM role, and instance profile.
+	ms := state.ModuleState{
+		Name:   "lore",
+		Status: "ready",
+		Resources: []state.ModuleResource{
+			{
+				TypeName:   "AWS::EC2::SecurityGroup",
+				Identifier: "sg-lore",
+				Properties: map[string]string{},
+			},
+			{
+				TypeName:   "AWS::S3::Bucket",
+				Identifier: "fabrica-lore-store-123456789012-us-east-1",
+				Properties: map[string]string{
+					"BucketName": "fabrica-lore-store-123456789012-us-east-1",
+				},
+			},
+			{
+				TypeName:   "AWS::IAM::Role",
+				Identifier: "fabrica-lore-role",
+				Properties: map[string]string{
+					"RoleName": "fabrica-lore-role",
+				},
+			},
+			{
+				TypeName:   "AWS::IAM::InstanceProfile",
+				Identifier: "fabrica-lore-profile",
+				Properties: map[string]string{
+					"InstanceProfileName": "fabrica-lore-profile",
+				},
+			},
+			{
+				TypeName:   "AWS::EC2::Instance",
+				Identifier: "i-lore",
+				Properties: map[string]string{
+					"instanceType": "m5.xlarge",
+					"volumeSize":   "500",
+				},
+			},
+		},
+	}
+	cfg := config.Defaults()
+	cfg.Lore.AmiID = "ami-lore123"
+	cfg.Lore.InstanceType = "m5.xlarge"
+	cfg.Lore.AllowedCIDR = "10.0.0.0/8"
+	cfg.Lore.StoreBackend = "s3"
+	cfg.Lore.StoreBucket = "fabrica-lore-store-123456789012-us-east-1"
+
+	mod := buildModule(ms, cfg)
+	if mod.Name != "lore" {
+		t.Errorf("unexpected module name: %s", mod.Name)
+	}
+	if len(mod.Resources) != 5 {
+		t.Errorf("expected 5 resources (SG + S3 + Role + Profile + Instance), got %d", len(mod.Resources))
+	}
+
+	// Verify S3 bucket is included in export.
+	foundBucket := false
+	foundRole := false
+	foundProfile := false
+	for _, r := range mod.Resources {
+		if r.TypeName == "AWS::S3::Bucket" {
+			foundBucket = true
+			if r.LogicalID == "" {
+				t.Error("S3 bucket should have a non-empty LogicalID")
+			}
+		}
+		if r.TypeName == "AWS::IAM::Role" {
+			foundRole = true
+			// Verify managed policy ARNs are included for lore role.
+			if policyARNs, ok := r.Properties["ManagedPolicyArns"].([]map[string]any); !ok || len(policyARNs) == 0 {
+				t.Error("lore IAM role should have ManagedPolicyArns in export")
+			}
+		}
+		if r.TypeName == "AWS::IAM::InstanceProfile" {
+			foundProfile = true
+		}
+	}
+	if !foundBucket {
+		t.Error("S3 bucket not found in exported lore module")
+	}
+	if !foundRole {
+		t.Error("IAM role not found in exported lore module")
+	}
+	if !foundProfile {
+		t.Error("Instance profile not found in exported lore module")
+	}
+}
+
 func TestTerraformResourceType(t *testing.T) {
 	gen := &terraformGenerator{}
 
@@ -2787,7 +2877,7 @@ func TestAssumeRolePolicyForModule(t *testing.T) {
 // TestManagedPolicyARNsForModule verifies which modules get SSM managed policies.
 func TestManagedPolicyARNsForModule(t *testing.T) {
 	// EC2-based modules should get SSM policy
-	for _, mod := range []string{"perforce", "ddc"} {
+	for _, mod := range []string{"perforce", "horde", "lore", "ddc"} {
 		arns := managedPolicyARNsForModule(mod)
 		if arns == nil {
 			t.Errorf("module %s: expected SSM managed policy ARN", mod)
@@ -2798,8 +2888,8 @@ func TestManagedPolicyARNsForModule(t *testing.T) {
 		}
 	}
 
-	// CI and Deploy should NOT get SSM managed policy
-	for _, mod := range []string{"ci", "deploy", "horde", "workstation"} {
+	// CI, Deploy, and Workstation should NOT get SSM managed policy in export
+	for _, mod := range []string{"ci", "deploy", "workstation"} {
 		arns := managedPolicyARNsForModule(mod)
 		if arns != nil {
 			t.Errorf("module %s: expected nil managed policy ARNs, got %v", mod, arns)
