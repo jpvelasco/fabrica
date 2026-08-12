@@ -901,3 +901,71 @@ func (f *fakeCodeBuildRunner) BuildStatus(_ context.Context, _ string) (cloud.Bu
 func (f *fakeCodeBuildRunner) BuildLog(_ context.Context, _ string) (string, error) {
 	return "", nil
 }
+
+func TestCheckAttributes_ScalingPolicy(t *testing.T) {
+	e := &Engine{}
+	res := DriftResult{Status: Missing}
+	m := &state.ModuleState{Name: "horde"}
+	recorded := &state.ModuleResource{TypeName: cloud.TypeAWSAutoScalingScalingPolicy, Identifier: "policy-123"}
+	live := &cloud.Resource{Identifier: "policy-123"}
+
+	result := e.checkAttributes(res, m, recorded, live)
+	if result.Status != InSync {
+		t.Errorf("expected InSync for ScalingPolicy, got %s", result.Status)
+	}
+}
+
+func TestCheckAttributes_CloudWatchAlarm(t *testing.T) {
+	e := &Engine{}
+	res := DriftResult{Status: Missing}
+	m := &state.ModuleState{Name: "horde"}
+	recorded := &state.ModuleResource{TypeName: cloud.TypeAWSCloudWatchAlarm, Identifier: "alarm-123"}
+	live := &cloud.Resource{Identifier: "alarm-123"}
+
+	result := e.checkAttributes(res, m, recorded, live)
+	if result.Status != InSync {
+		t.Errorf("expected InSync for CloudWatchAlarm, got %s", result.Status)
+	}
+}
+
+func TestRun_ScalingResourcesInSync(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{
+		{TypeName: cloud.TypeAWSAutoScalingAutoScalingGroup, Identifier: "asg-123", Properties: map[string]string{"role": "agent"}},
+		{TypeName: cloud.TypeAWSAutoScalingScalingPolicy, Identifier: "policy-out", Properties: map[string]string{"role": "agent", "scalingPolicy": "scale-out"}},
+		{TypeName: cloud.TypeAWSAutoScalingScalingPolicy, Identifier: "policy-in", Properties: map[string]string{"role": "agent", "scalingPolicy": "scale-in"}},
+		{TypeName: cloud.TypeAWSCloudWatchAlarm, Identifier: "alarm-out", Properties: map[string]string{"role": "agent", "scalingAlarm": "scale-out"}},
+		{TypeName: cloud.TypeAWSCloudWatchAlarm, Identifier: "alarm-in", Properties: map[string]string{"role": "agent", "scalingAlarm": "scale-in"}},
+	})
+
+	engine := &Engine{
+		State: st,
+		Config: &DriftConfig{
+			Account: "123456789012",
+		},
+		ResourceList: func(_ context.Context, typeName string) ([]cloud.Resource, error) {
+			switch typeName {
+			case cloud.TypeAWSAutoScalingAutoScalingGroup:
+				return []cloud.Resource{{Identifier: "asg-123", TypeName: typeName}}, nil
+			case cloud.TypeAWSAutoScalingScalingPolicy:
+				return []cloud.Resource{{Identifier: "policy-out", TypeName: typeName}, {Identifier: "policy-in", TypeName: typeName}}, nil
+			case cloud.TypeAWSCloudWatchAlarm:
+				return []cloud.Resource{{Identifier: "alarm-out", TypeName: typeName}, {Identifier: "alarm-in", TypeName: typeName}}, nil
+			default:
+				return nil, nil
+			}
+		},
+		ResourceGet: func(_ context.Context, r *cloud.Resource) error {
+			r.ActualState = json.RawMessage(`{}`)
+			return nil
+		},
+	}
+
+	report := engine.Run(context.Background())
+	if report.Extra != 0 {
+		t.Errorf("expected 0 extra resources, got %d", report.Extra)
+	}
+	if report.Missing != 0 {
+		t.Errorf("expected 0 missing resources, got %d", report.Missing)
+	}
+}

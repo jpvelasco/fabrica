@@ -3239,3 +3239,60 @@ func TestExportHordeWithAgents(t *testing.T) {
 		t.Error("LaunchTemplate not found in horde export")
 	}
 }
+
+func TestExportHordeAgentsWithScaling(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-coord123", "ready", []state.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-coordinator"},
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coordinator", Properties: map[string]string{"instanceType": "m7i.2xlarge"}},
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-agent123", Properties: map[string]string{"role": "agent"}},
+		{TypeName: "AWS::IAM::Role", Identifier: "role-agent123", Properties: map[string]string{"role": "agent"}},
+		{TypeName: "AWS::IAM::InstanceProfile", Identifier: "profile-agent123", Properties: map[string]string{"role": "agent"}},
+		{TypeName: "AWS::EC2::LaunchTemplate", Identifier: "lt-agent123", Properties: map[string]string{"role": "agent", "instanceType": "c7i.xlarge", "imageId": "ami-agent123"}},
+		{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent123", Properties: map[string]string{"role": "agent", "minSize": "0", "desiredCapacity": "2", "maxSize": "4"}},
+		{TypeName: "AWS::AutoScaling::ScalingPolicy", Identifier: "arn:aws:autoscaling:us-east-1:123456789012:scalingPolicy:abc123:autoScalingGroupName/fabrica-horde-agents-asg:policyName/fabrica-horde-agents-scale-out-policy", Properties: map[string]string{"role": "agent", "scalingPolicy": "scale-out", "PolicyName": "fabrica-horde-agents-scale-out-policy", "AutoScalingGroupName": "fabrica-horde-agents-asg"}},
+		{TypeName: "AWS::AutoScaling::ScalingPolicy", Identifier: "arn:aws:autoscaling:us-east-1:123456789012:scalingPolicy:def456:autoScalingGroupName/fabrica-horde-agents-asg:policyName/fabrica-horde-agents-scale-in-policy", Properties: map[string]string{"role": "agent", "scalingPolicy": "scale-in", "PolicyName": "fabrica-horde-agents-scale-in-policy", "AutoScalingGroupName": "fabrica-horde-agents-asg"}},
+		{TypeName: "AWS::CloudWatch::Alarm", Identifier: "fabrica-horde-agents-scale-out", Properties: map[string]string{"role": "agent", "scalingAlarm": "scale-out"}},
+		{TypeName: "AWS::CloudWatch::Alarm", Identifier: "fabrica-horde-agents-scale-in", Properties: map[string]string{"role": "agent", "scalingAlarm": "scale-in"}},
+	})
+
+	cfg := testConfigWithHorde()
+	modules, err := buildModules(st, cfg)
+	if err != nil {
+		t.Fatalf("buildModules: %v", err)
+	}
+
+	var hordeMod *ExportModule
+	for i := range modules {
+		if modules[i].Name == "horde" {
+			hordeMod = &modules[i]
+			break
+		}
+	}
+	if hordeMod == nil {
+		t.Fatal("horde module not found in export")
+	}
+
+	// Should have 11 resources: 7 base + 2 policies + 2 alarms.
+	if len(hordeMod.Resources) != 11 {
+		t.Errorf("horde module has %d resources, want 11", len(hordeMod.Resources))
+	}
+
+	// Verify scaling policies and alarms are present.
+	policyCount := 0
+	alarmCount := 0
+	for _, r := range hordeMod.Resources {
+		if r.TypeName == "AWS::AutoScaling::ScalingPolicy" {
+			policyCount++
+		}
+		if r.TypeName == "AWS::CloudWatch::Alarm" {
+			alarmCount++
+		}
+	}
+	if policyCount != 2 {
+		t.Errorf("expected 2 scaling policies, got %d", policyCount)
+	}
+	if alarmCount != 2 {
+		t.Errorf("expected 2 cloudwatch alarms, got %d", alarmCount)
+	}
+}
