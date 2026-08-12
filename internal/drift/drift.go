@@ -370,6 +370,14 @@ func (e *Engine) checkAttributes(res DriftResult, m *state.ModuleState, recorded
 		// IAM role existence is sufficient for V1 drift.
 		res.Status = InSync
 		return res
+	case cloud.TypeAWSS3Bucket:
+		// S3 bucket existence is sufficient for V1 drift.
+		res.Status = InSync
+		return res
+	case cloud.TypeAWSIAMInstanceProfile:
+		// IAM instance profile existence is sufficient for V1 drift.
+		res.Status = InSync
+		return res
 	default:
 		// For unknown types, existence is the only check we can do.
 		res.Status = InSync

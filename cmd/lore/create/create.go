@@ -48,9 +48,15 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Short: "Provision a Lore version control server",
 		Long: `Provision an Epic Lore (loreserver) version control server on AWS.
 
-Creates two resources in order:
+Creates resources in order:
   1. EC2 Security Group — TCP 41337 (gRPC), UDP 41337 (QUIC), TCP 41339 (HTTP)
-  2. EC2 Instance — runs loreserver using a user-provided AMI (local/EBS store)
+  2. S3 Store Bucket (optional) — enabled when lore.storeBackend is "s3"
+  3. IAM Role + Instance Profile (optional) — S3 access for the Lore instance
+  4. EC2 Instance — runs loreserver using a user-provided AMI
+
+Store backend:
+  - "local" (default): EBS-backed store on the instance volume
+  - "s3": S3-backed store with dedicated bucket and IAM role
 
 State is written after each resource so a partial failure is recoverable:
 re-running create will detect the already-provisioned module and exit cleanly.
@@ -148,12 +154,24 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	}
 	sgID := resources[len(resources)-1].Identifier
 
+	// S3 store resources (bucket + IAM role + instance profile) — created before
+	// the instance so the instance profile is available at launch.
+	if plan.StoreBackend == lore.StoreBackendS3 {
+		var err error
+		resources, _, _, _, err = c.createS3StoreResources(ctx, plan, resources, st)
+		if err != nil {
+			return err
+		}
+	}
+
 	fmt.Fprintf(c.out, "Creating instance %s...\n", plan.InstanceName)
 	userData, err := lore.Generate(lore.UserDataConfig{
-		StorePath: lore.DefaultStorePath,
-		ConfigDir: lore.DefaultConfigDir,
-		GRPCPort:  plan.GRPCPort,
-		HTTPPort:  plan.HTTPPort,
+		StorePath:    lore.DefaultStorePath,
+		ConfigDir:    lore.DefaultConfigDir,
+		GRPCPort:     plan.GRPCPort,
+		HTTPPort:     plan.HTTPPort,
+		StoreBackend: plan.StoreBackend,
+		StoreBucket:  plan.StoreBucket,
 	})
 	if err != nil {
 		return fmt.Errorf("generating user data: %w", err)
@@ -179,7 +197,65 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	return nil
 }
 
+func (c command) createS3StoreResources(ctx context.Context, plan *lore.CreatePlan, resources []fabricastate.ModuleResource, st *fabricastate.State) ([]fabricastate.ModuleResource, string, string, string, error) {
+	// S3 Bucket
+	fmt.Fprintf(c.out, "Creating S3 store bucket %s...\n", plan.StoreBucket)
+	var err error
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:    "S3 store bucket",
+		TypeName: cloud.TypeAWSS3Bucket,
+		BuildDesiredState: func() ([]byte, error) {
+			return lore.BucketDesiredState(plan)
+		},
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return resources, "", "", "", fmt.Errorf("creating S3 store bucket: %w", err)
+	}
+	storeBucketID := resources[len(resources)-1].Identifier
+
+	// IAM Role
+	fmt.Fprintf(c.out, "Creating IAM role %s...\n", plan.RoleName)
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:    "IAM role",
+		TypeName: cloud.TypeAWSIAMRole,
+		BuildDesiredState: func() ([]byte, error) {
+			return lore.RoleDesiredState(plan)
+		},
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return resources, storeBucketID, "", "", fmt.Errorf("creating IAM role: %w", err)
+	}
+	roleName := resources[len(resources)-1].Identifier
+
+	// IAM Instance Profile
+	fmt.Fprintf(c.out, "Creating instance profile %s...\n", plan.InstanceProfileName)
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:    "Instance profile",
+		TypeName: cloud.TypeAWSIAMInstanceProfile,
+		BuildDesiredState: func() ([]byte, error) {
+			return lore.InstanceProfileDesiredState(plan)
+		},
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return resources, storeBucketID, roleName, "", fmt.Errorf("creating instance profile: %w", err)
+	}
+	profileName := resources[len(resources)-1].Identifier
+
+	return resources, storeBucketID, roleName, profileName, nil
+}
+
 func (c command) printDryRun(plan *lore.CreatePlan) {
+	resources := []string{
+		"Security Group:   " + plan.SGName,
+		"EC2 Instance:     " + plan.InstanceName,
+	}
+	if plan.StoreBackend == lore.StoreBackendS3 {
+		resources = append(resources,
+			"S3 Bucket:        "+plan.StoreBucket,
+			"IAM Role:         "+plan.RoleName,
+			"Instance Profile: "+plan.InstanceProfileName,
+		)
+	}
 	provision.DryRun(c.out, provision.DryRunSpec{
 		Title: "Lore loreserver",
 		Info: provision.PlanInfo{
@@ -195,12 +271,10 @@ func (c command) printDryRun(plan *lore.CreatePlan) {
 			{Key: "AMI ID", Value: plan.AmiID},
 			{Key: "gRPC/QUIC port", Value: fmt.Sprintf("%d (tcp+udp)", plan.GRPCPort)},
 			{Key: "HTTP port", Value: fmt.Sprintf("%d", plan.HTTPPort)},
+			{Key: "Store backend", Value: plan.StoreBackend},
 			{Key: "Allowed CIDR", Value: plan.AllowedCIDR},
 		},
-		Resources: []string{
-			"Security Group:   " + plan.SGName,
-			"EC2 Instance:     " + plan.InstanceName,
-		},
+		Resources:     resources,
 		CostResources: plan.CostResources,
 		Costs:         c.costs,
 		RawBetween: func(w io.Writer) {
@@ -213,6 +287,17 @@ func (c command) printDryRun(plan *lore.CreatePlan) {
 }
 
 func (c command) printApplyPlan(plan *lore.CreatePlan) {
+	resources := []string{
+		"Security Group:   " + plan.SGName,
+		"EC2 Instance:     " + plan.InstanceName,
+	}
+	if plan.StoreBackend == lore.StoreBackendS3 {
+		resources = append(resources,
+			"S3 Bucket:        "+plan.StoreBucket,
+			"IAM Role:         "+plan.RoleName,
+			"Instance Profile: "+plan.InstanceProfileName,
+		)
+	}
 	provision.ApplyPlan(c.out, "Lore loreserver", provision.PlanInfo{
 		Account:      plan.Account,
 		Region:       plan.Region,
@@ -220,10 +305,8 @@ func (c command) printApplyPlan(plan *lore.CreatePlan) {
 		VolumeSize:   plan.VolumeSize,
 	}, []provision.PlanField{
 		{Key: "AMI ID", Value: plan.AmiID},
-	}, []string{
-		"Security Group:   " + plan.SGName,
-		"EC2 Instance:     " + plan.InstanceName,
-	})
+		{Key: "Store backend", Value: plan.StoreBackend},
+	}, resources)
 }
 
 func (c command) printPostCreate(plan *lore.CreatePlan, instanceID string) {

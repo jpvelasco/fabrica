@@ -95,3 +95,169 @@ func TestInstanceDesiredStateShape(t *testing.T) {
 		t.Errorf("DeleteOnTermination = %v, want true (destroy deletes store with instance)", ebs["DeleteOnTermination"])
 	}
 }
+
+func TestInstanceDesiredStateWithS3Store(t *testing.T) {
+	plan := &CreatePlan{
+		AmiID:               "ami-lore1",
+		InstanceType:        "m5.xlarge",
+		SubnetID:            "subnet-1",
+		VolumeSize:          500,
+		InstanceName:        "fabrica-lore",
+		StoreBackend:        StoreBackendS3,
+		InstanceProfileName: "fabrica-lore-profile",
+	}
+	raw, err := InstanceDesiredState(plan, "sg-abc", "dXNlcmRhdGE=")
+	if err != nil {
+		t.Fatalf("InstanceDesiredState: %v", err)
+	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+
+	// Verify IAM instance profile is set when S3 store is enabled.
+	if doc["IamInstanceProfile"] != "fabrica-lore-profile" {
+		t.Errorf("IamInstanceProfile = %v, want fabrica-lore-profile", doc["IamInstanceProfile"])
+	}
+}
+
+func TestInstanceDesiredStateWithoutS3Store(t *testing.T) {
+	plan := &CreatePlan{
+		AmiID:        "ami-lore1",
+		InstanceType: "m5.xlarge",
+		SubnetID:     "subnet-1",
+		VolumeSize:   500,
+		InstanceName: "fabrica-lore",
+		StoreBackend: StoreBackendLocal,
+	}
+	raw, err := InstanceDesiredState(plan, "sg-abc", "dXNlcmRhdGE=")
+	if err != nil {
+		t.Fatalf("InstanceDesiredState: %v", err)
+	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+
+	// Verify IAM instance profile is NOT set for local store.
+	if _, hasProfile := doc["IamInstanceProfile"]; hasProfile {
+		t.Error("IamInstanceProfile should not be set for local store backend")
+	}
+}
+
+func TestBucketDesiredStateShape(t *testing.T) {
+	plan := &CreatePlan{
+		StoreBucket:  "fabrica-lore-store-123-us-east-1",
+		StoreBackend: StoreBackendS3,
+	}
+	raw, err := BucketDesiredState(plan)
+	if err != nil {
+		t.Fatalf("BucketDesiredState: %v", err)
+	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+
+	if doc["BucketName"] != "fabrica-lore-store-123-us-east-1" {
+		t.Errorf("BucketName = %v", doc["BucketName"])
+	}
+
+	// Verify public access block.
+	pab, ok := doc["PublicAccessBlockConfiguration"].(map[string]any)
+	if !ok {
+		t.Fatal("PublicAccessBlockConfiguration not found")
+	}
+	if pab["BlockPublicAcls"] != true {
+		t.Error("BlockPublicAcls should be true")
+	}
+	if pab["BlockPublicPolicy"] != true {
+		t.Error("BlockPublicPolicy should be true")
+	}
+
+	// Verify encryption.
+	enc, ok := doc["BucketEncryption"].(map[string]any)
+	if !ok {
+		t.Fatal("BucketEncryption not found")
+	}
+	if enc == nil {
+		t.Error("BucketEncryption should not be nil")
+	}
+
+	// Verify versioning.
+	ver, ok := doc["VersioningConfiguration"].(map[string]any)
+	if !ok {
+		t.Fatal("VersioningConfiguration not found")
+	}
+	if ver["Status"] != "Enabled" {
+		t.Errorf("Versioning Status = %v, want Enabled", ver["Status"])
+	}
+
+	ec2state.AssertManagedByTag(t, raw)
+}
+
+func TestRoleDesiredStateShape(t *testing.T) {
+	plan := &CreatePlan{
+		RoleName:    "fabrica-lore-role",
+		StoreBucket: "fabrica-lore-store-123-us-east-1",
+	}
+	raw, err := RoleDesiredState(plan)
+	if err != nil {
+		t.Fatalf("RoleDesiredState: %v", err)
+	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+
+	if doc["RoleName"] != "fabrica-lore-role" {
+		t.Errorf("RoleName = %v", doc["RoleName"])
+	}
+
+	// Verify assume role policy allows EC2.
+	arp, ok := doc["AssumeRolePolicyDocument"].(map[string]any)
+	if !ok {
+		t.Fatal("AssumeRolePolicyDocument not found")
+	}
+	stmts := arp["Statement"].([]any)
+	if len(stmts) == 0 {
+		t.Fatal("AssumeRolePolicyDocument has no statements")
+	}
+	stmt := stmts[0].(map[string]any)
+	principal := stmt["Principal"].(map[string]any)
+	if principal["Service"] != "ec2.amazonaws.com" {
+		t.Errorf("Service principal = %v, want ec2.amazonaws.com", principal["Service"])
+	}
+
+	// Verify SSM managed policy is attached.
+	arns, ok := doc["ManagedPolicyArns"].([]any)
+	if !ok {
+		t.Fatal("ManagedPolicyArns not found")
+	}
+	found := false
+	for _, a := range arns {
+		if a == "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("SSM managed policy not found in ManagedPolicyArns")
+	}
+
+	// Verify S3 inline policy is present.
+	policies, ok := doc["Policies"].([]any)
+	if !ok {
+		t.Fatal("Policies not found")
+	}
+	if len(policies) == 0 {
+		t.Error("Expected at least one inline policy (S3 bucket access)")
+	}
+}
+
+func TestInstanceProfileDesiredStateShape(t *testing.T) {
+	plan := &CreatePlan{
+		InstanceProfileName: "fabrica-lore-profile",
+		RoleName:            "fabrica-lore-role",
+	}
+	raw, err := InstanceProfileDesiredState(plan)
+	if err != nil {
+		t.Fatalf("InstanceProfileDesiredState: %v", err)
+	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+
+	if doc["InstanceProfileName"] != "fabrica-lore-profile" {
+		t.Errorf("InstanceProfileName = %v", doc["InstanceProfileName"])
+	}
+	roles := doc["Roles"].([]any)
+	if len(roles) != 1 || roles[0] != "fabrica-lore-role" {
+		t.Errorf("Roles = %v, want [fabrica-lore-role]", roles)
+	}
+}

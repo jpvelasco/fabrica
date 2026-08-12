@@ -280,3 +280,93 @@ func TestCreateFlagOverridesConfig(t *testing.T) {
 	assert.Contains(t, out.String(), "m5.2xlarge")
 	assert.Contains(t, out.String(), "1000 GiB")
 }
+
+func TestCreateS3StoreDryRun(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
+	c := newTestCommand(&out, provider, st)
+	c.dryRun = true
+	c.runtime.Config.Lore.StoreBackend = "s3"
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := out.String()
+	assert.Contains(t, got, "Store backend:    s3")
+	assert.Contains(t, got, "S3 Bucket")
+	assert.Contains(t, got, "IAM Role")
+	assert.Contains(t, got, "Instance Profile")
+	assert.Contains(t, got, "fabrica-lore-store")
+}
+
+func TestCreateS3StoreHappyPath(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
+	capture := &testutil.StateWriteCapture{}
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.writeState = capture.WriteFunc()
+	c.runtime.Config.Lore.StoreBackend = "s3"
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// SG + S3 bucket + IAM role + instance profile + instance = 5 creates
+	if provider.CreateCalls != 5 {
+		t.Fatalf("expected 5 create calls for S3 store, got %d", provider.CreateCalls)
+	}
+	// Verify creation order: SG -> S3 bucket -> IAM role -> instance profile -> instance
+	if provider.CreatedTypes[0] != "AWS::EC2::SecurityGroup" {
+		t.Errorf("first created = %q, want SG", provider.CreatedTypes[0])
+	}
+	if provider.CreatedTypes[1] != "AWS::S3::Bucket" {
+		t.Errorf("second created = %q, want S3 bucket", provider.CreatedTypes[1])
+	}
+	if provider.CreatedTypes[2] != "AWS::IAM::Role" {
+		t.Errorf("third created = %q, want IAM role", provider.CreatedTypes[2])
+	}
+	if provider.CreatedTypes[3] != "AWS::IAM::InstanceProfile" {
+		t.Errorf("fourth created = %q, want instance profile", provider.CreatedTypes[3])
+	}
+	if provider.CreatedTypes[4] != "AWS::EC2::Instance" {
+		t.Errorf("fifth created = %q, want instance", provider.CreatedTypes[4])
+	}
+	final := capture.Last()
+	m := final.GetModule("lore")
+	if m == nil {
+		t.Fatal("lore module not in final state")
+		return
+	}
+	if len(m.Resources) != 5 {
+		t.Fatalf("final state has %d resources, want 5", len(m.Resources))
+	}
+}
+
+func TestCreateS3StoreBucketFailurePreservesPartialState(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{CreateErr: map[string]error{cloud.TypeAWSS3Bucket: errors.New("bucket name taken")}}
+	st := testutil.NewTestState()
+	capture := &testutil.StateWriteCapture{}
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.writeState = capture.WriteFunc()
+	c.runtime.Config.Lore.StoreBackend = "s3"
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error on S3 bucket create failure")
+	}
+	assert.Contains(t, err.Error(), "creating S3 store bucket")
+	// SG should be in state; bucket should not.
+	if capture.Last() == nil {
+		t.Fatal("state was never written")
+	}
+	_, hasSG := capture.Last().GetModuleResource("lore", "AWS::EC2::SecurityGroup")
+	if !hasSG {
+		t.Error("SG resource not recorded in state after bucket failure")
+	}
+}

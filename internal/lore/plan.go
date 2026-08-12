@@ -3,11 +3,18 @@ package lore
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/topology"
+)
+
+// Store backend kinds for lore.storeBackend.
+const (
+	StoreBackendLocal = "local"
+	StoreBackendS3    = "s3"
 )
 
 // Default ports for loreserver (Epic Lore).
@@ -36,6 +43,15 @@ type CreatePlan struct {
 	SGName       string
 	InstanceName string
 
+	// S3 store (optional, enabled when storeBackend is "s3").
+	StoreBackend        string
+	StoreBucket         string
+	RoleName            string
+	InstanceProfileName string
+
+	// TLS settings (optional).
+	TLSConfig config.LoreTLSConfig
+
 	CostResources []cost.Resource
 }
 
@@ -60,25 +76,54 @@ func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region s
 		allowedCIDR = "10.0.0.0/8"
 	}
 
+	storeBackend := normalizeStoreBackend(cfg.StoreBackend)
+	storeBucket := resolveStoreBucket(cfg.StoreBucket, account, region, storeBackend)
+
 	vpcID, subnetID, defaultVPC, err := topology.ResolveVPC(ctx, cfg.VPCId, cfg.SubnetId, resolver)
 	if err != nil {
 		return nil, err
 	}
 
 	return &CreatePlan{
-		Account:       account,
-		Region:        region,
-		AmiID:         cfg.AmiID,
-		InstanceType:  instanceType,
-		VolumeSize:    volumeSize,
-		GRPCPort:      DefaultGRPCPort,
-		HTTPPort:      DefaultHTTPPort,
-		AllowedCIDR:   allowedCIDR,
-		VPCID:         vpcID,
-		SubnetID:      subnetID,
-		DefaultVPC:    defaultVPC,
-		SGName:        "fabrica-lore-sg",
-		InstanceName:  "fabrica-lore",
-		CostResources: CostResources(cfg),
+		Account:             account,
+		Region:              region,
+		AmiID:               cfg.AmiID,
+		InstanceType:        instanceType,
+		VolumeSize:          volumeSize,
+		GRPCPort:            DefaultGRPCPort,
+		HTTPPort:            DefaultHTTPPort,
+		AllowedCIDR:         allowedCIDR,
+		VPCID:               vpcID,
+		SubnetID:            subnetID,
+		DefaultVPC:          defaultVPC,
+		SGName:              "fabrica-lore-sg",
+		InstanceName:        "fabrica-lore",
+		StoreBackend:        storeBackend,
+		StoreBucket:         storeBucket,
+		RoleName:            "fabrica-lore-role",
+		InstanceProfileName: "fabrica-lore-profile",
+		TLSConfig:           cfg.TLSConfig,
+		CostResources:       CostResources(cfg),
 	}, nil
+}
+
+func normalizeStoreBackend(raw string) string {
+	b := strings.ToLower(strings.TrimSpace(raw))
+	if b == "" {
+		return StoreBackendLocal
+	}
+	if b != StoreBackendS3 {
+		return StoreBackendLocal
+	}
+	return b
+}
+
+func resolveStoreBucket(bucket, account, region, backend string) string {
+	if backend != StoreBackendS3 {
+		return ""
+	}
+	if bucket != "" {
+		return bucket
+	}
+	return fmt.Sprintf("fabrica-lore-store-%s-%s", account, region)
 }

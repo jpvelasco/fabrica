@@ -378,9 +378,11 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			props["Roles"] = []string{roleNameForModule(moduleName)}
 		}
 	case "AWS::S3::Bucket":
-		// DDC bucket — properties come from state; enrich with config defaults.
+		// DDC/Lore bucket — properties come from state; enrich with config defaults.
 		if _, ok := props["BucketName"]; !ok {
-			props["BucketName"] = "fabrica-" + moduleName + "-bucket"
+			// Use the resource identifier as the bucket name (Cloud Control
+			// returns the bucket name as the resource identifier).
+			props["BucketName"] = r.Identifier
 		}
 		if _, ok := props["Tags"]; !ok {
 			props["Tags"] = defaultTags(moduleName)
