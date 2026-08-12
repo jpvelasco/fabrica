@@ -30,10 +30,10 @@ These govern every structural decision and carry across all phases.
 
 ## Current Status
 
-**Current stable: v0.4.0** (2026-08-11). Phase 0, Phase 1, Lore (v0.2), DDC
+**Current stable: v0.4.1** (2026-08-12). Phase 0, Phase 1, Lore (v0.2), DDC
 (V1 + multi-region edge nodes with live edge probes), and Horde Agents V1 are all complete. Export V2 covers all 8
 modules (state backend, Horde, Perforce, Lore, DDC, Workstation, CI, Deploy).
-Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release.
+Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. A dedicated agent AMI build guide is available in `docs/horde-agent-ami.md`.
 
 | Module | Commands | Status |
 |--------|----------|--------|
