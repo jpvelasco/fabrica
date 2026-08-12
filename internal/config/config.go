@@ -86,14 +86,26 @@ type PerforceBackupConfig struct {
 
 // HordeConfig holds the horde: section of fabrica.yaml.
 type HordeConfig struct {
-	AmiID        string `mapstructure:"amiId"        yaml:"amiId"`
-	InstanceType string `mapstructure:"instanceType" yaml:"instanceType"`
-	VolumeSize   int    `mapstructure:"volumeSize"   yaml:"volumeSize"`
-	VPCId        string `mapstructure:"vpcId"        yaml:"vpcId"`
-	SubnetId     string `mapstructure:"subnetId"     yaml:"subnetId"`
-	Port         int    `mapstructure:"port"         yaml:"port"`
-	GRPCPort     int    `mapstructure:"grpcPort"     yaml:"grpcPort"`
-	AllowedCIDR  string `mapstructure:"allowedCidr"  yaml:"allowedCidr"`
+	AmiID        string            `mapstructure:"amiId"        yaml:"amiId"`
+	InstanceType string            `mapstructure:"instanceType" yaml:"instanceType"`
+	VolumeSize   int               `mapstructure:"volumeSize"   yaml:"volumeSize"`
+	VPCId        string            `mapstructure:"vpcId"        yaml:"vpcId"`
+	SubnetId     string            `mapstructure:"subnetId"     yaml:"subnetId"`
+	Port         int               `mapstructure:"port"         yaml:"port"`
+	GRPCPort     int               `mapstructure:"grpcPort"     yaml:"grpcPort"`
+	AllowedCIDR  string            `mapstructure:"allowedCidr"  yaml:"allowedCidr"`
+	Agents       HordeAgentsConfig `mapstructure:"agents"       yaml:"agents"`
+}
+
+// HordeAgentsConfig holds the horde.agents: section of fabrica.yaml.
+// Used by `fabrica horde agents create` to provision an Auto Scaling Group
+// of Horde build agents.
+type HordeAgentsConfig struct {
+	AmiID           string `mapstructure:"amiId"           yaml:"amiId"`
+	InstanceType    string `mapstructure:"instanceType"    yaml:"instanceType"`
+	MinSize         int    `mapstructure:"minSize"         yaml:"minSize"`
+	DesiredCapacity int    `mapstructure:"desiredCapacity" yaml:"desiredCapacity"`
+	MaxSize         int    `mapstructure:"maxSize"         yaml:"maxSize"`
 }
 
 // LoreConfig holds the lore: section of fabrica.yaml.

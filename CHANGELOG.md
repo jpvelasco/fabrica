@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Horde agents V1** — `fabrica horde agents create|status|destroy` provisions a managed agent pool on AWS. Creates an Auto Scaling Group with a Launch Template that launches agent instances in private subnets. Agents enroll against the existing Horde coordinator via private IP. Resources: agent SG (coordinator SG source, no internet inbound), IAM role (SSM only), instance profile, launch template, ASG. Config: `horde.agents.amiId`, `instanceType`, `minSize`, `desiredCapacity`, `maxSize`. CLI flags override config. `--dry-run` shows plan + cost estimate. (#265)
+- **Drift ASG exclusion** — `fabrica drift` now excludes ASG-managed instances (tagged `FabricaRole=agent`) from Extra resource detection, preventing false positives for dynamically launched agent instances. (#265)
+- **Horde destroy includes agents** — `fabrica horde destroy` and `fabrica destroy --all` now tear down agent resources (ASG → LT → IAM → SG) before the coordinator instance, preventing orphaned resources. (#265)
+- **Export ASG + LaunchTemplate** — `fabrica export` now includes Auto Scaling Group and Launch Template resources when the horde module contains agent resources. (#265)
+
 ## [0.3.5] - 2026-08-10
 
 ### Added

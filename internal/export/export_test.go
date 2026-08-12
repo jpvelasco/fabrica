@@ -636,7 +636,7 @@ func TestBuildPerforceModule(t *testing.T) {
 	cfg.Perforce.InstanceType = "c5.2xlarge"
 	cfg.Perforce.AllowedCIDR = "10.0.0.0/8"
 
-	mod := buildPerforceModule(ms, cfg)
+	mod := buildModule(ms, cfg)
 	if mod.Name != "perforce" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -669,7 +669,7 @@ func TestBuildPerforceModuleWithImageId(t *testing.T) {
 	}
 	cfg := config.Defaults()
 
-	mod := buildPerforceModule(ms, cfg)
+	mod := buildModule(ms, cfg)
 	if mod.Name != "perforce" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -737,7 +737,7 @@ func TestBuildLoreModule(t *testing.T) {
 	cfg.Lore.InstanceType = "m5.xlarge"
 	cfg.Lore.AllowedCIDR = "10.0.0.0/8"
 
-	mod := buildLoreModule(ms, cfg)
+	mod := buildModule(ms, cfg)
 	if mod.Name != "lore" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -1443,18 +1443,10 @@ func TestSgRulesForModuleWorkstationDefaultCIDR(t *testing.T) {
 	}
 }
 
-// TestModuleDefaultCIDR verifies moduleDefaultCIDR returns the correct default
-// for each module.
-func TestModuleDefaultCIDR(t *testing.T) {
-	for _, mod := range []string{"horde", "perforce", "lore", "ddc", "workstation"} {
-		cidr := moduleDefaultCIDR(mod)
-		if cidr != "10.0.0.0/8" {
-			t.Errorf("%s default CIDR = %q, want 10.0.0.0/8", mod, cidr)
-		}
-	}
-	// Unknown module also falls back to 10.0.0.0/8.
-	if moduleDefaultCIDR("unknown") != "10.0.0.0/8" {
-		t.Error("unknown module should default to 10.0.0.0/8")
+// TestDefaultModuleCIDR verifies defaultModuleCIDR is the expected value.
+func TestDefaultModuleCIDR(t *testing.T) {
+	if defaultModuleCIDR != "10.0.0.0/8" {
+		t.Errorf("defaultModuleCIDR = %q, want 10.0.0.0/8", defaultModuleCIDR)
 	}
 }
 
@@ -1941,7 +1933,7 @@ func TestBuildDDCModule(t *testing.T) {
 		},
 	}
 	cfg := testConfigWithDDC()
-	mod := buildDDCModule(ms, cfg)
+	mod := buildModule(ms, cfg)
 	if mod.Name != "ddc" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -1974,7 +1966,7 @@ func TestBuildDDCModuleEmpty(t *testing.T) {
 		Resources: []state.ModuleResource{},
 	}
 	cfg := testConfigWithDDC()
-	mod := buildDDCModule(ms, cfg)
+	mod := buildModule(ms, cfg)
 	if mod.Name != "ddc" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -2007,7 +1999,7 @@ func TestBuildWorkstationModule(t *testing.T) {
 		},
 	}
 	cfg := testConfigWithWorkstation()
-	mod := buildWorkstationModule(ms, cfg)
+	mod := buildModule(ms, cfg)
 	if mod.Name != "workstation" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -2022,7 +2014,7 @@ func TestBuildWorkstationModuleEmpty(t *testing.T) {
 		Status:    "ready",
 		Resources: []state.ModuleResource{},
 	}
-	mod := buildWorkstationModule(ms, testConfigWithWorkstation())
+	mod := buildModule(ms, testConfigWithWorkstation())
 	if len(mod.Resources) != 0 {
 		t.Errorf("expected 0 resources, got %d", len(mod.Resources))
 	}
@@ -2050,7 +2042,7 @@ func TestBuildCIModule(t *testing.T) {
 		},
 	}
 	cfg := testConfigWithCI()
-	mod := buildCIModule(ms, cfg)
+	mod := buildModule(ms, cfg)
 	if mod.Name != "ci" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -2079,7 +2071,7 @@ func TestBuildCIModuleEmpty(t *testing.T) {
 		Status:    "ready",
 		Resources: []state.ModuleResource{},
 	}
-	mod := buildCIModule(ms, testConfigWithCI())
+	mod := buildModule(ms, testConfigWithCI())
 	if len(mod.Resources) != 0 {
 		t.Errorf("expected 0 resources, got %d", len(mod.Resources))
 	}
@@ -2122,7 +2114,7 @@ func TestBuildDeployModule(t *testing.T) {
 		},
 	}
 	cfg := testConfigWithDeploy()
-	mod := buildDeployModule(ms, cfg)
+	mod := buildModule(ms, cfg)
 	if mod.Name != "deploy" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -2148,7 +2140,7 @@ func TestBuildDeployModuleEmpty(t *testing.T) {
 		Status:    "ready",
 		Resources: []state.ModuleResource{},
 	}
-	mod := buildDeployModule(ms, testConfigWithDeploy())
+	mod := buildModule(ms, testConfigWithDeploy())
 	if len(mod.Resources) != 0 {
 		t.Errorf("expected 0 resources, got %d", len(mod.Resources))
 	}
@@ -2279,7 +2271,7 @@ func TestDDCRedaction(t *testing.T) {
 			},
 		},
 	}
-	mod := buildDDCModule(ms, testConfigWithDDC())
+	mod := buildModule(ms, testConfigWithDDC())
 	for _, r := range mod.Resources {
 		if r.TypeName == "AWS::EC2::Instance" {
 			if u, ok := r.Properties["UserData"].(string); ok && strings.HasPrefix(u, "# REDACTED") {
@@ -2306,7 +2298,7 @@ func TestWorkstationRedaction(t *testing.T) {
 			},
 		},
 	}
-	mod := buildWorkstationModule(ms, testConfigWithWorkstation())
+	mod := buildModule(ms, testConfigWithWorkstation())
 	for _, r := range mod.Resources {
 		if r.TypeName == "AWS::EC2::Instance" {
 			if u, ok := r.Properties["UserData"].(string); ok && strings.HasPrefix(u, "# REDACTED") {
@@ -2941,10 +2933,10 @@ func TestCiProjectNameForModule(t *testing.T) {
 	}
 }
 
-// TestCiRoleNameForModule verifies CI role name.
+// TestCiRoleNameForModule verifies CI role name via roleNameForModule.
 func TestCiRoleNameForModule(t *testing.T) {
-	if ciRoleNameForModule("ci") != "fabrica-ci-codebuild" {
-		t.Errorf("unexpected CI role name: %s", ciRoleNameForModule("ci"))
+	if roleNameForModule("ci") != "fabrica-ci-codebuild" {
+		t.Errorf("unexpected CI role name: %s", roleNameForModule("ci"))
 	}
 }
 
@@ -3055,5 +3047,102 @@ func TestCfPolicyArns(t *testing.T) {
 	result = cfPolicyArns(nil)
 	if result != nil {
 		t.Errorf("expected nil for nil input, got %v", result)
+	}
+}
+
+func TestExtractPropertiesASG(t *testing.T) {
+	res := state.ModuleResource{
+		TypeName:   "AWS::AutoScaling::AutoScalingGroup",
+		Identifier: "asg-agent123",
+		Properties: map[string]string{
+			"minSize":         "0",
+			"desiredCapacity": "2",
+			"maxSize":         "4",
+			"instanceType":    "c7i.xlarge",
+			"imageId":         "ami-agent123",
+		},
+	}
+	cfg := config.Defaults()
+
+	props := extractProperties("horde", res, cfg)
+	// AutoScalingGroupName falls back to default since it's not in state properties.
+	if props["AutoScalingGroupName"] != "fabrica-horde-agents-asg" {
+		t.Errorf("AutoScalingGroupName = %v, want fabrica-horde-agents-asg (default fallback)", props["AutoScalingGroupName"])
+	}
+	// State properties should be preserved.
+	if props["minSize"] != "0" {
+		t.Errorf("minSize = %v, want 0", props["minSize"])
+	}
+}
+
+func TestExtractPropertiesLaunchTemplate(t *testing.T) {
+	res := state.ModuleResource{
+		TypeName:   "AWS::EC2::LaunchTemplate",
+		Identifier: "lt-agent123",
+		Properties: map[string]string{
+			"instanceType": "c7i.xlarge",
+			"imageId":      "ami-agent123",
+		},
+	}
+	cfg := config.Defaults()
+
+	props := extractProperties("horde", res, cfg)
+	// LaunchTemplateName falls back to default since it's not in state properties.
+	if props["LaunchTemplateName"] != "fabrica-horde-agents-lt" {
+		t.Errorf("LaunchTemplateName = %v, want fabrica-horde-agents-lt (default fallback)", props["LaunchTemplateName"])
+	}
+}
+
+func TestExportHordeWithAgents(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-coord123", "ready", []state.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-coordinator"},
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coordinator", Properties: map[string]string{"instanceType": "m7i.2xlarge"}},
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-agent123", Properties: map[string]string{"role": "agent"}},
+		{TypeName: "AWS::IAM::Role", Identifier: "role-agent123", Properties: map[string]string{"role": "agent"}},
+		{TypeName: "AWS::IAM::InstanceProfile", Identifier: "profile-agent123", Properties: map[string]string{"role": "agent"}},
+		{TypeName: "AWS::EC2::LaunchTemplate", Identifier: "lt-agent123", Properties: map[string]string{"role": "agent", "instanceType": "c7i.xlarge", "imageId": "ami-agent123"}},
+		{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent123", Properties: map[string]string{"role": "agent", "minSize": "0", "desiredCapacity": "2", "maxSize": "4"}},
+	})
+
+	cfg := testConfigWithHorde()
+	modules, err := buildModules(st, cfg)
+	if err != nil {
+		t.Fatalf("buildModules: %v", err)
+	}
+
+	// Find the horde module.
+	var hordeMod *ExportModule
+	for i := range modules {
+		if modules[i].Name == "horde" {
+			hordeMod = &modules[i]
+			break
+		}
+	}
+	if hordeMod == nil {
+		t.Fatal("horde module not found in export")
+	}
+
+	// Should have 7 resources: coord SG, coord instance, agent SG, agent role, agent profile, LT, ASG.
+	if len(hordeMod.Resources) != 7 {
+		t.Errorf("horde module has %d resources, want 7", len(hordeMod.Resources))
+	}
+
+	// Check that ASG and LT are present.
+	hasASG := false
+	hasLT := false
+	for _, r := range hordeMod.Resources {
+		if r.TypeName == "AWS::AutoScaling::AutoScalingGroup" {
+			hasASG = true
+		}
+		if r.TypeName == "AWS::EC2::LaunchTemplate" {
+			hasLT = true
+		}
+	}
+	if !hasASG {
+		t.Error("ASG not found in horde export")
+	}
+	if !hasLT {
+		t.Error("LaunchTemplate not found in horde export")
 	}
 }

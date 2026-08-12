@@ -112,27 +112,12 @@ func buildModules(st *state.State, cfg *config.Config) ([]ExportModule, error) {
 
 	// Module-specific exports.
 	for _, ms := range st.Modules {
-		var mod ExportModule
 		switch ms.Name {
-		case "horde":
-			mod = buildHordeModule(ms, cfg)
-		case "perforce":
-			mod = buildPerforceModule(ms, cfg)
-		case "lore":
-			mod = buildLoreModule(ms, cfg)
-		case "ddc":
-			mod = buildDDCModule(ms, cfg)
-		case "workstation":
-			mod = buildWorkstationModule(ms, cfg)
-		case "ci":
-			mod = buildCIModule(ms, cfg)
-		case "deploy":
-			mod = buildDeployModule(ms, cfg)
-		default:
-			continue
-		}
-		if len(mod.Resources) > 0 {
-			modules = append(modules, mod)
+		case "horde", "perforce", "lore", "ddc", "workstation", "ci", "deploy":
+			mod := buildModule(ms, cfg)
+			if len(mod.Resources) > 0 {
+				modules = append(modules, mod)
+			}
 		}
 	}
 
@@ -279,127 +264,10 @@ func buildStateBackendModule(st *state.State, cfg *config.Config) (*ExportModule
 	return mod, nil
 }
 
-// buildHordeModule generates export resources for the Horde module.
-func buildHordeModule(ms state.ModuleState, cfg *config.Config) ExportModule {
-	mod := ExportModule{
-		Name:   ms.Name,
-		Status: ms.Status,
-	}
-
-	for _, r := range ms.Resources {
-		res := ExportResource{
-			TypeName:   r.TypeName,
-			LogicalID:  toLogicalID(ms.Name, r.TypeName, r.Identifier),
-			Properties: sanitize(extractProperties(ms.Name, r, cfg)),
-			Module:     ms.Name,
-		}
-		mod.Resources = append(mod.Resources, res)
-	}
-	return mod
-}
-
-// buildPerforceModule generates export resources for the Perforce module.
-func buildPerforceModule(ms state.ModuleState, cfg *config.Config) ExportModule {
-	mod := ExportModule{
-		Name:   ms.Name,
-		Status: ms.Status,
-	}
-
-	for _, r := range ms.Resources {
-		res := ExportResource{
-			TypeName:   r.TypeName,
-			LogicalID:  toLogicalID(ms.Name, r.TypeName, r.Identifier),
-			Properties: sanitize(extractProperties(ms.Name, r, cfg)),
-			Module:     ms.Name,
-		}
-		mod.Resources = append(mod.Resources, res)
-	}
-	return mod
-}
-
-// buildLoreModule generates export resources for the Lore module.
-func buildLoreModule(ms state.ModuleState, cfg *config.Config) ExportModule {
-	mod := ExportModule{
-		Name:   ms.Name,
-		Status: ms.Status,
-	}
-
-	for _, r := range ms.Resources {
-		res := ExportResource{
-			TypeName:   r.TypeName,
-			LogicalID:  toLogicalID(ms.Name, r.TypeName, r.Identifier),
-			Properties: sanitize(extractProperties(ms.Name, r, cfg)),
-			Module:     ms.Name,
-		}
-		mod.Resources = append(mod.Resources, res)
-	}
-	return mod
-}
-
-// buildDDCModule generates export resources for the DDC module.
-// Covers home-region resources (IAM role, instance profile, S3 bucket, SG,
-// EC2 instances) plus any edge-region SGs and instances recorded in state.
-func buildDDCModule(ms state.ModuleState, cfg *config.Config) ExportModule {
-	mod := ExportModule{
-		Name:   ms.Name,
-		Status: ms.Status,
-	}
-
-	for _, r := range ms.Resources {
-		res := ExportResource{
-			TypeName:   r.TypeName,
-			LogicalID:  toLogicalID(ms.Name, r.TypeName, r.Identifier),
-			Properties: sanitize(extractProperties(ms.Name, r, cfg)),
-			Module:     ms.Name,
-		}
-		mod.Resources = append(mod.Resources, res)
-	}
-	return mod
-}
-
-// buildWorkstationModule generates export resources for the Workstation module.
-// Covers SG + EC2 instance (NICE DCV).
-func buildWorkstationModule(ms state.ModuleState, cfg *config.Config) ExportModule {
-	mod := ExportModule{
-		Name:   ms.Name,
-		Status: ms.Status,
-	}
-
-	for _, r := range ms.Resources {
-		res := ExportResource{
-			TypeName:   r.TypeName,
-			LogicalID:  toLogicalID(ms.Name, r.TypeName, r.Identifier),
-			Properties: sanitize(extractProperties(ms.Name, r, cfg)),
-			Module:     ms.Name,
-		}
-		mod.Resources = append(mod.Resources, res)
-	}
-	return mod
-}
-
-// buildCIModule generates export resources for the CI module.
-// Covers IAM role (Cloud Control) and CodeBuild project (SDK-backed).
-func buildCIModule(ms state.ModuleState, cfg *config.Config) ExportModule {
-	mod := ExportModule{
-		Name:   ms.Name,
-		Status: ms.Status,
-	}
-
-	for _, r := range ms.Resources {
-		res := ExportResource{
-			TypeName:   r.TypeName,
-			LogicalID:  toLogicalID(ms.Name, r.TypeName, r.Identifier),
-			Properties: sanitize(extractProperties(ms.Name, r, cfg)),
-			Module:     ms.Name,
-		}
-		mod.Resources = append(mod.Resources, res)
-	}
-	return mod
-}
-
-// buildDeployModule generates export resources for the Deploy module.
-// Covers IAM role, GameLift alias, fleets, and builds as recorded in state.
-func buildDeployModule(ms state.ModuleState, cfg *config.Config) ExportModule {
+// buildModule generates export resources for any module. All modules share
+// the same transformation: iterate resources, assign logical IDs, sanitize
+// properties, and enrich with config-derived defaults via extractProperties.
+func buildModule(ms state.ModuleState, cfg *config.Config) ExportModule {
 	mod := ExportModule{
 		Name:   ms.Name,
 		Status: ms.Status,
@@ -552,6 +420,20 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		if _, ok := props["Name"]; !ok {
 			props["Name"] = "fabrica-" + moduleName + "-build"
 		}
+	case "AWS::AutoScaling::AutoScalingGroup":
+		// Horde agent ASG — properties come from state (minSize, desiredCapacity,
+		// maxSize, instanceType, imageId). Enrich with defaults if missing.
+		if _, ok := props["AutoScalingGroupName"]; !ok {
+			props["AutoScalingGroupName"] = "fabrica-" + moduleName + "-agents-asg"
+		}
+		if _, ok := props["Tags"]; !ok {
+			props["Tags"] = defaultTags(moduleName)
+		}
+	case "AWS::EC2::LaunchTemplate":
+		// Horde agent launch template — properties come from state.
+		if _, ok := props["LaunchTemplateName"]; !ok {
+			props["LaunchTemplateName"] = "fabrica-" + moduleName + "-agents-lt"
+		}
 	}
 
 	return props
@@ -649,7 +531,7 @@ func sgRulesForModule(module string, cfg *config.Config) []map[string]any {
 		}
 	}
 	if cidr == "" {
-		cidr = moduleDefaultCIDR(module)
+		cidr = defaultModuleCIDR
 	}
 
 	switch module {
@@ -681,17 +563,9 @@ func sgRulesForModule(module string, cfg *config.Config) []map[string]any {
 	return nil
 }
 
-// moduleDefaultCIDR returns the default AllowedCIDR that the create command
-// would use for the given module when the config field is empty. This keeps
-// the export in sync with the actual module defaults.
-func moduleDefaultCIDR(module string) string {
-	switch module {
-	case "horde", "perforce", "lore", "ddc", "workstation":
-		return "10.0.0.0/8"
-	default:
-		return "10.0.0.0/8"
-	}
-}
+// defaultModuleCIDR is the default AllowedCIDR that all module create commands
+// use when the config field is empty.
+const defaultModuleCIDR = "10.0.0.0/8"
 
 // roleNameForModule returns the default IAM role name for a module.
 // CI uses fabrica-ci-codebuild and Deploy uses fabrica-deploy-gamelift
@@ -780,11 +654,6 @@ func ciProjectNameForModule(module string, cfg *config.Config) string {
 		return cfg.CI.ProjectName
 	}
 	return "fabrica-" + module
-}
-
-// ciRoleNameForModule returns the CI IAM role name.
-func ciRoleNameForModule(module string) string {
-	return "fabrica-" + module + "-codebuild"
 }
 
 // ciComputeTypeForModule returns the CI compute type from config.

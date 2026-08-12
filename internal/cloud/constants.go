@@ -13,4 +13,7 @@ const (
 
 	TypeAWSS3Bucket      = "AWS::S3::Bucket"
 	TypeAWSDynamoDBTable = "AWS::DynamoDB::Table"
+
+	TypeAWSEC2LaunchTemplate           = "AWS::EC2::LaunchTemplate"
+	TypeAWSAutoScalingAutoScalingGroup = "AWS::AutoScaling::AutoScalingGroup"
 )

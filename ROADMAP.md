@@ -41,6 +41,7 @@ Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release.
 | `setup` | `setup` (`--dry-run`, `--yes`) | ✅ Complete — creates S3 bucket + DynamoDB table (idempotent, confirmed) |
 | `perforce` | `create`, `status`, `destroy`, `backup`, `backup list`, `backup delete`, `restore` | ✅ Complete — EBS backup/restore via SSM; optional S3 export |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | ✅ Complete |
+| `horde agents` | `create`, `status`, `destroy` | ✅ Complete (V1) — managed agent pool (ASG + Launch Template); private subnets, SSM-only access, coordinator enrollment via private IP; manual min/desired/max capacity |
 | `lore` | `create`, `status`, `destroy` | ✅ Complete (v0.2) — AMI-first loreserver; parallel to Perforce |
 | `ddc` | `setup`, `status`, `destroy`, `region add` | ✅ Complete — home-region Unreal Cloud DDC + additional edge regions; no replication-peer automation (operator-managed) |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | ✅ Complete |
