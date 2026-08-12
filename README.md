@@ -272,6 +272,20 @@ Two install methods are supported:
 
 Key flags: `--horde-version`, `--base-image`, `--region`, `--output-dir`, `--include-packer`, `--dry-run`.
 
+#### `fabrica horde agents create`
+
+Provisions a pool of Horde build agents on AWS. Creates an Auto Scaling Group with a Launch Template that launches agent instances in private subnets. The agents enroll against the existing Horde coordinator using its private IP address. Requires `horde.agents.amiId` in `fabrica.yaml` or `--ami-id` flag. See [docs/horde-agent-ami.md](docs/horde-agent-ami.md).
+
+Creates five resources: agent security group (no inbound from internet), IAM role (SSM only), instance profile, launch template, and auto scaling group. CLI flags `--instance-type`, `--min-size`, `--desired-capacity`, and `--max-size` override config defaults. `--dry-run` shows the plan and cost estimate.
+
+#### `fabrica horde agents status`
+
+Shows agent pool status: ASG capacity (min/desired/max), launch template, instance type, agent AMI, and coordinator endpoint. `--json` for machine-readable output.
+
+#### `fabrica horde agents destroy`
+
+Permanently deletes the agent pool and its AWS resources (ASG, launch template, IAM role/profile, security group) in reverse-creation order. The Horde coordinator is not affected. Typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview.
+
 ### Lore
 
 > **AMI requirement:** `fabrica lore create` is AMI-first. Your AMI must already contain the `loreserver` binary (and optional systemd unit). Fabrica only mounts the EBS store, writes local store config, and starts the service. See [docs/lore-ami.md](docs/lore-ami.md). Lore is a **parallel** VCS option alongside Perforce — both modules can coexist.

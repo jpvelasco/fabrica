@@ -25,20 +25,46 @@ var spec = teardown.Spec{
 }
 
 func hordeResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
-	order := []string{
-		"AWS::EC2::Instance",
-		"AWS::IAM::InstanceProfile",
-		"AWS::IAM::Role",
-		"AWS::EC2::SecurityGroup",
+	// Full destroy order: agents first (ASG → LT → agent IAM → agent SG),
+	// then coordinator (instance → coordinator IAM → coordinator SG).
+	// Agent resources are identified by Properties["role"] = "agent".
+
+	isAgentResource := func(r fabricastate.ModuleResource) bool {
+		return r.Properties != nil && r.Properties["role"] == "agent"
 	}
-	byType := map[string]fabricastate.ModuleResource{}
-	for _, r := range m.Resources {
-		byType[r.TypeName] = r
+
+	// Group resources by deletion phase.
+	type phase struct {
+		name    string
+		matchFn func(fabricastate.ModuleResource) bool
 	}
-	out := make([]cloud.Resource, 0, len(order))
-	for _, t := range order {
-		if r, ok := byType[t]; ok && r.Identifier != "" {
-			out = append(out, cloud.Resource{TypeName: r.TypeName, Identifier: r.Identifier})
+
+	phases := []phase{
+		{"asg", func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::AutoScaling::AutoScalingGroup" }},
+		{"lt", func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::EC2::LaunchTemplate" }},
+		{"instance", func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::EC2::Instance" }},
+		{"agent-profile", func(r fabricastate.ModuleResource) bool {
+			return r.TypeName == "AWS::IAM::InstanceProfile" && isAgentResource(r)
+		}},
+		{"coord-profile", func(r fabricastate.ModuleResource) bool {
+			return r.TypeName == "AWS::IAM::InstanceProfile" && !isAgentResource(r)
+		}},
+		{"agent-role", func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::IAM::Role" && isAgentResource(r) }},
+		{"coord-role", func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::IAM::Role" && !isAgentResource(r) }},
+		{"agent-sg", func(r fabricastate.ModuleResource) bool {
+			return r.TypeName == "AWS::EC2::SecurityGroup" && isAgentResource(r)
+		}},
+		{"coord-sg", func(r fabricastate.ModuleResource) bool {
+			return r.TypeName == "AWS::EC2::SecurityGroup" && !isAgentResource(r)
+		}},
+	}
+
+	out := make([]cloud.Resource, 0, len(m.Resources))
+	for _, p := range phases {
+		for _, r := range m.Resources {
+			if p.matchFn(r) && r.Identifier != "" {
+				out = append(out, cloud.Resource{TypeName: r.TypeName, Identifier: r.Identifier})
+			}
 		}
 	}
 	return out

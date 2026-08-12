@@ -28,6 +28,7 @@ type awsProvider struct {
 	newCWLogsClient          cwLogsClientFactory
 	newGameLiftClient        gameLiftClientFactory
 	newSSMClient             ssmClientFactory
+	newAutoScalingClient     autoScalingClientFactory
 }
 
 type awsConfig struct {

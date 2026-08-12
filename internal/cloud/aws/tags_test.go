@@ -92,6 +92,14 @@ func TestInjectFabricaTags(t *testing.T) {
 			version:  "0.1.0",
 			wantTags: nil,
 		},
+		{
+			name:     "LaunchTemplate denylist skips top-level tags",
+			typeName: "AWS::EC2::LaunchTemplate",
+			state:    `{"LaunchTemplateName":"test","LaunchTemplateData":{"ImageId":"ami-123"}}`,
+			module:   "horde",
+			version:  "0.1.0",
+			wantTags: nil,
+		},
 	}
 
 	for _, tt := range tests {

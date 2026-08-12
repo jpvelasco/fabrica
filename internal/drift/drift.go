@@ -248,6 +248,11 @@ func (e *Engine) checkExtraResources(ctx context.Context) []DriftResult {
 
 		for _, res := range live {
 			if !recordedIDs[res.Identifier] {
+				// Skip ASG-managed instances: they carry FabricaRole=agent
+				// in their tags and are not tracked individually in state.
+				if isASGManagedInstance(res) {
+					continue
+				}
 				results = append(results, DriftResult{
 					Module:     typeOwner[typeName],
 					TypeName:   typeName,
@@ -260,6 +265,34 @@ func (e *Engine) checkExtraResources(ctx context.Context) []DriftResult {
 	}
 
 	return results
+}
+
+// isASGManagedInstance returns true if the resource is an EC2 instance with
+// FabricaRole=agent in its tags. These are ASG-launched instances that are
+// not tracked individually in Fabrica state and should be excluded from
+// Extra detection.
+func isASGManagedInstance(res cloud.Resource) bool {
+	if res.TypeName != "AWS::EC2::Instance" {
+		return false
+	}
+	if len(res.ActualState) == 0 {
+		return false
+	}
+	var props struct {
+		Tags []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"Tags"`
+	}
+	if err := json.Unmarshal(res.ActualState, &props); err != nil {
+		return false
+	}
+	for _, tag := range props.Tags {
+		if tag.Key == "FabricaRole" && tag.Value == "agent" {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Engine) checkResource(ctx context.Context, m *state.ModuleState, r *state.ModuleResource) DriftResult {

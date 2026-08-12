@@ -10,6 +10,13 @@ import (
 // SDK may support tagging via separate APIs.
 var tagUnsupportedTypes = map[string]struct{}{
 	"AWS::IAM::InstanceProfile": {},
+	// AWS::EC2::LaunchTemplate does not accept a top-level "Tags" key in the
+	// Cloud Control schema — tags go in TagSpecifications only.
+	"AWS::EC2::LaunchTemplate": {},
+	// AWS::AutoScaling::AutoScalingGroup tags require PropagateAtLaunch;
+	// the plan layer sets this correctly. The generic injector would add
+	// tags without it, causing Cloud Control validation errors.
+	"AWS::AutoScaling::AutoScalingGroup": {},
 }
 
 // injectFabricaTags merges standard Fabrica tags into the desired state of a

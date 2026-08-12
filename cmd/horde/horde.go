@@ -4,6 +4,7 @@ import (
 	"io"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/horde/agents"
 	"github.com/jpvelasco/fabrica/cmd/horde/ami"
 	"github.com/jpvelasco/fabrica/cmd/horde/create"
 	"github.com/jpvelasco/fabrica/cmd/horde/destroy"
@@ -25,12 +26,14 @@ Available operations:
   status   Show coordinator health and connection info
   submit   Submit a BuildGraph job to the coordinator
   destroy  Permanently delete the coordinator and its AWS resources
-  ami      Tools for building a Horde AMI`,
+  ami      Tools for building a Horde AMI
+  agents   Manage a pool of Horde build agents (ASG + Launch Template)`,
 	}
 	cmd.AddCommand(create.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(status.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(submit.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(destroy.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(ami.New(out))
+	cmd.AddCommand(agents.New(runtimeSource, optionsSource, out))
 	return cmd
 }

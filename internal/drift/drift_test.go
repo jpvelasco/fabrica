@@ -675,6 +675,107 @@ func TestRun_ExtraResourceCodeBuildSkipped(t *testing.T) {
 	}
 }
 
+func TestRun_ASGManagedInstanceNotExtra(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-coord"},
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+		{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "fabrica-horde-agents-asg"},
+	})
+
+	engine := &Engine{
+		State: st,
+		ResourceGet: func(_ context.Context, r *cloud.Resource) error {
+			return nil
+		},
+		ResourceList: func(_ context.Context, typeName string) ([]cloud.Resource, error) {
+			switch typeName {
+			case "AWS::EC2::Instance":
+				// Returns coordinator + an ASG-managed agent instance.
+				return []cloud.Resource{
+					{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+					{
+						TypeName:    "AWS::EC2::Instance",
+						Identifier:  "i-asg-agent-001",
+						ActualState: json.RawMessage(`{"Tags":[{"Key":"FabricaRole","Value":"agent"},{"Key":"Name","Value":"fabrica-horde-agent"}]}`),
+					},
+				}, nil
+			case "AWS::EC2::SecurityGroup":
+				return []cloud.Resource{
+					{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-coord"},
+				}, nil
+			case "AWS::AutoScaling::AutoScalingGroup":
+				return []cloud.Resource{
+					{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "fabrica-horde-agents-asg"},
+				}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	report := engine.Run(context.Background())
+
+	// i-asg-agent-001 should NOT appear as Extra.
+	if report.Extra != 0 {
+		t.Errorf("expected 0 extra (ASG agent should be excluded), got %d", report.Extra)
+	}
+}
+
+func TestIsASGManagedInstance(t *testing.T) {
+	tests := []struct {
+		name     string
+		res      cloud.Resource
+		expected bool
+	}{
+		{
+			name:     "non-instance type",
+			res:      cloud.Resource{TypeName: "AWS::EC2::SecurityGroup"},
+			expected: false,
+		},
+		{
+			name:     "instance without state",
+			res:      cloud.Resource{TypeName: "AWS::EC2::Instance", Identifier: "i-123"},
+			expected: false,
+		},
+		{
+			name: "instance with agent role",
+			res: cloud.Resource{
+				TypeName:    "AWS::EC2::Instance",
+				Identifier:  "i-agent",
+				ActualState: json.RawMessage(`{"Tags":[{"Key":"FabricaRole","Value":"agent"}]}`),
+			},
+			expected: true,
+		},
+		{
+			name: "instance without agent role",
+			res: cloud.Resource{
+				TypeName:    "AWS::EC2::Instance",
+				Identifier:  "i-coord",
+				ActualState: json.RawMessage(`{"Tags":[{"Key":"FabricaRole","Value":"coordinator"}]}`),
+			},
+			expected: false,
+		},
+		{
+			name: "instance with bad JSON",
+			res: cloud.Resource{
+				TypeName:    "AWS::EC2::Instance",
+				Identifier:  "i-bad",
+				ActualState: json.RawMessage(`not json`),
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isASGManagedInstance(tt.res)
+			if got != tt.expected {
+				t.Errorf("isASGManagedInstance() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
 // fakeBackendChecker implements cloud.StateBackendChecker for tests.
 type fakeBackendChecker struct {
 	bucketExists bool

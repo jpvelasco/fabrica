@@ -9,7 +9,8 @@ import (
 )
 
 // TestProvider is a configurable fake provider with per-type error injection.
-// It satisfies cloud.Provider and provides a FakeResourceClient as its ResourceClient.
+// It satisfies cloud.Provider, cloud.ASGManager, and provides a FakeResourceClient
+// as its ResourceClient.
 //
 // Use this for command tests that need configurable identity, resource results,
 // per-type creation failures, or resource-operation call counts.
@@ -25,6 +26,9 @@ type TestProvider struct {
 	GetResources map[string]cloud.Resource
 	ListResult   []cloud.Resource
 	ListErr      error
+	// ASGInfo is the fake response returned by DescribeASG (ASGManager seam).
+	// When nil, DescribeASG returns an error indicating the ASG was not found.
+	ASGInfo *cloud.ASGInfo
 }
 
 func (f *TestProvider) Name() string { return "fake" }
@@ -46,6 +50,15 @@ func (f *TestProvider) Identity(_ context.Context) (string, string, string, erro
 
 func (f *TestProvider) Resources() cloud.ResourceClient {
 	return &FakeResourceClient{provider: f}
+}
+
+// DescribeASG satisfies cloud.ASGManager for tests that need live ASG lifecycle
+// data. When ASGInfo is nil, returns cloud.ErrResourceNotFound.
+func (f *TestProvider) DescribeASG(_ context.Context, _ string) (cloud.ASGInfo, error) {
+	if f.ASGInfo == nil {
+		return cloud.ASGInfo{}, cloud.ErrResourceNotFound
+	}
+	return *f.ASGInfo, nil
 }
 
 // WithRegion satisfies cloud.RegionProvider for multi-region command tests:
