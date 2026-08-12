@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Dedicated agent AMI runbook** — `docs/horde-agent-ami.md` rewritten as an executable build guide: prerequisites (UE/Horde agent source), two build methods (native install recommended, Docker container as trial mode), Packer template example, cloud-init interaction details, verification checklist with script, known-good AMI table, and common pitfalls. Clarifies that `horde.agents.amiId` is independent from `horde.amiId` and must not be the coordinator AMI.
+- **Agent UserData tests** — extended `internal/horde/agents_userdata_test.go` with tests for agent-only service name (`horde-agent`), correct config path (`/etc/horde/coordinator.conf`), INI format, no secrets in output, environment variable injection, no full compose stack, readiness sentinel, and custom port support.
+
 ## [0.4.0] - 2026-08-11
 
 ### Added
