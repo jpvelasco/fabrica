@@ -49,6 +49,87 @@ func TestNewCreatePlanDefaults(t *testing.T) {
 	if plan.AmiID != "ami-abc123" {
 		t.Errorf("AmiID = %q, want ami-abc123", plan.AmiID)
 	}
+	// Default store backend is local.
+	if plan.StoreBackend != StoreBackendLocal {
+		t.Errorf("StoreBackend = %q, want local", plan.StoreBackend)
+	}
+	if plan.StoreBucket != "" {
+		t.Errorf("StoreBucket = %q, want empty for local backend", plan.StoreBucket)
+	}
+}
+
+func TestNewCreatePlanS3StoreBackend(t *testing.T) {
+	cfg := config.LoreConfig{
+		AmiID:        "ami-abc123",
+		StoreBackend: "s3",
+	}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if plan.StoreBackend != StoreBackendS3 {
+		t.Errorf("StoreBackend = %q, want s3", plan.StoreBackend)
+	}
+	if plan.StoreBucket != "fabrica-lore-store-123456789012-us-east-1" {
+		t.Errorf("StoreBucket = %q, want fabrica-lore-store-123456789012-us-east-1", plan.StoreBucket)
+	}
+	if plan.RoleName != "fabrica-lore-role" {
+		t.Errorf("RoleName = %q, want fabrica-lore-role", plan.RoleName)
+	}
+	if plan.InstanceProfileName != "fabrica-lore-profile" {
+		t.Errorf("InstanceProfileName = %q, want fabrica-lore-profile", plan.InstanceProfileName)
+	}
+}
+
+func TestNewCreatePlanS3StoreCustomBucket(t *testing.T) {
+	cfg := config.LoreConfig{
+		AmiID:        "ami-abc123",
+		StoreBackend: "s3",
+		StoreBucket:  "my-lore-bucket",
+	}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if plan.StoreBucket != "my-lore-bucket" {
+		t.Errorf("StoreBucket = %q, want my-lore-bucket", plan.StoreBucket)
+	}
+}
+
+func TestNewCreatePlanInvalidStoreBackend(t *testing.T) {
+	cfg := config.LoreConfig{
+		AmiID:        "ami-abc123",
+		StoreBackend: "invalid",
+	}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Invalid backend should fall back to local.
+	if plan.StoreBackend != StoreBackendLocal {
+		t.Errorf("StoreBackend = %q, want local for invalid input", plan.StoreBackend)
+	}
+}
+
+func TestNewCreatePlanTLSConfig(t *testing.T) {
+	cfg := config.LoreConfig{
+		AmiID: "ami-abc123",
+		TLSConfig: config.LoreTLSConfig{
+			Enabled:  true,
+			CertPath: "/etc/ssl/certs/lore.crt",
+			KeyPath:  "/etc/ssl/private/lore.key",
+		},
+	}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !plan.TLSConfig.Enabled {
+		t.Error("TLSConfig.Enabled should be true")
+	}
+	if plan.TLSConfig.CertPath != "/etc/ssl/certs/lore.crt" {
+		t.Errorf("TLSConfig.CertPath = %q", plan.TLSConfig.CertPath)
+	}
 }
 
 func TestNewCreatePlanExplicitValues(t *testing.T) {

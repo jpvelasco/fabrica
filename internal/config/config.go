@@ -117,6 +117,24 @@ type LoreConfig struct {
 	VPCId        string `mapstructure:"vpcId"        yaml:"vpcId"`
 	SubnetId     string `mapstructure:"subnetId"     yaml:"subnetId"`
 	AllowedCIDR  string `mapstructure:"allowedCidr"  yaml:"allowedCidr"`
+	// StoreBackend selects the Lore store backend: "local" (default, EBS-only)
+	// or "s3" (S3-backed immutable/mutable/lock stores). When "s3", Fabrica
+	// provisions an S3 bucket + IAM role/instance profile for the Lore instance.
+	StoreBackend string `mapstructure:"storeBackend" yaml:"storeBackend"`
+	// StoreBucket is the S3 bucket name for the Lore store (used when storeBackend
+	// is "s3"). Defaults to "fabrica-lore-store-<account>-<region>" if empty.
+	StoreBucket string `mapstructure:"storeBucket" yaml:"storeBucket"`
+	// TLSConfig holds optional TLS settings for the Lore server.
+	TLSConfig LoreTLSConfig `mapstructure:"tls" yaml:"tls"`
+}
+
+// LoreTLSConfig holds optional TLS settings for the Lore server.
+// When enabled, Fabrica configures the loreserver to use the specified
+// certificate and key paths at boot time.
+type LoreTLSConfig struct {
+	Enabled  bool   `mapstructure:"enabled"  yaml:"enabled"`
+	CertPath string `mapstructure:"certPath" yaml:"certPath"`
+	KeyPath  string `mapstructure:"keyPath"  yaml:"keyPath"`
 }
 
 // CIConfig holds the ci: section of fabrica.yaml. Defaults are applied in the

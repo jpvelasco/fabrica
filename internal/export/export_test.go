@@ -2241,7 +2241,8 @@ func TestExtractPropertiesS3Bucket(t *testing.T) {
 	}
 }
 
-// TestExtractPropertiesS3BucketDefault verifies default bucket name when not in state.
+// TestExtractPropertiesS3BucketDefault verifies bucket name from resource
+// identifier when BucketName is not in state properties.
 func TestExtractPropertiesS3BucketDefault(t *testing.T) {
 	res := state.ModuleResource{
 		TypeName:   "AWS::S3::Bucket",
@@ -2250,8 +2251,10 @@ func TestExtractPropertiesS3BucketDefault(t *testing.T) {
 	}
 	props := extractProperties("ddc", res, config.Defaults())
 
-	if props["BucketName"] != "fabrica-ddc-bucket" {
-		t.Errorf("unexpected default bucket name: %v", props["BucketName"])
+	// Bucket name comes from the resource identifier (Cloud Control returns
+	// the bucket name as the resource identifier).
+	if props["BucketName"] != "some-bucket" {
+		t.Errorf("unexpected bucket name: %v, want some-bucket (from identifier)", props["BucketName"])
 	}
 }
 
