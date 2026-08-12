@@ -7,10 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-12
+
 ### Added
 
-- **Dedicated agent AMI runbook** — `docs/horde-agent-ami.md` rewritten as an executable build guide: prerequisites (UE/Horde agent source), two build methods (native install recommended, Docker container as trial mode), Packer template example, cloud-init interaction details, verification checklist with script, known-good AMI table, and common pitfalls. Clarifies that `horde.agents.amiId` is independent from `horde.amiId` and must not be the coordinator AMI.
-- **Agent UserData tests** — extended `internal/horde/agents_userdata_test.go` with tests for agent-only service name (`horde-agent`), correct config path (`/etc/horde/coordinator.conf`), INI format, no secrets in output, environment variable injection, no full compose stack, readiness sentinel, and custom port support.
+- **Dedicated agent AMI runbook** — `docs/horde-agent-ami.md` rewritten as an executable build guide: prerequisites (UE/Horde agent source), two build methods (native install recommended, Docker container as trial mode), Packer template example, cloud-init interaction details, verification checklist with script, known-good AMI table, and common pitfalls. Clarifies that `horde.agents.amiId` is independent from `horde.amiId` and must not be the coordinator AMI. (#272)
+- **Agent UserData tests** — extended `internal/horde/agents_userdata_test.go` with tests for agent-only service name (`horde-agent`), correct config path (`/etc/horde/coordinator.conf`), INI format, no secrets in output, environment variable injection, no full compose stack, readiness sentinel, and custom port support. (#272)
+
+### Changed
+
+- **CLI agent AMI distinction** — `horde ami build` Long text now clarifies that the agent AMI is distinct from the coordinator AMI and targets `horde-agent.service` only. (#272)
 
 ## [0.4.0] - 2026-08-11
 
@@ -256,7 +262,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/jpvelasco/fabrica/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jpvelasco/fabrica/compare/v0.3.5...v0.4.0
 [0.3.5]: https://github.com/jpvelasco/fabrica/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/jpvelasco/fabrica/compare/v0.3.3...v0.3.4
