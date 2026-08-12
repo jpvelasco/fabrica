@@ -304,6 +304,12 @@ Reads live state and probes `GET /health_check` on port 41339. Transitions `prov
 
 Terminates the EC2 instance and deletes the security group in reverse order. Idempotent. Typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview.
 
+#### `fabrica lore ami build`
+
+Generates the files needed to build a Lore AMI. Produces an EC2 Image Builder component (`component.yaml`) and recipe (`image-builder-recipe.json`) by default, an optional Packer HCL template (`--include-packer`), and a `build-guide.md` with end-to-end instructions. No AWS calls are made — all output is written to a local directory.
+
+Key flags: `--lore-version`, `--base-image`, `--region`, `--output-dir`, `--include-packer`, `--dry-run`.
+
 ### DDC
 
 > **AMI requirement:** `fabrica ddc setup` is AMI-first. Your AMI must already contain Unreal Cloud DDC (Jupiter). Fabrica mounts the hot EBS volume, writes hybrid-storage config, and starts the service. See [docs/ddc-ami.md](docs/ddc-ami.md).

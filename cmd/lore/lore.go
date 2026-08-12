@@ -4,6 +4,7 @@ import (
 	"io"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/lore/ami"
 	"github.com/jpvelasco/fabrica/cmd/lore/create"
 	"github.com/jpvelasco/fabrica/cmd/lore/destroy"
 	"github.com/jpvelasco/fabrica/cmd/lore/status"
@@ -22,11 +23,13 @@ Available operations:
   create   Provision a new Lore server on EC2
   status   Show server health and connection info
   destroy  Permanently remove the server and its resources
+  ami      Tools for building a Lore AMI
 
 Lore is offered in parallel with Perforce — studios may run either or both.`,
 	}
 	cmd.AddCommand(create.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(status.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(destroy.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(ami.New(out))
 	return cmd
 }

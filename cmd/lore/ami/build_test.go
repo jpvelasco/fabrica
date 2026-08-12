@@ -1,0 +1,151 @@
+package ami
+
+import (
+	"bytes"
+	"fmt"
+	"strings"
+	"testing"
+)
+
+func TestBuildValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     BuildConfig
+		wantErr string
+	}{
+		{
+			name:    "empty version",
+			cfg:     BuildConfig{OutputDir: "out"},
+			wantErr: "--lore-version is required",
+		},
+		{
+			name:    "invalid version format",
+			cfg:     BuildConfig{Version: "abc", OutputDir: "out"},
+			wantErr: "--lore-version must be in the format X.Y or X.Y.Z",
+		},
+		{
+			name:    "invalid ami",
+			cfg:     BuildConfig{Version: "5.5.0", BaseImage: "not-an-ami", OutputDir: "out"},
+			wantErr: "--base-image must be a valid AMI ID",
+		},
+		{
+			name:    "invalid region",
+			cfg:     BuildConfig{Version: "5.5.0", BaseImage: defaultBaseImage, Region: "not-a-region", OutputDir: "out"},
+			wantErr: "--region must be a valid AWS region",
+		},
+		{
+			name:    "invalid name characters",
+			cfg:     BuildConfig{Version: "5.5.0", BaseImage: defaultBaseImage, Region: defaultRegion, Name: "bad name!", OutputDir: "out"},
+			wantErr: "--name can only contain letters, numbers, dots, underscores, and hyphens",
+		},
+		{
+			name: "name too long",
+			cfg: BuildConfig{
+				Version:   "5.5.0",
+				BaseImage: defaultBaseImage,
+				Region:    defaultRegion,
+				Name:      strings.Repeat("a", 200),
+				OutputDir: "out",
+			},
+			wantErr: fmt.Sprintf("--name must be %d characters or fewer", maxNameLength),
+		},
+		{
+			name:    "empty output dir",
+			cfg:     BuildConfig{Version: "5.5.0", BaseImage: defaultBaseImage, Region: defaultRegion},
+			wantErr: "--output-dir is required",
+		},
+		{
+			name: "valid defaults",
+			cfg: BuildConfig{
+				Version:   "5.5.0",
+				BaseImage: defaultBaseImage,
+				Region:    defaultRegion,
+				OutputDir: "out",
+			},
+			wantErr: "",
+		},
+		{
+			name: "valid latest",
+			cfg: BuildConfig{
+				Version:   "latest",
+				BaseImage: defaultBaseImage,
+				Region:    defaultRegion,
+				OutputDir: "out",
+			},
+			wantErr: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &buildCommand{cfg: tt.cfg}
+			err := b.validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("validate() unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Errorf("validate() expected error containing %q, got nil", tt.wantErr)
+				return
+			}
+			if !bytes.Contains([]byte(err.Error()), []byte(tt.wantErr)) {
+				t.Errorf("validate() error = %q, want substring %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestBuildDryRun(t *testing.T) {
+	var out bytes.Buffer
+	b := &buildCommand{
+		out: &out,
+		cfg: BuildConfig{
+			Version:   "5.5.0",
+			BaseImage: defaultBaseImage,
+			Region:    defaultRegion,
+			Name:      "fabrica-lore-5.5.0",
+			OutputDir: "lore-ami",
+			DryRun:    true,
+		},
+	}
+
+	plannedFiles := []string{"image-builder-recipe.json", "component.yaml", "build-guide.md"}
+	b.printHeader(plannedFiles)
+	fmt.Fprintln(b.out, "Dry run — no files written.")
+	fmt.Fprintln(b.out)
+	b.printNextSteps()
+
+	got := out.String()
+	if !bytes.Contains([]byte(got), []byte("Would generate")) {
+		t.Errorf("expected 'Would generate' in output, got:\n%s", got)
+	}
+	if !bytes.Contains([]byte(got), []byte("Dry run")) {
+		t.Errorf("expected 'Dry run' in output, got:\n%s", got)
+	}
+	if !bytes.Contains([]byte(got), []byte("5.5.0")) {
+		t.Errorf("expected version '5.5.0' in output, got:\n%s", got)
+	}
+}
+
+func TestBuildPrintSuccess(t *testing.T) {
+	var out bytes.Buffer
+	b := &buildCommand{out: &out}
+	files := []string{"image-builder-recipe.json", "component.yaml", "build-guide.md"}
+	b.printSuccess(files)
+
+	got := out.String()
+	if !bytes.Contains([]byte(got), []byte("Generated 3 files")) {
+		t.Errorf("expected 'Generated 3 files' in output, got:\n%s", got)
+	}
+}
+
+func TestPlanVerb(t *testing.T) {
+	if got := planVerb(true); got != "Would write" {
+		t.Errorf("planVerb(true) = %q, want %q", got, "Would write")
+	}
+	if got := planVerb(false); got != "Writing" {
+		t.Errorf("planVerb(false) = %q, want %q", got, "Writing")
+	}
+}

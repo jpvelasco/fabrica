@@ -1,0 +1,92 @@
+packer {
+  required_plugins {
+    amazon = {
+      version = ">= 1.3.0"
+      source  = "github.com/hashicorp/amazon"
+    }
+  }
+}
+
+variable "aws_region" {
+  type        = string
+  default     = "{{ .Region }}"
+  description = "AWS region to build the AMI in."
+}
+
+variable "lore_version" {
+  type        = string
+  default     = "{{ .Version }}"
+  description = "Lore server version recorded in AMI tags."
+}
+
+variable "instance_type" {
+  type        = string
+  default     = "m7i.xlarge"
+  description = "Builder EC2 instance type. Match the runtime instance family to avoid arch mismatches."
+}
+
+variable "lore_source_dir" {
+  type        = string
+  description = "Local path to a directory containing the loreserver binary."
+}
+
+locals {
+  ami_name = "{{ .Name }}-${formatdate("YYYYMMDD-hhmmss", timestamp())}"
+}
+
+source "amazon-ebs" "lore" {
+  ami_name      = local.ami_name
+  instance_type = var.instance_type
+  region        = var.aws_region
+  source_ami    = "{{ .BaseImage }}"
+  ssh_username  = "ubuntu"
+
+  ami_block_device_mappings {
+    device_name           = "/dev/sda1"
+    volume_size           = 50
+    volume_type           = "gp3"
+    delete_on_termination = true
+    encrypted             = true
+  }
+
+  tags = {
+    ManagedBy   = "fabrica"
+    LoreVersion = var.lore_version
+    Name        = local.ami_name
+  }
+}
+
+build {
+  sources = ["source.amazon-ebs.lore"]
+
+  provisioner "file" {
+    source      = "${var.lore_source_dir}/"
+    destination = "/tmp/lore-bin/"
+  }
+
+  provisioner "shell" {
+    execute_command = "sudo -E bash -c '{{`{{ .Vars }}`}} {{`{{ .Path }}`}}'"
+    inline_shebang  = "/bin/bash -euo pipefail"
+    inline = [
+      "mkdir -p /opt/loreserver /etc/loreserver",
+      "cp /tmp/lore-bin/loreserver /opt/loreserver/",
+      "chmod +x /opt/loreserver/loreserver",
+      "ln -sf /opt/loreserver/loreserver /usr/local/bin/loreserver",
+      "cat >/etc/systemd/system/loreserver.service <<'UNIT'\n[Unit]\nDescription=Epic Lore Version Control Server\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart=/opt/loreserver/loreserver --config /etc/loreserver\nRestart=always\nRestartSec=10\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\nUNIT",
+      "systemctl daemon-reload",
+      "systemctl enable loreserver",
+      "systemctl enable amazon-ssm-agent",
+    ]
+  }
+
+  provisioner "shell" {
+    execute_command = "sudo -E bash -c '{{`{{ .Vars }}`}} {{`{{ .Path }}`}}'"
+    inline_shebang  = "/bin/bash -euo pipefail"
+    inline = [
+      "systemctl is-enabled loreserver",
+      "systemctl is-enabled amazon-ssm-agent",
+      "test -d /etc/loreserver",
+      "which loreserver",
+    ]
+  }
+}

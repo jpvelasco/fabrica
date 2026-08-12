@@ -38,7 +38,7 @@ func TestNewHasExpectedSubcommands(t *testing.T) {
 	for _, c := range cmd.Commands() {
 		names[c.Name()] = true
 	}
-	for _, want := range []string{"create", "status", "destroy"} {
+	for _, want := range []string{"create", "status", "destroy", "ami"} {
 		if !names[want] {
 			t.Errorf("missing subcommand %q", want)
 		}
@@ -52,8 +52,8 @@ func TestNewSubcommandCount(t *testing.T) {
 	opts := func() globals.Options { return globals.Options{} }
 	cmd := New(rt, opts, io.Discard)
 
-	if got := len(cmd.Commands()); got != 3 {
-		t.Errorf("expected 3 subcommands, got %d", got)
+	if got := len(cmd.Commands()); got != 4 {
+		t.Errorf("expected 4 subcommands, got %d", got)
 	}
 }
 
