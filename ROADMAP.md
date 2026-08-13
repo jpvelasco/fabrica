@@ -4,7 +4,7 @@ This document tracks what Fabrica ships today and where it's headed next.
 The `README.md` describes how to use what exists; this file tracks status and
 sequencing. When they disagree, this file wins.
 
-Last updated: 2026-08-11.
+Last updated: 2026-08-13.
 
 ## What Fabrica Is
 
