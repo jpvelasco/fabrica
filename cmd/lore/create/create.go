@@ -12,6 +12,7 @@ import (
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/credentials"
 	"github.com/jpvelasco/fabrica/internal/lore"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
@@ -200,6 +201,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 func (c command) createS3StoreResources(ctx context.Context, plan *lore.CreatePlan, resources []fabricastate.ModuleResource, st *fabricastate.State) ([]fabricastate.ModuleResource, string, string, string, error) {
 	// S3 Bucket
 	fmt.Fprintf(c.out, "Creating S3 store bucket %s...\n", plan.StoreBucket)
+	oplog.WithModule("lore").Debug("creating S3 store bucket", "bucket", plan.StoreBucket)
 	var err error
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:    "S3 store bucket",
@@ -215,6 +217,7 @@ func (c command) createS3StoreResources(ctx context.Context, plan *lore.CreatePl
 
 	// IAM Role
 	fmt.Fprintf(c.out, "Creating IAM role %s...\n", plan.RoleName)
+	oplog.WithModule("lore").Debug("creating IAM role", "role", plan.RoleName)
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:    "IAM role",
 		TypeName: cloud.TypeAWSIAMRole,
@@ -229,6 +232,7 @@ func (c command) createS3StoreResources(ctx context.Context, plan *lore.CreatePl
 
 	// IAM Instance Profile
 	fmt.Fprintf(c.out, "Creating instance profile %s...\n", plan.InstanceProfileName)
+	oplog.WithModule("lore").Debug("creating instance profile", "profile", plan.InstanceProfileName)
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:    "Instance profile",
 		TypeName: cloud.TypeAWSIAMInstanceProfile,

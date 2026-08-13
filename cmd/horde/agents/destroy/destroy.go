@@ -11,6 +11,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
@@ -208,12 +209,15 @@ func (c *command) deleteOneResource(ctx context.Context, st *fabricastate.State,
 	r := res // copy for mutation
 
 	fmt.Fprintf(c.out, "Deleting %s %s...\n", r.TypeName, r.Identifier)
+	oplog.WithModule("horde-agents").Debug("deleting resource", "type", r.TypeName, "identifier", r.Identifier)
 
 	if err := c.deleteResource(ctx, &r); err == nil {
 		fmt.Fprintf(c.out, "  Deleted: %s\n", r.Identifier)
+		oplog.WithModule("horde-agents").Debug("resource deleted", "identifier", r.Identifier)
 	} else {
 		if err != nil && strings.Contains(err.Error(), "not found") {
 			fmt.Fprintf(c.out, "  Already deleted: %s\n", r.Identifier)
+			oplog.WithModule("horde-agents").Debug("resource already deleted", "identifier", r.Identifier)
 		} else {
 			return fmt.Errorf("deleting %s %s: %w", r.TypeName, r.Identifier, err)
 		}

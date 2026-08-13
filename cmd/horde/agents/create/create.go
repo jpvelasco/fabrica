@@ -13,6 +13,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/horde"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
@@ -402,6 +403,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 func (c command) applyScalingResources(ctx context.Context, plan *horde.AgentsCreatePlan, resources []fabricastate.ModuleResource, st *fabricastate.State, ver string) ([]fabricastate.ModuleResource, error) {
 	// 6. Scale-out policy (created before alarms so AlarmActions can reference its ARN)
 	fmt.Fprintf(c.out, "Creating scale-out policy %s...\n", plan.ScaleOutPolicyName)
+	oplog.WithModule("horde-agents").Debug("creating scale-out policy", "policy", plan.ScaleOutPolicyName)
 	var err error
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:    "Scale-out policy",
@@ -424,6 +426,7 @@ func (c command) applyScalingResources(ctx context.Context, plan *horde.AgentsCr
 
 	// 7. Scale-in policy
 	fmt.Fprintf(c.out, "Creating scale-in policy %s...\n", plan.ScaleInPolicyName)
+	oplog.WithModule("horde-agents").Debug("creating scale-in policy", "policy", plan.ScaleInPolicyName)
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:    "Scale-in policy",
 		TypeName: cloud.TypeAWSAutoScalingScalingPolicy,
@@ -446,6 +449,7 @@ func (c command) applyScalingResources(ctx context.Context, plan *horde.AgentsCr
 
 	// 8. Scale-out alarm — uses the real policy ARN from Cloud Control.
 	fmt.Fprintf(c.out, "Creating scale-out alarm %s...\n", plan.ScaleOutAlarmName)
+	oplog.WithModule("horde-agents").Debug("creating scale-out alarm", "alarm", plan.ScaleOutAlarmName)
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:    "Scale-out alarm",
 		TypeName: cloud.TypeAWSCloudWatchAlarm,
@@ -468,6 +472,7 @@ func (c command) applyScalingResources(ctx context.Context, plan *horde.AgentsCr
 
 	// 9. Scale-in alarm — uses the real policy ARN from Cloud Control.
 	fmt.Fprintf(c.out, "Creating scale-in alarm %s...\n", plan.ScaleInAlarmName)
+	oplog.WithModule("horde-agents").Debug("creating scale-in alarm", "alarm", plan.ScaleInAlarmName)
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:    "Scale-in alarm",
 		TypeName: cloud.TypeAWSCloudWatchAlarm,
