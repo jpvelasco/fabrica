@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-08-13
+
 ### Added
 
 - **Lore S3 store backend** — `fabrica lore create` now supports an opt-in S3 store backend (`lore.storeBackend: "s3"`). When enabled, provisions an S3 bucket (versioning + encryption + public-access-block), IAM role (SSM + S3 bucket access), and instance profile before the EC2 instance. Cloud-init renders S3-based `local.toml` with bucket/prefix configuration. Default remains "local" (EBS-only). Cost estimation includes the S3 bucket. Destroy order reversed for S3 resources. Export and drift aware of S3 buckets and IAM instance profiles. (#274)
@@ -16,6 +18,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Queue-based autoscaling for Horde agent pool** — `fabrica horde agents create --scaling-enabled` provisions two CloudWatch alarms and two SimpleScaling policies that drive the ASG capacity based on an external metric (default `ASGQueueDepth`). Flags: `--scale-out-threshold`, `--scale-in-threshold`, `--scale-in-cooldown`. `horde agents status` reports scaling policy and live ASG lifecycle data. Destroy order includes scaling policies and alarms before the ASG. **Note:** Queue scaling requires agents to publish the configured metric to CloudWatch — Fabrica provisions the alarms and policies but does not publish the metric itself. (#279, #280)
 - **Horde agents status external-metric warning** — When scaling is enabled, status output now includes a note reminding operators that the metric must be published externally.
 
+### Fixed
+
+- **Horde autoscaling bugs** — four fixes in queue-based scaling: tag denylist for ScalingPolicy/CloudWatchAlarm (prevents Cloud Control validation rejection), stringified `Cooldown` property in scaling policy desired state, corrected `PutMetricData` example with matching Dimensions, and proper state storage of PolicyName/AutoScalingGroupName/AlarmName for export fidelity. (#279)
+- **Horde destroy order** — added ScalingPolicy and CloudWatchAlarm deletion phases before ASG teardown, preventing orphaned scaling resources. (#279)
+- **Ops logging coverage** — added `oplog.Debug` calls to horde agents create (scaling resources), horde agents destroy (per-resource deletion), and lore create (S3 store resources). (#280)
+
+### Changed
+
+- **Export Lore IAM roles** — Lore IAM roles now include `AmazonSSMManagedInstanceCore` in exported IaC templates via `managedPolicyARNsForModule`. (#276)
+- **Export/Drift S3 coverage** — Lore S3 store resources (bucket, IAM role, instance profile) covered in export and drift checks. (#276)
+
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/jpvelasco/fabrica/compare/v0.4.1...v0.4.2
 
 ## [0.4.1] - 2026-08-12
 
@@ -272,7 +287,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/jpvelasco/fabrica/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/jpvelasco/fabrica/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jpvelasco/fabrica/compare/v0.3.5...v0.4.0
 [0.3.5]: https://github.com/jpvelasco/fabrica/compare/v0.3.4...v0.3.5

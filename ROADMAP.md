@@ -4,7 +4,7 @@ This document tracks what Fabrica ships today and where it's headed next.
 The `README.md` describes how to use what exists; this file tracks status and
 sequencing. When they disagree, this file wins.
 
-Last updated: 2026-08-13.
+Last updated: 2026-08-13 (v0.4.2).
 
 ## What Fabrica Is
 
@@ -30,10 +30,10 @@ These govern every structural decision and carry across all phases.
 
 ## Current Status
 
-**Current stable: v0.4.1** (2026-08-12). Phase 0, Phase 1, Lore (v0.2), DDC
-(V1 + multi-region edge nodes with live edge probes), and Horde Agents V1 are all complete. Export V2 covers all 8
+**Current stable: v0.4.2** (2026-08-13). Phase 0, Phase 1, Lore (v0.3 with S3 store backend, AMI build command, TLS config hooks), DDC
+(V1 + multi-region edge nodes with live edge probes), and Horde Agents V1 (including queue-based autoscaling) are all complete. Export V2 covers all 8
 modules (state backend, Horde, Perforce, Lore, DDC, Workstation, CI, Deploy).
-Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. A dedicated agent AMI build guide is available in `docs/horde-agent-ami.md`.
+Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. Dedicated AMI build guides are available in `docs/horde-agent-ami.md` and `docs/lore-ami.md`.
 
 | Module | Commands | Status |
 |--------|----------|--------|
