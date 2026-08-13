@@ -257,6 +257,9 @@ func (c *command) printText(o StatusOutput) {
 		if o.ScaleInAlarmID != "" {
 			fmt.Fprintf(c.out, "    Scale-in alarm:   %s\n", o.ScaleInAlarmID)
 		}
+		fmt.Fprintln(c.out)
+		fmt.Fprintln(c.out, "    Note: Queue scaling requires an external metric publisher.")
+		fmt.Fprintf(c.out, "          Ensure agents publish the %s metric to CloudWatch.\n", o.MetricName)
 	}
 }
 

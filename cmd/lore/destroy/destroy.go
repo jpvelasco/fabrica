@@ -5,6 +5,8 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
+	"github.com/jpvelasco/fabrica/internal/cloud"
+	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
 )
 
@@ -18,6 +20,34 @@ var spec = teardown.Spec{
 	DryRunHeader:   "Lore loreserver (destroy dry run)",
 	Irreversible:   "IRREVERSIBLE: This will permanently delete the Lore server and its data.",
 	SuccessMessage: "Lore loreserver destroyed.",
+	ResourceOrder:  loreResourceOrder,
+}
+
+// loreResourceOrder returns the deletion sequence for the Lore module.
+// Standard: Instance → IAM profile → IAM role → S3 bucket → SG.
+// When S3 store backend is disabled: Instance → SG (profiles/role/bucket absent).
+func loreResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
+	type phase struct {
+		matchFn func(fabricastate.ModuleResource) bool
+	}
+
+	phases := []phase{
+		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::EC2::Instance" }},
+		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::IAM::InstanceProfile" }},
+		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::IAM::Role" }},
+		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::S3::Bucket" }},
+		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::EC2::SecurityGroup" }},
+	}
+
+	out := make([]cloud.Resource, 0, len(m.Resources))
+	for _, p := range phases {
+		for _, r := range m.Resources {
+			if p.matchFn(r) && r.Identifier != "" {
+				out = append(out, cloud.Resource{TypeName: r.TypeName, Identifier: r.Identifier})
+			}
+		}
+	}
+	return out
 }
 
 // NewTeardown builds this module's teardown.Command for orchestrated use by

@@ -409,10 +409,8 @@ func TestPopulateScaling_NonAgentResources(t *testing.T) {
 	}
 }
 
-func TestPrintText_ScalingEnabled(t *testing.T) {
-	var out bytes.Buffer
-	c := &command{out: &out}
-	o := StatusOutput{
+func scalingFixture() StatusOutput {
+	return StatusOutput{
 		Provisioned:       true,
 		ASGID:             "asg-agent123",
 		MinSize:           0,
@@ -430,15 +428,28 @@ func TestPrintText_ScalingEnabled(t *testing.T) {
 		ScaleOutAlarmID:   "alarm-out",
 		ScaleInAlarmID:    "alarm-in",
 	}
-	c.printText(o)
+}
+
+func TestPrintText_ScalingEnabled(t *testing.T) {
+	var out bytes.Buffer
+	c := &command{out: &out}
+	c.printText(scalingFixture())
 	got := out.String()
-	if !bytes.Contains(out.Bytes(), []byte("Queue Scaling")) {
-		t.Errorf("expected 'Queue Scaling' in output: %s", got)
+	for _, want := range []string{"Queue Scaling", "ASGQueueDepth", "Fabrica/HordeAgents"} {
+		if !bytes.Contains(out.Bytes(), []byte(want)) {
+			t.Errorf("expected %q in output: %s", want, got)
+		}
 	}
-	if !bytes.Contains(out.Bytes(), []byte("ASGQueueDepth")) {
-		t.Errorf("expected metric name in output: %s", got)
-	}
-	if !bytes.Contains(out.Bytes(), []byte("Fabrica/HordeAgents")) {
-		t.Errorf("expected metric namespace in output: %s", got)
+}
+
+func TestPrintText_ScalingWarningNote(t *testing.T) {
+	var out bytes.Buffer
+	c := &command{out: &out}
+	c.printText(scalingFixture())
+	got := out.String()
+	for _, want := range []string{"external metric publisher", "Ensure agents publish", "ASGQueueDepth"} {
+		if !bytes.Contains(out.Bytes(), []byte(want)) {
+			t.Errorf("expected %q in output: %s", want, got)
+		}
 	}
 }
