@@ -34,9 +34,12 @@ func isAgentResource(r fabricastate.ModuleResource) bool {
 
 // agentsToDelete returns agent resources in deletion order.
 func agentsToDelete(m *fabricastate.ModuleState) []cloud.Resource {
-	// Scaling policy → alarms → ASG → LT → instance profile → role → SG.
-	// Scaling resources must be deleted before the ASG they reference.
+	// Ingress → scaling policy → alarms → ASG → LT → instance profile →
+	// role → SG. The ingress rule references both the coordinator and agent
+	// security groups, so it must go before either SG; scaling resources go
+	// before the ASG they reference.
 	order := []string{
+		"AWS::EC2::SecurityGroupIngress",
 		"AWS::AutoScaling::ScalingPolicy",
 		"AWS::CloudWatch::Alarm",
 		"AWS::AutoScaling::AutoScalingGroup",

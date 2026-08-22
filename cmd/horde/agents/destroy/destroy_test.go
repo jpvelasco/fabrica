@@ -90,6 +90,7 @@ func TestAgentsToDelete_Order(t *testing.T) {
 	m := &fabricastate.ModuleState{
 		Resources: []fabricastate.ModuleResource{
 			{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-agent", Properties: map[string]string{"role": "agent"}},
+			{TypeName: "AWS::EC2::SecurityGroupIngress", Identifier: "sgr-agent", Properties: map[string]string{"role": "agent"}},
 			{TypeName: "AWS::IAM::Role", Identifier: "role-agent", Properties: map[string]string{"role": "agent"}},
 			{TypeName: "AWS::IAM::InstanceProfile", Identifier: "profile-agent", Properties: map[string]string{"role": "agent"}},
 			{TypeName: "AWS::EC2::LaunchTemplate", Identifier: "lt-agent", Properties: map[string]string{"role": "agent"}},
@@ -103,12 +104,15 @@ func TestAgentsToDelete_Order(t *testing.T) {
 	}
 
 	resources := agentsToDelete(m)
-	if len(resources) != 9 {
-		t.Fatalf("want 9 agent resources, got %d", len(resources))
+	if len(resources) != 10 {
+		t.Fatalf("want 10 agent resources, got %d", len(resources))
 	}
 
-	// Verify deletion order: policies → alarms → ASG → LT → profile → role → SG
+	// Verify deletion order: ingress → policies → alarms → ASG → LT →
+	// profile → role → SG. The ingress rule references both SGs and must go
+	// before either.
 	wantOrder := []string{
+		"AWS::EC2::SecurityGroupIngress",
 		"AWS::AutoScaling::ScalingPolicy",
 		"AWS::AutoScaling::ScalingPolicy",
 		"AWS::CloudWatch::Alarm",

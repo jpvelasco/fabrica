@@ -31,6 +31,7 @@ type awsProvider struct {
 	newGameLiftClient        gameLiftClientFactory
 	newSSMClient             ssmClientFactory
 	newAutoScalingClient     autoScalingClientFactory
+	newPurgeS3Client         purgeS3ClientFactory
 }
 
 type awsConfig struct {

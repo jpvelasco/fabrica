@@ -1,6 +1,8 @@
 package destroy
 
 import (
+	"context"
+	"errors"
 	"io"
 	"testing"
 
@@ -262,5 +264,47 @@ func TestLoreResourceOrder_SkipsEmptyIdentifiers(t *testing.T) {
 	}
 	if len(resources) > 0 && resources[0].Identifier != "sg-lore123" {
 		t.Errorf("resource ID = %s, want sg-lore123", resources[0].Identifier)
+	}
+}
+
+// fakeBucketCleaner records purge calls for the SDKDeleteFunc wiring test.
+type fakeBucketCleaner struct {
+	purged []string
+}
+
+func (f *fakeBucketCleaner) PurgeBucket(_ context.Context, bucket string) error {
+	f.purged = append(f.purged, bucket)
+	return nil
+}
+
+// TestWireSDKDeletePurgesStoreBucket verifies the Lore teardown purges the
+// versioned store bucket via the S3BucketCleaner auxiliary interface, then
+// hands the empty bucket back to Cloud Control deletion (ErrNotHandled).
+func TestWireSDKDeletePurgesStoreBucket(t *testing.T) {
+	cleaner := &fakeBucketCleaner{}
+	provider := struct {
+		*testutil.TestProvider
+		*fakeBucketCleaner
+	}{TestProvider: &testutil.TestProvider{}, fakeBucketCleaner: cleaner}
+	tc := NewTeardown(globals.Runtime{Config: &config.Config{}, Provider: provider}, io.Discard)
+	if tc.SDKDeleteFunc == nil {
+		t.Fatal("SDKDeleteFunc not wired; store bucket would never be emptied")
+	}
+
+	err := tc.SDKDeleteFunc(context.Background(), "AWS::S3::Bucket", "lore-store-bucket")
+	if !errors.Is(err, cloud.ErrNotHandled) {
+		t.Fatalf("after purging, hook must fall through to Cloud Control: %v", err)
+	}
+	if len(cleaner.purged) != 1 || cleaner.purged[0] != "lore-store-bucket" {
+		t.Errorf("purged = %v, want [lore-store-bucket]", cleaner.purged)
+	}
+
+	// Non-bucket resources are not handled by this hook.
+	err = tc.SDKDeleteFunc(context.Background(), "AWS::EC2::Instance", "i-1")
+	if !errors.Is(err, cloud.ErrNotHandled) {
+		t.Errorf("non-bucket type = %v, want ErrNotHandled", err)
+	}
+	if len(cleaner.purged) != 1 {
+		t.Errorf("purge called for non-bucket resource: %v", cleaner.purged)
 	}
 }

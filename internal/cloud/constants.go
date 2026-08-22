@@ -6,7 +6,10 @@ package cloud
 const (
 	TypeAWSEC2Instance      = "AWS::EC2::Instance"
 	TypeAWSEC2SecurityGroup = "AWS::EC2::SecurityGroup"
-	TypeAWSEC2Volume        = "AWS::EC2::Volume"
+	// TypeAWSEC2SecurityGroupIngress is a standalone ingress rule referencing
+	// two security groups (e.g. agent-to-coordinator authorization).
+	TypeAWSEC2SecurityGroupIngress = "AWS::EC2::SecurityGroupIngress"
+	TypeAWSEC2Volume               = "AWS::EC2::Volume"
 
 	TypeAWSIAMRole            = "AWS::IAM::Role"
 	TypeAWSIAMInstanceProfile = "AWS::IAM::InstanceProfile"
