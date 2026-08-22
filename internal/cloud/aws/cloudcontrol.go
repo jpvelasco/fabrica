@@ -316,7 +316,12 @@ func (c *resourceClients) List(ctx context.Context, typeName string) ([]fabricac
 }
 
 // ensureClient lazily initialises the SDK client and waiter on first use.
+// Serialized by initMu: concurrent MCP tool calls share this client and must
+// not race construction. The mutex is not held during API calls.
 func (c *resourceClients) ensureClient(ctx context.Context) error {
+	c.initMu.Lock()
+	defer c.initMu.Unlock()
+
 	if c.cc != nil {
 		return nil
 	}

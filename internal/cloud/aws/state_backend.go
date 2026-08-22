@@ -18,6 +18,11 @@ import (
 var _ fabricac.StateBackendChecker = (*awsProvider)(nil)
 var _ fabricac.StateBackendDestroyer = (*awsProvider)(nil)
 
+// stateBackendDeleteTimeout bounds the whole delete-then-wait sequence. It must
+// exceed the 2-minute waiter bounds below, or the parent context cancels the
+// waiter before its stated maximum is ever reachable.
+const stateBackendDeleteTimeout = 3 * time.Minute
+
 type stateBackendConfigLoader func(context.Context, string, string) (aws.Config, error)
 
 type stateBackendS3Client interface {
@@ -108,7 +113,7 @@ func (p *awsProvider) DeleteStateBucket(ctx context.Context, bucket string) (fab
 		return result, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, stateBackendDeleteTimeout)
 	defer cancel()
 
 	client := p.s3StateClient(cfg)
@@ -143,7 +148,7 @@ func (p *awsProvider) DeleteStateLockTable(ctx context.Context, table string) (f
 		return result, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, stateBackendDeleteTimeout)
 	defer cancel()
 
 	client := p.dynamoDBStateClient(cfg)
@@ -272,7 +277,7 @@ func (p *awsProvider) EnsureStateLockTable(ctx context.Context, table string) (f
 		return result, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, stateBackendDeleteTimeout)
 	defer cancel()
 
 	client := p.dynamoDBStateClient(cfg)

@@ -3,6 +3,8 @@ package aws
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -175,5 +177,38 @@ func TestEC2ServiceEnsureClient_SharesClientAcrossCapabilities(t *testing.T) {
 	}
 	if newCalls != 1 {
 		t.Errorf("newClient called %d times, want 1", newCalls)
+	}
+}
+
+// TestEC2ServiceEnsureClient_ConcurrentInit verifies concurrent first use
+// constructs the SDK client exactly once (the MCP server dispatches tool
+// calls concurrently against one shared provider).
+func TestEC2ServiceEnsureClient_ConcurrentInit(t *testing.T) {
+	var constructions atomic.Int32
+	s := &ec2Service{
+		awsCfg: awsConfig{region: "us-east-1"},
+		loadCfg: func(_ context.Context, _, _ string) (aws.Config, error) {
+			return aws.Config{Region: "us-east-1"}, nil
+		},
+		newClient: func(aws.Config) ec2APIClient {
+			constructions.Add(1)
+			return &fakeEC2ImagesClient{}
+		},
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := s.ensureClient(context.Background()); err != nil {
+				t.Errorf("ensureClient: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := constructions.Load(); got != 1 {
+		t.Errorf("client constructed %d times under concurrency, want 1", got)
 	}
 }

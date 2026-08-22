@@ -426,23 +426,18 @@ func (e *Engine) checkEC2Instance(res DriftResult, m *state.ModuleState, recorde
 
 	// Check EC2 instance state — the expected state is "running".
 	// "stopped" is drift for modules without a stop command (Horde, Perforce,
-	// Lore, DDC). "terminated" means the instance was deleted outside Fabrica.
-	if actual.State.Name != "" {
-		switch actual.State.Name {
-		case "running":
-			// Expected state — no mismatch.
-		case "stopped":
-			res.Status = Mismatch
-			res.Details = "instance stopped (expected running)"
-			return res
-		case "terminated":
-			res.Status = Mismatch
-			res.Details = "instance terminated (expected running)"
-			return res
-		default:
-			// Transitional states (pending, stopping, shutting-down) are
-			// not drift — the instance is still being managed.
-		}
+	// Lore, DDC). Workstation ships supported stop/start lifecycle commands,
+	// so a deliberately parked workstation is in sync. "terminated" means the
+	// instance was deleted outside Fabrica.
+	if actual.State.Name == "stopped" && m.Name != "workstation" {
+		res.Status = Mismatch
+		res.Details = "instance stopped (expected running)"
+		return res
+	}
+	if actual.State.Name == "terminated" {
+		res.Status = Mismatch
+		res.Details = "instance terminated (expected running)"
+		return res
 	}
 
 	// Check recorded properties against live values.
