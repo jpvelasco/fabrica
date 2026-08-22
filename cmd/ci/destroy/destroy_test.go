@@ -173,7 +173,7 @@ func (e errContext) Error() string { return string(e) }
 func TestRunOrchestratedNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())
 	rt := globals.Runtime{Config: &config.Config{}}
-	if err := RunOrchestrated(context.Background(), rt, &bytes.Buffer{}); err != nil {
+	if err := RunOrchestrated(context.Background(), rt, &bytes.Buffer{}, false); err != nil {
 		t.Fatalf("RunOrchestrated on empty state: %v", err)
 	}
 }
@@ -191,7 +191,7 @@ func TestRunOrchestratedProvisioned(t *testing.T) {
 		Provider: &testutil.CodeBuildProvider{},
 	}
 
-	if err := RunOrchestrated(context.Background(), rt, &bytes.Buffer{}); err != nil {
+	if err := RunOrchestrated(context.Background(), rt, &bytes.Buffer{}, false); err != nil {
 		t.Fatalf("RunOrchestrated should not error: %v", err)
 	}
 }

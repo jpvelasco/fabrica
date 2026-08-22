@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/internal/cloud"
@@ -198,6 +199,7 @@ func (c *command) apply(ctx context.Context, st *fabricastate.State, m *fabricas
 	}
 
 	if c.jsonOut {
+		modstatus.WriteJSON(c.out, teardown.Output{Destroyed: destroyed, DryRun: false})
 		return nil
 	}
 
@@ -212,15 +214,21 @@ func (c *command) apply(ctx context.Context, st *fabricastate.State, m *fabricas
 func (c *command) deleteOneResource(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, res cloud.Resource) error {
 	r := res // copy for mutation
 
-	fmt.Fprintf(c.out, "Deleting %s %s...\n", r.TypeName, r.Identifier)
+	if !c.jsonOut {
+		fmt.Fprintf(c.out, "Deleting %s %s...\n", r.TypeName, r.Identifier)
+	}
 	oplog.WithModule("horde-agents").Debug("deleting resource", "type", r.TypeName, "identifier", r.Identifier)
 
 	if err := c.deleteResource(ctx, &r); err == nil {
-		fmt.Fprintf(c.out, "  Deleted: %s\n", r.Identifier)
+		if !c.jsonOut {
+			fmt.Fprintf(c.out, "  Deleted: %s\n", r.Identifier)
+		}
 		oplog.WithModule("horde-agents").Debug("resource deleted", "identifier", r.Identifier)
 	} else {
 		if err != nil && strings.Contains(err.Error(), "not found") {
-			fmt.Fprintf(c.out, "  Already deleted: %s\n", r.Identifier)
+			if !c.jsonOut {
+				fmt.Fprintf(c.out, "  Already deleted: %s\n", r.Identifier)
+			}
 			oplog.WithModule("horde-agents").Debug("resource already deleted", "identifier", r.Identifier)
 		} else {
 			return fmt.Errorf("deleting %s %s: %w", r.TypeName, r.Identifier, err)
@@ -237,10 +245,22 @@ func (c *command) deleteOneResource(ctx context.Context, st *fabricastate.State,
 }
 
 func (c *command) printNotProvisioned() {
+	if c.jsonOut {
+		modstatus.WriteJSON(c.out, teardown.Output{Destroyed: []string{}, DryRun: c.dryRun})
+		return
+	}
 	fmt.Fprintln(c.out, "Horde agents are not provisioned. Nothing to destroy.")
 }
 
 func (c *command) printDryRun(m *fabricastate.ModuleState, resources []cloud.Resource) {
+	if c.jsonOut {
+		ids := make([]string, 0, len(resources))
+		for _, r := range resources {
+			ids = append(ids, r.Identifier)
+		}
+		modstatus.WriteJSON(c.out, teardown.Output{Destroyed: ids, DryRun: true})
+		return
+	}
 	fmt.Fprintln(c.out, "Horde build agent pool (destroy dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "  Status:   %s\n", m.Status)
@@ -254,6 +274,9 @@ func (c *command) printDryRun(m *fabricastate.ModuleState, resources []cloud.Res
 }
 
 func (c *command) printPlan(m *fabricastate.ModuleState, resources []cloud.Resource) {
+	if c.jsonOut {
+		return
+	}
 	fmt.Fprintln(c.out, "Horde build agent pool — destroy plan")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "  Status:   %s\n", m.Status)

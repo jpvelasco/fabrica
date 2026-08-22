@@ -139,9 +139,10 @@ func ciResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 }
 
 // RunOrchestrated runs the CI teardown with confirmation skipped, for use by
-// `fabrica destroy --all`. The aggregate confirmation is handled by the orchestrator.
-func RunOrchestrated(ctx context.Context, rt globals.Runtime, out io.Writer) error {
-	c := command{runtime: rt, skipConfirm: true, assumeYes: true, out: out}
+// `fabrica destroy --all`. The aggregate confirmation is handled by the
+// orchestrator. jsonOut keeps module-level output machine-readable under --json.
+func RunOrchestrated(ctx context.Context, rt globals.Runtime, out io.Writer, jsonOut bool) error {
+	c := command{runtime: rt, skipConfirm: true, assumeYes: true, jsonOut: jsonOut, out: out}
 	tc := c.buildTeardown()
 	return tc.Run(ctx)
 }
