@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -341,6 +342,56 @@ func TestAgentsCreateRuntimeError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from runtimeSource")
 	}
+}
+
+// TestAgentsCreateMinSizeZeroOverridesConfig verifies an explicit --min-size 0
+// overrides a nonzero horde.agents.minSize config value; zero is valid.
+func TestAgentsCreateMinSizeZeroOverridesConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, coordinatorStateJSON())
+
+	cfg := config.Defaults()
+	cfg.State.Bucket = "fabrica-state-test"
+	cfg.State.Table = "fabrica-locks-test"
+	cfg.Horde.Agents.AmiID = "ami-agent123"
+	cfg.Horde.Agents.MinSize = 2
+	provider := &testutil.TestProvider{
+		GetResources: map[string]cloud.Resource{
+			cloud.TypeAWSEC2Instance: {
+				Identifier: "i-coordinator",
+				ActualState: mustJSON(map[string]any{
+					"PrivateIpAddress": "10.0.1.50",
+				}),
+			},
+		},
+	}
+	vpcProvider := &vpcTestProvider{TestProvider: provider, vpcID: "vpc-test", subnetID: "subnet-test"}
+	rt := globals.Runtime{Config: cfg, Provider: vpcProvider}
+	runtimeSource := func() (globals.Runtime, error) { return rt, nil }
+
+	got, err := runAgentsCreate(t, runtimeSource,
+		"--dry-run", "--min-size", "0",
+	)
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	// Parse the "Min size" row from the plan table and require 0 (the
+	// configured minimum was 2).
+	minSize := fieldAfter(got, "Min size:")
+	if minSize != "0" {
+		t.Errorf("Min size = %q, want 0 (--min-size 0 must override configured 2)", minSize)
+	}
+}
+
+// fieldAfter returns the trimmed remainder of the first line containing label.
+func fieldAfter(out, label string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if idx := strings.Index(line, label); idx >= 0 {
+			return strings.TrimSpace(line[idx+len(label):])
+		}
+	}
+	return ""
 }
 
 // mustJSON marshals v to JSON bytes, panicking on error (for test fixtures).

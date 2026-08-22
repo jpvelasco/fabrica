@@ -165,6 +165,36 @@ func TestRun_InstanceStopped(t *testing.T) {
 	}
 }
 
+// TestRun_WorkstationStoppedInSync verifies a deliberately stopped workstation
+// is not drift: the module ships supported stop/start lifecycle commands.
+func TestRun_WorkstationStoppedInSync(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("workstation", "ami-fake", "ready", []state.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-ws"},
+	})
+
+	engine := &Engine{
+		State: st,
+		ResourceGet: func(_ context.Context, r *cloud.Resource) error {
+			r.ActualState = json.RawMessage(`{"State":{"Name":"stopped"}}`)
+			return nil
+		},
+	}
+
+	report := engine.Run(context.Background())
+
+	if report.Mismatch != 0 {
+		t.Errorf("stopped workstation reported as mismatch (%d); want in-sync", report.Mismatch)
+	}
+	for _, mod := range report.Modules {
+		for _, r := range mod.Resources {
+			if r.Status == Mismatch {
+				t.Errorf("workstation resource status = %s (%s), want not-mismatch", r.Status, r.Details)
+			}
+		}
+	}
+}
+
 func TestRun_BackendMissing(t *testing.T) {
 	st := state.NewState("123456789012", "us-east-1")
 

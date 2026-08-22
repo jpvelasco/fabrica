@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -16,6 +17,10 @@ var _ fabricac.EC2InstanceManager = (*ec2Service)(nil)
 type ec2Service struct {
 	awsCfg awsConfig
 	client ec2APIClient
+
+	// initMu serializes lazy initialization (concurrent MCP tool calls share
+	// this service). Not held during API calls.
+	initMu sync.Mutex
 
 	// seams for testing — nil means use real SDK
 	loadCfg   func(ctx context.Context, region, profile string) (aws.Config, error)
@@ -32,6 +37,9 @@ type ec2APIClient interface {
 }
 
 func (s *ec2Service) ensureClient(ctx context.Context) error {
+	s.initMu.Lock()
+	defer s.initMu.Unlock()
+
 	if s.client != nil {
 		return nil
 	}

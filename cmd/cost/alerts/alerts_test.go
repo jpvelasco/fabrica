@@ -105,8 +105,34 @@ func TestSetValidation(t *testing.T) {
 	if err := c.run("perforce", 0, 0); err == nil {
 		t.Fatal("expected error for monthly <= 0")
 	}
-	if err := c.run("nonsense", 100, 0); err == nil {
+	err := c.run("nonsense", 100, 0)
+	if err == nil {
 		t.Fatal("expected error for unknown scope")
+	}
+	// The error must enumerate the real scope list (derived from knownScopes),
+	// including modules like lore and ddc.
+	for _, want := range []string{"total", "lore", "ddc", "workstation", "deploy"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("scope error missing %q: %v", want, err)
+		}
+	}
+}
+
+// TestSetDDCScopeAccepted verifies the ddc module is a valid budget scope.
+func TestSetDDCScopeAccepted(t *testing.T) {
+	var out bytes.Buffer
+	var saved *config.Config
+	c := setCommand{
+		cfg:     config.Defaults(),
+		out:     &out,
+		cfgPath: "fabrica.yaml",
+		cfgSave: func(cfg *config.Config, _ string) error { saved = cfg; return nil },
+	}
+	if err := c.run("ddc", 300, 0); err != nil {
+		t.Fatalf("ddc scope rejected: %v", err)
+	}
+	if saved == nil || len(saved.Cost.Budgets) != 1 || saved.Cost.Budgets[0].Scope != "ddc" {
+		t.Fatalf("expected ddc budget saved, got %+v", saved)
 	}
 }
 
