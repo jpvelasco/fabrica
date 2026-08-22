@@ -197,9 +197,9 @@ func GenerateBackupScript(cfg BackupScriptConfig) (string, error) {
 	b.WriteString("CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)\n")
 	if s3URI != "" {
 		fmt.Fprintf(&b, "S3_URI=%s\n", shellSingleQuote(s3URI))
-		b.WriteString("aws s3 sync \"$DEST\" \"$S3_URI/\" --only-show-errors\n")
 	}
 	// metadata.json: static fields as JSON strings; SIZE/CREATED expanded by shell.
+	// Written BEFORE the S3 sync so uploaded backups carry their own manifest.
 	b.WriteString("cat > \"$DEST/metadata.json\" <<EOF\n")
 	b.WriteString("{\n")
 	fmt.Fprintf(&b, "  \"id\": %s,\n", jsonString(cfg.BackupID))
@@ -217,6 +217,9 @@ func GenerateBackupScript(cfg BackupScriptConfig) (string, error) {
 	fmt.Fprintf(&b, "  \"status\": %s\n", jsonString(BackupStatusComplete))
 	b.WriteString("}\n")
 	b.WriteString("EOF\n")
+	if s3URI != "" {
+		b.WriteString("aws s3 sync \"$DEST\" \"$S3_URI/\" --only-show-errors\n")
+	}
 	b.WriteString("echo \"BACKUP_OK $BACKUP_ID\"\n")
 	return b.String(), nil
 }

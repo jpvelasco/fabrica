@@ -141,6 +141,28 @@ func TestGenerateBackupScript_S3(t *testing.T) {
 	}
 }
 
+// TestGenerateBackupScript_ManifestBeforeSync verifies metadata.json is written
+// before the S3 upload, so every exported backup carries its own manifest.
+func TestGenerateBackupScript_ManifestBeforeSync(t *testing.T) {
+	script, err := GenerateBackupScript(BackupScriptConfig{
+		BackupID:      "id1",
+		AdminPassword: "pw",
+		S3Export:      true,
+		S3Bucket:      "my-bucket",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestIdx := strings.Index(script, `cat > "$DEST/metadata.json"`)
+	syncIdx := strings.Index(script, "aws s3 sync")
+	if manifestIdx < 0 || syncIdx < 0 {
+		t.Fatalf("script missing manifest or sync:\n%s", script)
+	}
+	if manifestIdx > syncIdx {
+		t.Errorf("metadata.json must be written BEFORE the s3 sync (manifest@%d, sync@%d)", manifestIdx, syncIdx)
+	}
+}
+
 func TestGenerateBackupScript_Errors(t *testing.T) {
 	if _, err := GenerateBackupScript(BackupScriptConfig{}); err == nil {
 		t.Fatal("expected error for empty id")
