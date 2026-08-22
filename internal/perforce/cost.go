@@ -89,7 +89,7 @@ func (ec2VolumeEstimator) Estimate(r cost.Resource) (cost.Monthly, error) {
 // config, applying the same defaults as NewCreatePlan. Pure — no AWS, no
 // validation side effects. Single source of truth for the module cost shape.
 func CostResources(cfg config.PerforceConfig) []cost.Resource {
-	return ec2cost.ResourcesWithDefaults(cfg.InstanceType, "m5.xlarge", cfg.VolumeSize, 500)
+	return ec2cost.ResourcesWithDefaults(cfg.InstanceType, DefaultInstanceType, cfg.VolumeSize, 500)
 }
 
 func init() {

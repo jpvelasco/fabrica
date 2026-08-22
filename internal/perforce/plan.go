@@ -16,6 +16,9 @@ var (
 	reVersionBuild = regexp.MustCompile(`^\d{4}\.\d+/\d+$`)
 )
 
+// DefaultInstanceType is the EC2 shape used when config omits instanceType.
+const DefaultInstanceType = "m5.xlarge"
+
 // CreatePlan holds everything needed to provision Perforce: resolved names,
 // resource specs, cost inputs. No AWS SDK types — callers execute the plan.
 type CreatePlan struct {
@@ -52,7 +55,7 @@ func NewCreatePlan(ctx context.Context, cfg config.PerforceConfig, account, regi
 
 	instanceType := cfg.InstanceType
 	if instanceType == "" {
-		instanceType = "m5.xlarge"
+		instanceType = DefaultInstanceType
 	}
 	volumeSize := cfg.VolumeSize
 	if volumeSize <= 0 {

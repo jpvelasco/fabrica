@@ -164,6 +164,40 @@ func TestExportCobraOutputToFile(t *testing.T) {
 	}
 }
 
+// TestExportCobraDryRunDoesNotWriteFile verifies --dry-run with --output
+// previews the plan without writing the file (the example block advertises
+// dry-run as a preview; it must not have side effects).
+func TestExportCobraDryRunDoesNotWriteFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeStateFile(t, testStateWithHorde())
+	cfg := config.Defaults()
+	outputPath := dir + "/output.yaml"
+	got, err := runExportCmd(t, newTestRuntime(cfg), "--format", "cloudformation", "--output", outputPath, "--dry-run")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assert.Contains(t, got, "Dry run: would write cloudformation template")
+	if _, err := os.Stat(outputPath); !os.IsNotExist(err) {
+		t.Error("--dry-run must not write the output file")
+	}
+}
+
+// TestExportCobraDryRunStdoutPreviews verifies --dry-run without --output
+// prints a labeled preview to stdout.
+func TestExportCobraDryRunStdoutPreviews(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeStateFile(t, testStateWithHorde())
+	cfg := config.Defaults()
+	got, err := runExportCmd(t, newTestRuntime(cfg), "--format", "cloudformation", "--dry-run")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assert.Contains(t, got, "Dry run: template preview follows")
+	assert.Contains(t, got, "AWSTemplateFormatVersion")
+}
+
 // TestExportCobraEmptyState verifies empty state warns and exits 0.
 func TestExportCobraEmptyState(t *testing.T) {
 	dir := t.TempDir()
