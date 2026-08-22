@@ -64,12 +64,18 @@ func injectFabricaTags(typeName string, state json.RawMessage, module, version s
 
 	standard := []struct{ k, v string }{
 		{"ManagedBy", "fabrica"},
-		{"FabricaModule", module},
 		{"FabricaVersion", version},
 	}
 	for _, s := range standard {
 		addKey(s.k)
 		merged[s.k] = s.v
+	}
+	// Plans stamp their own FabricaModule (e.g. "lore", "ddc", "horde") —
+	// respect that value instead of clobbering it with the provider-level
+	// default, so live tags support per-module attribution.
+	if _, exists := merged["FabricaModule"]; !exists {
+		addKey("FabricaModule")
+		merged["FabricaModule"] = module
 	}
 	for k, v := range extra {
 		addKey(k)

@@ -767,3 +767,13 @@ func assertStringContains(t *testing.T, s, substr string) {
 	}
 	t.Fatalf("%q does not contain %q", s, substr)
 }
+
+// TestStateBackendDeleteTimeoutCoversWaiterBounds pins the invariant that the
+// parent delete context outlives the declared 2-minute waiter maximums;
+// otherwise the waiter can never use its stated budget.
+func TestStateBackendDeleteTimeoutCoversWaiterBounds(t *testing.T) {
+	const waiterMax = 2 * time.Minute
+	if stateBackendDeleteTimeout <= waiterMax {
+		t.Fatalf("stateBackendDeleteTimeout = %v must exceed the %v waiter bound", stateBackendDeleteTimeout, waiterMax)
+	}
+}

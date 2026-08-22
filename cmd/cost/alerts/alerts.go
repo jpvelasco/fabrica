@@ -10,6 +10,7 @@ import (
 	"io"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/costsource"
@@ -23,7 +24,20 @@ import (
 // knownScopes are the valid budget scopes: "total" plus each module name.
 var knownScopes = map[string]bool{
 	"total": true, "perforce": true, "horde": true, "lore": true,
-	"workstation": true, "ci": true, "deploy": true,
+	"ddc": true, "workstation": true, "ci": true, "deploy": true,
+}
+
+// knownScopesList renders the accepted scopes for error messages, derived from
+// knownScopes so the two can never drift apart.
+func knownScopesList() string {
+	names := make([]string, 0, len(knownScopes))
+	for k := range knownScopes {
+		if k != "total" {
+			names = append(names, k)
+		}
+	}
+	sort.Strings(names)
+	return "total, " + strings.Join(names, ", ")
 }
 
 // New returns the "cost alerts" parent command.
@@ -143,7 +157,7 @@ func (c setCommand) run(scope string, monthly float64, warnPct int) error {
 		return fmt.Errorf("monthly budget must be greater than 0 (got %v) — pass a positive USD amount", monthly)
 	}
 	if !knownScopes[scope] {
-		return fmt.Errorf("unknown scope %q — must be \"total\" or a module name (perforce, horde, workstation, ci, deploy)", scope)
+		return fmt.Errorf("unknown scope %q — must be one of: %s", scope, knownScopesList())
 	}
 	// Upsert into a copy so dry-run never mutates shared config.
 	updated := upsert(c.cfg.Cost.Budgets, config.BudgetThreshold{Scope: scope, Monthly: monthly, WarnPct: warnPct})

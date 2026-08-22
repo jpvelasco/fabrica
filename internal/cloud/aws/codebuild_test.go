@@ -62,15 +62,42 @@ func (f *fakeCodeBuildClient) BatchGetProjects(_ context.Context, _ *codebuild.B
 }
 
 type fakeCWLogsClient struct {
+	// Single-page convenience (legacy): returned on every call.
 	events []cwltypes.OutputLogEvent
 	err    error
+
+	// Scripted pagination: pages[i] is returned on call i, with tokens[i] as
+	// NextForwardToken. When calls exceed len(pages), the last page repeats.
+	pages  [][]cwltypes.OutputLogEvent
+	tokens []string
+	calls  int
 }
 
-func (f *fakeCWLogsClient) GetLogEvents(_ context.Context, _ *cloudwatchlogs.GetLogEventsInput, _ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.GetLogEventsOutput, error) {
+func (f *fakeCWLogsClient) GetLogEvents(_ context.Context, in *cloudwatchlogs.GetLogEventsInput, _ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.GetLogEventsOutput, error) {
+	f.calls++
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &cloudwatchlogs.GetLogEventsOutput{Events: f.events}, nil
+	if f.pages == nil {
+		return &cloudwatchlogs.GetLogEventsOutput{Events: f.events}, nil
+	}
+	i := f.calls - 1
+	if i >= len(f.pages) {
+		// Exhausted stream: CloudWatch returns no events plus the same
+		// forward token that was sent.
+		return &cloudwatchlogs.GetLogEventsOutput{
+			Events:           []cwltypes.OutputLogEvent{},
+			NextForwardToken: awssdk.String(f.tokens[len(f.tokens)-1]),
+		}, nil
+	}
+	var token string
+	if i < len(f.tokens) {
+		token = f.tokens[i]
+	}
+	return &cloudwatchlogs.GetLogEventsOutput{
+		Events:           f.pages[i],
+		NextForwardToken: awssdk.String(token),
+	}, nil
 }
 
 func newCodeBuildTestProvider(cb *fakeCodeBuildClient, logs *fakeCWLogsClient) *awsProvider {
@@ -283,6 +310,69 @@ func TestBuildLogConcatenatesEvents(t *testing.T) {
 		t.Fatalf("BuildLog: %v", err)
 	}
 	if out != "line1\nline2\n" {
+		t.Errorf("log = %q", out)
+	}
+}
+
+// TestBuildLogFollowsPagination verifies BuildLog follows NextForwardToken
+// across pages and stops when the stream is exhausted (same token returned).
+func TestBuildLogFollowsPagination(t *testing.T) {
+	cb := &fakeCodeBuildClient{builds: []codebuildtypes.Build{{
+		Id:          awssdk.String("build-123"),
+		BuildStatus: codebuildtypes.StatusTypeSucceeded,
+		Logs: &codebuildtypes.LogsLocation{
+			GroupName:  awssdk.String("/aws/codebuild/fabrica-ci"),
+			StreamName: awssdk.String("abc"),
+		},
+	}}}
+	logs := &fakeCWLogsClient{
+		pages: [][]cwltypes.OutputLogEvent{
+			{{Message: awssdk.String("page1\n")}},
+			{{Message: awssdk.String("page2\n")}},
+			{{Message: awssdk.String("page3\n")}},
+		},
+		tokens: []string{"t1", "t2", "t3"},
+	}
+	p := newCodeBuildTestProvider(cb, logs)
+
+	out, err := p.BuildLog(context.Background(), "build-123")
+	if err != nil {
+		t.Fatalf("BuildLog: %v", err)
+	}
+	if out != "page1\npage2\npage3\n" {
+		t.Errorf("log = %q, want all three pages in order", out)
+	}
+	// One extra call confirms exhaustion via the repeated token, then stops.
+	if logs.calls != 4 {
+		t.Errorf("GetLogEvents calls = %d, want 4 (3 pages + 1 exhausted check)", logs.calls)
+	}
+}
+
+// TestBuildLogStopsOnEmptyPage verifies an empty page terminates pagination
+// even if a token is present.
+func TestBuildLogStopsOnEmptyPage(t *testing.T) {
+	cb := &fakeCodeBuildClient{builds: []codebuildtypes.Build{{
+		Id:          awssdk.String("build-123"),
+		BuildStatus: codebuildtypes.StatusTypeSucceeded,
+		Logs: &codebuildtypes.LogsLocation{
+			GroupName:  awssdk.String("/aws/codebuild/fabrica-ci"),
+			StreamName: awssdk.String("abc"),
+		},
+	}}}
+	logs := &fakeCWLogsClient{
+		pages: [][]cwltypes.OutputLogEvent{
+			{{Message: awssdk.String("only\n")}},
+			{}, // empty page
+		},
+		tokens: []string{"t1", "t2"},
+	}
+	p := newCodeBuildTestProvider(cb, logs)
+
+	out, err := p.BuildLog(context.Background(), "build-123")
+	if err != nil {
+		t.Fatalf("BuildLog: %v", err)
+	}
+	if out != "only\n" {
 		t.Errorf("log = %q", out)
 	}
 }

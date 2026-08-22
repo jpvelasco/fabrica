@@ -31,8 +31,11 @@ type command struct {
 	amiID        string
 	instanceType string
 	minSize      int
-	desiredCap   int
-	maxSize      int
+	// minSizeSet distinguishes an explicit --min-size 0 from an omitted flag,
+	// so zero can override a nonzero config value.
+	minSizeSet bool
+	desiredCap int
+	maxSize    int
 	// Scaling flags
 	scalingEnabled    bool
 	scaleOutThreshold float64
@@ -111,6 +114,7 @@ without making any AWS calls.`,
 				amiID:             amiID,
 				instanceType:      instanceType,
 				minSize:           minSize,
+				minSizeSet:        cmd.Flags().Changed("min-size"),
 				desiredCap:        desiredCap,
 				maxSize:           maxSize,
 				scalingEnabled:    scalingEnabled,
@@ -163,7 +167,8 @@ func (c command) run(ctx context.Context) error {
 	if c.maxSize > 0 {
 		agentsCfg.MaxSize = c.maxSize
 	}
-	if c.minSize > 0 {
+	// Zero is a valid explicit minimum; only an omitted flag inherits config.
+	if c.minSize > 0 || c.minSizeSet {
 		agentsCfg.MinSize = c.minSize
 	}
 

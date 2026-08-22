@@ -191,3 +191,24 @@ func TestInjectFabricaTagsModuleShape(t *testing.T) {
 		t.Errorf("GroupName clobbered: %v", m["GroupName"])
 	}
 }
+
+// TestInjectFabricaTagsRespectsPlanModule verifies a plan-stamped FabricaModule
+// (e.g. "lore") survives injection even though the provider passes its
+// provider-level default ("fabrica") as the module value.
+func TestInjectFabricaTagsRespectsPlanModule(t *testing.T) {
+	state := `{"Tags":[{"Key":"ManagedBy","Value":"fabrica"},{"Key":"FabricaModule","Value":"lore"}]}`
+
+	result := injectFabricaTags("AWS::EC2::SecurityGroup", json.RawMessage(state), "fabrica", "0.4.2", nil)
+
+	tags := tagsAsMap(t, result)
+	if tags["FabricaModule"] != "lore" {
+		t.Errorf("FabricaModule = %q, want plan-stamped %q (must not be clobbered)", tags["FabricaModule"], "lore")
+	}
+	if tags["ManagedBy"] != "fabrica" {
+		t.Errorf("ManagedBy = %q, want fabrica", tags["ManagedBy"])
+	}
+	// FabricaVersion is still injected when absent from the plan state.
+	if tags["FabricaVersion"] != "0.4.2" {
+		t.Errorf("FabricaVersion = %q, want 0.4.2", tags["FabricaVersion"])
+	}
+}

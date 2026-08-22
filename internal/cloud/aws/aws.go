@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -18,6 +19,7 @@ type awsProvider struct {
 	awsCfg                   awsConfig
 	clients                  resourceClients
 	ec2                      ec2Service
+	resMu                    sync.Mutex // guards lazy init of clients/ec2 below
 	loadConfig               stateBackendConfigLoader
 	newS3StateClient         stateBackendS3ClientFactory
 	newDynamoDBStateClient   stateBackendDynamoDBClientFactory
@@ -43,6 +45,10 @@ type resourceClients struct {
 	awsCfg      awsConfig
 	version     string
 	waitTimeout time.Duration // 0 → defaultWaitTimeout
+
+	// initMu serializes lazy initialization so concurrent MCP tool calls do
+	// not race client construction. Not held during API calls.
+	initMu sync.Mutex
 
 	// seams for testing — nil means use real SDK constructors
 	loadCfg   func(ctx context.Context, region, profile string) (aws.Config, error)
@@ -79,6 +85,8 @@ func (p *awsProvider) Identity(ctx context.Context) (account, arn, region string
 }
 
 func (p *awsProvider) Resources() fabricac.ResourceClient {
+	p.resMu.Lock()
+	defer p.resMu.Unlock()
 	if p.clients.awsCfg == (awsConfig{}) {
 		p.clients.awsCfg = p.awsCfg
 		p.clients.version = fabricav.Version
