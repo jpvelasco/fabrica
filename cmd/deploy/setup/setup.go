@@ -124,7 +124,12 @@ func (c command) apply(ctx context.Context, plan *deploy.SetupPlan) error {
 		return fmt.Errorf("reading state: %w", err)
 	}
 
+	// Seed with existing module resources so an idempotent re-setup preserves
+	// build and fleet records recorded by later promote runs.
 	var resources []fabricastate.ModuleResource
+	if m := st.GetModule(moduleName); m != nil {
+		resources = append(resources, m.Resources...)
+	}
 
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:             "IAM role",

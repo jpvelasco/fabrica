@@ -194,7 +194,10 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 		Identifier: buildRes.Identifier,
 		Properties: map[string]string{"buildVersion": plan.BuildVersion},
 	})
-	_ = c.writeState(st)
+	st.UpsertModule(moduleName, plan.BuildVersion, "provisioning", m.Resources)
+	if err := c.writeState(st); err != nil {
+		return fmt.Errorf("recording GameLift build %s in state: %w — the build exists in AWS but is untracked; fix the state write and inspect .fabrica/state.json before retrying promote", buildRes.Identifier, err)
+	}
 
 	// 2. Create fleet (non-blocking).
 	fleetState, err := deploy.FleetDesiredState(plan, buildRes.Identifier)
@@ -217,7 +220,9 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 		},
 	})
 	st.UpsertModule(moduleName, plan.BuildVersion, "provisioning", m.Resources)
-	_ = c.writeState(st)
+	if err := c.writeState(st); err != nil {
+		return fmt.Errorf("recording fleet %s in state: %w — the fleet is being created in AWS but is untracked; fix the state write, then check 'fabrica deploy status' and .fabrica/state.json", fleetRes.Identifier, err)
+	}
 
 	if !c.wait {
 		fmt.Fprintf(c.out, "\nFleet creation started. Track it with: fabrica deploy status\n")

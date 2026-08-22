@@ -468,3 +468,58 @@ func TestPromoteNoWaitSkipsPoll(t *testing.T) {
 		t.Errorf("expected no-wait message:\n%s", out.String())
 	}
 }
+
+// ---- Incremental state-write failures ----
+
+// TestPromoteBuildStateWriteErrorStopsBeforeFleet verifies a failed state write
+// after build registration aborts promote BEFORE creating the fleet, so the
+// build never exists untracked alongside a half-created fleet.
+func TestPromoteBuildStateWriteErrorStopsBeforeFleet(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	c := newTestCmd(&out, st)
+	c.assumeYes = true
+	fleets := 0
+	c.createFleetAsync = func(_ context.Context, r *cloud.Resource) error {
+		fleets++
+		r.Identifier = "fleet-new"
+		return nil
+	}
+	c.writeState = func(*fabricastate.State) error { return errors.New("disk full") }
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when state write fails after build registration")
+	}
+	if !strings.Contains(err.Error(), "recording GameLift build") {
+		t.Errorf("error = %q, want build state-write context", err)
+	}
+	if fleets != 0 {
+		t.Errorf("fleet created %d times despite failed build state write; want 0", fleets)
+	}
+}
+
+// TestPromoteNoWaitFleetStateWriteErrorFails verifies that under --no-wait a
+// failed post-fleet state write surfaces as an error instead of a false success.
+func TestPromoteNoWaitFleetStateWriteErrorFails(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	c := newTestCmd(&out, st)
+	c.assumeYes = true
+	c.wait = false
+	writes := 0
+	c.writeState = func(s *fabricastate.State) error {
+		writes++
+		if writes >= 2 {
+			return errors.New("disk full")
+		}
+		*st = *s
+		return nil
+	}
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when post-fleet state write fails under --no-wait")
+	}
+	if !strings.Contains(err.Error(), "recording fleet") {
+		t.Errorf("error = %q, want fleet state-write context", err)
+	}
+}

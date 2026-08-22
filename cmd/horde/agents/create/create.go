@@ -187,12 +187,7 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 
-	var resolver cloud.VPCResolver
-	if vr, ok := c.runtime.Provider.(cloud.VPCResolver); ok {
-		resolver = vr
-	}
-
-	plan, err := horde.NewAgentsCreatePlan(ctx, agentsCfg, coordIP, coordPort, coordSGID, account, region, resolver)
+	plan, err := horde.NewAgentsCreatePlan(ctx, agentsCfg, coordIP, coordPort, coordSGID, account, region, provision.VPCResolver(c.runtime.Provider))
 	if err != nil {
 		return fmt.Errorf("building agents create plan: %w", err)
 	}

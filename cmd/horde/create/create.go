@@ -115,17 +115,12 @@ func (c command) run(ctx context.Context) error {
 		hordeCfg.VolumeSize = c.volumeSize
 	}
 
-	var resolver cloud.VPCResolver
-	if vr, ok := c.runtime.Provider.(cloud.VPCResolver); ok {
-		resolver = vr
-	}
-
 	var cidrResolver cloud.VPCCIDRResolver
 	if cr, ok := c.runtime.Provider.(cloud.VPCCIDRResolver); ok {
 		cidrResolver = cr
 	}
 
-	plan, err := horde.NewCreatePlan(ctx, hordeCfg, account, region, resolver, cidrResolver)
+	plan, err := horde.NewCreatePlan(ctx, hordeCfg, account, region, provision.VPCResolver(c.runtime.Provider), cidrResolver)
 	if err != nil {
 		return fmt.Errorf("building create plan: %w", err)
 	}
