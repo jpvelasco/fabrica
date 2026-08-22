@@ -59,6 +59,10 @@ type Spec struct {
 	// Instance -> SecurityGroup order. Modules whose resources are not the
 	// EC2/SG pair (e.g. deploy's GameLift fleet/build/alias/role) set this.
 	ResourceOrder func(*fabricastate.ModuleState) []cloud.Resource
+	// WireCommand, when non-nil, is called by every constructor (standalone
+	// and orchestrated) after base wiring so a module can attach SDK-side
+	// hooks such as SDKDeleteFunc without changing constructor signatures.
+	WireCommand func(tc *Command, rt globals.Runtime)
 }
 
 // Command runs a teardown for one module. The varying strings come from Spec;
@@ -459,6 +463,9 @@ func NewStandalone(spec Spec, rt globals.Runtime, out io.Writer, dryRun, assumeY
 		WriteState: fabricastate.WriteState,
 	}
 	WireProvider(&tc, rt)
+	if spec.WireCommand != nil {
+		spec.WireCommand(&tc, rt)
+	}
 	return tc
 }
 

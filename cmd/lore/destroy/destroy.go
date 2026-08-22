@@ -1,6 +1,8 @@
 package destroy
 
 import (
+	"context"
+	"fmt"
 	"io"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -21,6 +23,30 @@ var spec = teardown.Spec{
 	Irreversible:   "IRREVERSIBLE: This will permanently delete the Lore server and its data.",
 	SuccessMessage: "Lore loreserver destroyed.",
 	ResourceOrder:  loreResourceOrder,
+	WireCommand:    wireSDKDelete,
+}
+
+// wireSDKDelete attaches the S3 purge hook so the versioned store bucket is
+// emptied (all versions + delete markers) before Cloud Control deletes it.
+// Without purging, any data ever written blocks bucket deletion forever.
+func wireSDKDelete(tc *teardown.Command, rt globals.Runtime) {
+	if rt.Provider == nil {
+		return
+	}
+	cleaner, ok := rt.Provider.(cloud.S3BucketCleaner)
+	if !ok {
+		return
+	}
+	tc.SDKDeleteFunc = func(ctx context.Context, typeName, identifier string) error {
+		if typeName != cloud.TypeAWSS3Bucket {
+			return cloud.ErrNotHandled
+		}
+		if err := cleaner.PurgeBucket(ctx, identifier); err != nil {
+			return fmt.Errorf("emptying S3 bucket %s: %w", identifier, err)
+		}
+		// Purged — hand the now-empty bucket back to Cloud Control deletion.
+		return cloud.ErrNotHandled
+	}
 }
 
 // loreResourceOrder returns the deletion sequence for the Lore module.
