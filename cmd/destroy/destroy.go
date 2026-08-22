@@ -104,13 +104,19 @@ func runAll(ctx context.Context, rt globals.Runtime, opts globals.Options, out i
 			mods = append(mods, destroyall.Module{Name: name, Teardown: td})
 		}
 	}
-	add("deploy", teardownClosure(ctx, deploydestroy.NewTeardown(rt, out)))
-	add("ci", ciTeardownClosure(ctx, rt, out))
-	add("workstation", teardownClosure(ctx, wsterminate.NewTeardown(rt, out)))
-	add("ddc", teardownClosure(ctx, ddcdestroy.NewTeardown(rt, out)))
-	add("horde", teardownClosure(ctx, hordedestroy.NewTeardown(rt, out)))
-	add("lore", teardownClosure(ctx, loredestroy.NewTeardown(rt, out)))
-	add("perforce", teardownClosure(ctx, pfdestroy.NewTeardown(rt, out)))
+	// Propagate --json into every orchestrated teardown so module-level
+	// progress stays machine-readable instead of leaking human text.
+	withJSON := func(tc teardown.Command) teardown.Command {
+		tc.JSONOut = opts.JSONOutput
+		return tc
+	}
+	add("deploy", teardownClosure(ctx, withJSON(deploydestroy.NewTeardown(rt, out))))
+	add("ci", ciTeardownClosure(ctx, rt, out, opts.JSONOutput))
+	add("workstation", teardownClosure(ctx, withJSON(wsterminate.NewTeardown(rt, out))))
+	add("ddc", teardownClosure(ctx, withJSON(ddcdestroy.NewTeardown(rt, out))))
+	add("horde", teardownClosure(ctx, withJSON(hordedestroy.NewTeardown(rt, out))))
+	add("lore", teardownClosure(ctx, withJSON(loredestroy.NewTeardown(rt, out))))
+	add("perforce", teardownClosure(ctx, withJSON(pfdestroy.NewTeardown(rt, out))))
 
 	names := fabricastate.ResolveBackendNames(rt.Config, account)
 	destroyer, _ := rt.Provider.(cloud.StateBackendDestroyer)
@@ -142,9 +148,9 @@ func teardownClosure(_ context.Context, tc teardown.Command) destroyall.ModuleTe
 
 // ciTeardownClosure builds the CI teardown closure. CI is not a teardown.Command
 // (its CodeBuild project is SDK-managed); it uses cmd/ci/destroy's orchestrated path.
-func ciTeardownClosure(_ context.Context, rt globals.Runtime, out io.Writer) destroyall.ModuleTeardown {
+func ciTeardownClosure(_ context.Context, rt globals.Runtime, out io.Writer, jsonOut bool) destroyall.ModuleTeardown {
 	return func(ctx context.Context) ([]string, error) {
-		return nil, cidestroy.RunOrchestrated(ctx, rt, out)
+		return nil, cidestroy.RunOrchestrated(ctx, rt, out, jsonOut)
 	}
 }
 

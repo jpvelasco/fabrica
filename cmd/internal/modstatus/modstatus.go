@@ -231,14 +231,21 @@ func (c Command) pollUntilReady(ctx context.Context, st *fabricastate.State, m *
 			return nil
 		}
 
-		c.Renderer.Result(c.Out, info, c.JSONOut)
-
-		if c.Now().After(deadline) {
-			fmt.Fprintf(c.Out, "Timed out waiting for %s to become ready (10 minutes).\n", c.Spec.DisplayName)
+		timedOut := c.Now().After(deadline)
+		// JSON mode emits exactly one final document; interim renders and
+		// wait lines would corrupt the stream for machine consumers.
+		if !c.JSONOut {
+			c.Renderer.Result(c.Out, info, c.JSONOut)
+			if timedOut {
+				fmt.Fprintf(c.Out, "Timed out waiting for %s to become ready (10 minutes).\n", c.Spec.DisplayName)
+				return nil
+			}
+			fmt.Fprintf(c.Out, "Waiting %s before next check...\n\n", waitInterval)
+		} else if timedOut {
+			c.Renderer.Result(c.Out, info, c.JSONOut)
 			return nil
 		}
 
-		fmt.Fprintf(c.Out, "Waiting %s before next check...\n\n", waitInterval)
 		c.Sleep(waitInterval)
 	}
 }
