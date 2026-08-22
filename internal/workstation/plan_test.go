@@ -3,6 +3,7 @@ package workstation
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/assert"
@@ -127,6 +128,59 @@ func TestNewCreatePlanTemplateArtist(t *testing.T) {
 	}
 	if plan.VolumeSize != ArtistVolumeSize {
 		t.Errorf("VolumeSize = %d, want %d", plan.VolumeSize, ArtistVolumeSize)
+	}
+}
+
+// TestResolveSizingFlagOverridesTemplate pins the documented precedence:
+// explicit flags/config win over template values per field.
+func TestResolveSizingFlagOverridesTemplate(t *testing.T) {
+	cfg := config.WorkstationConfig{InstanceType: "c7i.xlarge", VolumeSize: 50}
+	inst, vol := resolveSizing(cfg, TemplateArtist)
+	if inst != "c7i.xlarge" || vol != 50 {
+		t.Errorf("resolveSizing(flag+artist) = (%q, %d), want (c7i.xlarge, 50)", inst, vol)
+	}
+}
+
+// TestResolveSizingTemplateFillsUnsetField verifies per-field fallback: a
+// template still supplies the field the operator did not set.
+func TestResolveSizingTemplateFillsUnsetField(t *testing.T) {
+	cfg := config.WorkstationConfig{VolumeSize: 50}
+	inst, vol := resolveSizing(cfg, TemplateArtist)
+	if inst != ArtistInstanceType || vol != 50 {
+		t.Errorf("resolveSizing(vol-only + artist) = (%q, %d), want (%q, 50)", inst, vol, ArtistInstanceType)
+	}
+
+	cfg2 := config.WorkstationConfig{InstanceType: "c7i.xlarge"}
+	inst2, vol2 := resolveSizing(cfg2, TemplateProgrammer)
+	if inst2 != "c7i.xlarge" || vol2 != ProgrammerVolumeSize {
+		t.Errorf("resolveSizing(type-only + programmer) = (%q, %d), want (c7i.xlarge, %d)", inst2, vol2, ProgrammerVolumeSize)
+	}
+}
+
+// TestNewCreatePlanTemplateCostMatchesSizing verifies the pre-approval cost
+// estimate prices the template-resolved shape, not the raw config defaults.
+func TestNewCreatePlanTemplateCostMatchesSizing(t *testing.T) {
+	cfg := config.WorkstationConfig{
+		AmiID:    "ami-abc123",
+		VPCId:    "vpc-x",
+		SubnetId: "subnet-x",
+	}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, TemplateArtist, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(plan.CostResources) != 2 {
+		t.Fatalf("CostResources len = %d, want 2", len(plan.CostResources))
+	}
+	if plan.CostResources[0].Name != ArtistInstanceType {
+		t.Errorf("cost instance = %q, want %q", plan.CostResources[0].Name, ArtistInstanceType)
+	}
+	wantVol := "gp3-" + strconv.Itoa(ArtistVolumeSize) + "GiB"
+	if plan.CostResources[1].Name != wantVol {
+		t.Errorf("cost volume = %q, want %q", plan.CostResources[1].Name, wantVol)
+	}
+	if plan.InstanceType != plan.CostResources[0].Name {
+		t.Error("plan shape and cost shape disagree")
 	}
 }
 

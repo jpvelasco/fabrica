@@ -47,10 +47,17 @@ var ec2InstancePrices = map[string]float64{
 	"g4dn.2xlarge": 0.752,
 	"g4dn.4xlarge": 1.204,
 	"g4dn.8xlarge": 2.264,
-	"g5.xlarge":    1.006,
-	"g5.2xlarge":   1.212,
-	"g5.4xlarge":   1.624,
-	"g5.8xlarge":   2.448,
+	// g6 family — NVIDIA L4 GPU (us-east-1, Linux, on-demand, 2025).
+	"g6.xlarge":  0.8048,
+	"g6.2xlarge": 0.9776,
+	"g6.4xlarge": 1.3232,
+	// i4i family — storage-optimized, Scylla DDC backend default (us-east-1,
+	// Linux, on-demand, 2025).
+	"i4i.large":  0.172,
+	"g5.xlarge":  1.006,
+	"g5.2xlarge": 1.212,
+	"g5.4xlarge": 1.624,
+	"g5.8xlarge": 2.448,
 }
 
 const hoursPerMonth = 730.0
