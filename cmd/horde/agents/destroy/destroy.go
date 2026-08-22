@@ -179,6 +179,10 @@ func (c *command) apply(ctx context.Context, st *fabricastate.State, m *fabricas
 
 	fmt.Fprintln(c.out)
 
+	// deleteOneResource marks the module "destroying" through the aliased
+	// state entry; remember the pre-destroy status so it can be restored.
+	origStatus := m.Status
+
 	destroyed := make([]string, 0, len(resources))
 	for _, res := range resources {
 		if err := c.deleteOneResource(ctx, st, m, res); err != nil {
@@ -188,7 +192,7 @@ func (c *command) apply(ctx context.Context, st *fabricastate.State, m *fabricas
 	}
 
 	// Update module status but keep the module (coordinator still exists).
-	st.UpsertModule(moduleName, m.Version, m.Status, m.Resources)
+	st.UpsertModule(moduleName, m.Version, origStatus, m.Resources)
 	if err := c.writeState(st); err != nil {
 		fmt.Fprintf(c.out, "Warning: could not update local state: %v\n", err)
 	}
