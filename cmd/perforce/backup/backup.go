@@ -148,7 +148,11 @@ func (c createCommand) run(ctx context.Context) error {
 		return err
 	}
 
-	if err := remoteexec.RunScript(ctx, c.out, c.runRemote, target.Instance.Identifier, "backup", script); err != nil {
+	progressOut := c.out
+	if c.jsonOut {
+		progressOut = io.Discard // keep stdout a single JSON document
+	}
+	if err := remoteexec.RunScript(ctx, progressOut, c.runRemote, target.Instance.Identifier, "backup", script); err != nil {
 		return err
 	}
 
@@ -167,6 +171,9 @@ func (c createCommand) resolveBackupConfig(cfg config.PerforceBackupConfig) (str
 }
 
 func (c createCommand) printBackupPlan(id, dest string, s3Export bool, cfg config.PerforceBackupConfig) {
+	if c.jsonOut {
+		return // the JSON document from printBackupComplete is the entire output
+	}
 	fmt.Fprintln(c.out, "Perforce backup")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "  Backup ID:  %s\n", id)

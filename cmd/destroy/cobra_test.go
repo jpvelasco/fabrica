@@ -3,6 +3,7 @@ package destroy_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -184,6 +185,53 @@ func TestDestroyCobraAllWithModules(t *testing.T) {
 	}
 
 	testutil.AssertContains(t, got, "complete")
+}
+
+// TestDestroyCobraAllWithModulesJSON verifies that destroy --all --json keeps
+// every module's teardown output machine-readable: stdout is a stream of pure
+// JSON documents with no human progress text interleaved.
+func TestDestroyCobraAllWithModulesJSON(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	stateWithModules := `{"account":"123456789012","region":"us-east-1","modules":[
+		{"name":"perforce","version":"2024.2","status":"ready","resources":[
+			{"typeName":"AWS::EC2::SecurityGroup","identifier":"sg-pf"},
+			{"typeName":"AWS::EC2::Instance","identifier":"i-pf"}
+		]},
+		{"name":"ci","version":"fabrica-ci","status":"ready","resources":[
+			{"typeName":"AWS::CodeBuild::Project","identifier":"fabrica-ci"},
+			{"typeName":"AWS::IAM::Role","identifier":"fabrica-ci-role"}
+		]}
+	]}`
+	testutil.WriteStateFile(t, dir, stateWithModules)
+
+	provider := &cobraFakeProviderWithCI{}
+	got, err := runDestroy(t, newCobraTestRuntime(provider), "--all", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("destroy --all --json failed: %v", err)
+	}
+
+	for _, human := range []string{"Deleting ", "Deleted: ", "destroyed.", "Proceeding without"} {
+		if strings.Contains(got, human) {
+			t.Errorf("human text %q leaked into --json output:\n%s", human, got)
+		}
+	}
+
+	// Stdout must be a stream of valid JSON documents (module Outputs + the
+	// aggregate Result), each decodable in sequence.
+	dec := json.NewDecoder(strings.NewReader(got))
+	docs := 0
+	var last map[string]any
+	for dec.More() {
+		if err := dec.Decode(&last); err != nil {
+			t.Fatalf("stdout segment %d is not valid JSON: %v\noutput:\n%s", docs+1, err, got)
+		}
+		docs++
+	}
+	if docs < 2 {
+		t.Errorf("expected module Output documents plus aggregate Result, got %d document(s)", docs)
+	}
 }
 
 // TestDestroyCobraReadStateError verifies error when state read fails.

@@ -3,6 +3,7 @@ package destroy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -578,9 +579,77 @@ func TestApply_JSONOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// JSON output should not print the "destroyed" message.
 	if bytes.Contains(out.Bytes(), []byte("Horde build agent pool destroyed")) {
 		t.Error("JSON output should not print 'destroyed' message")
+	}
+	var doc struct {
+		Destroyed []string `json:"destroyed"`
+		DryRun    bool     `json:"dryRun"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("--json must emit a valid JSON document, got: %s (%v)", out.String(), err)
+	}
+	if len(doc.Destroyed) != 1 || doc.Destroyed[0] != "asg-agent" {
+		t.Errorf("destroyed = %v, want [asg-agent]", doc.Destroyed)
+	}
+	if doc.DryRun {
+		t.Error("dryRun = true on a live destroy")
+	}
+}
+
+func TestApply_JSONObjectProgressSuppressed(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	m := &fabricastate.ModuleState{Status: "ready"}
+	resources := []cloud.Resource{{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent"}}
+	c := command{
+		out:            &out,
+		jsonOut:        true,
+		deleteResource: func(ctx context.Context, r *cloud.Resource) error { return nil },
+		writeState:     func(st *fabricastate.State) error { return nil },
+	}
+	if err := c.apply(context.Background(), st, m, resources); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if strings.Contains(out.String(), "Deleting ") || strings.Contains(out.String(), "\n  Deleted:") {
+		t.Errorf("progress lines leaked into --json output:\n%s", out.String())
+	}
+}
+
+func TestPrintDryRun_JSON(t *testing.T) {
+	var out bytes.Buffer
+	c := command{out: &out, jsonOut: true, dryRun: true}
+	resources := []cloud.Resource{
+		{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-1"},
+		{TypeName: "AWS::EC2::LaunchTemplate", Identifier: "lt-1"},
+	}
+	c.printDryRun(&fabricastate.ModuleState{Status: "ready"}, resources)
+
+	var doc struct {
+		Destroyed []string `json:"destroyed"`
+		DryRun    bool     `json:"dryRun"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("invalid JSON from --dry-run --json: %v\n%s", err, out.String())
+	}
+	if !doc.DryRun || len(doc.Destroyed) != 2 || doc.Destroyed[0] != "asg-1" {
+		t.Errorf("unexpected document: %+v", doc)
+	}
+}
+
+func TestPrintNotProvisioned_JSON(t *testing.T) {
+	var out bytes.Buffer
+	c := command{out: &out, jsonOut: true}
+	c.printNotProvisioned()
+	var doc struct {
+		Destroyed []string `json:"destroyed"`
+		DryRun    bool     `json:"dryRun"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("invalid JSON from not-provisioned --json: %v\n%s", err, out.String())
+	}
+	if len(doc.Destroyed) != 0 {
+		t.Errorf("destroyed = %v, want empty", doc.Destroyed)
 	}
 }
 
