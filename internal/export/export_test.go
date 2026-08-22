@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/ddc"
+	"github.com/jpvelasco/fabrica/internal/lore"
+	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"go.yaml.in/yaml/v3"
 )
@@ -413,15 +416,17 @@ func TestInstanceTypeForModule(t *testing.T) {
 		t.Errorf("unexpected perforce instance type: %s", instanceTypeForModule("perforce", cfg))
 	}
 
-	// Default for perforce when not set
+	// Default for perforce when not set — must match the plan-layer default.
 	cfg2 := config.Defaults()
-	if instanceTypeForModule("perforce", cfg2) != "c5.2xlarge" {
-		t.Errorf("unexpected default perforce instance type: %s", instanceTypeForModule("perforce", cfg2))
+	if instanceTypeForModule("perforce", cfg2) != perforce.DefaultInstanceType {
+		t.Errorf("unexpected default perforce instance type: %s, want %q (plan-layer default)",
+			instanceTypeForModule("perforce", cfg2), perforce.DefaultInstanceType)
 	}
 
 	// Default for lore
-	if instanceTypeForModule("lore", cfg2) != "m5.xlarge" {
-		t.Errorf("unexpected default lore instance type: %s", instanceTypeForModule("lore", cfg2))
+	if instanceTypeForModule("lore", cfg2) != lore.DefaultInstanceType {
+		t.Errorf("unexpected default lore instance type: %s, want %q (plan-layer default)",
+			instanceTypeForModule("lore", cfg2), lore.DefaultInstanceType)
 	}
 
 	// Unknown module returns empty string
@@ -2785,14 +2790,15 @@ func TestDDCCloudFormationOutput(t *testing.T) {
 
 // TestInstanceTypeForModuleDDC verifies DDC instance type resolution.
 func TestInstanceTypeForModuleDDC(t *testing.T) {
-	cfg := testConfigWithDDC()
+	cfg := testConfigWithDDC() // sets DDC.InstanceType explicitly
 	if instanceTypeForModule("ddc", cfg) != "m5.xlarge" {
 		t.Errorf("unexpected DDC instance type: %s", instanceTypeForModule("ddc", cfg))
 	}
 
 	cfg2 := config.Defaults()
-	if instanceTypeForModule("ddc", cfg2) != "m5.xlarge" {
-		t.Errorf("unexpected default DDC instance type: %s", instanceTypeForModule("ddc", cfg2))
+	if instanceTypeForModule("ddc", cfg2) != ddc.DefaultInstanceType {
+		t.Errorf("unexpected default DDC instance type: %s, want %q (plan-layer default)",
+			instanceTypeForModule("ddc", cfg2), ddc.DefaultInstanceType)
 	}
 }
 
@@ -3162,9 +3168,45 @@ func TestExtractPropertiesASG(t *testing.T) {
 	if props["AutoScalingGroupName"] != "fabrica-horde-agents-asg" {
 		t.Errorf("AutoScalingGroupName = %v, want fabrica-horde-agents-asg (default fallback)", props["AutoScalingGroupName"])
 	}
-	// State properties should be preserved.
-	if props["minSize"] != "0" {
-		t.Errorf("minSize = %v, want 0", props["minSize"])
+	// ASG sizing keys normalize to their CloudFormation property names.
+	if props["MinSize"] != "0" || props["DesiredCapacity"] != "2" || props["MaxSize"] != "4" {
+		t.Errorf("ASG sizing = %v/%v/%v, want MinSize=0 DesiredCapacity=2 MaxSize=4",
+			props["MinSize"], props["DesiredCapacity"], props["MaxSize"])
+	}
+	for _, bad := range []string{"minSize", "desiredCapacity", "maxSize"} {
+		if _, ok := props[bad]; ok {
+			t.Errorf("lowercase key %q leaked into properties", bad)
+		}
+	}
+}
+
+// TestExtractPropertiesInternalKeysDropped verifies module-internal metadata
+// (role, region, backup/scaling bookkeeping) never reaches generated output.
+func TestExtractPropertiesInternalKeysDropped(t *testing.T) {
+	res := state.ModuleResource{
+		TypeName:   "AWS::EC2::Instance",
+		Identifier: "i-abc123",
+		Properties: map[string]string{
+			"role":              "agent",
+			"region":            "eu-west-1",
+			"lastBackupId":      "backup-20260822",
+			"lastBackupAt":      "2026-08-22T00:00:00Z",
+			"scalingPolicy":     "scale-out",
+			"scalingAlarm":      "scale-out",
+			"scaleOutThreshold": "5",
+			"buildVersion":      "v1.2.3",
+			"instanceType":      "m5.xlarge",
+			"imageId":           "ami-123456",
+		},
+	}
+	props := extractProperties("perforce", res, config.Defaults())
+	for k := range internalStateKeys {
+		if _, ok := props[k]; ok {
+			t.Errorf("internal key %q leaked into exported properties", k)
+		}
+	}
+	if props["InstanceType"] != "m5.xlarge" || props["ImageId"] != "ami-123456" {
+		t.Errorf("legit IaC keys must survive: %v", props)
 	}
 }
 
@@ -3183,6 +3225,17 @@ func TestExtractPropertiesLaunchTemplate(t *testing.T) {
 	// LaunchTemplateName falls back to default since it's not in state properties.
 	if props["LaunchTemplateName"] != "fabrica-horde-agents-lt" {
 		t.Errorf("LaunchTemplateName = %v, want fabrica-horde-agents-lt (default fallback)", props["LaunchTemplateName"])
+	}
+	// Shape properties must nest under LaunchTemplateData for schema validity.
+	data, ok := props["LaunchTemplateData"].(map[string]any)
+	if !ok {
+		t.Fatalf("LaunchTemplateData = %v, want nested map", props["LaunchTemplateData"])
+	}
+	if data["InstanceType"] != "c7i.xlarge" || data["ImageId"] != "ami-agent123" {
+		t.Errorf("LaunchTemplateData = %v, want instance/image shape", data)
+	}
+	if _, ok := props["InstanceType"]; ok {
+		t.Error("top-level InstanceType is invalid for AWS::EC2::LaunchTemplate and must be nested")
 	}
 }
 

@@ -139,6 +139,9 @@ func TestGPUInstancePrices(t *testing.T) {
 		{"g4dn.2xlarge", 0.752},
 		{"g5.xlarge", 1.006},
 		{"g5.2xlarge", 1.212},
+		{"g6.xlarge", 0.8048},
+		{"g6.2xlarge", 0.9776},
+		{"g6.4xlarge", 1.3232},
 	} {
 		r := cost.Resource{TypeName: cloud.TypeAWSEC2Instance, Name: tc.typ}
 		got, err := cost.Global.Estimate(cloud.TypeAWSEC2Instance, r)

@@ -120,7 +120,7 @@ func (c command) run(ctx context.Context) error {
 		pfCfg.VolumeSize = c.volumeSize
 	}
 
-	plan, err := perforce.NewCreatePlan(ctx, pfCfg, account, region, effectiveVersion, nil)
+	plan, err := perforce.NewCreatePlan(ctx, pfCfg, account, region, effectiveVersion, provision.VPCResolver(c.runtime.Provider))
 	if err != nil {
 		return fmt.Errorf("building create plan: %w", err)
 	}

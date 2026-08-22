@@ -99,11 +99,7 @@ func (c command) run(ctx context.Context) error {
 		cfg.Backend = c.backend
 	}
 
-	var resolver cloud.VPCResolver
-	if vr, ok := c.runtime.Provider.(cloud.VPCResolver); ok {
-		resolver = vr
-	}
-	plan, err := ddc.NewSetupPlan(ctx, cfg, account, region, resolver)
+	plan, err := ddc.NewSetupPlan(ctx, cfg, account, region, provision.VPCResolver(c.runtime.Provider))
 	if err != nil {
 		return fmt.Errorf("building setup plan: %w", err)
 	}

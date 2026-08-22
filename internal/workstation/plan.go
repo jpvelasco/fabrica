@@ -51,16 +51,21 @@ type CreatePlan struct {
 	CostResources []cost.Resource
 }
 
-// resolveSizing applies template + config + default precedence for the two
-// sizing fields. tmpl is "", TemplateArtist, or TemplateProgrammer.
+// resolveSizing applies the sizing precedence per field: explicit config
+// (which carries --instance-type/--volume-size flags merged by the cmd layer)
+// > template > default. A template only fills fields the operator left unset.
 func resolveSizing(cfg config.WorkstationConfig, tmpl string) (instanceType string, volumeSize int) {
-	instanceType = cfg.InstanceType
-	volumeSize = cfg.VolumeSize
 	switch tmpl {
 	case TemplateArtist:
 		instanceType, volumeSize = ArtistInstanceType, ArtistVolumeSize
 	case TemplateProgrammer:
 		instanceType, volumeSize = ProgrammerInstanceType, ProgrammerVolumeSize
+	}
+	if cfg.InstanceType != "" {
+		instanceType = cfg.InstanceType
+	}
+	if cfg.VolumeSize > 0 {
+		volumeSize = cfg.VolumeSize
 	}
 	if instanceType == "" {
 		instanceType = DefaultInstanceType
@@ -73,7 +78,8 @@ func resolveSizing(cfg config.WorkstationConfig, tmpl string) (instanceType stri
 
 // NewCreatePlan validates inputs and builds a CreatePlan. VPCResolver is called
 // only when VPCId/SubnetId are absent from cfg; pass nil to skip resolution.
-// template overrides instanceType and volumeSize when non-empty.
+// template supplies defaults for instanceType and volumeSize; explicit flags
+// and config win per field.
 // perforceAddr, when non-empty, is the Perforce server address to mount; it is
 // threaded through to UserDataConfig at apply time and toggles MountPerforce.
 func NewCreatePlan(ctx context.Context, cfg config.WorkstationConfig, account, region string, resolver cloud.VPCResolver, tmpl, perforceAddr string) (*CreatePlan, error) {
@@ -119,6 +125,6 @@ func NewCreatePlan(ctx context.Context, cfg config.WorkstationConfig, account, r
 		PerforceServerAddr: perforceAddr,
 		SGName:             "fabrica-workstation-sg",
 		InstanceName:       "fabrica-workstation",
-		CostResources:      CostResources(cfg),
+		CostResources:      CostResourcesFor(instanceType, volumeSize),
 	}, nil
 }

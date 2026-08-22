@@ -132,7 +132,7 @@ func (c command) run(ctx context.Context) error {
 		perforceAddr = addr
 	}
 
-	plan, err := workstation.NewCreatePlan(ctx, wsCfg, account, region, nil, c.template, perforceAddr)
+	plan, err := workstation.NewCreatePlan(ctx, wsCfg, account, region, provision.VPCResolver(c.runtime.Provider), c.template, perforceAddr)
 	if err != nil {
 		return fmt.Errorf("building create plan: %w", err)
 	}

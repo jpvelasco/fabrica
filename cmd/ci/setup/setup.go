@@ -106,11 +106,7 @@ func (c command) run(ctx context.Context) error {
 	// default HORDE_URL is populated. Not required for setup to succeed.
 	hordeURL := c.resolveHordeURL(ctx)
 
-	var resolver cloud.VPCResolver
-	if vr, ok := c.runtime.Provider.(cloud.VPCResolver); ok {
-		resolver = vr
-	}
-	plan, err := ci.NewCreatePlan(ctx, c.runtime.Config.CI, account, region, hordeURL, resolver)
+	plan, err := ci.NewCreatePlan(ctx, c.runtime.Config.CI, account, region, hordeURL, provision.VPCResolver(c.runtime.Provider))
 	if err != nil {
 		return fmt.Errorf("building CI plan: %w", err)
 	}

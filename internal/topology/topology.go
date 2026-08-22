@@ -115,17 +115,29 @@ func (t Topology) Regions() []string {
 
 // ResolveVPC returns the effective VPC ID, subnet ID, and whether the
 // default VPC was resolved via the resolver. If both vpcID and subnetID are
-// already set, the resolver is skipped. If one is missing and resolver is nil,
-// the empty values are returned as-is (caller responsibility to validate).
+// set, they win as-is. If both are empty and resolver is non-nil, the account
+// default VPC is resolved. A partially specified pair is rejected with an
+// actionable error rather than silently substituting default-VPC values for
+// an explicitly configured one.
 func ResolveVPC(ctx context.Context, vpcID, subnetID string, resolver cloud.VPCResolver) (string, string, bool, error) {
 	defaultVPC := false
-	if (vpcID == "" || subnetID == "") && resolver != nil {
-		var err error
-		vpcID, subnetID, err = resolver.ResolveDefaultVPC(ctx)
-		if err != nil {
-			return "", "", false, fmt.Errorf("resolving default VPC: %w", err)
+	switch {
+	case vpcID != "" && subnetID != "":
+		// Explicit configuration wins; nothing to resolve.
+	case vpcID == "" && subnetID == "":
+		if resolver != nil {
+			var err error
+			vpcID, subnetID, err = resolver.ResolveDefaultVPC(ctx)
+			if err != nil {
+				return "", "", false, fmt.Errorf("resolving default VPC: %w", err)
+			}
+			defaultVPC = true
 		}
-		defaultVPC = true
+	default:
+		return "", "", false, fmt.Errorf(
+			"vpcId and subnetId must be set together or both omitted (got vpcId=%q, subnetId=%q) — omit both to place resources in the account default VPC",
+			vpcID, subnetID,
+		)
 	}
 	return vpcID, subnetID, defaultVPC, nil
 }

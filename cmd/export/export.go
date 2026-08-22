@@ -24,6 +24,7 @@ import (
 type command struct {
 	format          string
 	output          string
+	dryRun          bool
 	cfg             *config.Config
 	out             io.Writer
 	readState       func() (*fabricastate.State, error)
@@ -65,9 +66,11 @@ No live AWS calls are required — all data comes from local state.`,
 		if err != nil {
 			return err
 		}
+		opts := optionsSource()
 		c := command{
 			format:    format,
 			output:    output,
+			dryRun:    opts.DryRun,
 			cfg:       rt.Config,
 			out:       out,
 			readState: func() (*fabricastate.State, error) { return provision.ReadState(rt) },
@@ -111,12 +114,18 @@ func (c *command) run() error {
 	}
 
 	// Write output.
-	if c.output != "" {
+	switch {
+	case c.output != "" && c.dryRun:
+		fmt.Fprintf(c.out, "Dry run: would write %s template to %s (run without --dry-run to write the file).\n", c.format, c.output)
+	case c.output != "":
 		if err := os.WriteFile(c.output, data, 0600); err != nil {
 			return fmt.Errorf("writing output file %s: %w", c.output, err)
 		}
 		fmt.Fprintf(c.out, "Exported %s template to %s\n", c.format, c.output)
-	} else {
+	case c.dryRun:
+		fmt.Fprintln(c.out, "Dry run: template preview follows (no file written).")
+		fmt.Fprint(c.out, string(data))
+	default:
 		fmt.Fprint(c.out, string(data))
 	}
 
