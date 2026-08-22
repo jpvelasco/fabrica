@@ -37,7 +37,7 @@ type command struct {
 	readState   func() (*fabricastate.State, error)
 	getResource func(ctx context.Context, r *cloud.Resource) error
 	runner      cloud.CodeBuildRunner
-	sleep       func(time.Duration)
+	waitCtx     func(context.Context, time.Duration) error
 	now         func() time.Time
 }
 
@@ -76,7 +76,7 @@ Use --wait / -w to poll until the build reaches a terminal state (60m timeout).`
 				wait:           wait,
 				out:            out,
 				readState:      func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-				sleep:          time.Sleep,
+				waitCtx:        provision.WaitInterval,
 				now:            time.Now,
 			}
 			if rt.Provider != nil {
@@ -202,7 +202,10 @@ func (c command) pollUntilDone(ctx context.Context, buildID string) error {
 			fmt.Fprintf(c.out, "Timed out waiting for build %s (60 minutes). Check 'fabrica ci status'.\n", buildID)
 			return nil
 		}
-		c.sleep(waitInterval)
+		if err := c.waitCtx(ctx, waitInterval); err != nil {
+			fmt.Fprintf(c.out, "waiting cancelled: %v\n", err)
+			return nil
+		}
 	}
 }
 

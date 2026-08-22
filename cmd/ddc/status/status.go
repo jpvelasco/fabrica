@@ -48,6 +48,9 @@ type renderer struct {
 	provider      cloud.Provider
 	readState     func() (*fabricastate.State, error)
 	getEdgeStatus func(ctx context.Context, edges []ddc.EdgeResource, provider cloud.Provider) []ddc.EdgeStatus
+	// ctx is the signal-cancelled command context threaded through Resolve;
+	// edge probes must stop promptly on Ctrl+C.
+	ctx context.Context
 }
 
 // New returns the "ddc status" subcommand.
@@ -65,7 +68,7 @@ operator is outside the VPC), its status is reported gracefully as
 'unreachable' or 'missing' without failing the command.`,
 		ModuleName:  moduleName,
 		DisplayName: "DDC",
-		Resolve: func(rt globals.Runtime) modstatus.RuntimeSpec {
+		Resolve: func(rt globals.Runtime, cmdCtx context.Context) modstatus.RuntimeSpec {
 			port := ddc.DefaultPublicPort
 			backend := ddc.BackendZen
 			if rt.Config != nil {
@@ -76,6 +79,9 @@ operator is outside the VPC), its status is reported gracefully as
 					backend = rt.Config.DDC.Backend
 				}
 			}
+			if cmdCtx == nil {
+				cmdCtx = context.Background()
+			}
 			r := renderer{
 				publicPort: port,
 				backend:    backend,
@@ -84,6 +90,7 @@ operator is outside the VPC), its status is reported gracefully as
 				getEdgeStatus: func(ctx context.Context, edges []ddc.EdgeResource, p cloud.Provider) []ddc.EdgeStatus {
 					return ddc.ProbeEdges(ctx, edges, p, ddc.ProbeEdgesOptions{PublicPort: port})
 				},
+				ctx: cmdCtx,
 			}
 			return modstatus.RuntimeSpec{
 				ProbePort: port,
@@ -218,7 +225,7 @@ func (r renderer) printText(out io.Writer, info modstatus.Info) {
 }
 
 func (r renderer) printEdgesText(out io.Writer, info modstatus.Info) {
-	edges := r.edgeOutputs(context.Background())
+	edges := r.edgeOutputs(r.ctx)
 	if len(edges) == 0 {
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, "  Edge regions:  none (single home-region deployment)")
@@ -250,7 +257,7 @@ func (r renderer) printEdgesText(out io.Writer, info modstatus.Info) {
 }
 
 func (r renderer) printJSON(out io.Writer, info modstatus.Info) {
-	o := StatusOutput{Backend: r.backend, Edges: r.edgeOutputs(context.Background())}
+	o := StatusOutput{Backend: r.backend, Edges: r.edgeOutputs(r.ctx)}
 	o.BaseStatusOutput = modstatus.NewBaseStatusOutput(info)
 	o.SGID = r.homeSGID(info)
 	if info.PrivateIP != "" {

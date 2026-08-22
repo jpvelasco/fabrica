@@ -41,7 +41,7 @@ func TestNewCobraCommandWiresFlagsAndNilProvider(t *testing.T) {
 		Long:        "long",
 		ModuleName:  "example",
 		DisplayName: "Example",
-		Resolve: func(globals.Runtime) RuntimeSpec {
+		Resolve: func(globals.Runtime, context.Context) RuntimeSpec {
 			resolveCalls++
 			return RuntimeSpec{ProbePort: 1234, Renderer: renderer}
 		},
@@ -88,7 +88,7 @@ func TestNewCobraCommandWiresProviderAndResolvedProbe(t *testing.T) {
 	cmd := NewCobraCommand(CobraSpec{
 		ModuleName:  "example",
 		DisplayName: "Example",
-		Resolve: func(globals.Runtime) RuntimeSpec {
+		Resolve: func(globals.Runtime, context.Context) RuntimeSpec {
 			return RuntimeSpec{
 				ProbePort: 4321,
 				Renderer:  renderer,
@@ -120,7 +120,7 @@ func TestNewCobraCommandReturnsRuntimeErrorBeforeResolving(t *testing.T) {
 	resolveCalled := false
 	optionsCalled := false
 	cmd := NewCobraCommand(CobraSpec{
-		Resolve: func(globals.Runtime) RuntimeSpec {
+		Resolve: func(globals.Runtime, context.Context) RuntimeSpec {
 			resolveCalled = true
 			return RuntimeSpec{}
 		},

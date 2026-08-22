@@ -63,7 +63,7 @@ func newTestCmd(out *bytes.Buffer, st *fabricastate.State) *command {
 		},
 		fleetEvents: func(context.Context, string) ([]cloud.FleetEvent, error) { return nil, nil },
 		confirm:     func(string) bool { return true },
-		sleep:       func(time.Duration) {},
+		waitCtx:     func(context.Context, time.Duration) error { return nil },
 		now:         time.Now,
 	}
 }
@@ -326,7 +326,7 @@ func TestPromotePollTimeout(t *testing.T) {
 		}
 		return baseTime.Add(46 * time.Minute)
 	}
-	c.sleep = func(time.Duration) {}
+	c.waitCtx = func(context.Context, time.Duration) error { return nil }
 	err := c.run(context.Background())
 	if err == nil {
 		t.Fatal("expected timeout error")
@@ -521,5 +521,26 @@ func TestPromoteNoWaitFleetStateWriteErrorFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "recording fleet") {
 		t.Errorf("error = %q, want fleet state-write context", err)
+	}
+}
+
+// TestPromoteWaitCancelled verifies cancellation during fleet polling returns
+// an explicit error stating the alias was not changed.
+func TestPromoteWaitCancelled(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	c := newTestCmd(&out, st)
+	c.assumeYes = true
+	c.fleetStatus = func(_ context.Context, id string) (cloud.FleetInfo, error) {
+		return cloud.FleetInfo{FleetID: id, Status: "CREATED"}, nil
+	}
+	c.waitCtx = func(context.Context, time.Duration) error { return context.Canceled }
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected cancellation error during fleet wait")
+	}
+	if !strings.Contains(err.Error(), "cancelled") || !strings.Contains(err.Error(), "alias was not changed") {
+		t.Errorf("error = %v, want cancelled + alias-not-changed guidance", err)
 	}
 }

@@ -306,7 +306,14 @@ func ProbeEdges(ctx context.Context, edges []EdgeResource, provider cloud.Provid
 
 		// Probe health if running and private IP is available.
 		if s.InstanceState == "running" && s.PrivateIP != "" {
-			s.ProbeStatus = probeEdgeHealth(client, s.PrivateIP, opts.PublicPort)
+			if ctx.Err() != nil {
+				// Cancelled — stop scheduling further probes.
+				s.ProbeStatus = "skipped"
+				s.ProbeError = "cancelled"
+				statuses = append(statuses, s)
+				continue
+			}
+			s.ProbeStatus = probeEdgeHealth(ctx, client, s.PrivateIP, opts.PublicPort)
 		} else {
 			s.ProbeStatus = "skipped"
 		}
@@ -337,10 +344,15 @@ func parseEdgeActualState(r *cloud.Resource, s *EdgeStatus) {
 }
 
 // probeEdgeHealth performs an HTTP GET /health/ready against the edge instance.
-// Returns "ready" on HTTP 200, "unreachable" otherwise.
-func probeEdgeHealth(client *http.Client, privateIP string, port int) string {
+// The request carries ctx so cancellation stops in-flight probes. Returns
+// "ready" on HTTP 200, "unreachable" otherwise.
+func probeEdgeHealth(ctx context.Context, client *http.Client, privateIP string, port int) string {
 	url := fmt.Sprintf("http://%s:%d/health/ready", privateIP, port)
-	resp, err := client.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "unreachable"
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "unreachable"
 	}

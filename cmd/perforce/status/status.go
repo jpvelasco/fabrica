@@ -1,6 +1,7 @@
 package status
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -44,7 +45,7 @@ Use --wait / -w to poll every 15 seconds until Helix Core is reachable
 (times out after 10 minutes).`,
 		ModuleName:  moduleName,
 		DisplayName: "Perforce",
-		Resolve: func(globals.Runtime) modstatus.RuntimeSpec {
+		Resolve: func(globals.Runtime, context.Context) modstatus.RuntimeSpec {
 			return modstatus.RuntimeSpec{
 				ProbePort: p4Port,
 				Renderer: modstatus.NewRenderer(

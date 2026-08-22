@@ -1,6 +1,7 @@
 package status
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -51,7 +52,7 @@ Use --wait / -w to poll every 15 seconds until Horde is reachable
 (times out after 10 minutes).`,
 		ModuleName:  moduleName,
 		DisplayName: "Horde",
-		Resolve: func(rt globals.Runtime) modstatus.RuntimeSpec {
+		Resolve: func(rt globals.Runtime, cmdCtx context.Context) modstatus.RuntimeSpec {
 			port, grpcPort := resolvePorts(rt)
 			r := renderer{port: port, grpcPort: grpcPort}
 			return modstatus.RuntimeSpec{

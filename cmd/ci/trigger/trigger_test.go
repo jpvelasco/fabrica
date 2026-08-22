@@ -81,9 +81,9 @@ func newCmd(out *bytes.Buffer, runner cloud.CodeBuildRunner, st *fabricastate.St
 			r.ActualState = []byte(`{"PrivateIpAddress":"10.0.1.42"}`)
 			return nil
 		},
-		runner: runner,
-		sleep:  func(time.Duration) {},
-		now:    time.Now,
+		runner:  runner,
+		waitCtx: func(context.Context, time.Duration) error { return nil },
+		now:     time.Now,
 	}
 }
 
@@ -224,7 +224,7 @@ func TestTriggerNoRunnerErrors(t *testing.T) {
 		buildGraphPath: writeTempBuildGraph(t),
 		out:            &out,
 		readState:      func() (*fabricastate.State, error) { return st, nil },
-		sleep:          func(time.Duration) {},
+		waitCtx:        func(context.Context, time.Duration) error { return nil },
 		now:            time.Now,
 		runner:         nil,
 	}
@@ -259,7 +259,7 @@ func TestTriggerResolveHordeNoGetInstance(t *testing.T) {
 		readState:      func() (*fabricastate.State, error) { return st, nil },
 		getResource:    nil,
 		runner:         &fakeRunner{startID: "x"},
-		sleep:          func(time.Duration) {},
+		waitCtx:        func(context.Context, time.Duration) error { return nil },
 		now:            time.Now,
 	}
 	if err := c.run(context.Background()); err == nil {
@@ -279,9 +279,9 @@ func TestTriggerResolveHordeNoPrivateIP(t *testing.T) {
 			r.ActualState = []byte(`{}`)
 			return nil
 		},
-		runner: &fakeRunner{startID: "x"},
-		sleep:  func(time.Duration) {},
-		now:    time.Now,
+		runner:  &fakeRunner{startID: "x"},
+		waitCtx: func(context.Context, time.Duration) error { return nil },
+		now:     time.Now,
 	}
 	if err := c.run(context.Background()); err == nil {
 		t.Fatal("expected error when no private IP")
@@ -298,7 +298,7 @@ func TestTriggerResolveHordeGetResourceError(t *testing.T) {
 		readState:      func() (*fabricastate.State, error) { return st, nil },
 		getResource:    func(_ context.Context, _ *cloud.Resource) error { return errors.New("provider error") },
 		runner:         &fakeRunner{startID: "x"},
-		sleep:          func(time.Duration) {},
+		waitCtx:        func(context.Context, time.Duration) error { return nil },
 		now:            time.Now,
 	}
 	if err := c.run(context.Background()); err == nil {
@@ -321,9 +321,9 @@ func TestTriggerCustomHordePort(t *testing.T) {
 			r.ActualState = []byte(`{"PrivateIpAddress":"10.0.1.42"}`)
 			return nil
 		},
-		runner: runner,
-		sleep:  func(time.Duration) {},
-		now:    time.Now,
+		runner:  runner,
+		waitCtx: func(context.Context, time.Duration) error { return nil },
+		now:     time.Now,
 	}
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -345,9 +345,9 @@ func TestTriggerWaitBuildStatusError(t *testing.T) {
 			r.ActualState = []byte(`{"PrivateIpAddress":"10.0.1.42"}`)
 			return nil
 		},
-		runner: &failingStatusRunner{},
-		sleep:  func(time.Duration) {},
-		now:    time.Now,
+		runner:  &failingStatusRunner{},
+		waitCtx: func(context.Context, time.Duration) error { return nil },
+		now:     time.Now,
 	}
 	c.wait = true
 	if err := c.run(context.Background()); err == nil {
@@ -406,7 +406,7 @@ func TestTriggerReadStateError(t *testing.T) {
 		out:            &out,
 		readState:      func() (*fabricastate.State, error) { return nil, errors.New("state read error") },
 		runner:         &fakeRunner{startID: "x"},
-		sleep:          func(time.Duration) {},
+		waitCtx:        func(context.Context, time.Duration) error { return nil },
 		now:            time.Now,
 	}
 	if err := c.run(context.Background()); err == nil {
@@ -427,5 +427,22 @@ func TestTriggerHordeInstanceMissingFromState(t *testing.T) {
 	c.buildGraphPath = writeTempBuildGraph(t)
 	if err := c.run(context.Background()); err == nil {
 		t.Fatal("expected error when horde instance not in state")
+	}
+}
+
+// TestTriggerWaitCancelled verifies cancellation during the polling interval
+// ends the wait immediately with a notice instead of hanging.
+func TestTriggerWaitCancelled(t *testing.T) {
+	var out bytes.Buffer
+	c := newCmd(&out, &alwaysInProgressRunner{startID: "build-1"}, provisionedState())
+	c.buildGraphPath = writeTempBuildGraph(t)
+	c.wait = true
+	c.waitCtx = func(context.Context, time.Duration) error { return context.Canceled }
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.Contains(out.String(), "waiting cancelled") {
+		t.Errorf("expected cancellation notice:\n%s", out.String())
 	}
 }

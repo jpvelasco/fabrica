@@ -1,6 +1,7 @@
 package status
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -47,7 +48,7 @@ Use --wait / -w to poll every 15 seconds until Lore is reachable
 (times out after 10 minutes).`,
 		ModuleName:  moduleName,
 		DisplayName: "Lore",
-		Resolve: func(globals.Runtime) modstatus.RuntimeSpec {
+		Resolve: func(globals.Runtime, context.Context) modstatus.RuntimeSpec {
 			r := renderer{
 				grpcPort: lore.DefaultGRPCPort,
 				httpPort: lore.DefaultHTTPPort,

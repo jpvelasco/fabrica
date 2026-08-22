@@ -49,7 +49,7 @@ type command struct {
 	fleetStatus      func(ctx context.Context, fleetID string) (cloud.FleetInfo, error)
 	fleetEvents      func(ctx context.Context, fleetID string) ([]cloud.FleetEvent, error)
 	confirm          func(string) bool
-	sleep            func(time.Duration)
+	waitCtx          func(context.Context, time.Duration) error
 	now              func() time.Time
 }
 
@@ -103,7 +103,7 @@ server.zip"; override with --s3-bucket / --s3-key.`,
 				readState:    func() (*fabricastate.State, error) { return provision.ReadState(rt) },
 				writeState:   fabricastate.WriteState,
 				confirm:      prompt.Confirm,
-				sleep:        time.Sleep,
+				waitCtx:      provision.WaitInterval,
 				now:          time.Now,
 			}
 			if rt.Provider != nil {
@@ -285,7 +285,9 @@ func (c command) pollUntilActive(ctx context.Context, fleetID string, plan *depl
 			c.printFleetEvents(ctx, fleetID)
 			return fmt.Errorf("timed out after %d minutes waiting for fleet %s to become ACTIVE (status %s) — check 'fabrica deploy status'; the alias was not changed", plan.ActivationTimeoutMinutes, fleetID, info.Status)
 		}
-		c.sleep(pollInterval)
+		if err := c.waitCtx(ctx, pollInterval); err != nil {
+			return fmt.Errorf("waiting for fleet %s cancelled: %w — the alias was not changed; check 'fabrica deploy status'", fleetID, err)
+		}
 	}
 }
 
