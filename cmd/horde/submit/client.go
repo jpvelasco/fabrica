@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jpvelasco/fabrica/internal/horde/buildgraph"
 )
@@ -19,6 +20,11 @@ type HordeClient interface {
 	GetJobStatus(ctx context.Context, jobID string) (state string, err error)
 }
 
+// hordeHTTPTimeout bounds every Horde API request. Without it a server that
+// accepts TCP but never responds hangs submit/status indefinitely; command
+// contexts still cancel sooner when the user interrupts.
+const hordeHTTPTimeout = 30 * time.Second
+
 type hordeHTTPClient struct {
 	baseURL string // e.g. "http://10.0.1.42:5000"
 	token   string // service account token (optional)
@@ -29,7 +35,7 @@ func newHordeHTTPClient(baseURL, token string) *hordeHTTPClient {
 	return &hordeHTTPClient{
 		baseURL: baseURL,
 		token:   token,
-		http:    &http.Client{},
+		http:    &http.Client{Timeout: hordeHTTPTimeout},
 	}
 }
 

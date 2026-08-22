@@ -379,8 +379,9 @@ func newSubmitCommandWithFakeRC(t *testing.T, actualStateJSON string) command {
 
 // TestSubmitResolvePrivateIP verifies the provider-resolve path when no
 // client is injected: the command resolves instance IP via Cloud Control Get.
+// Loopback is used so connection refusal is immediate and deterministic.
 func TestSubmitResolvePrivateIP(t *testing.T) {
-	c := newSubmitCommandWithFakeRC(t, `{"PrivateIpAddress":"10.0.1.42"}`)
+	c := newSubmitCommandWithFakeRC(t, `{"PrivateIpAddress":"127.0.0.1"}`)
 
 	err := c.run(context.Background())
 	if err == nil {

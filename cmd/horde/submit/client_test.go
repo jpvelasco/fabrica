@@ -145,3 +145,15 @@ func TestSubmitJob404ProbeSendsToken(t *testing.T) {
 		t.Errorf("probe Authorization = %q, want ServiceAccount probe-secret", gotAuth)
 	}
 }
+
+// TestNewHordeHTTPClientHasTimeout verifies the production client bounds every
+// request; without it a blackholed endpoint hangs submit/status indefinitely.
+func TestNewHordeHTTPClientHasTimeout(t *testing.T) {
+	c := newHordeHTTPClient("http://10.0.1.42:5000", "")
+	if c.http.Timeout != hordeHTTPTimeout {
+		t.Errorf("client timeout = %v, want %v", c.http.Timeout, hordeHTTPTimeout)
+	}
+	if c.http.Timeout <= 0 {
+		t.Error("client must not be constructed without a finite timeout")
+	}
+}
