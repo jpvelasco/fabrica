@@ -15,7 +15,12 @@ import (
 	"strings"
 
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/ddc"
+	"github.com/jpvelasco/fabrica/internal/horde"
+	"github.com/jpvelasco/fabrica/internal/lore"
+	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/workstation"
 )
 
 // Format is the target IaC format for export.
@@ -289,10 +294,27 @@ func buildModule(ms state.ModuleState, cfg *config.Config) ExportModule {
 // Production state stores camelCase keys (instanceType, volumeSize) in
 // ModuleResource.Properties; this function normalizes them to the IaC-appropriate
 // forms and enriches with config-derived defaults.
+// internalStateKeys are module-internal metadata recorded alongside resources
+// for status, teardown, and cost logic. They are not CloudFormation/Terraform
+// resource properties; leaking them into generated templates yields invalid
+// IaC (e.g. "role": "agent" under AWS::EC2::Instance).
+var internalStateKeys = map[string]struct{}{
+	"role":              {},
+	"region":            {},
+	"buildVersion":      {},
+	"lastBackupId":      {},
+	"lastBackupAt":      {},
+	"scalingPolicy":     {},
+	"scalingAlarm":      {},
+	"scaleOutThreshold": {},
+	"scaleInThreshold":  {},
+}
+
 func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Config) map[string]any {
 	props := make(map[string]any)
 
-	// Copy state properties, normalizing camelCase keys to their IaC forms.
+	// Copy state properties, normalizing camelCase keys to their IaC forms
+	// and dropping module-internal metadata.
 	for k, v := range r.Properties {
 		switch k {
 		case "instanceType":
@@ -304,8 +326,16 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			// BlockDeviceMappings below. Store it temporarily under a private
 			// key so the switch block can consume it.
 			props["__volumeSize"] = v
+		case "minSize":
+			props["MinSize"] = v
+		case "desiredCapacity":
+			props["DesiredCapacity"] = v
+		case "maxSize":
+			props["MaxSize"] = v
 		default:
-			props[k] = v
+			if _, internal := internalStateKeys[k]; !internal {
+				props[k] = v
+			}
 		}
 	}
 
@@ -432,9 +462,20 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			props["Tags"] = defaultTags(moduleName)
 		}
 	case "AWS::EC2::LaunchTemplate":
-		// Horde agent launch template — properties come from state.
+		// Horde agent launch template — state stores the image/instance shape
+		// flat, but the Cloud Control schema nests them under LaunchTemplateData.
 		if _, ok := props["LaunchTemplateName"]; !ok {
 			props["LaunchTemplateName"] = "fabrica-" + moduleName + "-agents-lt"
+		}
+		data := map[string]any{}
+		for _, k := range []string{"InstanceType", "ImageId"} {
+			if v, ok := props[k]; ok {
+				data[k] = v
+				delete(props, k)
+			}
+		}
+		if len(data) > 0 {
+			props["LaunchTemplateData"] = data
 		}
 	case "AWS::AutoScaling::ScalingPolicy":
 		// Horde agent scaling policy — properties come from state.
@@ -478,27 +519,27 @@ func instanceTypeForModule(module string, cfg *config.Config) string {
 		if cfg.Horde.InstanceType != "" {
 			return cfg.Horde.InstanceType
 		}
-		return "m7i.2xlarge"
+		return horde.DefaultInstanceType
 	case "perforce":
 		if cfg.Perforce.InstanceType != "" {
 			return cfg.Perforce.InstanceType
 		}
-		return "c5.2xlarge"
+		return perforce.DefaultInstanceType
 	case "lore":
 		if cfg.Lore.InstanceType != "" {
 			return cfg.Lore.InstanceType
 		}
-		return "m5.xlarge"
+		return lore.DefaultInstanceType
 	case "ddc":
 		if cfg.DDC.InstanceType != "" {
 			return cfg.DDC.InstanceType
 		}
-		return "m5.xlarge"
+		return ddc.DefaultInstanceType
 	case "workstation":
 		if cfg.Workstation.InstanceType != "" {
 			return cfg.Workstation.InstanceType
 		}
-		return "g4dn.xlarge"
+		return workstation.DefaultInstanceType
 	}
 	return ""
 }

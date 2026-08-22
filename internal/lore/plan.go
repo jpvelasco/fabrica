@@ -17,6 +17,9 @@ const (
 	StoreBackendS3    = "s3"
 )
 
+// DefaultInstanceType is the EC2 shape used when config omits instanceType.
+const DefaultInstanceType = "m5.xlarge"
+
 // Default ports for loreserver (Epic Lore).
 const (
 	DefaultGRPCPort  = 41337 // gRPC over TCP and QUIC over UDP

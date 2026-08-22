@@ -10,6 +10,9 @@ import (
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
 
+// DefaultInstanceType is the EC2 shape used when config omits instanceType.
+const DefaultInstanceType = "m7i.2xlarge"
+
 type CreatePlan struct {
 	Account      string
 	Region       string
@@ -38,7 +41,7 @@ func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region 
 
 	instanceType := cfg.InstanceType
 	if instanceType == "" {
-		instanceType = "m7i.2xlarge"
+		instanceType = DefaultInstanceType
 	}
 	volumeSize := cfg.VolumeSize
 	if volumeSize <= 0 {
