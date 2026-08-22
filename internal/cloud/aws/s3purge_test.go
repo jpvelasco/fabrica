@@ -13,6 +13,7 @@ import (
 type fakePurgeS3Client struct {
 	pages       []s3.ListObjectVersionsOutput
 	listErr     error
+	deleteErr   error
 	calls       int
 	deletedObjs []s3types.ObjectIdentifier
 }
@@ -30,6 +31,9 @@ func (f *fakePurgeS3Client) ListObjectVersions(_ context.Context, _ *s3.ListObje
 }
 
 func (f *fakePurgeS3Client) DeleteObjects(_ context.Context, params *s3.DeleteObjectsInput, _ ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error) {
+	if f.deleteErr != nil {
+		return nil, f.deleteErr
+	}
 	f.deletedObjs = append(f.deletedObjs, params.Delete.Objects...)
 	return &s3.DeleteObjectsOutput{}, nil
 }
@@ -105,5 +109,49 @@ func TestPurgeBucketListErrorWrapped(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "listing versions in bucket") {
 		t.Errorf("error = %v, want list-phase context", err)
+	}
+}
+
+func TestPurgeBucketConfigError(t *testing.T) {
+	p := &awsProvider{
+		loadConfig: func(_ context.Context, _, _ string) (awssdk.Config, error) {
+			return awssdk.Config{}, context.Canceled
+		},
+	}
+	if err := p.PurgeBucket(context.Background(), "b"); err == nil {
+		t.Fatal("expected config-load error")
+	}
+}
+
+func TestPurgeBucketDeleteErrorWrapped(t *testing.T) {
+	fake := &fakePurgeS3Client{
+		deleteErr: context.DeadlineExceeded,
+		pages: []s3.ListObjectVersionsOutput{
+			{
+				Versions: []s3types.ObjectVersion{
+					{Key: awssdk.String("k1"), VersionId: awssdk.String("v1")},
+				},
+			},
+		},
+	}
+	p := &awsProvider{
+		loadConfig: func(_ context.Context, _, _ string) (awssdk.Config, error) {
+			return awssdk.Config{Region: "us-east-1"}, nil
+		},
+		newPurgeS3Client: func(awssdk.Config) purgeS3Client { return fake },
+	}
+	err := p.PurgeBucket(context.Background(), "store-bucket")
+	if err == nil {
+		t.Fatal("expected delete-phase error")
+	}
+	if !strings.Contains(err.Error(), "deleting 1 versions from bucket store-bucket") {
+		t.Errorf("error = %v, want delete-phase context with count and bucket", err)
+	}
+}
+
+func TestPurgeClientDefaultFactory(t *testing.T) {
+	p := &awsProvider{}
+	if got := p.purgeClient(awssdk.Config{Region: "us-east-1"}); got == nil {
+		t.Fatal("default factory returned nil client")
 	}
 }
