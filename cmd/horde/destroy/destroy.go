@@ -40,6 +40,9 @@ func hordeResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 	}
 
 	phases := []phase{
+		{"agent-ingress", func(r fabricastate.ModuleResource) bool {
+			return r.TypeName == "AWS::EC2::SecurityGroupIngress" && isAgentResource(r)
+		}},
 		{"scaling-policy", func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::AutoScaling::ScalingPolicy" }},
 		{"alarm", func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::CloudWatch::Alarm" }},
 		{"asg", func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::AutoScaling::AutoScalingGroup" }},

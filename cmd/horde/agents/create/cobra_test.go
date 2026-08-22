@@ -230,9 +230,9 @@ func TestAgentsCreateYesFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("--yes run failed: %v", err)
 	}
-	// 5 resources: SG, role, profile, LT, ASG
-	if provider.CreateCalls != 5 {
-		t.Fatalf("--yes: expected 5 create calls, got %d", provider.CreateCalls)
+	// 6 resources: SG, agent-to-coordinator ingress, role, profile, LT, ASG.
+	if provider.CreateCalls != 6 {
+		t.Fatalf("--yes: expected 6 create calls, got %d", provider.CreateCalls)
 	}
 }
 

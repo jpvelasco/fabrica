@@ -47,17 +47,11 @@ func TestAgentSGDesiredState(t *testing.T) {
 		t.Errorf("VpcId = %v, want %s", doc["VpcId"], plan.VPCID)
 	}
 
-	// Check ingress rules include coordinator SG reference.
-	ingressRaw, ok := doc["SecurityGroupIngress"].([]any)
-	if !ok || len(ingressRaw) != 1 {
-		t.Fatalf("expected 1 ingress rule, got %d", len(ingressRaw))
-	}
-	ingress, ok := ingressRaw[0].(map[string]any)
-	if !ok {
-		t.Fatal("ingress rule is not a map")
-	}
-	if ingress["SourceSecurityGroupId"] != plan.CoordinatorSGID {
-		t.Errorf("SourceSecurityGroupId = %v, want %s", ingress["SourceSecurityGroupId"], plan.CoordinatorSGID)
+	// Agents only dial OUT to the coordinator; the agent SG must have no
+	// inbound rules at all. Agent-to-coordinator authorization lives on the
+	// coordinator SG as a standalone ingress resource.
+	if _, has := doc["SecurityGroupIngress"]; has {
+		t.Errorf("agent SG must have no inbound rules; got %v", doc["SecurityGroupIngress"])
 	}
 }
 
@@ -77,6 +71,33 @@ func TestAgentSGDesiredStateNoCoordinatorSG(t *testing.T) {
 	// No ingress rules when coordinator SG is not set.
 	if _, has := doc["SecurityGroupIngress"]; has {
 		t.Error("should not have SecurityGroupIngress when coordinator SG is empty")
+	}
+}
+
+// TestAgentToCoordinatorIngressDesiredState verifies the standalone rule
+// authorizes coordinator inbound from the agent SG on the coordinator port.
+func TestAgentToCoordinatorIngressDesiredState(t *testing.T) {
+	plan := newTestAgentsPlan()
+	ds, err := AgentToCoordinatorIngressDesiredState(plan, "sg-agent456")
+	if err != nil {
+		t.Fatalf("AgentToCoordinatorIngressDesiredState: %v", err)
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(ds, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if doc["GroupId"] != plan.CoordinatorSGID {
+		t.Errorf("GroupId = %v, want coordinator SG %s", doc["GroupId"], plan.CoordinatorSGID)
+	}
+	if doc["SourceSecurityGroupId"] != "sg-agent456" {
+		t.Errorf("SourceSecurityGroupId = %v, want agent SG sg-agent456", doc["SourceSecurityGroupId"])
+	}
+	if doc["FromPort"] != float64(plan.CoordinatorPort) || doc["ToPort"] != float64(plan.CoordinatorPort) {
+		t.Errorf("ports = %v/%v, want %d", doc["FromPort"], doc["ToPort"], plan.CoordinatorPort)
+	}
+	if _, has := doc["Tags"]; has {
+		t.Error("AWS::EC2::SecurityGroupIngress has no Tags property; none must be emitted")
 	}
 }
 

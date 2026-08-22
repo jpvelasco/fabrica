@@ -303,6 +303,25 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	}
 	sgID := resources[len(resources)-1].Identifier
 
+	// 1b. Agent-to-coordinator ingress on the COORDINATOR security group.
+	// Agents dial the coordinator (HTTP enrollment + gRPC), so the rule must
+	// authorize coordinator inbound from the agent SG — not the reverse.
+	if plan.CoordinatorSGID != "" {
+		fmt.Fprintln(c.out)
+		fmt.Fprintf(c.out, "Authorizing agents on coordinator security group %s...\n", plan.CoordinatorSGID)
+		resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+			Label:    "Agent-to-coordinator ingress",
+			TypeName: cloud.TypeAWSEC2SecurityGroupIngress,
+			BuildDesiredState: func() ([]byte, error) {
+				return horde.AgentToCoordinatorIngressDesiredState(plan, sgID)
+			},
+			Properties: map[string]string{"role": "agent"},
+		}, moduleName, ver, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+		if err != nil {
+			return fmt.Errorf("creating agent-to-coordinator ingress: %w", err)
+		}
+	}
+
 	// 2. IAM Role
 	fmt.Fprintf(c.out, "Creating agent IAM role %s...\n", plan.RoleName)
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{

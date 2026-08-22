@@ -9,25 +9,11 @@ import (
 )
 
 // AgentSGDesiredState returns the Cloud Control desired-state JSON for the
-// agent security group. Agents only need outbound access to the coordinator
-// (HTTP/gRPC) and SSM for management. No inbound from the internet.
-//
-// Inbound rules: if a coordinator SG ID is available, allow traffic from the
-// coordinator SG on the coordinator port. Otherwise the SG has no inbound
-// rules (agents are managed via SSM only).
+// agent security group. Agents initiate connections TO the coordinator, so
+// this SG needs no inbound rules at all — SSM handles management, and agent-
+// to-coordinator traffic is authorized on the coordinator side (see
+// AgentToCoordinatorIngressDesiredState).
 func AgentSGDesiredState(plan *AgentsCreatePlan) (json.RawMessage, error) {
-	var ingress []map[string]any
-
-	if plan.CoordinatorSGID != "" {
-		ingress = append(ingress, map[string]any{
-			"IpProtocol":            "tcp",
-			"FromPort":              plan.CoordinatorPort,
-			"ToPort":                plan.CoordinatorPort,
-			"SourceSecurityGroupId": plan.CoordinatorSGID,
-			"Description":           "Horde coordinator to agent communication",
-		})
-	}
-
 	tags := []map[string]string{
 		{"Key": "ManagedBy", "Value": "fabrica"},
 		{"Key": "Name", "Value": plan.SGName},
@@ -41,10 +27,25 @@ func AgentSGDesiredState(plan *AgentsCreatePlan) (json.RawMessage, error) {
 		"VpcId":            plan.VPCID,
 		"Tags":             tags,
 	}
-	if len(ingress) > 0 {
-		doc["SecurityGroupIngress"] = ingress
-	}
 
+	return json.Marshal(doc)
+}
+
+// AgentToCoordinatorIngressDesiredState returns Cloud Control desired-state for
+// a standalone ingress rule authorizing agent-initiated connections to the
+// coordinator. Agents dial the coordinator, so the rule belongs ON the
+// coordinator security group WITH the agent security group as source. The rule
+// is tracked as its own resource (AWS::EC2::SecurityGroupIngress) and deleted
+// before either SG during teardown.
+func AgentToCoordinatorIngressDesiredState(plan *AgentsCreatePlan, agentSGID string) (json.RawMessage, error) {
+	doc := map[string]any{
+		"GroupId":               plan.CoordinatorSGID,
+		"SourceSecurityGroupId": agentSGID,
+		"IpProtocol":            "tcp",
+		"FromPort":              plan.CoordinatorPort,
+		"ToPort":                plan.CoordinatorPort,
+		"Description":           "Horde agents to coordinator (Fabrica-managed)",
+	}
 	return json.Marshal(doc)
 }
 

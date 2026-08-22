@@ -1233,3 +1233,37 @@ func TestNewStandaloneCommandStopsOnRuntimeError(t *testing.T) {
 		t.Error("options source called after runtime resolution failed")
 	}
 }
+
+// TestCommandDeleteResourcesWrapper exercises the exported DeleteResources
+// wrapper end-to-end through the real deletion loop.
+func TestCommandDeleteResourcesWrapper(t *testing.T) {
+	var deleted []string
+	tc := Command{
+		Spec:           Spec{ModuleName: "perforce"},
+		DeleteResource: func(_ context.Context, r *cloud.Resource) error { deleted = append(deleted, r.Identifier); return nil },
+		WriteState:     func(*fabricastate.State) error { return nil },
+		Out:            io.Discard,
+	}
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("perforce", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-1"},
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-1"},
+	})
+
+	got, err := tc.DeleteResources(context.Background(), st, st.GetModule("perforce"), []cloud.Resource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-1"},
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-1"},
+	})
+	if err != nil {
+		t.Fatalf("DeleteResources: %v", err)
+	}
+	if len(got) != 2 || got[0] != "i-1" || got[1] != "sg-1" {
+		t.Errorf("destroyed = %v, want [i-1 sg-1]", got)
+	}
+	if len(deleted) != 2 {
+		t.Errorf("provider deletes = %v, want 2", deleted)
+	}
+	if n := len(st.GetModule("perforce").Resources); n != 0 {
+		t.Errorf("resources left in state after delete: %d", n)
+	}
+}

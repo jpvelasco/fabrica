@@ -13,6 +13,9 @@ var tagUnsupportedTypes = map[string]struct{}{
 	// AWS::EC2::LaunchTemplate does not accept a top-level "Tags" key in the
 	// Cloud Control schema — tags go in TagSpecifications only.
 	"AWS::EC2::LaunchTemplate": {},
+	// AWS::EC2::SecurityGroupIngress has no "Tags" property in the Cloud
+	// Control schema — injecting Tags causes validation rejection.
+	"AWS::EC2::SecurityGroupIngress": {},
 	// AWS::AutoScaling::AutoScalingGroup tags require PropagateAtLaunch;
 	// the plan layer sets this correctly. The generic injector would add
 	// tags without it, causing Cloud Control validation errors.
