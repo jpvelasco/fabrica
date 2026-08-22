@@ -4,7 +4,7 @@
 
 Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, zero external dependencies. Sister tool to [Ludus](https://github.com/jpvelasco/ludus) — Ludus orchestrates game builds, Fabrica gives them somewhere to run.
 
-**Current state:** All phases implemented — Phase 0, Phase 1 (core pipeline), Lore (v0.2), and DDC (V1 + multi-region edge nodes) are complete; current stable release **v0.3.0** (2026-08-07). Modules implemented: `perforce`, `horde`, `lore`, `ddc`, `workstation`, `ci`, `deploy`, `cost`, plus read-only `status`, `doctor`, `drift`, `config show`, `export`, `mcp`, full-stack `destroy --all`, and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) for the authoritative, current module status.
+**Current state:** All phases implemented — Phase 0, Phase 1 (core pipeline), Lore (v0.2), and DDC (V1 + multi-region edge nodes) are complete; current stable release **v0.4.2** (2026-08-19). Modules implemented: `perforce`, `horde`, `lore`, `ddc`, `workstation`, `ci`, `deploy`, `cost`, plus read-only `status`, `doctor`, `drift`, `config show`, `export`, `mcp`, full-stack `destroy --all`, and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) for the authoritative, current module status.
 
 **Private designs:** Draft specs and implementation plans for future work live under `.private/` (gitignored — never commit). Suggested layout: `.private/designs/`, `.private/plans/`. Public user docs stay in `docs/` (AMI guides, deploy notes) and root `README.md` / `ROADMAP.md`.
 
@@ -26,7 +26,7 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 
 ## Current Known Limitations
 
-- **State backend is created by `fabrica setup`.** Provisions the S3 state bucket (versioning + encryption + public-access-block) and the DynamoDB lock table, idempotently — shows a plan + cost estimate and prompts before any write (`--yes` skips, `--dry-run` previews). Run it once before other commands.
+- **State backend is created by `fabrica setup`.** Provisions the S3 state bucket (versioning + encryption + public-access-block) and the DynamoDB lock table (reserved for distributed locking — commands do not acquire it yet), idempotently — shows a plan + cost estimate and prompts before any write (`--yes` skips, `--dry-run` previews). Run it once before other commands.
 - **Horde requires a user-provided AMI.** AMI must already contain MongoDB 7, Redis 6.2, and the Horde server binary. See [docs/horde-ami.md](docs/horde-ami.md).
 - **DDC edges reuse the home stack.** Edge AMIs are region-specific; copy the home AMI first (`aws ec2 copy-image`). Cross-region replication between edges is operator-managed. See [docs/ddc-ami.md](docs/ddc-ami.md).
 
@@ -66,6 +66,14 @@ go list -deps ./internal/cloud/...
 
 **VPCResolver interface** — when a module needs AWS-specific resolution, define an interface in `internal/<module>/config.go` that the provider implements. Keeps `internal/*` SDK-free.
 
+**VPC wiring via the shared helper** — create/setup commands pass `provision.VPCResolver(rt.Provider)` into their plan constructors; never re-type-assert inline and never pass `nil`. With config `vpcId`/`subnetId` absent, plans resolve the account default VPC; a half-specified pair (one set, one empty) fails fast via `topology.ResolveVPC`.
+
+**Context-aware polling** — every polling interval goes through `provision.WaitInterval(ctx, d)` via a `waitCtx`/`SleepCtx` seam, so Ctrl+C ends waits immediately instead of after the full interval. Never wire bare `time.Sleep`; never call `http.Get` without `NewRequestWithContext`.
+
+**SDK-first deletion hooks** — resources Cloud Control can't delete directly use the teardown engine's `SDKDeleteFunc(ctx, typeName, identifier)` seam: return `cloud.ErrNotHandled` to fall through to Cloud Control. Modules attach it through `teardown.Spec.WireCommand` so both standalone and orchestrated paths get it (CI: project deletion; lore: purge the versioned store bucket first via `cloud.S3BucketCleaner`).
+
+**Concurrency-safe lazy init** — the MCP server dispatches tool calls concurrently against one provider. All lazy client construction in `internal/cloud/aws` (`Resources()`, `resourceClients.ensureClient`, `ec2Service.ensureClient`) is mutex-guarded; keep new lazy-init sites synchronized.
+
 **Embedded templates** — `cmd/horde/ami` ships build artifacts as `embed.FS` templates rendered with `text/template`. New file-generator commands should follow this pattern: templates under `cmd/<cmd>/templates/`, rendered via a `renderTemplate` helper on the command struct. No `RuntimeSource`/`OptionsSource` needed when the command makes no AWS calls.
 
 **Provider registration** — `internal/cloud/aws/aws.go` registers the AWS provider via a blank-import side-effect (`_ "github.com/jpvelasco/fabrica/internal/cloud/aws"` in `cmd/root`). New providers follow the same `init()` pattern against `internal/cloud/registry.go`.
@@ -81,9 +89,9 @@ go list -deps ./internal/cloud/...
 | `cmd/root` | Wires global flags (`--config`, `--verbose`, `--json`, `--dry-run`, `--yes`, `--profile`), initializes `globals.Store`, registers subcommands |
 | `cmd/globals` | `Runtime` (Config + Provider + ConfigPath), `Options`, `Store.Init()`, dependency injection types |
 | `internal/config` | `Config` struct, Viper loading from `fabrica.yaml` (scoped here only), YAML serialization, defaults |
-| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `EC2InstanceManager`, `RemoteRunner`, `StateBackendChecker`, `StateBackendBootstrapper`, `StateBackendDestroyer`, `CodeBuildRunner`, `GameLiftManager` |
+| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `EC2InstanceManager`, `RemoteRunner`, `StateBackendChecker`, `StateBackendBootstrapper`, `StateBackendDestroyer`, `CodeBuildRunner`, `GameLiftManager`, `S3BucketCleaner` |
 | `internal/cloud/aws` | AWS implementation registered via `init()` in `internal/cloud/registry.go`; wraps `cloudcontrol`, `s3`, `dynamodb`, `iam`, `ec2` SDK clients |
-| `internal/state` | `State`/`ModuleState`/`ModuleResource` types, `Backend` interface, S3+DynamoDB bootstrap, DynamoDB locking |
+| `internal/state` | `State`/`ModuleState`/`ModuleResource` types, `Backend` interface, S3+DynamoDB bootstrap; `LockStore` exists but no command acquires it yet (reserved for distributed locking) |
 | `internal/cost` | Cost estimator interface + estimators; registered by resource `TypeName`. `Project`/`Forecast` for time-horizon projection; `EvaluateBudgets` for threshold evaluation. Stays free of `internal/config` — the config↔cost mapping lives in `costsource` |
 | `internal/tags` | Tag injection helpers; `ManagedBy: fabrica` applied to all resources |
 | `internal/prompt` | `Confirm` (y/N) and `ConfirmExact` (typed phrase) for interactive confirmation dialogs |
@@ -102,7 +110,7 @@ go list -deps ./internal/cloud/...
 | `cmd/internal/teardown` | Full engine for perforce/horde/workstation teardown commands |
 | `cmd/internal/destroyall` | Orchestration engine for `destroy --all`: ordered per-module teardown then state backend |
 | `cmd/internal/modstatus` | Orchestration engine for status commands; each command implements a `Renderer` |
-| `cmd/internal/provision` | Shared create lifecycle and resource-step orchestration |
+| `cmd/internal/provision` | Shared create lifecycle and resource-step orchestration; `VPCResolver(provider)` wiring helper and `WaitInterval(ctx, d)` context-aware polling seam |
 | `cmd/internal/costsource` | Shared `Aggregate` engine; sole owner of module enumeration for cost; `MapBudgets` bridges config↔cost |
 
 ### Shared command helpers rule of thumb
@@ -152,7 +160,7 @@ Reference: `cmd/perforce/` + `internal/perforce/` are the canonical Cloud-Contro
 ## Build Commands
 
 ```bash
-go build ./...                         # requires Go 1.25.12+; defaults to Version=dev Commit=unknown
+go build ./...                         # requires Go 1.25.13+; defaults to Version=dev Commit=unknown
 go build -ldflags "-X github.com/jpvelasco/fabrica/internal/version.Version=v1.0.0 -X github.com/jpvelasco/fabrica/internal/version.Commit=$(git rev-parse --short HEAD)" .  # release build
 go vet ./...
 go test ./...                          # Windows (no -race)
@@ -208,7 +216,7 @@ git config core.hooksPath .githooks
 
 - **Module path:** `github.com/jpvelasco/fabrica`
 - **IaC:** AWS Cloud Control API (`aws-sdk-go-v2/service/cloudcontrol`) — no Terraform, no Pulumi, no external binaries
-- **State backend:** S3 + DynamoDB (locking) + `.fabrica/state.json` (local cache)
+- **State backend:** S3 + DynamoDB (lock table provisioned; locking not yet enforced) + `.fabrica/state.json` (local cache)
 - **Config:** Viper + YAML (`fabrica.yaml`) — Viper scoped inside `internal/config` only
 - **No logging library:** `fmt.Printf`/`Println` only
 - **EC2 stop/start:** uses `cloud.EC2InstanceManager` (auxiliary interface) + EC2 SDK, not Cloud Control
@@ -219,7 +227,8 @@ git config core.hooksPath .githooks
 - **AMI-first provisioning** — the AMI must already have NICE DCV installed. Fabrica only configures and starts the DCV session via cloud-init.
 - **No credentials in UserData** — DCV session password is written to `.fabrica/workstation-credentials.yaml` (mode 0600) only; never embedded in UserData.
 - **Port** — 8443 (NICE DCV HTTPS). Default `allowedCidr` is `0.0.0.0/0`; restrict to a VPN CIDR in production via `workstation.allowedCidr` in `fabrica.yaml`.
-- **Templates** — `--template artist` → `g6.xlarge` + 200 GiB; `--template programmer` → `c7i.xlarge` + 100 GiB. Explicit `--instance-type`/`--volume-size` flags override.
+- **Templates** — `--template artist` → `g6.xlarge` + 200 GiB; `--template programmer` → `c7i.xlarge` + 100 GiB. Precedence is per field: explicit `--instance-type`/`--volume-size` flags > config > template > default (`resolveSizing`).
+- **Cost matches the resolved shape** — create-time estimates price the template/flag-resolved shape via `workstation.CostResourcesFor(instanceType, volumeSize)`; `CostResources(cfg)` remains the config-derived fallback for reporting.
 - **`--mount-perforce`** — reads the Perforce module's instance private IP from local state via Cloud Control `Get`, then injects `P4PORT=<ip>:1666` into `~/.p4config` via cloud-init. Requires Perforce to be provisioned first.
 - **Stop/start state** — stop sets `"stopped"`, start sets `"ready"`. Fire-and-accept; Fabrica does not wait for terminal state.
 - **Terminate vs destroy** — uses `terminate` as the permanent deletion command.
@@ -232,12 +241,14 @@ git config core.hooksPath .githooks
 - **Ports** — 5000 (HTTP/web UI), 5002 (gRPC for agents). Status probes port 5000 only.
 - **Submit URL** — `hordeHTTPClient` uses the instance's private IP from Cloud Control. Requires VPN or same-VPC access; no public IP in V1.
 - **`horde_service_token`** in credentials is optional; if empty the auth header is omitted.
+- **HTTP timeout** — all Horde API requests carry a 30-second client timeout (`hordeHTTPTimeout`); command contexts cancel sooner on interrupt.
+- **Agent SG direction** — agents dial the coordinator, so the agent SG has no inbound rules; a standalone `AWS::EC2::SecurityGroupIngress` on the coordinator SG (source: agent SG) authorizes enrollment. The rule is tracked with `role=agent` and deleted first during teardown.
 
 ### Lore
 - **AMI-first provisioning** — the AMI must already contain the `loreserver` binary.
 - **Runs parallel to Perforce, not instead of it** — no interaction with the `perforce` module.
 - **Ports** — 41337 (gRPC/QUIC) and 41339 (HTTP health, `GET /health_check`). Status probes 41339 only.
-- **Store path** — local/EBS only in V1 (`DefaultStorePath = /opt/loreserver/store`); no S3-backed store yet.
+- **Store path** — local/EBS by default (`DefaultStorePath = /opt/loreserver/store`); `lore.storeBackend: s3` adds a versioned S3 bucket, which destroy purges first via `cloud.S3BucketCleaner` (all versions + delete markers) before Cloud Control deletes the empty bucket.
 - **Built on the shared EC2 packages** — `internal/lore` is the reference consumer of `ec2plan`/`ec2state`/`ec2cost`/`userdata`. Use it as the template for a new single-instance module ahead of `internal/perforce`.
 
 ### DDC
@@ -246,8 +257,8 @@ git config core.hooksPath .githooks
 - **Backend choice** — `--backend zen` (default) or `--backend scylla` (adds 1-node Scylla bootstrap, not HA). CQL port 9042 opened only for `scylla`, internal-CIDR only.
 - **Hybrid storage** — EBS for local/hot storage plus S3 bucket for cold tier.
 - **Endpoints file** — `setup` writes `.fabrica/ddc-endpoints.yaml` instead of a credentials file.
-- **Probe** — `GET /health/ready` on the public port; `status` lists edge regions from local state (not live-probed).
-- **Deferred (Phase 2+)** — replication peers, OIDC/HTTPS, `ddc ami build`, production (HA) Scylla, live edge probes.
+- **Probe** — `GET /health/ready` on the public port; `status` live-probes edge regions (region-scoped Cloud Control + health requests) with the command context threaded through, so Ctrl+C stops in-flight probes.
+- **Deferred (Phase 2+)** — replication peers, OIDC/HTTPS, `ddc ami build`, production (HA) Scylla.
 
 ### CI
 - **Orchestration layer over Horde** — `ci` does not replace Horde; CodeBuild is the conductor, Horde stays the BuildGraph executor.
@@ -262,6 +273,7 @@ git config core.hooksPath .githooks
 - **Non-blocking fleet create via CreateFleetAsync** — `promote` starts fleet creation with a non-blocking Cloud Control path, then polls `FleetStatus` for ACTIVE.
 - **Alias-flip blue/green** — `promote` always creates a new fleet and flips the alias to it only once ACTIVE. The previous fleet is retained for `rollback`.
 - **Retain prior fleet for rollback** — `promote` stores the previous active fleet ID in state so `rollback` can flip the alias back instantly.
+- **Incremental state writes are checked** — a failed write after build registration stops promote before fleet creation; under `--no-wait`, a failed post-fleet write is an error, not a false success.
 - **Destroy default vs. `--all`** — `destroy` (default) deletes fleets + builds but leaves the alias and IAM role. `--all` also removes the alias + role.
 - **`deploy.buildBucket` required** — S3 bucket where CI/Horde uploads packaged builds. `promote` uses `s3://<buildBucket>/builds/<build-version>/server.zip` by default.
 
@@ -272,6 +284,10 @@ git config core.hooksPath .githooks
 - **Deploy torn down with `all=true`** — `destroy --all` deletes everything (fleets, builds, alias, IAM role). Plain `fabrica deploy destroy` retains alias + role.
 - **CI's SDK-delete special case** — CodeBuild project deleted via SDK, IAM role via Cloud Control. CI uses `cidestroy.RunOrchestrated`.
 - **Continue-on-failure + backend preserved** — failed modules are printed with errors; the backend is never deleted on any failure.
+
+### Drift
+- **Stopped workstation is in sync** — workstation ships supported stop/start commands, so a parked instance is not drift; stopped Horde/Perforce/Lore/DDC instances still report Mismatch.
+- **Terminated instances are always drift** — deletion outside Fabrica must surface.
 
 ### Cost
 - **Config-derive model** — fully offline; `costsource.Aggregate` engine reads state + config. No AWS calls.
