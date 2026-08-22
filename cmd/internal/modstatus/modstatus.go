@@ -111,7 +111,10 @@ type CobraSpec struct {
 	Long        string
 	ModuleName  string
 	DisplayName string
-	Resolve     func(globals.Runtime) RuntimeSpec
+	// Resolve builds the runtime-dependent behavior. cmdCtx is the signal-
+	// cancelled command context; renderers that make live calls (e.g. DDC
+	// edge probes) must thread it through so Ctrl+C cancels promptly.
+	Resolve func(globals.Runtime, context.Context) RuntimeSpec
 }
 
 // RuntimeSpec contains the status behavior that may depend on loaded config.
@@ -136,7 +139,7 @@ func NewCobraCommand(spec CobraSpec, runtimeSource globals.RuntimeSource, option
 				return err
 			}
 
-			resolved := spec.Resolve(rt)
+			resolved := spec.Resolve(rt, cmd.Context())
 			probe := resolved.Probe
 			if probe == nil {
 				probe = DefaultProbeTCP
@@ -155,7 +158,7 @@ func NewCobraCommand(spec CobraSpec, runtimeSource globals.RuntimeSource, option
 				ReadState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
 				WriteState: fabricastate.WriteState,
 				ProbeTCP:   probe,
-				Sleep:      time.Sleep,
+				SleepCtx:   provision.WaitInterval,
 				Now:        time.Now,
 			}
 			if rt.Provider != nil {
@@ -182,7 +185,7 @@ type Command struct {
 	WriteState  func(*fabricastate.State) error
 	GetResource func(ctx context.Context, r *cloud.Resource) error
 	ProbeTCP    func(address string) bool
-	Sleep       func(d time.Duration)
+	SleepCtx    func(context.Context, time.Duration) error
 	Now         func() time.Time
 }
 
@@ -246,7 +249,10 @@ func (c Command) pollUntilReady(ctx context.Context, st *fabricastate.State, m *
 			return nil
 		}
 
-		c.Sleep(waitInterval)
+		if err := c.SleepCtx(ctx, waitInterval); err != nil {
+			fmt.Fprintf(c.Out, "Waiting cancelled: %v\n", err)
+			return nil
+		}
 	}
 }
 

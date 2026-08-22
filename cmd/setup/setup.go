@@ -269,8 +269,8 @@ func (c command) printCompletion(plan fabricastate.SetupPlan, results []fabricas
 	}
 	fmt.Fprintln(c.out, "What just happened:")
 	fmt.Fprintf(c.out, "  %s the S3 bucket %q (versioned, encrypted, public access blocked)\n", verb, plan.Backend.Bucket)
-	fmt.Fprintf(c.out, "  %s the DynamoDB table %q (state locking)\n", verb, plan.Backend.Table)
-	fmt.Fprintln(c.out, "  Together these store and lock Fabrica's remote state for this account.")
+	fmt.Fprintf(c.out, "  %s the DynamoDB table %q (reserved for distributed state locking)\n", verb, plan.Backend.Table)
+	fmt.Fprintln(c.out, "  Together these store Fabrica's remote state for this account.")
 	c.printRunningCost(plan)
 
 	fmt.Fprintln(c.out)

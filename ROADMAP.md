@@ -11,8 +11,8 @@ Last updated: 2026-08-13 (v0.4.2).
 A single-binary Go CLI that provisions and manages game studio cloud
 infrastructure on AWS — Perforce/Lore version control, Unreal Horde build
 farms, Distributed DDC, CI/CD, GameLift deployment, and cloud workstations.
-One YAML config, cost estimates before any write, DynamoDB-locked state so
-two engineers don't clobber each other's runs.
+One YAML config, cost estimates before any write, state stored remotely in
+S3 + DynamoDB (distributed locking is planned — see issue #303).
 
 Sister tool to [Ludus](https://github.com/jpvelasco/ludus): Ludus orchestrates
 game builds; Fabrica gives them somewhere to run.

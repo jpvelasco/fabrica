@@ -33,7 +33,7 @@ type command struct {
 	// seams for testing
 	readState   func() (*fabricastate.State, error)
 	hordeClient HordeClient
-	sleep       func(time.Duration)
+	waitCtx     func(context.Context, time.Duration) error
 	now         func() time.Time
 }
 
@@ -66,7 +66,7 @@ Run 'fabrica horde status' to confirm the coordinator is ready.`,
 				wait:           wait,
 				out:            out,
 				readState:      func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-				sleep:          time.Sleep,
+				waitCtx:        provision.WaitInterval,
 				now:            time.Now,
 			}
 			return c.run(cmd.Context())
@@ -153,7 +153,10 @@ func (c command) pollUntilDone(ctx context.Context, client HordeClient, jobID st
 			return nil
 		}
 
-		c.sleep(waitInterval)
+		if err := c.waitCtx(ctx, waitInterval); err != nil {
+			fmt.Fprintf(c.out, "waiting cancelled: %v\n", err)
+			return nil
+		}
 	}
 }
 

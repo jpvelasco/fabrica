@@ -111,7 +111,7 @@ func newTestCommand(out *bytes.Buffer, st *fabricastate.State, rr *recordingRend
 		Spec:     Spec{ModuleName: "perforce", ProbePort: 1666, DisplayName: "Perforce"},
 		Renderer: rr,
 		Out:      out,
-		Sleep:    func(time.Duration) {},
+		SleepCtx: func(context.Context, time.Duration) error { return nil },
 		Now:      time.Now,
 	}
 	c.ReadState = func() (*fabricastate.State, error) { return st, nil }
@@ -720,4 +720,19 @@ func TestPollUntilReadyJSONTimeout(t *testing.T) {
 	if strings.Contains(out.String(), "Timed out") {
 		t.Error("timeout notice must not print in JSON mode")
 	}
+}
+
+// TestPollUntilReadySleepCancelled verifies cancellation during the interval
+// ends the wait with a printed notice instead of another poll.
+func TestPollUntilReadySleepCancelled(t *testing.T) {
+	var out bytes.Buffer
+	rr := &recordingRenderer{}
+	st := moduleState("provisioning", true)
+	c := newTestCommand(&out, st, rr, runningInstance, func(string) bool { return false })
+	c.SleepCtx = func(context.Context, time.Duration) error { return context.Canceled }
+
+	if err := c.pollUntilReady(context.Background(), st, st.GetModule("perforce")); err != nil {
+		t.Fatalf("pollUntilReady: %v", err)
+	}
+	assert.Contains(t, out.String(), "Waiting cancelled")
 }

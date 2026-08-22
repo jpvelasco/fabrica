@@ -70,7 +70,7 @@ func newTestCommand(out *bytes.Buffer, client HordeClient, st *fabricastate.Stat
 		runtime:     globals.Runtime{Config: cfg, Provider: nil},
 		out:         out,
 		hordeClient: client,
-		sleep:       func(time.Duration) {},
+		waitCtx:     func(context.Context, time.Duration) error { return nil },
 		now:         time.Now,
 	}
 	c.readState = func() (*fabricastate.State, error) { return st, nil }
@@ -369,7 +369,7 @@ func newSubmitCommandWithFakeRC(t *testing.T, actualStateJSON string) command {
 		runtime:     globals.Runtime{Config: cfg, Provider: fakeProv},
 		out:         &bytes.Buffer{},
 		hordeClient: nil,
-		sleep:       func(time.Duration) {},
+		waitCtx:     func(context.Context, time.Duration) error { return nil },
 		now:         time.Now,
 	}
 	c.readState = func() (*fabricastate.State, error) { return st, nil }
@@ -415,7 +415,7 @@ func TestSubmitResolvePrivateIPGetError(t *testing.T) {
 		runtime:     globals.Runtime{Config: cfg, Provider: fakeProv},
 		out:         &out,
 		hordeClient: nil,
-		sleep:       func(time.Duration) {},
+		waitCtx:     func(context.Context, time.Duration) error { return nil },
 		now:         time.Now,
 	}
 	c.readState = func() (*fabricastate.State, error) { return st, nil }
@@ -438,7 +438,7 @@ func TestSubmitResolvePrivateIPNoProvider(t *testing.T) {
 		runtime:     globals.Runtime{Config: cfg, Provider: nil},
 		out:         &out,
 		hordeClient: nil,
-		sleep:       func(time.Duration) {},
+		waitCtx:     func(context.Context, time.Duration) error { return nil },
 		now:         time.Now,
 	}
 	c.readState = func() (*fabricastate.State, error) { return st, nil }
@@ -698,4 +698,20 @@ func TestHordeHTTPClientSubmitJobAPI404RouteExists(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 	assert.Contains(t, err.Error(), "HTTP 404")
+}
+
+// TestSubmitWaitCancelled verifies Ctrl+C during the polling interval ends the
+// wait immediately with a cancellation notice instead of hanging.
+func TestSubmitWaitCancelled(t *testing.T) {
+	var out bytes.Buffer
+	st := hordeProvisionedState()
+	c := newTestCommand(&out, &fakeHordeClient{submitJobID: "job-cancel"}, st)
+	c.buildGraphPath = writeTempBuildGraph(t)
+	c.wait = true
+	c.waitCtx = func(context.Context, time.Duration) error { return context.Canceled }
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	assert.Contains(t, out.String(), "waiting cancelled")
 }

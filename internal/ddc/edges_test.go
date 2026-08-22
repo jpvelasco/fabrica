@@ -599,7 +599,7 @@ func TestProbeEdgeHealth(t *testing.T) {
 	host, portStr, _ := net.SplitHostPort(server.Listener.Addr().String())
 	var port int
 	_, _ = fmt.Sscanf(portStr, "%d", &port)
-	result := probeEdgeHealth(client, host, port)
+	result := probeEdgeHealth(context.Background(), client, host, port)
 	if result != "ready" {
 		t.Fatalf("probeEdgeHealth = %q, want ready", result)
 	}
@@ -612,7 +612,7 @@ func TestProbeEdgeHealth(t *testing.T) {
 	host500, portStr500, _ := net.SplitHostPort(server500.Listener.Addr().String())
 	var port500 int
 	_, _ = fmt.Sscanf(portStr500, "%d", &port500)
-	result500 := probeEdgeHealth(client, host500, port500)
+	result500 := probeEdgeHealth(context.Background(), client, host500, port500)
 	if result500 != "unreachable" {
 		t.Fatalf("probeEdgeHealth = %q, want unreachable for 500", result500)
 	}
@@ -637,5 +637,38 @@ func TestParseEdgeActualStateNil(t *testing.T) {
 	parseEdgeActualState(r, &s)
 	if s.InstanceState != "" {
 		t.Fatalf("InstanceState should be empty for nil ActualState, got %q", s.InstanceState)
+	}
+}
+
+// TestProbeEdgesCancelledContext verifies a cancelled command context stops
+// probe scheduling: the running edge is marked skipped/cancelled and the HTTP
+// request is never attempted.
+func TestProbeEdgesCancelledContext(t *testing.T) {
+	actualState := makeInstanceActualState("running", "127.0.0.1", "m7i.large")
+	provider := &fakeRegionProvider{
+		regionViews: map[string]cloud.RegionView{
+			"eu-west-1": {
+				Resources: &fakeResourceClient{
+					getResult: &cloud.Resource{ActualState: actualState},
+				},
+			},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	edges := []EdgeResource{{Region: "eu-west-1", InstanceID: "i-eu"}}
+	result := ProbeEdges(ctx, edges, provider, ProbeEdgesOptions{PublicPort: 80})
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 status, got %d", len(result))
+	}
+	s := result[0]
+	if s.ProbeStatus != "skipped" {
+		t.Errorf("ProbeStatus = %q, want skipped after cancellation", s.ProbeStatus)
+	}
+	if s.ProbeError != "cancelled" {
+		t.Errorf("ProbeError = %q, want cancelled", s.ProbeError)
 	}
 }
