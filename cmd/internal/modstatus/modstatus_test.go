@@ -662,3 +662,62 @@ func TestWriteJSON(t *testing.T) {
 		t.Error("expected indented JSON")
 	}
 }
+
+// TestPollUntilReadyJSONSingleDocument verifies --wait --json renders exactly
+// one final result document: interim renders and "Waiting" lines would corrupt
+// the JSON stream for machine consumers.
+func TestPollUntilReadyJSONSingleDocument(t *testing.T) {
+	var out bytes.Buffer
+	rr := &recordingRenderer{}
+	st := moduleState("provisioning", true)
+
+	calls := 0
+	c := newTestCommand(&out, st, rr, runningInstance, func(string) bool {
+		calls++
+		return calls >= 3 // fail twice, succeed on third probe
+	})
+	c.JSONOut = true
+
+	if err := c.pollUntilReady(context.Background(), st, st.GetModule("perforce")); err != nil {
+		t.Fatalf("pollUntilReady: %v", err)
+	}
+	if len(rr.results) != 1 {
+		t.Errorf("Result rendered %d times under --json, want 1 (final only)", len(rr.results))
+	}
+	if strings.Count(out.String(), "status=") != 1 {
+		t.Errorf("expected a single status line, got:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "Waiting") || strings.Contains(out.String(), "Timed out") {
+		t.Errorf("human wait text leaked into --json output:\n%s", out.String())
+	}
+}
+
+// TestPollUntilReadyJSONTimeout verifies the timeout path also emits exactly
+// one final document under --json.
+func TestPollUntilReadyJSONTimeout(t *testing.T) {
+	var out bytes.Buffer
+	rr := &recordingRenderer{}
+	st := moduleState("provisioning", true)
+
+	startTime := time.Now()
+	callCount := 0
+	c := newTestCommand(&out, st, rr, runningInstance, func(string) bool { return false })
+	c.JSONOut = true
+	c.Now = func() time.Time {
+		callCount++
+		if callCount <= 1 {
+			return startTime // first call computes the deadline
+		}
+		return startTime.Add(waitDeadline + time.Second) // subsequent: past deadline
+	}
+
+	if err := c.pollUntilReady(context.Background(), st, st.GetModule("perforce")); err != nil {
+		t.Fatalf("pollUntilReady: %v", err)
+	}
+	if len(rr.results) != 1 {
+		t.Errorf("Result rendered %d times on timeout under --json, want 1", len(rr.results))
+	}
+	if strings.Contains(out.String(), "Timed out") {
+		t.Error("timeout notice must not print in JSON mode")
+	}
+}

@@ -3,6 +3,7 @@ package backup
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -377,8 +378,21 @@ func TestCreateJSONSuccess(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), `"backupId"`) {
-		t.Fatalf("json out: %s", out.String())
+	// --json stdout must be exactly one parseable JSON document.
+	var doc struct {
+		BackupID string `json:"backupId"`
+		Status   string `json:"status"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("--json output is not a single JSON document: %v\n%s", err, out.String())
+	}
+	if doc.BackupID == "" || doc.Status != "complete" {
+		t.Errorf("unexpected document: %+v", doc)
+	}
+	for _, human := range []string{"Perforce backup\n", "via SSM", "WARNING:"} {
+		if strings.Contains(out.String(), human) {
+			t.Errorf("human text %q leaked into --json output", human)
+		}
 	}
 }
 
