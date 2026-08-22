@@ -126,9 +126,11 @@ type fakeVPCResolver struct {
 	vpcID    string
 	subnetID string
 	err      error
+	calls    int
 }
 
 func (f *fakeVPCResolver) ResolveDefaultVPC(_ context.Context) (string, string, error) {
+	f.calls++
 	return f.vpcID, f.subnetID, f.err
 }
 
@@ -177,5 +179,44 @@ func TestResolveVPC_ResolverError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "resolving default VPC") {
 		t.Fatalf("expected context in error, got: %v", err)
+	}
+}
+
+// TestResolveVPC_PartialConfigRejected verifies that setting only one of
+// vpcId/subnetId fails fast instead of silently overwriting the explicit
+// value with default-VPC resolution results.
+func TestResolveVPC_PartialConfigRejected(t *testing.T) {
+	resolver := &fakeVPCResolver{vpcID: "vpc-default", subnetID: "subnet-default"}
+
+	for _, tc := range []struct{ vpc, subnet string }{
+		{"vpc-explicit", ""},
+		{"", "subnet-explicit"},
+	} {
+		vpc, subnet, _, err := ResolveVPC(context.Background(), tc.vpc, tc.subnet, resolver)
+		if err == nil {
+			t.Fatalf("ResolveVPC(%q, %q): expected error for half-specified config", tc.vpc, tc.subnet)
+		}
+		if !strings.Contains(err.Error(), "must be set together") {
+			t.Errorf("error = %v, want actionable guidance", err)
+		}
+		if vpc == "vpc-default" || subnet == "subnet-default" {
+			t.Errorf("explicit config was clobbered by resolver output: %s/%s", vpc, subnet)
+		}
+		if resolver.calls != 0 {
+			t.Errorf("resolver invoked %d times for partial config; want 0", resolver.calls)
+		}
+	}
+}
+
+// TestResolveVPC_BothSetSkipsResolver verifies fully explicit config never
+// touches the resolver.
+func TestResolveVPC_BothSetSkipsResolver(t *testing.T) {
+	resolver := &fakeVPCResolver{vpcID: "vpc-default", subnetID: "subnet-default"}
+	_, _, _, err := ResolveVPC(context.Background(), "vpc-123", "subnet-456", resolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolver.calls != 0 {
+		t.Errorf("resolver calls = %d, want 0 when both IDs set", resolver.calls)
 	}
 }

@@ -501,6 +501,36 @@ func TestRun_ConfirmationAccepted(t *testing.T) {
 	}
 }
 
+// TestApply_RestoresOriginalStatus verifies a successful agents destroy does
+// not leave the horde module stuck in "destroying": the final status-preserving
+// write must persist the pre-destroy status, not the value set by intermediate
+// deletion steps through the aliased module entry.
+func TestApply_RestoresOriginalStatus(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent", Properties: map[string]string{"role": "agent"}},
+		{TypeName: "AWS::EC2::LaunchTemplate", Identifier: "lt-agent", Properties: map[string]string{"role": "agent"}},
+	})
+	c := command{
+		out:            &out,
+		deleteResource: func(ctx context.Context, r *cloud.Resource) error { return nil },
+		writeState:     func(st *fabricastate.State) error { return nil },
+	}
+
+	m := st.GetModule("horde")
+	resources := agentsToDelete(m)
+	if err := c.apply(context.Background(), st, m, resources); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if got := st.GetModule("horde").Status; got != "ready" {
+		t.Errorf("module status after agents destroy = %q, want ready (pre-destroy status)", got)
+	}
+	if n := len(st.GetModule("horde").Resources); n != 0 {
+		t.Errorf("agent resources remain after destroy: %d", n)
+	}
+}
+
 func TestApply_WriteStateError(t *testing.T) {
 	var out bytes.Buffer
 	var deleted []cloud.Resource
