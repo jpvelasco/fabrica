@@ -183,3 +183,52 @@ func TestSetupNoCreateResource(t *testing.T) {
 		t.Fatal("expected error when createResource is nil")
 	}
 }
+
+// TestSetupPreservesFleetAndBuildRecords verifies that an idempotent re-setup
+// does not drop build/fleet records written by later promote runs.
+func TestSetupPreservesFleetAndBuildRecords(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("deploy", "fabrica-deploy", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::IAM::Role", Identifier: "existing-role"},
+		{TypeName: "AWS::GameLift::Alias", Identifier: "existing-alias"},
+		{TypeName: "AWS::GameLift::Build", Identifier: "build-1", Properties: map[string]string{"buildVersion": "v1"}},
+		{TypeName: "AWS::GameLift::Fleet", Identifier: "fleet-1", Properties: map[string]string{"role": "active"}},
+	})
+	c := &command{
+		runtime:    baseRuntime(),
+		assumeYes:  true,
+		out:        &out,
+		costs:      fabricacost.Global,
+		readState:  func() (*fabricastate.State, error) { return st, nil },
+		writeState: func(s *fabricastate.State) error { st = s; return nil },
+		createResource: func(_ context.Context, r *cloud.Resource) error {
+			r.Identifier = r.TypeName + "-id"
+			return nil
+		},
+		getResource: func(_ context.Context, _ *cloud.Resource) error { return nil },
+		confirm:     func(string) bool { return true },
+	}
+	c.runtime.Provider = &testutil.TestProvider{}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	m := st.GetModule("deploy")
+	var haveRole, haveAlias, haveBuild, haveFleet bool
+	for _, r := range m.Resources {
+		switch {
+		case r.TypeName == "AWS::IAM::Role":
+			haveRole = true
+		case r.TypeName == "AWS::GameLift::Alias":
+			haveAlias = true
+		case r.TypeName == "AWS::GameLift::Build" && r.Identifier == "build-1":
+			haveBuild = true
+		case r.TypeName == "AWS::GameLift::Fleet" && r.Identifier == "fleet-1" && r.Properties["role"] == "active":
+			haveFleet = true
+		}
+	}
+	if !haveRole || !haveAlias || !haveBuild || !haveFleet {
+		t.Fatalf("re-setup dropped records (role=%v alias=%v build=%v fleet=%v): %+v",
+			haveRole, haveAlias, haveBuild, haveFleet, m.Resources)
+	}
+}

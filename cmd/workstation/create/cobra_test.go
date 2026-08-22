@@ -114,3 +114,44 @@ func TestCreateCobraAmiIDMissing(t *testing.T) {
 	}
 	testutil.AssertContains(t, err.Error(), "workstation.amiId")
 }
+
+// TestCreateCobraVPCResolverWiring verifies that workstation create wires the
+// provider's VPC resolver, so the default VPC is resolved when config omits
+// vpcId/subnetId instead of sending empty values to Cloud Control.
+func TestCreateCobraVPCResolverWiring(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.State.Bucket = "fabrica-state-test"
+	cfg.Workstation.AmiID = "ami-test12345"
+	provider := &testutil.VPCResolverProvider{VPCID: "vpc-default", SubnetID: "subnet-default"}
+	rt := globals.Runtime{Config: cfg, Provider: provider}
+	runtimeSource := func() (globals.Runtime, error) { return rt, nil }
+	got, err := runCreate(t, runtimeSource, "--dry-run")
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	testutil.AssertContains(t, got, "vpc-default")
+	if provider.Calls != 1 {
+		t.Errorf("ResolveDefaultVPC calls = %d, want 1", provider.Calls)
+	}
+}
+
+// TestCreateCobraExplicitVPCCfgSkipsResolver verifies explicit config
+// vpcId/subnetId bypass default-VPC resolution.
+func TestCreateCobraExplicitVPCCfgSkipsResolver(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.State.Bucket = "fabrica-state-test"
+	cfg.Workstation.AmiID = "ami-test12345"
+	cfg.Workstation.VPCId = "vpc-explicit"
+	cfg.Workstation.SubnetId = "subnet-explicit"
+	provider := &testutil.VPCResolverProvider{VPCID: "vpc-default", SubnetID: "subnet-default"}
+	rt := globals.Runtime{Config: cfg, Provider: provider}
+	runtimeSource := func() (globals.Runtime, error) { return rt, nil }
+	got, err := runCreate(t, runtimeSource, "--dry-run")
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	testutil.AssertContains(t, got, "vpc-explicit")
+	if provider.Calls != 0 {
+		t.Errorf("ResolveDefaultVPC calls = %d, want 0 with explicit config", provider.Calls)
+	}
+}

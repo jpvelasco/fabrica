@@ -112,7 +112,7 @@ func (c command) run(ctx context.Context) error {
 		loreCfg.VolumeSize = c.volumeSize
 	}
 
-	plan, err := lore.NewCreatePlan(ctx, loreCfg, account, region, nil)
+	plan, err := lore.NewCreatePlan(ctx, loreCfg, account, region, provision.VPCResolver(c.runtime.Provider))
 	if err != nil {
 		return fmt.Errorf("building create plan: %w", err)
 	}
