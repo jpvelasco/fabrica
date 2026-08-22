@@ -223,20 +223,37 @@ func (p *awsProvider) BuildLog(ctx context.Context, buildID string) (string, err
 	defer cancel()
 
 	client := p.cwLogsClient(cfg)
-	out, err := client.GetLogEvents(ctx, &cloudwatchlogs.GetLogEventsInput{
-		LogGroupName:  aws.String(info.LogGroup),
-		LogStreamName: aws.String(info.LogStream),
-		StartFromHead: aws.Bool(true),
-	})
-	if err != nil {
-		return "", fmt.Errorf("fetching logs for build %s: %w", buildID, err)
-	}
 
+	// Page through the stream: a single GetLogEvents response is capped
+	// (~10k events / ~1 MB), so head-only fetching silently truncated long
+	// build logs. CloudWatch returns the same forward token once the stream
+	// is exhausted, which terminates the loop.
 	var sb strings.Builder
-	for _, ev := range out.Events {
-		sb.WriteString(aws.ToString(ev.Message))
+	var sentToken string
+	for {
+		input := &cloudwatchlogs.GetLogEventsInput{
+			LogGroupName:  aws.String(info.LogGroup),
+			LogStreamName: aws.String(info.LogStream),
+			StartFromHead: aws.Bool(true),
+		}
+		if sentToken != "" {
+			input.NextToken = aws.String(sentToken)
+		}
+		out, err := client.GetLogEvents(ctx, input)
+		if err != nil {
+			return "", fmt.Errorf("fetching logs for build %s: %w", buildID, err)
+		}
+
+		for _, ev := range out.Events {
+			sb.WriteString(aws.ToString(ev.Message))
+		}
+
+		nextToken := aws.ToString(out.NextForwardToken)
+		if len(out.Events) == 0 || nextToken == "" || nextToken == sentToken {
+			return sb.String(), nil
+		}
+		sentToken = nextToken
 	}
-	return sb.String(), nil
 }
 
 func (p *awsProvider) codeBuildClient(cfg aws.Config) codeBuildClient {
