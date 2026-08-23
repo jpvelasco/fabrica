@@ -353,3 +353,30 @@ func TestSaveBackendConfigPartialFill(t *testing.T) {
 		t.Errorf("Bucket = %q, want fabrica-state-new-account", cfg.State.Bucket)
 	}
 }
+
+// TestSetupRunLockHeldAborts verifies a held state lock aborts setup with the
+// actionable message before any bootstrap happens.
+func TestSetupRunLockHeldAborts(t *testing.T) {
+	var buf strings.Builder
+	bootstrapCalled := false
+	cmd := command{
+		runtime: testApplyRuntime(),
+		out:     &buf,
+		costs:   fabricacost.Global,
+		bootstrap: func(_ context.Context, _ fabricac.Provider, _ *config.Config) ([]fabricastate.BootstrapResult, error) {
+			bootstrapCalled = true
+			return nil, nil
+		},
+	}
+	rt := testApplyRuntime()
+	rt.Provider = &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}
+	cmd.runtime = rt
+
+	err := cmd.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "another fabrica run holds the state lock") {
+		t.Fatalf("err = %v, want held-lock abort", err)
+	}
+	if bootstrapCalled {
+		t.Error("bootstrap ran despite held lock")
+	}
+}

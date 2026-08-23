@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -1265,5 +1266,41 @@ func TestCommandDeleteResourcesWrapper(t *testing.T) {
 	}
 	if n := len(st.GetModule("perforce").Resources); n != 0 {
 		t.Errorf("resources left in state after delete: %d", n)
+	}
+}
+
+// TestRunLockHeldAborts verifies a held state lock aborts teardown with the
+// actionable message before any deletion happens.
+func TestRunLockHeldAborts(t *testing.T) {
+	var out bytes.Buffer
+	st := moduleState("ready", true)
+	provider := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}
+	c := newTestCommand(&out, st, nil)
+	c.Runtime = globals.Runtime{Config: config.Defaults(), Provider: provider}
+
+	err := c.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "another fabrica run holds the state lock") {
+		t.Fatalf("err = %v, want held-lock abort", err)
+	}
+	if provider.Acquires != 1 {
+		t.Errorf("acquires = %d, want 1", provider.Acquires)
+	}
+}
+
+// TestRunLockAcquiredAndReleased verifies the happy path takes and frees the
+// lock around the teardown.
+func TestRunLockAcquiredAndReleased(t *testing.T) {
+	var out bytes.Buffer
+	st := moduleState("ready", false)
+	provider := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}}
+	c := newTestCommand(&out, st, nil)
+	c.Runtime = globals.Runtime{Config: config.Defaults(), Provider: provider}
+	c.AssumeYes = true
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if provider.Acquires != 1 {
+		t.Errorf("acquires = %d, want 1", provider.Acquires)
 	}
 }

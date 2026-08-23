@@ -192,3 +192,23 @@ func StateWriteAlwaysError() func(*fabricastate.State) error {
 func StateWriteNever() func(*fabricastate.State) error {
 	return func(_ *fabricastate.State) error { return nil }
 }
+
+// LockingProvider implements cloud.StateLockManager on top of TestProvider so
+// command tests can exercise AcquireStateLock error and success paths.
+type LockingProvider struct {
+	*TestProvider
+	Held     bool // when true, acquires fail with ErrLockHeld
+	Acquires int
+}
+
+func (l *LockingProvider) AcquireStateLockRow(_ context.Context, _ string, _ map[string]string, _ string, _ map[string]string) error {
+	l.Acquires++
+	if l.Held {
+		return cloud.ErrLockHeld
+	}
+	return nil
+}
+
+func (l *LockingProvider) ReleaseStateLockRow(context.Context, string, string, string) error {
+	return nil
+}
