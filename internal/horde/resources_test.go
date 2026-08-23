@@ -164,3 +164,36 @@ func TestInstanceProfileDesiredState(t *testing.T) {
 		t.Errorf("Roles = %v, want [fabrica-horde-role]", doc["Roles"])
 	}
 }
+
+// TestCoordinatorDesiredStatesStampFabricaModule guards fix #329: coordinator
+// resources must carry FabricaModule=horde (agents already stamped their own).
+func TestCoordinatorDesiredStatesStampFabricaModule(t *testing.T) {
+	plan := &CreatePlan{SGName: "fabrica-horde-sg", VPCID: "vpc-x", AllowedCIDR: "10.0.0.0/32", Port: 5000, GRPCPort: 5002}
+
+	sgRaw, err := SGDesiredState(plan)
+	if err != nil {
+		t.Fatalf("SGDesiredState: %v", err)
+	}
+	if got := ec2state.ParseTags(t, ec2state.UnmarshalDesiredState(t, sgRaw)["Tags"].([]any))["FabricaModule"]; got != "horde" {
+		t.Errorf("SG FabricaModule = %q, want horde", got)
+	}
+
+	instRaw, err := InstanceDesiredState(&CreatePlan{
+		AmiID: "ami-1", InstanceType: "m7i.2xlarge", SubnetID: "subnet-abc",
+		InstanceName: "fabrica-horde", VolumeSize: 100,
+	}, "sg-123", "ud", "")
+	if err != nil {
+		t.Fatalf("InstanceDesiredState: %v", err)
+	}
+	if got := ec2state.ParseTags(t, ec2state.UnmarshalDesiredState(t, instRaw)["Tags"].([]any))["FabricaModule"]; got != "horde" {
+		t.Errorf("instance FabricaModule = %q, want horde", got)
+	}
+
+	roleRaw, err := RoleDesiredState(&CreatePlan{RoleName: "fabrica-horde-role"})
+	if err != nil {
+		t.Fatalf("RoleDesiredState: %v", err)
+	}
+	if got := ec2state.ParseTags(t, ec2state.UnmarshalDesiredState(t, roleRaw)["Tags"].([]any))["FabricaModule"]; got != "horde" {
+		t.Errorf("role FabricaModule = %q, want horde", got)
+	}
+}
