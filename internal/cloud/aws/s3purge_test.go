@@ -155,3 +155,16 @@ func TestPurgeClientDefaultFactory(t *testing.T) {
 		t.Fatal("default factory returned nil client")
 	}
 }
+
+func TestPurgeBucketMissingBucketConverges(t *testing.T) {
+	fake := &fakePurgeS3Client{listErr: &s3types.NoSuchBucket{}}
+	p := &awsProvider{
+		loadConfig: func(_ context.Context, _, _ string) (awssdk.Config, error) {
+			return awssdk.Config{Region: "us-east-1"}, nil
+		},
+		newPurgeS3Client: func(awssdk.Config) purgeS3Client { return fake },
+	}
+	if err := p.PurgeBucket(context.Background(), "already-gone"); err != nil {
+		t.Fatalf("missing bucket must converge to nil, got: %v", err)
+	}
+}

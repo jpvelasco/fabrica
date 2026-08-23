@@ -715,3 +715,40 @@ func TestDeleteOneResource_DeleteError(t *testing.T) {
 		t.Errorf("error = %q, want 'access denied'", err.Error())
 	}
 }
+
+// TestRun_YesJSONPureOutput verifies --yes --json stdout is exactly one JSON
+// document: the assume-yes notice must not leak ahead of it (road test D7).
+func TestRun_YesJSONPureOutput(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::AutoScaling::AutoScalingGroup", Identifier: "asg-agent", Properties: map[string]string{"role": "agent"}},
+	})
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = "123456789012"
+	c := command{
+		runtime:        globals.Runtime{Config: cfg},
+		out:            &out,
+		jsonOut:        true,
+		assumeYes:      true,
+		readState:      func() (*fabricastate.State, error) { return st, nil },
+		writeState:     func(*fabricastate.State) error { return nil },
+		deleteResource: func(ctx context.Context, r *cloud.Resource) error { return nil },
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if strings.Contains(out.String(), "Proceeding without") || strings.Contains(out.String(), "Destroying ") {
+		t.Errorf("human text leaked into --yes --json output:\n%s", out.String())
+	}
+	var doc struct {
+		Destroyed []string `json:"destroyed"`
+		DryRun    bool     `json:"dryRun"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("--yes --json stdout is not one JSON document: %v\n%s", err, out.String())
+	}
+	if len(doc.Destroyed) != 1 || doc.Destroyed[0] != "asg-agent" {
+		t.Errorf("destroyed = %v, want [asg-agent]", doc.Destroyed)
+	}
+}

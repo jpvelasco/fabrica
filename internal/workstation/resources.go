@@ -16,7 +16,7 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 		[]ec2state.SGIngressRule{
 			{IpProtocol: "tcp", FromPort: plan.DCVPort, ToPort: plan.DCVPort, CidrIp: plan.AllowedCIDR, Description: "NICE DCV HTTPS"},
 		},
-		nil,
+		map[string]string{"FabricaModule": "workstation"},
 	)
 }
 
@@ -34,5 +34,6 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMess
 			InstanceName:    plan.InstanceName,
 		},
 		ec2state.WithDeviceName("/dev/sda1"),
+		ec2state.WithExtraTags("FabricaModule", "workstation"),
 	)
 }

@@ -65,3 +65,28 @@ func TestInstanceDesiredStateVolume(t *testing.T) {
 	doc := ec2state.UnmarshalDesiredState(t, raw)
 	ec2state.AssertEBS(t, doc, plan.VolumeSize, true)
 }
+
+// TestDesiredStatesStampFabricaModule guards fix #329: workstation resources
+// must carry FabricaModule=workstation.
+func TestDesiredStatesStampFabricaModule(t *testing.T) {
+	plan := &CreatePlan{SGName: "fabrica-workstation-sg", VPCID: "vpc-x", AllowedCIDR: "10.0.0.0/32", DCVPort: 8443}
+
+	sgRaw, err := SGDesiredState(plan)
+	if err != nil {
+		t.Fatalf("SGDesiredState: %v", err)
+	}
+	if got := ec2state.ParseTags(t, ec2state.UnmarshalDesiredState(t, sgRaw)["Tags"].([]any))["FabricaModule"]; got != "workstation" {
+		t.Errorf("SG FabricaModule = %q, want workstation", got)
+	}
+
+	instRaw, err := InstanceDesiredState(&CreatePlan{
+		AmiID: "ami-1", InstanceType: "g4dn.xlarge", SubnetID: "subnet-abc",
+		InstanceName: "fabrica-workstation", VolumeSize: 100,
+	}, "sg-123", "ud")
+	if err != nil {
+		t.Fatalf("InstanceDesiredState: %v", err)
+	}
+	if got := ec2state.ParseTags(t, ec2state.UnmarshalDesiredState(t, instRaw)["Tags"].([]any))["FabricaModule"]; got != "workstation" {
+		t.Errorf("instance FabricaModule = %q, want workstation", got)
+	}
+}

@@ -68,3 +68,11 @@ func TestResolveUbuntuAMI_DescribeError(t *testing.T) {
 	}
 	assert.Contains(t, err.Error(), "describing Ubuntu AMIs")
 }
+
+func (f *fakeEC2ImagesClient) DescribeVolumes(context.Context, *ec2.DescribeVolumesInput, ...func(*ec2.Options)) (*ec2.DescribeVolumesOutput, error) {
+	return &ec2.DescribeVolumesOutput{}, nil
+}
+
+func (f *fakeEC2ImagesClient) CreateTags(context.Context, *ec2.CreateTagsInput, ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error) {
+	return &ec2.CreateTagsOutput{}, nil
+}

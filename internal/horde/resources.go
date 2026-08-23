@@ -18,7 +18,7 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 			{IpProtocol: "tcp", FromPort: plan.Port, ToPort: plan.Port, CidrIp: plan.AllowedCIDR, Description: "Horde HTTP API + web UI"},
 			{IpProtocol: "tcp", FromPort: plan.GRPCPort, ToPort: plan.GRPCPort, CidrIp: plan.AllowedCIDR, Description: "Horde gRPC (agent connections)"},
 		},
-		nil,
+		map[string]string{"FabricaModule": "horde"},
 	)
 }
 
@@ -39,6 +39,7 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName 
 
 	dsOpts := []ec2state.DesiredStateOption{
 		ec2state.WithDeleteOnTermination(false),
+		ec2state.WithExtraTags("FabricaModule", "horde"),
 	}
 	if instanceProfileName != "" {
 		dsOpts = append(dsOpts, ec2state.WithIAMProfile(instanceProfileName))
@@ -52,7 +53,7 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName 
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 	return iamrole.RoleDocument(plan.RoleName, iamrole.ServiceEC2, []string{
 		"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-	}, nil, nil)
+	}, nil, map[string]string{"FabricaModule": "horde"})
 }
 
 // InstanceProfileDesiredState returns Cloud Control desired-state for the

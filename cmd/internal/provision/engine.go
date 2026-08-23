@@ -26,6 +26,11 @@ type CreateStep struct {
 	// ReuseExisting, when true, reuses a resource of the same type already
 	// recorded for the module instead of creating it again.
 	ReuseExisting bool
+	// PostCreate, when non-nil, runs after a fresh resource is created (never
+	// on reuse). Use for provider-side follow-ups Cloud Control cannot express,
+	// e.g. tagging BlockDeviceMapping data volumes via the EC2 SDK
+	// (cloud.VolumeTagger). A PostCreate failure fails the step.
+	PostCreate func(ctx context.Context, identifier string) error
 	// IgnoreWriteError, when true, causes writeState failures to be silently
 	// ignored after this step. Defaults to false (fail on writeState error).
 	IgnoreWriteError bool
@@ -68,6 +73,11 @@ func ExecuteStep(
 	identifier := res.Identifier
 	if step.ResourceIdentifier != nil {
 		identifier = step.ResourceIdentifier(res)
+	}
+	if step.PostCreate != nil {
+		if err := step.PostCreate(ctx, identifier); err != nil {
+			return nil, fmt.Errorf("%s: post-create: %w", step.Label, err)
+		}
 	}
 	fmt.Fprintf(out, "  %s created: %s\n", step.Label, identifier)
 
