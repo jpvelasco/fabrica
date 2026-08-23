@@ -75,7 +75,10 @@ func (p *awsProvider) ReleaseStateLockRow(ctx context.Context, table, lockID, to
 		Key: map[string]dynamodbtypes.AttributeValue{
 			"LockID": &dynamodbtypes.AttributeValueMemberS{Value: lockID},
 		},
-		ConditionExpression:       aws.String("Token = :token"),
+		// "Token" is a DynamoDB reserved keyword — reference it via an
+		// expression attribute name.
+		ConditionExpression:       aws.String("#tok = :token"),
+		ExpressionAttributeNames:  map[string]string{"#tok": "Token"},
 		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":token": &dynamodbtypes.AttributeValueMemberS{Value: token}},
 	})
 	if err != nil {
