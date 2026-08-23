@@ -183,13 +183,21 @@ func GenerateBackupScript(cfg BackupScriptConfig) (string, error) {
 	fmt.Fprintf(&b, "SERVER_ROOT=%s\n", shellSingleQuote(serverRoot))
 	fmt.Fprintf(&b, "BACKUP_ID=%s\n", shellSingleQuote(cfg.BackupID))
 	b.WriteString("mkdir -p \"$DEST\"\n")
+	// The SSM session runs as root but the checkpoint is written server-side
+	// by the perforce user — hand over the directory or writes get EACCES.
+	b.WriteString("chown -R perforce:perforce \"$DEST\" 2>/dev/null || true\n")
 	b.WriteString("PASSFILE=$(mktemp)\n")
 	b.WriteString("chmod 600 \"$PASSFILE\"\n")
 	fmt.Fprintf(&b, "printf '%%s' %s > \"$PASSFILE\"\n", pass)
-	b.WriteString("trap 'rm -f \"$PASSFILE\"' EXIT\n")
-	b.WriteString("export P4PORT=localhost:1666 P4USER=admin\n")
-	b.WriteString("export P4PASSWD=$(cat \"$PASSFILE\")\n")
+	b.WriteString("trap 'rm -f \"$PASSFILE\"; rm -f \"$TICKETS\"' EXIT\n")
+	// Modern p4-server security levels require a login ticket; bare
+	// P4PASSWD is ignored/rejected. Isolate the ticket file so runs never
+	// clobber an operator's tickets.
+	b.WriteString("TICKETS=$(mktemp)\n")
+	b.WriteString("chmod 600 \"$TICKETS\"\n")
+	b.WriteString("export P4PORT=localhost:1666 P4USER=admin P4TICKETS=\"$TICKETS\"\n")
 	b.WriteString("p4 trust -y >/dev/null 2>&1 || true\n")
+	b.WriteString("p4 login -a < \"$PASSFILE\" >/dev/null 2>&1\n")
 	// Checkpoint (+ journal) into the backup directory using a stable prefix.
 	b.WriteString("p4 admin checkpoint -z \"$DEST/checkpoint\"\n")
 	b.WriteString("p4 admin journal -z \"$DEST/journal\" || true\n")
@@ -218,6 +226,9 @@ func GenerateBackupScript(cfg BackupScriptConfig) (string, error) {
 	b.WriteString("}\n")
 	b.WriteString("EOF\n")
 	if s3URI != "" {
+		// SSM sessions run a minimal environment that often lacks the AWS
+		// CLI; self-provision it (instance profile supplies credentials).
+		b.WriteString("command -v aws >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y awscli; }\n")
 		b.WriteString("aws s3 sync \"$DEST\" \"$S3_URI/\" --only-show-errors\n")
 	}
 	b.WriteString("echo \"BACKUP_OK $BACKUP_ID\"\n")
@@ -290,6 +301,7 @@ func GenerateDeleteScript(backupRoot, backupID, s3URI string) (string, error) {
 	fmt.Fprintf(&b, "DEST=%s\n", shellSingleQuote(dest))
 	b.WriteString("rm -rf \"$DEST\"\n")
 	if s3URI != "" {
+		b.WriteString("command -v aws >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y awscli; }\n")
 		fmt.Fprintf(&b, "aws s3 rm %s --recursive --only-show-errors\n", shellSingleQuote(strings.TrimRight(s3URI, "/")+"/"))
 	}
 	b.WriteString("echo DELETE_OK\n")
