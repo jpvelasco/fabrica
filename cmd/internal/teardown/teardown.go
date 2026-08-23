@@ -107,6 +107,15 @@ type Command struct {
 // in reverse-creation order, persisting state after each deletion so a partial
 // failure leaves a recoverable record.
 func (c Command) Run(ctx context.Context) error {
+	// Serialize concurrent runs so read-modify-write state updates cannot
+	// clobber each other (road test D10). Nested orchestrated calls inherit
+	// the aggregate lock via ctx and no-op here.
+	ctx, releaseLock, err := provision.AcquireStateLock(ctx, c.Runtime, c.Spec.ModuleName+" destroy")
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
+
 	st, err := c.ReadState()
 	if err != nil {
 		return fmt.Errorf("reading state: %w", err)

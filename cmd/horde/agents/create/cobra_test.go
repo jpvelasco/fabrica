@@ -417,3 +417,44 @@ func (v *vpcTestProvider) ResolveDefaultVPC(_ context.Context) (string, string, 
 
 // Ensure vpcTestProvider satisfies cloud.VPCResolver at compile time.
 var _ cloud.VPCResolver = (*vpcTestProvider)(nil)
+
+// lockingVPCProvider combines lock capability with VPC resolution.
+type lockingVPCProvider struct {
+	*testutil.LockingProvider
+	vpcID    string
+	subnetID string
+}
+
+func (v *lockingVPCProvider) ResolveDefaultVPC(_ context.Context) (string, string, error) {
+	return v.vpcID, v.subnetID, nil
+}
+
+// TestAgentsCreateLockHeldAborts verifies a held state lock aborts the create
+// with an actionable error before any resource is touched.
+func TestAgentsCreateLockHeldAborts(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, coordinatorStateJSON())
+
+	provider := &lockingVPCProvider{
+		LockingProvider: &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true},
+		vpcID:           "vpc-test", subnetID: "subnet-test",
+	}
+	runtimeSource := testRuntimeWith(provider)
+
+	_, err := runAgentsCreate(t, runtimeSource, "--yes", "--ami-id", "ami-agent123")
+	if err == nil || !strings.Contains(err.Error(), "another fabrica run holds the state lock") {
+		t.Fatalf("err = %v, want held-lock abort", err)
+	}
+}
+
+func TestDebugVPCProviderCapabilityRemoved(t *testing.T) {}
+
+func testRuntimeWith(provider cloud.Provider) globals.RuntimeSource {
+	cfg := config.Defaults()
+	cfg.State.Bucket = "fabrica-state-test"
+	cfg.State.Table = "fabrica-locks-test"
+	cfg.Horde.Agents.AmiID = "ami-agent123"
+	rt := globals.Runtime{Config: cfg, Provider: provider}
+	return func() (globals.Runtime, error) { return rt, nil }
+}

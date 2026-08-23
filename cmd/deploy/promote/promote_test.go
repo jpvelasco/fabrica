@@ -544,3 +544,18 @@ func TestPromoteWaitCancelled(t *testing.T) {
 		t.Errorf("error = %v, want cancelled + alias-not-changed guidance", err)
 	}
 }
+
+// TestPromoteLockHeldAborts verifies a held state lock aborts promote before
+// any state read or AWS call.
+func TestPromoteLockHeldAborts(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	c := newTestCmd(&out, st)
+	c.assumeYes = true
+	c.runtime.Provider = &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}
+
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "another fabrica run holds the state lock") {
+		t.Fatalf("err = %v, want held-lock abort", err)
+	}
+}

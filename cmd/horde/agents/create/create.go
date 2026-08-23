@@ -154,6 +154,12 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 
+	ctx, releaseLock, err := provision.AcquireStateLock(ctx, c.runtime, "horde agents create")
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
+
 	agentsCfg := c.runtime.Config.Horde.Agents
 	if c.amiID != "" {
 		agentsCfg.AmiID = c.amiID

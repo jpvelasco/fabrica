@@ -337,3 +337,21 @@ func TestTeardownFieldNil(t *testing.T) {
 		t.Error("expected ReadState not nil")
 	}
 }
+
+func TestTestProviderDescribeASG(t *testing.T) {
+	p := &TestProvider{}
+	_, err := p.DescribeASG(context.Background(), "asg-missing")
+	if !errors.Is(err, cloud.ErrResourceNotFound) {
+		t.Fatalf("err = %v, want ErrResourceNotFound when ASGInfo unset", err)
+	}
+
+	want := cloud.ASGInfo{Name: "fabrica-agents-asg", DesiredCapacity: 1}
+	p.ASGInfo = &want
+	got, err := p.DescribeASG(context.Background(), "asg-x")
+	if err != nil {
+		t.Fatalf("DescribeASG with ASGInfo: %v", err)
+	}
+	if got.Name != want.Name || got.DesiredCapacity != want.DesiredCapacity {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}

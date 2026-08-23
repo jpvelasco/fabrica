@@ -26,7 +26,7 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 
 ## Current Known Limitations
 
-- **State backend is created by `fabrica setup`.** Provisions the S3 state bucket (versioning + encryption + public-access-block) and the DynamoDB lock table (reserved for distributed locking — commands do not acquire it yet), idempotently — shows a plan + cost estimate and prompts before any write (`--yes` skips, `--dry-run` previews). Run it once before other commands.
+- **State backend is created by `fabrica setup`.** Provisions the S3 state bucket (versioning + encryption + public-access-block) and the DynamoDB lock table used for distributed state locking (15-minute TTL with stale takeover), idempotently — shows a plan + cost estimate and prompts before any write (`--yes` skips, `--dry-run` previews). Run it once before other commands.
 - **Horde requires a user-provided AMI.** AMI must already contain MongoDB 7, Redis 6.2, and the Horde server binary. See [docs/horde-ami.md](docs/horde-ami.md).
 - **DDC edges reuse the home stack.** Edge AMIs are region-specific; copy the home AMI first (`aws ec2 copy-image`). Cross-region replication between edges is operator-managed. See [docs/ddc-ami.md](docs/ddc-ami.md).
 
@@ -70,6 +70,8 @@ go list -deps ./internal/cloud/...
 
 **Context-aware polling** — every polling interval goes through `provision.WaitInterval(ctx, d)` via a `waitCtx`/`SleepCtx` seam, so Ctrl+C ends waits immediately instead of after the full interval. Never wire bare `time.Sleep`; never call `http.Get` without `NewRequestWithContext`.
 
+**Distributed state locking** — every state-mutating flow acquires the account-level DynamoDB lock via `provision.AcquireStateLock(ctx, rt, operation)` at entry and defers the release. Nested orchestration (`destroy --all` → module teardowns) inherits the lock through a ctx sentinel and no-ops. The lock carries a 15-minute TTL with stale takeover, so a crashed holder cannot deadlock anyone. Providers without `cloud.StateLockManager` (fakes/E2E) get a silent no-op.
+
 **SDK-first deletion hooks** — resources Cloud Control can't delete directly use the teardown engine's `SDKDeleteFunc(ctx, typeName, identifier)` seam: return `cloud.ErrNotHandled` to fall through to Cloud Control. Modules attach it through `teardown.Spec.WireCommand` so both standalone and orchestrated paths get it (CI: project deletion; lore: purge the versioned store bucket first via `cloud.S3BucketCleaner`).
 
 **Concurrency-safe lazy init** — the MCP server dispatches tool calls concurrently against one provider. All lazy client construction in `internal/cloud/aws` (`Resources()`, `resourceClients.ensureClient`, `ec2Service.ensureClient`) is mutex-guarded; keep new lazy-init sites synchronized.
@@ -91,7 +93,7 @@ go list -deps ./internal/cloud/...
 | `internal/config` | `Config` struct, Viper loading from `fabrica.yaml` (scoped here only), YAML serialization, defaults |
 | `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `EC2InstanceManager`, `RemoteRunner`, `StateBackendChecker`, `StateBackendBootstrapper`, `StateBackendDestroyer`, `CodeBuildRunner`, `GameLiftManager`, `S3BucketCleaner` |
 | `internal/cloud/aws` | AWS implementation registered via `init()` in `internal/cloud/registry.go`; wraps `cloudcontrol`, `s3`, `dynamodb`, `iam`, `ec2` SDK clients |
-| `internal/state` | `State`/`ModuleState`/`ModuleResource` types, `Backend` interface, S3+DynamoDB bootstrap; `LockStore` exists but no command acquires it yet (reserved for distributed locking) |
+| `internal/state` | `State`/`ModuleState`/`ModuleResource` types, `Backend` interface, S3+DynamoDB bootstrap; `LockStore` — TTL + stale-takeover locking wired into all state-mutating flows via `provision.AcquireStateLock` |
 | `internal/cost` | Cost estimator interface + estimators; registered by resource `TypeName`. `Project`/`Forecast` for time-horizon projection; `EvaluateBudgets` for threshold evaluation. Stays free of `internal/config` — the config↔cost mapping lives in `costsource` |
 | `internal/tags` | Tag injection helpers; `ManagedBy: fabrica` applied to all resources |
 | `internal/prompt` | `Confirm` (y/N) and `ConfirmExact` (typed phrase) for interactive confirmation dialogs |
@@ -216,7 +218,7 @@ git config core.hooksPath .githooks
 
 - **Module path:** `github.com/jpvelasco/fabrica`
 - **IaC:** AWS Cloud Control API (`aws-sdk-go-v2/service/cloudcontrol`) — no Terraform, no Pulumi, no external binaries
-- **State backend:** S3 + DynamoDB (lock table provisioned; locking not yet enforced) + `.fabrica/state.json` (local cache)
+- **State backend:** S3 + DynamoDB (DynamoDB-locked, 15-min TTL with stale takeover) + `.fabrica/state.json` (local cache)
 - **Config:** Viper + YAML (`fabrica.yaml`) — Viper scoped inside `internal/config` only
 - **No logging library:** `fmt.Printf`/`Println` only
 - **EC2 stop/start:** uses `cloud.EC2InstanceManager` (auxiliary interface) + EC2 SDK, not Cloud Control
