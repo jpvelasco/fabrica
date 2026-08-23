@@ -65,6 +65,15 @@ var _ fabricac.VPCResolver = (*awsProvider)(nil)
 var _ fabricac.VPCCIDRResolver = (*awsProvider)(nil)
 var _ fabricac.RegionProvider = (*awsProvider)(nil)
 
+// TagInstanceVolumes delegates to the EC2 service so *awsProvider satisfies
+// cloud.VolumeTagger — create flows assert the capability on the provider,
+// not on the embedded service.
+func (p *awsProvider) TagInstanceVolumes(ctx context.Context, instanceID string, tags map[string]string) error {
+	return p.ec2.TagInstanceVolumes(ctx, instanceID, tags)
+}
+
+var _ fabricac.VolumeTagger = (*awsProvider)(nil)
+
 func newProvider(cfg *config.Config) (fabricac.Provider, error) {
 	awsCfg := awsConfig{
 		region:  cfg.Cloud.AWS.Region,

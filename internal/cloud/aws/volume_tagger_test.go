@@ -160,3 +160,30 @@ func TestTagInstanceVolumesEnsureClientError(t *testing.T) {
 		t.Fatalf("err = %v, want config-load failure", err)
 	}
 }
+
+// TestProviderTagInstanceVolumesDelegate verifies the awsProvider-level
+// delegate reaches the EC2 service (the capability assert in create flows
+// targets the provider, not the service).
+func TestProviderTagInstanceVolumesDelegate(t *testing.T) {
+	fake := &fakeVolumeEC2Client{pages: []ec2.DescribeVolumesOutput{
+		{Volumes: []types.Volume{{VolumeId: aws.String("vol-del")}}},
+	}}
+	p := &awsProvider{
+		loadConfig: func(_ context.Context, _, _ string) (aws.Config, error) {
+			return aws.Config{Region: "us-east-1"}, nil
+		},
+		newPurgeS3Client: nil,
+	}
+	p.ec2 = ec2Service{
+		awsCfg:    awsConfig{region: "us-east-1"},
+		loadCfg:   p.loadConfig,
+		newClient: func(aws.Config) ec2APIClient { return fake },
+	}
+
+	if err := p.TagInstanceVolumes(context.Background(), "i-9", map[string]string{"ManagedBy": "fabrica"}); err != nil {
+		t.Fatalf("provider delegate: %v", err)
+	}
+	if len(fake.lastVolumes) != 1 || fake.lastVolumes[0] != "vol-del" {
+		t.Errorf("tagged = %v", fake.lastVolumes)
+	}
+}
