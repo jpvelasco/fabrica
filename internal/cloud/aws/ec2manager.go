@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 )
 
@@ -34,6 +36,8 @@ type ec2APIClient interface {
 	DescribeImages(ctx context.Context, params *ec2.DescribeImagesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error)
 	DescribeVpcs(ctx context.Context, params *ec2.DescribeVpcsInput, optFns ...func(*ec2.Options)) (*ec2.DescribeVpcsOutput, error)
 	DescribeSubnets(ctx context.Context, params *ec2.DescribeSubnetsInput, optFns ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error)
+	DescribeVolumes(ctx context.Context, params *ec2.DescribeVolumesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeVolumesOutput, error)
+	CreateTags(ctx context.Context, params *ec2.CreateTagsInput, optFns ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error)
 }
 
 func (s *ec2Service) ensureClient(ctx context.Context) error {
@@ -58,6 +62,58 @@ func (s *ec2Service) ensureClient(ctx context.Context) error {
 		}
 	}
 	s.client = newClient(cfg)
+	return nil
+}
+
+// TagInstanceVolumes applies tags to every EBS volume attached to the
+// instance. Cloud Control cannot tag BlockDeviceMapping volumes at creation,
+// so create flows call this right after the instance step; without it, data
+// volumes are invisible to ManagedBy sweeps (road test D8).
+func (s *ec2Service) TagInstanceVolumes(ctx context.Context, instanceID string, tags map[string]string) error {
+	if err := s.ensureClient(ctx); err != nil {
+		return err
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+
+	ec2Tags := make([]types.Tag, 0, len(tags))
+	for k, v := range tags {
+		ec2Tags = append(ec2Tags, types.Tag{Key: aws.String(k), Value: aws.String(v)})
+	}
+
+	// Volumes attach asynchronously right after launch — retry briefly when
+	// none are visible yet so a fast poll doesn't miss them.
+	const attempts = 5
+	var vols []types.Volume
+	for i := 0; i < attempts; i++ {
+		out, err := s.client.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+			Filters: []types.Filter{
+				{Name: aws.String("attachment.instance-id"), Values: []string{instanceID}},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("describing volumes attached to %s: %w", instanceID, err)
+		}
+		if len(out.Volumes) > 0 || i == attempts-1 {
+			vols = out.Volumes
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for volumes on %s: %w", instanceID, ctx.Err())
+		case <-time.After(2 * time.Second):
+		}
+	}
+
+	for _, v := range vols {
+		if _, err := s.client.CreateTags(ctx, &ec2.CreateTagsInput{
+			Resources: []string{aws.ToString(v.VolumeId)},
+			Tags:      ec2Tags,
+		}); err != nil {
+			return fmt.Errorf("tagging volume %s: %w", aws.ToString(v.VolumeId), err)
+		}
+	}
 	return nil
 }
 

@@ -222,6 +222,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 			"volumeSize":   strconv.Itoa(plan.VolumeSize),
 			"imageId":      imageID,
 		},
+		PostCreate: provision.TagVolumesPostCreate(c.runtime.Provider, "perforce", plan.InstanceName),
 	}, moduleName, plan.HelixVersion, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
 		return fmt.Errorf("creating EC2 instance: %w", err)

@@ -1,6 +1,7 @@
 package provision
 
 import (
+	"context"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
@@ -18,5 +19,19 @@ func TestVPCResolverFromProvider(t *testing.T) {
 	}
 	if got := VPCResolver(nil); got != nil {
 		t.Fatalf("VPCResolver(nil) = %v, want nil", got)
+	}
+}
+
+// TestTagVolumesPostCreate verifies the hook tags via the provider tagger and
+// no-ops when the provider lacks cloud.VolumeTagger.
+func TestTagVolumesPostCreate(t *testing.T) {
+	resolving := &testutil.VPCResolverProvider{VPCID: "vpc-1", SubnetID: "subnet-1"}
+	hook := TagVolumesPostCreate(resolving, "perforce", "fabrica-perforce")
+	if err := hook(context.Background(), "i-1"); err != nil {
+		t.Fatalf("hook on provider without VolumeTagger must no-op: %v", err)
+	}
+
+	if TagVolumesPostCreate(nil, "perforce", "n") == nil {
+		t.Fatal("TagVolumesPostCreate(nil provider) returned nil func")
 	}
 }
