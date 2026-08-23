@@ -113,6 +113,12 @@ type createOutput struct {
 }
 
 func (c createCommand) run(ctx context.Context) error {
+	ctx, releaseLock, err := provision.AcquireStateLock(ctx, c.runtime, "perforce backup create")
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
+
 	target, err := perforceprovisioning.Resolve(c.readState)
 	if err != nil {
 		return err

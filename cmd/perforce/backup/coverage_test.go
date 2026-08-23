@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -166,5 +167,53 @@ func TestCreateNilPropertiesInit(t *testing.T) {
 		if r.TypeName == "AWS::EC2::Instance" && r.Properties["lastBackupId"] == "" {
 			t.Fatal("expected lastBackupId set on nil Properties map")
 		}
+	}
+}
+
+// TestDeleteLockHeldAborts verifies a held state lock aborts backup delete
+// before any SSM command runs.
+func TestDeleteLockHeldAborts(t *testing.T) {
+	var ran bool
+	c := deleteCommand{
+		runtime:   globals.Runtime{Config: config.Defaults(), Provider: &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}},
+		assumeYes: true,
+		backupID:  "b1",
+		out:       &bytes.Buffer{},
+		readState: readyStateFn,
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			ran = true
+			return cloud.RemoteResult{}, nil
+		},
+	}
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "another fabrica run holds the state lock") {
+		t.Fatalf("err = %v, want held-lock abort", err)
+	}
+	if ran {
+		t.Error("SSM delete ran despite held lock")
+	}
+}
+
+// TestCreateLockHeldAborts verifies a held state lock aborts backup create
+// before the SSM backup script executes.
+func TestCreateLockHeldAborts(t *testing.T) {
+	var out bytes.Buffer
+	c := createCommand{
+		runtime:    globals.Runtime{Config: config.Defaults(), Provider: &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}},
+		assumeYes:  true,
+		jsonOut:    false,
+		out:        &out,
+		now:        func() time.Time { return time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC) },
+		readState:  readyStateFn,
+		writeState: func(*fabricastate.State) error { return nil },
+		readCreds:  func() (string, error) { return "pw", nil },
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			t.Error("backup script ran despite held lock")
+			return cloud.RemoteResult{}, nil
+		},
+	}
+	if err := c.run(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "another fabrica run holds the state lock") {
+		t.Fatalf("err = %v, want held-lock abort", err)
 	}
 }
