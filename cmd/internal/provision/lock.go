@@ -9,7 +9,6 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/cloud"
-	"github.com/jpvelasco/fabrica/internal/oplog"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -45,7 +44,8 @@ func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string)
 	}
 
 	lockID := "fabrica-state/" + account
-	holder := fmt.Sprintf("%s pid=%d host=%s", operation, os.Getpid(), shortHostname())
+	host, _ := os.Hostname()
+	holder := fmt.Sprintf("%s pid=%d host=%s", operation, os.Getpid(), shortHostname(host))
 	table := rt.Config.State.Table
 
 	var token string
@@ -71,20 +71,17 @@ func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string)
 
 	release := func() {
 		// WithoutCancel: a cancelled command must still free the lock.
-		if err := store.Release(context.WithoutCancel(ctx), lockID, token); err != nil {
-			oplog.WithModule("state-lock").Warn("releasing state lock", "error", err)
-		}
+		// state.Release swallows takeover races and logs storage failures.
+		_ = store.Release(context.WithoutCancel(ctx), lockID, token)
 	}
 	return context.WithValue(ctx, lockHeldKey, holder), release, nil
 }
 
-func shortHostname() string {
-	h, err := os.Hostname()
-	if err != nil {
-		return "unknown-host"
+// shortHostname trims the domain part off a machine hostname for compact
+// lock-holder identities.
+func shortHostname(host string) string {
+	if i := strings.Index(host, "."); i >= 0 {
+		return host[:i]
 	}
-	if i := strings.Index(h, "."); i >= 0 {
-		return h[:i]
-	}
-	return h
+	return host
 }

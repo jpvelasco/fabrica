@@ -18,10 +18,14 @@ type fakeLockManager struct {
 	releases   int
 	held       bool
 	releaseErr error
+	acquireErr error
 }
 
 func (f *fakeLockManager) AcquireStateLockRow(_ context.Context, _ string, _ map[string]string, _ string, _ map[string]string) error {
 	f.acquires++
+	if f.acquireErr != nil {
+		return f.acquireErr
+	}
 	if f.held {
 		return cloud.ErrLockHeld
 	}
@@ -153,11 +157,29 @@ func TestAcquireStateLockNilConfigIsNoop(t *testing.T) {
 }
 
 func TestAcquireStateLockReleaseWarnPath(t *testing.T) {
-	locker := &fakeLockManager{releaseErr: cloud.ErrLockHeld}
+	locker := &fakeLockManager{releaseErr: errors.New("dynamo down")} // non-held: real release failure
 	rt := testRuntimeWithLocker(locker)
 	_, release, err := AcquireStateLock(context.Background(), rt, "op")
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	release() // takeover after our TTL — must not panic or propagate
+	release() // must log via oplog and not panic or propagate
+}
+
+func TestAcquireStateLockGenericErrorWrapped(t *testing.T) {
+	locker := &fakeLockManager{acquireErr: errors.New("dynamo down")}
+	rt := testRuntimeWithLocker(locker)
+	_, _, err := AcquireStateLock(context.Background(), rt, "op")
+	if err == nil || !strings.Contains(err.Error(), "acquiring state lock (op)") {
+		t.Fatalf("err = %v, want generic acquire wrap", err)
+	}
+}
+
+func TestShortHostnameTrimsDomain(t *testing.T) {
+	if got := shortHostname("runner-01.github.actions"); got != "runner-01" {
+		t.Errorf("shortHostname(fqdn) = %q, want runner-01", got)
+	}
+	if got := shortHostname("bare-host"); got != "bare-host" {
+		t.Errorf("shortHostname(bare) = %q, want bare-host", got)
+	}
 }
