@@ -5,6 +5,7 @@ go 1.25.13
 require (
 	github.com/aws/aws-sdk-go-v2 v1.43.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.35
+	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.71.1
 	github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.32.4
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.81.1
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.72.4
@@ -14,7 +15,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.5
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.73.4
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.4
-	github.com/aws/smithy-go v1.27.7
+	github.com/aws/smithy-go v1.27.8
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
@@ -28,7 +29,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.36 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.36 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.36 // indirect
-	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.71.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.15 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.28 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.12.12 // indirect
