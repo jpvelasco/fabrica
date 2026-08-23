@@ -159,8 +159,10 @@ func (c *command) run(ctx context.Context) error {
 	c.printPlan(m, resources)
 
 	if c.assumeYes {
-		fmt.Fprintln(c.out)
-		fmt.Fprintln(c.out, "Proceeding without interactive confirmation (--yes flag set).")
+		if !c.jsonOut {
+			fmt.Fprintln(c.out)
+			fmt.Fprintln(c.out, "Proceeding without interactive confirmation (--yes flag set).")
+		}
 	} else {
 		account := c.resolveAccount(st)
 		phrase := fmt.Sprintf("destroy agents %s", account)

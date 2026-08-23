@@ -17,7 +17,7 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 		[]ec2state.SGIngressRule{
 			{IpProtocol: "tcp", FromPort: 1666, ToPort: 1666, CidrIp: plan.AllowedCIDR, Description: "Perforce p4d"},
 		},
-		nil,
+		map[string]string{"FabricaModule": "perforce"},
 	)
 }
 
@@ -39,6 +39,7 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName,
 
 	dsOpts := []ec2state.DesiredStateOption{
 		ec2state.WithDeleteOnTermination(false),
+		ec2state.WithExtraTags("FabricaModule", "perforce"),
 	}
 	if instanceProfileName != "" {
 		dsOpts = append(dsOpts, ec2state.WithIAMProfile(instanceProfileName))
@@ -57,7 +58,7 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 		"RoleName":                 plan.RoleName,
 		"AssumeRolePolicyDocument": iamrole.AssumeRolePolicyDocument(iamrole.ServiceEC2),
 		"ManagedPolicyArns":        managed,
-		"Tags":                     iamrole.RoleTags(plan.RoleName, nil),
+		"Tags":                     iamrole.RoleTags(plan.RoleName, map[string]string{"FabricaModule": "perforce"}),
 	}
 	if plan.BackupS3Export && plan.BackupS3Bucket != "" {
 		prefix := plan.BackupS3Prefix
