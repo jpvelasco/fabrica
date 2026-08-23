@@ -231,3 +231,35 @@ func TestInstanceDesiredState_EmptyImageID(t *testing.T) {
 		t.Error("ImageId should not be present when empty")
 	}
 }
+
+// TestDesiredStatesStampFabricaModule guards fix #329: every perforce resource
+// must carry FabricaModule=perforce so tag-based attribution works live.
+func TestDesiredStatesStampFabricaModule(t *testing.T) {
+	plan := &CreatePlan{SGName: "fabrica-perforce-sg", VPCID: "vpc-x", AllowedCIDR: "10.0.0.0/32"}
+
+	sgRaw, err := SGDesiredState(plan)
+	if err != nil {
+		t.Fatalf("SGDesiredState: %v", err)
+	}
+	if got := ec2state.ParseTags(t, ec2state.UnmarshalDesiredState(t, sgRaw)["Tags"].([]any))["FabricaModule"]; got != "perforce" {
+		t.Errorf("SG FabricaModule = %q, want perforce", got)
+	}
+
+	instRaw, err := InstanceDesiredState(&CreatePlan{
+		InstanceType: "m5.xlarge", SubnetID: "subnet-abc", InstanceName: "fabrica-perforce", VolumeSize: 500,
+	}, "sg-123", "ud", "", "")
+	if err != nil {
+		t.Fatalf("InstanceDesiredState: %v", err)
+	}
+	if got := ec2state.ParseTags(t, ec2state.UnmarshalDesiredState(t, instRaw)["Tags"].([]any))["FabricaModule"]; got != "perforce" {
+		t.Errorf("instance FabricaModule = %q, want perforce", got)
+	}
+
+	roleRaw, err := RoleDesiredState(&CreatePlan{RoleName: "fabrica-perforce-role"})
+	if err != nil {
+		t.Fatalf("RoleDesiredState: %v", err)
+	}
+	if got := ec2state.ParseTags(t, ec2state.UnmarshalDesiredState(t, roleRaw)["Tags"].([]any))["FabricaModule"]; got != "perforce" {
+		t.Errorf("role FabricaModule = %q, want perforce", got)
+	}
+}
