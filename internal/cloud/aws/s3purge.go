@@ -2,7 +2,9 @@ package aws
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -34,6 +36,12 @@ func (p *awsProvider) PurgeBucket(ctx context.Context, bucket string) error {
 	for {
 		out, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{Bucket: aws.String(bucket)})
 		if err != nil {
+			// Bucket already gone (e.g. deleted by a concurrent or prior
+			// run) — nothing to purge; Cloud Control's delete will converge.
+			var nf *s3types.NoSuchBucket
+			if errors.As(err, &nf) || strings.Contains(err.Error(), "NoSuchBucket") {
+				return nil
+			}
 			return fmt.Errorf("listing versions in bucket %s: %w", bucket, err)
 		}
 
