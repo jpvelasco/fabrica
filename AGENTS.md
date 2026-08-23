@@ -70,7 +70,9 @@ go list -deps ./internal/cloud/...
 
 **Context-aware polling** — every polling interval goes through `provision.WaitInterval(ctx, d)` via a `waitCtx`/`SleepCtx` seam, so Ctrl+C ends waits immediately instead of after the full interval. Never wire bare `time.Sleep`; never call `http.Get` without `NewRequestWithContext`.
 
-**Distributed state locking** — every state-mutating flow acquires the account-level DynamoDB lock via `provision.AcquireStateLock(ctx, rt, operation)` at entry and defers the release. Nested orchestration (`destroy --all` → module teardowns) inherits the lock through a ctx sentinel and no-ops. The lock carries a 15-minute TTL with stale takeover, so a crashed holder cannot deadlock anyone. Providers without `cloud.StateLockManager` (fakes/E2E) get a silent no-op.
+**Distributed state locking** — every state-mutating flow acquires the account-level DynamoDB lock via `provision.AcquireStateLock(ctx, rt, operation)` at entry and defers the release. Nested orchestration (`destroy --all` → module teardowns) inherits the lock through a ctx sentinel and no-ops. The lock carries a 15-minute TTL with stale takeover, so a crashed holder cannot deadlock anyone. Providers without `cloud.StateLockManager` (fakes/E2E) get a silent no-op. `setup` (and any command on an unbootstrapped account) proceeds unlocked when the table is absent — the adapter maps ResourceNotFoundException to `cloud.ErrLockTableMissing`; don't "fix" this into a hard failure, it's the bootstrap ordering.
+
+**Provider capability asserts target `*awsProvider`** — auxiliary interfaces implemented on the embedded `ec2Service`/dynamo clients need an explicit delegating method on `awsProvider` (e.g. `TagInstanceVolumes`, `AcquireStateLockRow`), or `rt.Provider.(cloud.X)` fails silently and flows no-op. Add a `var _ cloud.X = (*awsProvider)(nil)` guard next to every delegate; unit-test through the provider, not the service.
 
 **SDK-first deletion hooks** — resources Cloud Control can't delete directly use the teardown engine's `SDKDeleteFunc(ctx, typeName, identifier)` seam: return `cloud.ErrNotHandled` to fall through to Cloud Control. Modules attach it through `teardown.Spec.WireCommand` so both standalone and orchestrated paths get it (CI: project deletion; lore: purge the versioned store bucket first via `cloud.S3BucketCleaner`).
 
@@ -91,7 +93,7 @@ go list -deps ./internal/cloud/...
 | `cmd/root` | Wires global flags (`--config`, `--verbose`, `--json`, `--dry-run`, `--yes`, `--profile`), initializes `globals.Store`, registers subcommands |
 | `cmd/globals` | `Runtime` (Config + Provider + ConfigPath), `Options`, `Store.Init()`, dependency injection types |
 | `internal/config` | `Config` struct, Viper loading from `fabrica.yaml` (scoped here only), YAML serialization, defaults |
-| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `EC2InstanceManager`, `RemoteRunner`, `StateBackendChecker`, `StateBackendBootstrapper`, `StateBackendDestroyer`, `CodeBuildRunner`, `GameLiftManager`, `S3BucketCleaner` |
+| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `EC2InstanceManager`, `RemoteRunner`, `StateBackendChecker`, `StateBackendBootstrapper`, `StateBackendDestroyer`, `CodeBuildRunner`, `GameLiftManager`, `S3BucketCleaner`, `StateLockManager`, `VolumeTagger` |
 | `internal/cloud/aws` | AWS implementation registered via `init()` in `internal/cloud/registry.go`; wraps `cloudcontrol`, `s3`, `dynamodb`, `iam`, `ec2` SDK clients |
 | `internal/state` | `State`/`ModuleState`/`ModuleResource` types, `Backend` interface, S3+DynamoDB bootstrap; `LockStore` — TTL + stale-takeover locking wired into all state-mutating flows via `provision.AcquireStateLock` |
 | `internal/cost` | Cost estimator interface + estimators; registered by resource `TypeName`. `Project`/`Forecast` for time-horizon projection; `EvaluateBudgets` for threshold evaluation. Stays free of `internal/config` — the config↔cost mapping lives in `costsource` |
@@ -236,6 +238,14 @@ git config core.hooksPath .githooks
 - **Terminate vs destroy** — uses `terminate` as the permanent deletion command.
 - **Idle timeout** — `workstation.idleTimeoutMinutes` in `fabrica.yaml` (default 60) is injected into the DCV cloud-init; the constant `DefaultIdleTimeoutMinutes` lives in `internal/workstation/config.go`.
 - **GPU instance prices** — g4dn, g5, g6, and c7i family prices live in `internal/perforce/cost.go`. Do not add a separate cost registration for workstation resources.
+
+### Perforce
+- **Version pins rot** — Perforce's jammy archive drops old releases; `helix-p4d=2024.2` no longer exists and apt needs the full `X.Y-build~jammy` string anyway. The userdata falls back to the current repo version when a pin fails; `DefaultHelixVersion` (internal/perforce/config.go) tracks the oldest still-published release.
+- **Two packaging generations** — 2026.1 split Helix Core into p4-server packages: `configure-p4d.sh` takes a positional service name with `-P password` (legacy `--super-passwd`/`-y` gone) and instances are managed via **p4dctl**, not a helix-p4d systemd unit. The userdata detects the installed generation at RUNTIME (`--help` grep + unit-file check) — never at render time, because the pin can fall back to a newer generation than requested.
+- **Data volume auto-detection is mandatory** — EC2 NVMe enumeration order flips between launches; `/dev/nvme1n1` has pointed at the ROOT disk. Userdata detects the largest non-root unformatted volume at runtime; an explicit `dataDevice` override still wins.
+- **Backup auth = login ticket, not P4PASSWD** — modern p4-server security levels ignore/reject bare `P4PASSWD`. The generated script does `p4 login -a` into an isolated `P4TICKETS` file; keep it that way.
+- **SSM sessions lack the AWS CLI** — scripts that call `aws s3 …` self-install `awscli` on demand (instance profile supplies credentials).
+- **Destroy retains the data volume by design** (DeleteOnTermination=false on /hxdepots); operators delete it when done. It IS tagged, so sweeps see it.
 
 ### Horde
 - **AMI-first provisioning** — AMI must contain MongoDB 7, Redis 6.2, and the Horde server binary. See `docs/horde-ami.md`.
