@@ -82,6 +82,12 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("could not resolve AWS identity: %w", err)
 	}
 
+	ctx, releaseLock, err := provision.AcquireStateLock(ctx, c.runtime, "setup")
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
+
 	cfg := c.runtime.Config
 	plan := fabricastate.NewSetupPlan(cfg, account, region)
 	tags := setupTags(c.version, cfg.Cloud.AWS.Tags)
@@ -269,7 +275,7 @@ func (c command) printCompletion(plan fabricastate.SetupPlan, results []fabricas
 	}
 	fmt.Fprintln(c.out, "What just happened:")
 	fmt.Fprintf(c.out, "  %s the S3 bucket %q (versioned, encrypted, public access blocked)\n", verb, plan.Backend.Bucket)
-	fmt.Fprintf(c.out, "  %s the DynamoDB table %q (reserved for distributed state locking)\n", verb, plan.Backend.Table)
+	fmt.Fprintf(c.out, "  %s the DynamoDB table %q (distributed state locking)\n", verb, plan.Backend.Table)
 	fmt.Fprintln(c.out, "  Together these store Fabrica's remote state for this account.")
 	c.printRunningCost(plan)
 

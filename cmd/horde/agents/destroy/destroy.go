@@ -134,6 +134,12 @@ With --dry-run, shows the destroy plan without making any AWS calls.`,
 }
 
 func (c *command) run(ctx context.Context) error {
+	ctx, releaseLock, err := provision.AcquireStateLock(ctx, c.runtime, "horde agents destroy")
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
+
 	st, err := c.readState()
 	if err != nil {
 		return fmt.Errorf("reading state: %w", err)

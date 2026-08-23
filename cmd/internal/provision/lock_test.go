@@ -1,0 +1,116 @@
+package provision
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
+	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/config"
+)
+
+// fakeLockManager records lock calls for bridge tests.
+type fakeLockManager struct {
+	acquires int
+	releases int
+	held     bool
+}
+
+func (f *fakeLockManager) AcquireStateLockRow(_ context.Context, _ string, _ map[string]string, _ string, _ map[string]string) error {
+	f.acquires++
+	if f.held {
+		return cloud.ErrLockHeld
+	}
+	return nil
+}
+
+func (f *fakeLockManager) ReleaseStateLockRow(_ context.Context, _, _, _ string) error {
+	f.releases++
+	return nil
+}
+
+type lockingProvider struct {
+	*testutil.TestProvider
+	*fakeLockManager
+}
+
+func testRuntimeWithLocker(l *fakeLockManager) globals.Runtime {
+	return globals.Runtime{Config: config.Defaults(), Provider: &lockingProvider{TestProvider: &testutil.TestProvider{}, fakeLockManager: l}}
+}
+
+func TestAcquireStateLockNoCapabilityIsNoop(t *testing.T) {
+	rt := globals.Runtime{Config: config.Defaults(), Provider: &testutil.TestProvider{}}
+	ctx, release, err := AcquireStateLock(context.Background(), rt, "op")
+	if err != nil {
+		t.Fatalf("expected silent no-op: %v", err)
+	}
+	if ctx.Value(lockHeldKey) != nil {
+		t.Error("sentinel must not be set for capability-less providers")
+	}
+	release()
+}
+
+func TestAcquireStateLockAcquiresAndReleases(t *testing.T) {
+	locker := &fakeLockManager{}
+	rt := testRuntimeWithLocker(locker)
+	ctx, release, err := AcquireStateLock(context.Background(), rt, "perforce destroy")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	if ctx.Value(lockHeldKey) == nil {
+		t.Error("lock sentinel missing from returned context")
+	}
+	if locker.acquires != 1 {
+		t.Errorf("acquires = %d, want 1", locker.acquires)
+	}
+	release()
+	if locker.releases != 1 {
+		t.Errorf("releases = %d, want 1", locker.releases)
+	}
+}
+
+func TestAcquireStateLockNestedSkips(t *testing.T) {
+	locker := &fakeLockManager{}
+	rt := testRuntimeWithLocker(locker)
+	ctx, release, err := AcquireStateLock(context.Background(), rt, "outer")
+	if err != nil {
+		t.Fatalf("outer acquire: %v", err)
+	}
+	defer release()
+
+	_, nestedRelease, err := AcquireStateLock(ctx, rt, "inner")
+	if err != nil {
+		t.Fatalf("nested acquire must inherit the outer lock: %v", err)
+	}
+	nestedRelease()
+	if locker.acquires != 1 {
+		t.Errorf("acquires = %d, want 1 (nested must not re-acquire)", locker.acquires)
+	}
+	if locker.releases != 0 {
+		t.Errorf("releases = %d before outer release; nested release must be a no-op", locker.releases)
+	}
+}
+
+func TestAcquireStateLockHeldWrapsActionableError(t *testing.T) {
+	locker := &fakeLockManager{held: true}
+	rt := testRuntimeWithLocker(locker)
+	_, _, err := AcquireStateLock(context.Background(), rt, "horde destroy")
+	if err == nil {
+		t.Fatal("expected held-lock error")
+	}
+	if !errors.Is(err, ErrStateLocked) {
+		t.Fatalf("err = %v, want ErrStateLocked", err)
+	}
+	for _, want := range []string{"wait for the other run", "stale row", "fabrica-state-lock"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q: %v", want, err)
+		}
+	}
+}
+
+// Compile-time guard: the bridge depends on ResolveIdentity, which needs a
+// provider that reports identity — TestProvider satisfies it.
+var _ = func() { _ = config.Defaults() }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,41 +13,40 @@ import (
 	"github.com/jpvelasco/fabrica/internal/oplog"
 )
 
-// mockLockClient implements lockClient for testing.
-type mockLockClient struct {
-	items       map[string]*putOutput
-	conditionOK bool
-	deleteOK    bool
+// recordingLockStore builds a LockStore over captured storage functions.
+type recordingLockStore struct {
+	putCalls    int
+	delCalls    int
+	putErr      error
+	delErr      error
+	lastItem    map[string]string
+	lastCond    string
+	lastCondVal map[string]string
 }
 
-func newMockLockClient() *mockLockClient {
-	return &mockLockClient{
-		items:       make(map[string]*putOutput),
-		conditionOK: true,
-		deleteOK:    true,
+func (r *recordingLockStore) put(_ context.Context, item map[string]string, condition string, condValues map[string]string) error {
+	r.putCalls++
+	if r.putErr != nil {
+		return r.putErr
 	}
+	r.lastItem = item
+	r.lastCond = condition
+	r.lastCondVal = condValues
+	return nil
 }
 
-func (m *mockLockClient) putItem(ctx context.Context, in *putInput) (*putOutput, error) {
-	if !m.conditionOK {
-		return nil, fmt.Errorf("conditional put failed")
-	}
-	for k := range in.Item {
-		m.items[k] = nil
-	}
-	return &putOutput{}, nil
+func (r *recordingLockStore) del(_ context.Context, key map[string]string, condition string, condValues map[string]string) error {
+	r.delCalls++
+	return r.delErr
 }
 
-func (m *mockLockClient) deleteItem(ctx context.Context, in *deleteInput) (*deleteOutput, error) {
-	if !m.deleteOK {
-		return nil, fmt.Errorf("conditional delete failed")
-	}
-	return &deleteOutput{}, nil
+func newRecordingLockStore() (*LockStore, *recordingLockStore) {
+	rec := &recordingLockStore{}
+	return NewFuncLockStore("fabrica-state-lock", DefaultLockTTL, rec.put, rec.del), rec
 }
 
 func TestLockAcquire(t *testing.T) {
-	lc := newMockLockClient()
-	ls := NewLockStore("fabrica-state-lock", "us-east-1", lc)
+	ls, _ := newRecordingLockStore()
 
 	token, err := ls.Acquire(context.Background(), "my-resource", "test-holder")
 	if err != nil {
@@ -57,45 +57,95 @@ func TestLockAcquire(t *testing.T) {
 	}
 }
 
-func TestLockAcquireConflict(t *testing.T) {
-	lc := newMockLockClient()
-	lc.conditionOK = false
-	ls := NewLockStore("fabrica-state-lock", "us-east-1", lc)
+// TestLockAcquireStaleCondition verifies the conditional put carries the
+// not-exists OR stale-takeover expression and stamps holder/token/timestamp.
+func TestLockAcquireStaleCondition(t *testing.T) {
+	ls, rec := newRecordingLockStore()
 
-	_, err := ls.Acquire(context.Background(), "my-resource", "test-holder")
-	if err == nil {
+	if _, err := ls.Acquire(context.Background(), "res", "holder-a"); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	if !strings.Contains(rec.lastCond, "attribute_not_exists(LockID)") ||
+		!strings.Contains(rec.lastCond, "AcquiredAt <= :stale") {
+		t.Errorf("condition = %q, want absence-or-stale takeover", rec.lastCond)
+	}
+	for _, k := range []string{"LockID", "Holder", "Token", "AcquiredAt"} {
+		if rec.lastItem[k] == "" {
+			t.Errorf("item missing %q: %v", k, rec.lastItem)
+		}
+	}
+	stale := rec.lastCondVal[":stale"]
+	if _, err := strconv.ParseInt(stale, 10, 64); err != nil {
+		t.Errorf(":stale = %q, want epoch seconds", stale)
+	}
+}
+
+// TestLockStaleTakeoverSucceeds verifies a lock older than the TTL is taken
+// over automatically: time advances past the TTL and a second Acquire wins.
+func TestLockStaleTakeoverSucceeds(t *testing.T) {
+	ls, _ := newRecordingLockStore()
+
+	now := time.Unix(1_800_000_000, 0).UTC()
+	ls.SetClock(func() time.Time { return now })
+
+	if _, err := ls.Acquire(context.Background(), "res", "crashed-runner"); err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+
+	now = now.Add(DefaultLockTTL + time.Minute)
+	if _, err := ls.Acquire(context.Background(), "res", "second-runner"); err != nil {
+		t.Fatalf("stale takeover acquire: %v", err)
+	}
+}
+
+// TestLockFreshHolderBlocks verifies an unexpired lock still blocks.
+func TestLockFreshHolderBlocks(t *testing.T) {
+	ls, rec := newRecordingLockStore()
+	now := time.Unix(1_800_000_000, 0).UTC()
+	ls.SetClock(func() time.Time { return now })
+
+	if _, err := ls.Acquire(context.Background(), "res", "first"); err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+
+	now = now.Add(time.Minute)
+	rec.putErr = fmt.Errorf("ConditionalCheckFailed")
+	if _, err := ls.Acquire(context.Background(), "res", "second"); err == nil {
+		t.Fatal("fresh lock must block a second acquirer")
+	}
+}
+
+func TestLockAcquireConflict(t *testing.T) {
+	ls, rec := newRecordingLockStore()
+	rec.putErr = fmt.Errorf("conditional put failed")
+
+	if _, err := ls.Acquire(context.Background(), "my-resource", "test-holder"); err == nil {
 		t.Fatal("expected error on conflict, got nil")
 	}
 }
 
 func TestLockRelease(t *testing.T) {
-	lc := newMockLockClient()
-	ls := NewLockStore("fabrica-state-lock", "us-east-1", lc)
+	ls, _ := newRecordingLockStore()
 
 	token, err := ls.Acquire(context.Background(), "my-resource", "test-holder")
 	if err != nil {
 		t.Fatalf("Acquire failed: %v", err)
 	}
 
-	err = ls.Release(context.Background(), "my-resource", token)
-	if err != nil {
+	if err := ls.Release(context.Background(), "my-resource", token); err != nil {
 		t.Fatalf("Release failed: %v", err)
 	}
 }
 
-func TestLockReleaseBadToken(t *testing.T) {
-	lc := newMockLockClient()
-	lc.deleteOK = false
-	ls := NewLockStore("fabrica-state-lock", "us-east-1", lc)
+// TestLockReleaseAfterTakeoverIsNotError verifies a token-mismatched delete
+// (someone took the lock over after our TTL lapsed) is treated as success:
+// the caller's work is done either way.
+func TestLockReleaseAfterTakeoverIsNotError(t *testing.T) {
+	ls, rec := newRecordingLockStore()
+	rec.delErr = fmt.Errorf("conditional delete failed")
 
-	_, err := ls.Acquire(context.Background(), "my-resource", "test-holder")
-	if err != nil {
-		t.Fatalf("Acquire failed: %v", err)
-	}
-
-	err = ls.Release(context.Background(), "my-resource", "wrong-token")
-	if err == nil {
-		t.Fatal("expected error on bad token release")
+	if err := ls.Release(context.Background(), "my-resource", "stale-token"); err != nil {
+		t.Fatalf("release after takeover must converge to nil, got: %v", err)
 	}
 }
 
@@ -440,8 +490,7 @@ func TestResolveBackendNamesPartialConfig(t *testing.T) {
 
 // TestLockAcquireTokenFormat verifies the lock token is 32 hex chars.
 func TestLockAcquireTokenFormat(t *testing.T) {
-	lc := newMockLockClient()
-	ls := NewLockStore("fabrica-state-lock", "us-east-1", lc)
+	ls, _ := newRecordingLockStore()
 
 	token, err := ls.Acquire(context.Background(), "my-resource", "test-holder")
 	if err != nil {
@@ -479,9 +528,8 @@ func TestLockAcquire_ErrorLog(t *testing.T) {
 	var buf strings.Builder
 	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
 
-	lc := newMockLockClient()
-	lc.conditionOK = false
-	ls := NewLockStore("fabrica-state-lock", "us-east-1", lc)
+	ls, rec := newRecordingLockStore()
+	rec.putErr = fmt.Errorf("conditional put failed")
 
 	_, err := ls.Acquire(context.Background(), "my-resource", "test-holder")
 	if err == nil {
@@ -489,8 +537,8 @@ func TestLockAcquire_ErrorLog(t *testing.T) {
 	}
 
 	logOutput := buf.String()
-	if !strings.Contains(logOutput, "failed to acquire lock") {
-		t.Errorf("expected error log 'failed to acquire lock', got:\n%s", logOutput)
+	if !strings.Contains(logOutput, "lock not acquired") {
+		t.Errorf("expected log 'lock not acquired', got:\n%s", logOutput)
 	}
 }
 
@@ -499,8 +547,7 @@ func TestLockAcquire_DebugLog(t *testing.T) {
 	var buf strings.Builder
 	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
 
-	lc := newMockLockClient()
-	ls := NewLockStore("fabrica-state-lock", "us-east-1", lc)
+	ls, _ := newRecordingLockStore()
 
 	token, err := ls.Acquire(context.Background(), "my-resource", "test-holder")
 	if err != nil {
@@ -521,23 +568,21 @@ func TestLockRelease_ErrorLog(t *testing.T) {
 	var buf strings.Builder
 	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
 
-	lc := newMockLockClient()
-	lc.deleteOK = false
-	ls := NewLockStore("fabrica-state-lock", "us-east-1", lc)
+	ls, rec := newRecordingLockStore()
+	rec.delErr = fmt.Errorf("conditional delete failed")
 
-	_, err := ls.Acquire(context.Background(), "my-resource", "test-holder")
-	if err != nil {
+	if _, err := ls.Acquire(context.Background(), "my-resource", "test-holder"); err != nil {
 		t.Fatalf("Acquire failed: %v", err)
 	}
 
-	err = ls.Release(context.Background(), "my-resource", "wrong-token")
-	if err == nil {
-		t.Fatal("expected error on bad token release")
+	err := ls.Release(context.Background(), "my-resource", "wrong-token")
+	if err != nil {
+		t.Fatal("release after takeover converges to nil (logged as warning)")
 	}
 
 	logOutput := buf.String()
-	if !strings.Contains(logOutput, "failed to release lock") {
-		t.Errorf("expected error log 'failed to release lock', got:\n%s", logOutput)
+	if !strings.Contains(logOutput, "release did not delete row") {
+		t.Errorf("expected warn log 'release did not delete row', got:\n%s", logOutput)
 	}
 }
 
@@ -546,8 +591,7 @@ func TestLockRelease_DebugLog(t *testing.T) {
 	var buf strings.Builder
 	oplog.InitWithWriter(slog.LevelInfo, true, &buf)
 
-	lc := newMockLockClient()
-	ls := NewLockStore("fabrica-state-lock", "us-east-1", lc)
+	ls, _ := newRecordingLockStore()
 
 	token, err := ls.Acquire(context.Background(), "my-resource", "test-holder")
 	if err != nil {

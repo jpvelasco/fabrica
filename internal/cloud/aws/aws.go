@@ -32,6 +32,7 @@ type awsProvider struct {
 	newSSMClient             ssmClientFactory
 	newAutoScalingClient     autoScalingClientFactory
 	newPurgeS3Client         purgeS3ClientFactory
+	newLockDynamoClient      lockDynamoClientFactory
 }
 
 type awsConfig struct {
