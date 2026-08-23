@@ -608,3 +608,16 @@ func TestLockRelease_DebugLog(t *testing.T) {
 		t.Errorf("expected debug log 'lock released', got:\n%s", logOutput)
 	}
 }
+
+// TestNewFuncLockStoreDefaultTTL verifies a non-positive TTL selects the
+// package default.
+func TestNewFuncLockStoreDefaultTTL(t *testing.T) {
+	ls := NewFuncLockStore("t", 0, nil, nil)
+	if ls.ttl != DefaultLockTTL {
+		t.Fatalf("ttl = %v, want %v", ls.ttl, DefaultLockTTL)
+	}
+	ls = NewFuncLockStore("t", -time.Minute, nil, nil)
+	if ls.ttl != DefaultLockTTL {
+		t.Fatalf("negative ttl = %v, want %v", ls.ttl, DefaultLockTTL)
+	}
+}

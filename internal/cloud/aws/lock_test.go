@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -101,5 +102,36 @@ func TestReleaseStateLockRowConditionalFailureMapsToErrLockHeld(t *testing.T) {
 	}
 	if fake.lastDelete.Key["LockID"].(*dynamodbtypes.AttributeValueMemberS).Value != "fabrica-state/123" {
 		t.Errorf("delete key = %+v", fake.lastDelete.Key)
+	}
+}
+
+func TestAcquireStateLockRowConfigError(t *testing.T) {
+	p := &awsProvider{
+		loadConfig: func(_ context.Context, _, _ string) (awssdk.Config, error) {
+			return awssdk.Config{}, context.Canceled
+		},
+	}
+	err := p.AcquireStateLockRow(context.Background(), "t", map[string]string{"LockID": "x"}, "cond", nil)
+	if err == nil || strings.Contains(fmt.Sprintf("%T", err), "ErrLockHeld") {
+		t.Fatalf("err = %v, want config-load failure", err)
+	}
+}
+
+func TestReleaseStateLockRowConfigError(t *testing.T) {
+	p := &awsProvider{
+		loadConfig: func(_ context.Context, _, _ string) (awssdk.Config, error) {
+			return awssdk.Config{}, context.Canceled
+		},
+	}
+	err := p.ReleaseStateLockRow(context.Background(), "t", "fabrica-state/1", "tok")
+	if err == nil || errors.Is(err, fabricac.ErrLockHeld) {
+		t.Fatalf("err = %v, want config-load failure", err)
+	}
+}
+
+func TestLockDynamoDefaultFactory(t *testing.T) {
+	p := &awsProvider{}
+	if got := p.lockDynamo(awssdk.Config{Region: "us-east-1"}); got == nil {
+		t.Fatal("default factory returned nil client")
 	}
 }

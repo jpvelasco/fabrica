@@ -14,9 +14,10 @@ import (
 
 // fakeLockManager records lock calls for bridge tests.
 type fakeLockManager struct {
-	acquires int
-	releases int
-	held     bool
+	acquires   int
+	releases   int
+	held       bool
+	releaseErr error
 }
 
 func (f *fakeLockManager) AcquireStateLockRow(_ context.Context, _ string, _ map[string]string, _ string, _ map[string]string) error {
@@ -29,7 +30,7 @@ func (f *fakeLockManager) AcquireStateLockRow(_ context.Context, _ string, _ map
 
 func (f *fakeLockManager) ReleaseStateLockRow(_ context.Context, _, _, _ string) error {
 	f.releases++
-	return nil
+	return f.releaseErr
 }
 
 type lockingProvider struct {
@@ -114,3 +115,49 @@ func TestAcquireStateLockHeldWrapsActionableError(t *testing.T) {
 // Compile-time guard: the bridge depends on ResolveIdentity, which needs a
 // provider that reports identity — TestProvider satisfies it.
 var _ = func() { _ = config.Defaults() }
+
+// identityFailLockingProvider has lock capability but a failing Identity.
+type identityFailLockingProvider struct {
+	lockingProvider
+	identityErr error
+}
+
+func (p *identityFailLockingProvider) Identity(context.Context) (string, string, string, error) {
+	return "", "", "", p.identityErr
+}
+
+func TestAcquireStateLockIdentityError(t *testing.T) {
+	rt := testRuntimeWithLocker(&fakeLockManager{})
+	rt.Provider = &identityFailLockingProvider{
+		lockingProvider: lockingProvider{TestProvider: &testutil.TestProvider{}, fakeLockManager: &fakeLockManager{}},
+		identityErr:     errors.New("creds gone"),
+	}
+	_, _, err := AcquireStateLock(context.Background(), rt, "op")
+	if err == nil || !strings.Contains(err.Error(), "resolving account for state lock") {
+		t.Fatalf("err = %v, want identity-failure context", err)
+	}
+}
+
+func TestAcquireStateLockNilConfigIsNoop(t *testing.T) {
+	locker := &fakeLockManager{}
+	rt := testRuntimeWithLocker(locker)
+	rt.Config = nil
+	_, release, err := AcquireStateLock(context.Background(), rt, "op")
+	if err != nil {
+		t.Fatalf("nil config must no-op: %v", err)
+	}
+	release()
+	if locker.acquires != 0 {
+		t.Errorf("acquires = %d, want 0", locker.acquires)
+	}
+}
+
+func TestAcquireStateLockReleaseWarnPath(t *testing.T) {
+	locker := &fakeLockManager{releaseErr: cloud.ErrLockHeld}
+	rt := testRuntimeWithLocker(locker)
+	_, release, err := AcquireStateLock(context.Background(), rt, "op")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	release() // takeover after our TTL — must not panic or propagate
+}
