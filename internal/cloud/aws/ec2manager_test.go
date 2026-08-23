@@ -32,6 +32,14 @@ func (f *fakeEC2Client) StopInstances(_ context.Context, in *ec2.StopInstancesIn
 	return &ec2.StopInstancesOutput{}, nil
 }
 
+func (f *fakeEC2Client) DescribeVolumes(context.Context, *ec2.DescribeVolumesInput, ...func(*ec2.Options)) (*ec2.DescribeVolumesOutput, error) {
+	return &ec2.DescribeVolumesOutput{}, nil
+}
+
+func (f *fakeEC2Client) CreateTags(context.Context, *ec2.CreateTagsInput, ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error) {
+	return &ec2.CreateTagsOutput{}, nil
+}
+
 func (f *fakeEC2Client) StartInstances(_ context.Context, in *ec2.StartInstancesInput, _ ...func(*ec2.Options)) (*ec2.StartInstancesOutput, error) {
 	f.startCalls++
 	f.lastStartID = in.InstanceIds

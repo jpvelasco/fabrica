@@ -255,3 +255,50 @@ func TestExecuteStepMultipleStepsInSequence(t *testing.T) {
 		t.Fatalf("expected Instance, got %s", resources[1].TypeName)
 	}
 }
+
+// TestExecuteStepPostCreate verifies PostCreate runs after a fresh create and
+// is skipped on the reuse path; a PostCreate error fails the step.
+func TestExecuteStepPostCreate(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	var postIDs []string
+	newStep := func(postErr error) CreateStep {
+		return CreateStep{
+			Label:             "instance",
+			TypeName:          "AWS::EC2::Instance",
+			BuildDesiredState: func() ([]byte, error) { return []byte(`{}`), nil },
+			PostCreate: func(_ context.Context, id string) error {
+				postIDs = append(postIDs, id)
+				return postErr
+			},
+		}
+	}
+	create := func(_ context.Context, r *cloud.Resource) error { r.Identifier = "i-new"; return nil }
+	write := func(*fabricastate.State) error { return nil }
+	var out bytes.Buffer
+
+	if _, err := ExecuteStep(context.Background(), newStep(nil), "m", "v", "provisioning", nil, st, &out, create, write); err != nil {
+		t.Fatalf("fresh create with PostCreate: %v", err)
+	}
+	if len(postIDs) != 1 || postIDs[0] != "i-new" {
+		t.Fatalf("postCreate ids = %v, want [i-new]", postIDs)
+	}
+
+	// Reuse path must not invoke PostCreate.
+	existing := fabricastate.ModuleResource{TypeName: "AWS::EC2::Instance", Identifier: "i-old"}
+	st.UpsertModule("m", "v", "provisioning", []fabricastate.ModuleResource{existing})
+	reuseStep := newStep(nil)
+	reuseStep.ReuseExisting = true
+	before := len(postIDs)
+	if _, err := ExecuteStep(context.Background(), reuseStep, "m", "v", "provisioning", nil, st, &out, create, write); err != nil {
+		t.Fatalf("reuse path: %v", err)
+	}
+	if len(postIDs) != before {
+		t.Error("PostCreate ran on the reuse path; it must only run for fresh creates")
+	}
+
+	// PostCreate error fails the step.
+	_, postErr := ExecuteStep(context.Background(), newStep(errors.New("tag boom")), "m2", "v", "provisioning", nil, fabricastate.NewState("123456789012", "us-east-1"), &out, create, write)
+	if postErr == nil || !strings.Contains(postErr.Error(), "post-create") {
+		t.Errorf("err = %v, want wrapped post-create failure", postErr)
+	}
+}

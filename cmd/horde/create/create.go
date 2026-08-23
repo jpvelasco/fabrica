@@ -227,6 +227,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 			"instanceType": plan.InstanceType,
 			"volumeSize":   strconv.Itoa(plan.VolumeSize),
 		},
+		PostCreate: provision.TagVolumesPostCreate(c.runtime.Provider, "horde", plan.InstanceName),
 		// fail on writeState error (default)
 	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {

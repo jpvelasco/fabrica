@@ -1,6 +1,8 @@
 package provision
 
 import (
+	"context"
+
 	"github.com/jpvelasco/fabrica/internal/cloud"
 )
 
@@ -13,4 +15,31 @@ func VPCResolver(p cloud.Provider) cloud.VPCResolver {
 		return vr
 	}
 	return nil
+}
+
+// VolumeTagger returns the provider's EBS volume tagger, or nil when it does
+// not implement cloud.VolumeTagger. Instance create steps use it in PostCreate
+// to tag BlockDeviceMapping volumes, which Cloud Control cannot tag at creation.
+func VolumeTagger(p cloud.Provider) cloud.VolumeTagger {
+	if vt, ok := p.(cloud.VolumeTagger); ok {
+		return vt
+	}
+	return nil
+}
+
+// TagVolumesPostCreate returns a CreateStep.PostCreate hook that tags every
+// EBS volume attached to the freshly created instance (ManagedBy,
+// FabricaModule, Name). No-op when the provider lacks cloud.VolumeTagger.
+func TagVolumesPostCreate(p cloud.Provider, module, instanceName string) func(context.Context, string) error {
+	tagger := VolumeTagger(p)
+	return func(ctx context.Context, instanceID string) error {
+		if tagger == nil {
+			return nil
+		}
+		return tagger.TagInstanceVolumes(ctx, instanceID, map[string]string{
+			"ManagedBy":     "fabrica",
+			"FabricaModule": module,
+			"Name":          instanceName,
+		})
+	}
 }

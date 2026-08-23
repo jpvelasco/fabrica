@@ -197,6 +197,7 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, plan *ddc.Se
 			"instanceType": plan.InstanceType,
 			"volumeSize":   strconv.Itoa(plan.VolumeSize),
 		},
+		PostCreate: provision.TagVolumesPostCreate(c.runtime.Provider, "ddc", plan.InstanceName),
 	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
 		return fmt.Errorf("creating DDC instance: %w", err)
@@ -221,6 +222,7 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, plan *ddc.Se
 				"instanceType": plan.ScyllaInstanceType,
 				"volumeSize":   strconv.Itoa(plan.ScyllaVolumeSize),
 			},
+			PostCreate:       provision.TagVolumesPostCreate(c.runtime.Provider, "ddc", plan.InstanceName),
 			IgnoreWriteError: true,
 		}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState); err != nil {
 			return fmt.Errorf("creating Scylla instance: %w", err)
