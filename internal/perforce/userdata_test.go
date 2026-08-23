@@ -170,3 +170,42 @@ func TestGenerate_DefaultsApplied(t *testing.T) {
 		t.Error("default ServerID should appear in decoded output")
 	}
 }
+
+// TestGenerateRaw_P4ServerStyle verifies 2026.1+ versions render the
+// p4-server/p4dctl path and never the legacy --super-passwd flow (road test:
+// Perforce split Helix Core into p4-server packaging in 2026.1).
+func TestGenerateRaw_P4ServerStyle(t *testing.T) {
+	for _, v := range []string{"latest", "2026.1", "2026.1/2972966"} {
+		got, err := GenerateRaw(UserDataConfig{Version: v, AdminPass: "pw"})
+		if err != nil {
+			t.Fatalf("version %s: %v", v, err)
+		}
+		if !strings.Contains(got, "p4dctl start") {
+			t.Errorf("version %s: missing p4dctl start", v)
+		}
+		if strings.Contains(got, "--super-passwd") {
+			t.Errorf("version %s: legacy --super-passwd must not appear in p4-server style", v)
+		}
+		if strings.Contains(got, "systemctl start helix-p4d") {
+			t.Errorf("version %s: legacy helix-p4d unit must not appear", v)
+		}
+	}
+}
+
+// TestGenerateRaw_LegacyStyle verifies pre-2026 pins keep the legacy
+// configure flags and helix-p4d unit.
+func TestGenerateRaw_LegacyStyle(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: "pw"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(got, "--super-passwd") {
+		t.Error("legacy style must use --super-passwd")
+	}
+	if !strings.Contains(got, "systemctl restart helix-p4d") {
+		t.Error("legacy style must manage the helix-p4d unit")
+	}
+	if strings.Contains(got, "p4dctl start") {
+		t.Error("legacy style must not use p4dctl")
+	}
+}

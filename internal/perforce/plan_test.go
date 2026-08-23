@@ -94,7 +94,7 @@ func TestNewCreatePlan_VersionValidation(t *testing.T) {
 		wantErr bool
 	}{
 		{"latest", false},
-		{"2024.2", false},
+		{"2025.2", false},
 		{"2024.2/2659294", false},
 		{"2025.1", false},
 		{"2025.1/1234567", false},
@@ -121,7 +121,7 @@ func TestResolveVersion(t *testing.T) {
 	cases := []struct {
 		flag, cfg, want string
 	}{
-		{"2024.2", "2023.1", "2024.2"},
+		{"2025.2", "2023.1", "2025.2"},
 		{"", "2023.1", "2023.1"},
 		{"", "", DefaultHelixVersion},
 		{"latest", "2023.1", "latest"},
