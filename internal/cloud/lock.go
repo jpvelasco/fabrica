@@ -8,6 +8,11 @@ import (
 // ErrLockHeld is returned when another run currently holds the state lock.
 var ErrLockHeld = errors.New("state lock is held by another fabrica run")
 
+// ErrLockTableMissing is returned when the lock table does not exist yet —
+// i.e. before `fabrica setup` has bootstrapped it. Callers proceed unlocked
+// (there is nothing to protect on an unbootstrapped account).
+var ErrLockTableMissing = errors.New("state lock table does not exist")
+
 // StateLockManager performs the DynamoDB rows backing state.LockStore.
 // Implemented by the AWS provider via the SDK; mechanics only — locking
 // policy (conditions, TTL takeover) lives in internal/state.

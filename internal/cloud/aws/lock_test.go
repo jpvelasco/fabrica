@@ -135,3 +135,21 @@ func TestLockDynamoDefaultFactory(t *testing.T) {
 		t.Fatal("default factory returned nil client")
 	}
 }
+
+func TestAcquireStateLockRowMissingTableMaps(t *testing.T) {
+	fake := &fakeLockDynamo{putErr: &dynamodbtypes.ResourceNotFoundException{}}
+	p := newLockAdapterTest(t, fake)
+	err := p.AcquireStateLockRow(context.Background(), "t", map[string]string{"LockID": "x"}, "cond", nil)
+	if !errors.Is(err, fabricac.ErrLockTableMissing) {
+		t.Fatalf("err = %v, want ErrLockTableMissing", err)
+	}
+}
+
+func TestReleaseStateLockRowMissingTableMaps(t *testing.T) {
+	fake := &fakeLockDynamo{deleteErr: &dynamodbtypes.ResourceNotFoundException{}}
+	p := newLockAdapterTest(t, fake)
+	err := p.ReleaseStateLockRow(context.Background(), "t", "fabrica-state/1", "tok")
+	if !errors.Is(err, fabricac.ErrLockTableMissing) {
+		t.Fatalf("err = %v, want ErrLockTableMissing", err)
+	}
+}

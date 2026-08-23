@@ -51,6 +51,10 @@ func (p *awsProvider) AcquireStateLockRow(ctx context.Context, table string, ite
 		if errors.As(err, &ccfe) {
 			return fabricac.ErrLockHeld
 		}
+		var rnf *dynamodbtypes.ResourceNotFoundException
+		if errors.As(err, &rnf) {
+			return fabricac.ErrLockTableMissing
+		}
 		return fmt.Errorf("putting state lock row in %s: %w", table, err)
 	}
 	return nil
@@ -78,6 +82,10 @@ func (p *awsProvider) ReleaseStateLockRow(ctx context.Context, table, lockID, to
 		var ccfe *dynamodbtypes.ConditionalCheckFailedException
 		if errors.As(err, &ccfe) {
 			return fabricac.ErrLockHeld
+		}
+		var rnf *dynamodbtypes.ResourceNotFoundException
+		if errors.As(err, &rnf) {
+			return fabricac.ErrLockTableMissing
 		}
 		return fmt.Errorf("deleting state lock row from %s: %w", table, err)
 	}
