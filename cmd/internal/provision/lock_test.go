@@ -183,3 +183,16 @@ func TestShortHostnameTrimsDomain(t *testing.T) {
 		t.Errorf("shortHostname(bare) = %q, want bare-host", got)
 	}
 }
+
+func TestAcquireStateLockMissingTableProceedsUnlocked(t *testing.T) {
+	locker := &fakeLockManager{acquireErr: cloud.ErrLockTableMissing}
+	rt := testRuntimeWithLocker(locker)
+	ctx, release, err := AcquireStateLock(context.Background(), rt, "setup")
+	if err != nil {
+		t.Fatalf("missing lock table must proceed unlocked, got: %v", err)
+	}
+	release()
+	if ctx.Value(lockHeldKey) != nil {
+		t.Error("sentinel must not be set when running unlocked")
+	}
+}

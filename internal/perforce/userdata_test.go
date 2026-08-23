@@ -20,12 +20,16 @@ func TestGenerateRaw_LatestVersion(t *testing.T) {
 }
 
 func TestGenerateRaw_PinnedVersion(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{Version: "2024.2", AdminPass: "testpass"})
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: "testpass"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(got, `helix-p4d=2024.2`) {
-		t.Errorf("expected version pin 'helix-p4d=2024.2', got:\n%s", got)
+	if !strings.Contains(got, `helix-p4d=2025.2`) {
+		t.Errorf("expected version pin 'helix-p4d=2025.2', got:\n%s", got)
+	}
+	// Pinned installs must fall back to the repo version when the pin rotted.
+	if !strings.Contains(got, "falling back to the latest available version") {
+		t.Error("missing pinned-install fallback")
 	}
 }
 
@@ -39,20 +43,82 @@ func TestGenerateRaw_PinnedVersionWithBuild(t *testing.T) {
 	}
 }
 
-func TestGenerateRaw_AdminPasswordAppearsOnce(t *testing.T) {
+// TestGenerateRaw_AdminPasswordLiteralOnce verifies the raw password literal
+// appears exactly once (the ADMIN_PASS assignment); both generation branches
+// reference the variable instead of repeating the secret.
+func TestGenerateRaw_AdminPasswordLiteralOnce(t *testing.T) {
 	pass := "s3cr3tP@ssw0rd"
 	got, err := GenerateRaw(UserDataConfig{Version: "2024.2", AdminPass: pass})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	count := strings.Count(got, pass)
-	if count != 1 {
+	if count := strings.Count(got, pass); count != 1 {
 		t.Errorf("admin password appears %d times, want exactly 1", count)
+	}
+	if !strings.Contains(got, `ADMIN_PASS="`+pass+`"`) {
+		t.Error("password assignment missing")
+	}
+	if !strings.Contains(got, `"$ADMIN_PASS"`) {
+		t.Error("configure branches must reference $ADMIN_PASS")
+	}
+}
+
+func TestGenerateRaw_DataDeviceAutoDetection(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: "pw"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		"findmnt -n -o SOURCE /",
+		"lsblk -no PKNAME",
+		"no unformatted data volume found besides root",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("auto-detection missing %q", want)
+		}
+	}
+	if !strings.Contains(got, "mkfs.ext4 \"$DATA_DEVICE\"") {
+		t.Error("mkfs must target the detected device variable")
+	}
+}
+
+// TestGenerateRaw_ExplicitDataDeviceHonored verifies an explicit device skips
+// auto-detection and is used verbatim.
+func TestGenerateRaw_ExplicitDataDeviceHonored(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: "pw", DataDevice: "/dev/nvme2n1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(got, `"DATA_DEVICE=/dev/nvme2n1"`) && !strings.Contains(got, "DATA_DEVICE=\"/dev/nvme2n1\"") {
+		t.Errorf("explicit device not honored:\n%s", got)
+	}
+}
+
+// TestGenerateRaw_RuntimeInterfaceDetection verifies the configure/service
+// steps detect the Perforce packaging generation at runtime rather than
+// render time — the installed version can differ from the requested pin when
+// the archive dropped it.
+func TestGenerateRaw_RuntimeInterfaceDetection(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: "pw"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		`grep -q -- '--super-passwd'`,
+		"-P \"$ADMIN_PASS\"",
+		`--super-passwd "$ADMIN_PASS"`,
+		`grep -q '^helix-p4d'`,
+		"p4dctl start \"$SERVER_ID\"",
+		"systemctl restart helix-p4d",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("runtime detection missing %q", want)
+		}
 	}
 }
 
 func TestGenerateRaw_MountPoint(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{Version: "2024.2", AdminPass: "testpass"})
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: "testpass"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -62,7 +128,7 @@ func TestGenerateRaw_MountPoint(t *testing.T) {
 }
 
 func TestGenerateRaw_PipefailPresent(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{Version: "2024.2", AdminPass: "testpass"})
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: "testpass"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -72,7 +138,7 @@ func TestGenerateRaw_PipefailPresent(t *testing.T) {
 }
 
 func TestGenerateRaw_EmptyAdminPassError(t *testing.T) {
-	_, err := GenerateRaw(UserDataConfig{Version: "2024.2", AdminPass: ""})
+	_, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: ""})
 	if err == nil {
 		t.Error("expected error for empty AdminPass")
 	}
@@ -82,9 +148,6 @@ func TestApplyDefaults(t *testing.T) {
 	t.Run("fills all zeros", func(t *testing.T) {
 		cfg := UserDataConfig{AdminPass: "pw"}
 		cfg.applyDefaults()
-		if cfg.DataDevice != "/dev/nvme1n1" {
-			t.Errorf("DataDevice = %q, want /dev/nvme1n1", cfg.DataDevice)
-		}
 		if cfg.DataMount != "/hxdepots" {
 			t.Errorf("DataMount = %q, want /hxdepots", cfg.DataMount)
 		}
@@ -139,7 +202,7 @@ func TestGenerate_ValidationError(t *testing.T) {
 }
 
 func TestGenerate_ReturnsBase64(t *testing.T) {
-	got, err := Generate(UserDataConfig{Version: "2024.2", AdminPass: "testpass"})
+	got, err := Generate(UserDataConfig{Version: "2025.2", AdminPass: "testpass"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

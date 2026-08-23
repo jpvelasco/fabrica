@@ -9,6 +9,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -60,6 +61,13 @@ func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string)
 
 	tok, err := store.Acquire(ctx, lockID, holder)
 	if err != nil {
+		if errors.Is(err, cloud.ErrLockTableMissing) {
+			// Bootstrap ordering: `setup` creates the lock table, so it (and
+			// any command on an unbootstrapped account) runs unlocked.
+			oplog.WithModule("state-lock").Warn(
+				"lock table absent — proceeding WITHOUT locking; run 'fabrica setup' to enable distributed locking")
+			return ctx, noop, nil
+		}
 		if errors.Is(err, cloud.ErrLockHeld) {
 			return ctx, noop, fmt.Errorf(
 				"%w — wait for the other run to finish, or delete the stale row (LockID %q) from table %q if it is older than %s",

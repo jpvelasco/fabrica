@@ -168,7 +168,7 @@ func TestCreateCobraAlreadyProvisioned(t *testing.T) {
 	t.Chdir(dir)
 
 	stateJSON := `{"account":"123456789012","region":"us-east-1","modules":[
-		{"name":"perforce","version":"2024.2","status":"provisioning","resources":[
+		{"name":"perforce","version":"2025.2","status":"provisioning","resources":[
 			{"typeName":"AWS::EC2::SecurityGroup","identifier":"sg-existing"},
 			{"typeName":"AWS::EC2::Instance","identifier":"i-existing"}
 		]}]}`
