@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -132,5 +133,30 @@ func TestTagInstanceVolumesCreateErrorWrapped(t *testing.T) {
 	err := s.TagInstanceVolumes(context.Background(), "i-1", map[string]string{"k": "v"})
 	if err == nil || !strings.Contains(err.Error(), "tagging volume vol-x") {
 		t.Errorf("err = %v, want tagging-phase context", err)
+	}
+}
+
+func TestTagInstanceVolumesCtxCancelledDuringRetry(t *testing.T) {
+	fake := &fakeVolumeEC2Client{} // never returns volumes
+	s := newVolumeTaggerTest(t, fake)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	err := s.TagInstanceVolumes(ctx, "i-1", map[string]string{"ManagedBy": "fabrica"})
+	if err == nil || !strings.Contains(err.Error(), "waiting for volumes on i-1") {
+		t.Fatalf("err = %v, want retry-wait cancellation error", err)
+	}
+}
+
+func TestTagInstanceVolumesEnsureClientError(t *testing.T) {
+	s := &ec2Service{
+		awsCfg: awsConfig{region: "us-east-1"},
+		loadCfg: func(_ context.Context, _, _ string) (aws.Config, error) {
+			return aws.Config{}, errors.New("no credentials")
+		},
+	}
+	err := s.TagInstanceVolumes(context.Background(), "i-1", map[string]string{"k": "v"})
+	if err == nil || !strings.Contains(err.Error(), "loading AWS config") {
+		t.Fatalf("err = %v, want config-load failure", err)
 	}
 }

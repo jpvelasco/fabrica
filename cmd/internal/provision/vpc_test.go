@@ -35,3 +35,28 @@ func TestTagVolumesPostCreate(t *testing.T) {
 		t.Fatal("TagVolumesPostCreate(nil provider) returned nil func")
 	}
 }
+
+// taggingProvider implements cloud.VolumeTagger so the positive path of
+// TagVolumesPostCreate is exercised end-to-end.
+type taggingProvider struct {
+	*testutil.TestProvider
+	tagged map[string]map[string]string
+}
+
+func (t *taggingProvider) TagInstanceVolumes(_ context.Context, instanceID string, tags map[string]string) error {
+	t.tagged[instanceID] = tags
+	return nil
+}
+
+func TestTagVolumesPostCreateRoutesThroughProvider(t *testing.T) {
+	prov := &taggingProvider{TestProvider: &testutil.TestProvider{}, tagged: map[string]map[string]string{}}
+	hook := TagVolumesPostCreate(prov, "perforce", "fabrica-perforce")
+
+	if err := hook(context.Background(), "i-42"); err != nil {
+		t.Fatalf("hook: %v", err)
+	}
+	got := prov.tagged["i-42"]
+	if got["FabricaModule"] != "perforce" || got["ManagedBy"] != "fabrica" || got["Name"] != "fabrica-perforce" {
+		t.Errorf("applied tags = %v", got)
+	}
+}
