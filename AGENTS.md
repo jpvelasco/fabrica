@@ -82,7 +82,7 @@ go list -deps ./internal/cloud/...
 
 **Provider registration** — `internal/cloud/aws/aws.go` registers the AWS provider via a blank-import side-effect (`_ "github.com/jpvelasco/fabrica/internal/cloud/aws"` in `cmd/root`). New providers follow the same `init()` pattern against `internal/cloud/registry.go`.
 
-**Config + State** — `fabrica.yaml` (or `fabrica-<profile>.yaml` with `--profile`). Copy `fabrica.example.yaml` for a starting point. State: S3 bucket (`fabrica-state-<account-id>`) + DynamoDB table (`fabrica-state-lock`) remote, with `.fabrica/state.json` local cache.
+**Config + State** — `fabrica.yaml` (or `fabrica-<profile>.yaml` with `--profile`). Copy `fabrica.example.yaml` for a starting point. `setup` rewrites the file via Viper on success (fills accountId/bucket, normalizes indentation) — re-read it before hand-editing; mixing indent styles with a normalized file breaks parsing. State: S3 bucket (`fabrica-state-<account-id>`) + DynamoDB table (`fabrica-state-lock`) remote, with `.fabrica/state.json` local cache.
 
 **Output** — dual streams: human output via `fmt.Printf`/`Println` to stdout; operational diagnostics via `internal/oplog` (stdlib `log/slog`) to stderr. Enable with `--verbose` or `FABRICA_LOG_LEVEL=debug`.
 
