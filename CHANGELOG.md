@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-08-23
+
+### Fixed
+
+- **Distributed state locking enforced end-to-end** — every state-mutating flow now acquires the account-level DynamoDB lock via `provision.AcquireStateLock`: teardown engine, setup, deploy promote/rollback, horde agents create/destroy, perforce backup create/delete, and `destroy --all`. LockStore has a 15-minute TTL with stale takeover; nested orchestration inherits the lock through a ctx sentinel. Commands on an unbootstrapped account proceed unlocked (`ErrLockTableMissing`). Lock release references the reserved keyword via expression attribute names so rows actually delete. (#336, #337, #338)
+- **Perforce 2026.1 p4-server packaging support** — userdata detects legacy helix-p4d vs p4-server generation at runtime (configure flags + p4dctl supervisor), falls back to the current repo version when a pin rots out of the jammy archive, auto-detects the largest non-root unformatted NVMe volume as the data device (enumeration order is not deterministic), and self-installs the AWS CLI plus authenticates backups via a `p4 login -a` ticket in an isolated `P4TICKETS` file. `DefaultHelixVersion` bumped to 2025.2. (#338)
+- **Volume tagging and module attribution** — BlockDeviceMapping data volumes are tagged post-create via `cloud.VolumeTagger`; `FabricaModule` is stamped on perforce, horde coordinator, and workstation desired states; `awsProvider` delegates `TagInstanceVolumes` so capability asserts succeed. (#334, #335)
+- **Machine-readable `--json` output** — agents destroy, perforce backup create, `status --wait`, and `destroy --all` emit exactly one JSON document on stdout on every exit path. (#322, #333)
+- **Horde agent enrollment and lore teardown** — agent SG direction corrected (standalone ingress rule on the coordinator SG sourced from the agent SG); lore S3 store bucket purged (versions + delete markers) before deletion, tolerating missing buckets; horde status restored correctly after agents destroy; all Horde API requests bounded by a 30-second timeout. (#319, #325, #327, #333)
+- **State-integrity repairs** — VPC resolver wired into perforce/lore/workstation create so omitted config resolves the default VPC; partial `vpcId`/`subnetId` pairs fail fast; deploy setup preserves build/fleet records on re-setup; deploy promote verifies incremental state writes before fleet creation. (#316, #319)
+- **Workstation sizing and cost fidelity** — per-field precedence (flags > config > template > default), cost estimates price the resolved shape, and g6.xlarge/g6.2xlarge/g6.4xlarge/i4i.large prices added. (#317)
+- **Export correctness** — module-internal properties no longer leak into CloudFormation/Terraform templates; fallback instance types reference real defaults; `export --dry-run` honored as documented. (#320)
+- **Context-aware polling** — Ctrl+C ends submit/promote/trigger/status waits immediately; DDC edge probes thread the command context. (#326)
+- **CI logs and backups** — `ci logs` paginates CloudWatch Logs past ~10k events instead of truncating; generated backup scripts write metadata manifests alongside uploads. (#323)
+- **Road-test batch** — drift no longer flags a deliberately stopped workstation; state-backend waiter contexts bound at 3 minutes; cost-alert scope list derived from known scopes; mutex-guarded lazy client init closes the MCP concurrency race; explicit `--min-size 0` wins over nonzero config. (#324)
+
+### Changed
+
+- **Go toolchain 1.25.13** — clears five reachable stdlib vulnerabilities reported by govulncheck on 1.25.12. (#318)
+- **Docs** — AGENTS.md refreshed to current architecture, locking semantics, and live road-test knowledge (provider capability delegates, bootstrap ordering, Perforce packaging generations); setup warns that it rewrites `fabrica.yaml` via Viper. (#328, #340, #341)
+
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/jpvelasco/fabrica/compare/v0.4.2...v0.4.3
+
 ## [0.4.2] - 2026-08-13
 
 ### Added
@@ -29,7 +53,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Export Lore IAM roles** — Lore IAM roles now include `AmazonSSMManagedInstanceCore` in exported IaC templates via `managedPolicyARNsForModule`. (#276)
 - **Export/Drift S3 coverage** — Lore S3 store resources (bucket, IAM role, instance profile) covered in export and drift checks. (#276)
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.4.2...HEAD
 [0.4.2]: https://github.com/jpvelasco/fabrica/compare/v0.4.1...v0.4.2
 
 ## [0.4.1] - 2026-08-12
