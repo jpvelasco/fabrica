@@ -180,7 +180,7 @@ go list -deps ./internal/cloud/...     # layering check
 
 ### Linting
 
-`.golangci.yml` (v2 schema) starts from `default: none` and explicitly enables: `errcheck`, `govet`, `ineffassign`, `staticcheck`, `unused`, `gocritic`, `misspell`, `unconvert`, `gosec`, `dupl`. `gofmt` is the only formatter. `gosec` excludes G104 (best-effort cleanup), G204/G702/G703 (subprocess/taint-analysis noise for a CLI tool), G301/G306 (standard dir/file perms), G304 (config-file reads via variable path) — match these rationales before adding new suppressions. Codacy mirrors this via `.codacy.yml` (govet + staticcheck engines).
+`.golangci.yml` (v2 schema) starts from `default: none` and explicitly enables: `errcheck`, `govet`, `ineffassign`, `staticcheck`, `unused`, `gocritic`, `misspell`, `unconvert`, `gosec`, `dupl`. `gofmt` is the only formatter. `gosec` excludes G104 (best-effort cleanup), G204/G702/G703 (subprocess/taint-analysis noise for a CLI tool), G301/G306 (standard dir/file perms), G304 (config-file reads via variable path) — match these rationales before adding new suppressions. Codacy mirrors this via `.codacy.yml` (govet + staticcheck engines). The Opengrep pattern `Semgrep_go.lang.security.audit.xss.import-text-template.import-text-template` is disabled repo-wide in the Codacy dashboard (inline `// nosemgrep` comments are ignored by the managed scan): every `text/template` use renders local build artifacts or cloud-init, never HTML; re-enable only if a web surface appears.
 
 ### CI
 
