@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	// nosemgrep: go.lang.security.audit.xss.import-text-template.import-text-template — renders
+	// local YAML/JSON/HCL/MD build artifacts, not HTML; no server or browser consumes this output.
 	"text/template"
 
 	"github.com/spf13/cobra"
