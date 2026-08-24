@@ -4,7 +4,7 @@ This document tracks what Fabrica ships today and where it's headed next.
 The `README.md` describes how to use what exists; this file tracks status and
 sequencing. When they disagree, this file wins.
 
-Last updated: 2026-08-13 (v0.4.2).
+Last updated: 2026-08-23 (v0.4.3).
 
 ## What Fabrica Is
 
@@ -30,7 +30,7 @@ These govern every structural decision and carry across all phases.
 
 ## Current Status
 
-**Current stable: v0.4.2** (2026-08-13). Phase 0, Phase 1, Lore (v0.3 with S3 store backend, AMI build command, TLS config hooks), DDC
+**Current stable: v0.4.3** (2026-08-23). Phase 0, Phase 1, Lore (v0.3 with S3 store backend, AMI build command, TLS config hooks), DDC
 (V1 + multi-region edge nodes with live edge probes), and Horde Agents V1 (including queue-based autoscaling) are all complete. Export V2 covers all 8
 modules (state backend, Horde, Perforce, Lore, DDC, Workstation, CI, Deploy).
 Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. Dedicated AMI build guides are available in `docs/horde-agent-ami.md` and `docs/lore-ami.md`.
@@ -70,7 +70,7 @@ Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. Dedicated
 
 - **IaC:** AWS Cloud Control API — no Terraform, Pulumi, or external binaries
 - **Module path:** `github.com/jpvelasco/fabrica`
-- **Go version:** 1.25.12
+- **Go version:** 1.25.13
 - **Config:** Viper + YAML, scoped inside `internal/config` only
 - **Output:** dual streams — human output via `fmt.Print*` to stdout; operational diagnostics via `internal/oplog` (stdlib `log/slog`) to stderr
 - **State:** S3 bucket (`fabrica-state-<account-id>`) + DynamoDB lock table (`fabrica-state-lock`); local `.fabrica/state.json` cache
