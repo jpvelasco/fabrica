@@ -4,7 +4,7 @@
 
 Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, zero external dependencies. Sister tool to [Ludus](https://github.com/jpvelasco/ludus) — Ludus orchestrates game builds, Fabrica gives them somewhere to run.
 
-**Current state:** All phases implemented — Phase 0, Phase 1 (core pipeline), Lore (v0.2), and DDC (V1 + multi-region edge nodes) are complete; current stable release **v0.4.2** (2026-08-19). Modules implemented: `perforce`, `horde`, `lore`, `ddc`, `workstation`, `ci`, `deploy`, `cost`, plus read-only `status`, `doctor`, `drift`, `config show`, `export`, `mcp`, full-stack `destroy --all`, and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) for the authoritative, current module status.
+**Current state:** All phases implemented — Phase 0, Phase 1 (core pipeline), Lore (v0.2), and DDC (V1 + multi-region edge nodes) are complete; current stable release **v0.4.3** (2026-08-23). Modules implemented: `perforce`, `horde`, `lore`, `ddc`, `workstation`, `ci`, `deploy`, `cost`, plus read-only `status`, `doctor`, `drift`, `config show`, `export`, `mcp`, full-stack `destroy --all`, and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) for the authoritative, current module status.
 
 **Private designs:** Draft specs and implementation plans for future work live under `.private/` (gitignored — never commit). Suggested layout: `.private/designs/`, `.private/plans/`. Public user docs stay in `docs/` (AMI guides, deploy notes) and root `README.md` / `ROADMAP.md`.
 
@@ -13,15 +13,15 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 | Module | Commands | What it does |
 |--------|----------|--------------|
 | foundation | `setup`, `status`, `doctor`, `drift`, `config show`, `version` | S3 + DynamoDB state backend, aggregate health overview, env checks, read-only drift detection against live AWS, config display, version |
-| `perforce` | `create`, `status`, `destroy`, `backup`, `restore` | Provisions a Perforce Helix Core EC2 instance with SG + SSM instance profile; tracks provisioning state; TCP probe on 1666; EBS backup/restore via SSM |
-| `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Provisions an Unreal Horde build coordinator (AMI-first, m7i.2xlarge) with SG + IAM SSM instance profile; probes port 5000; parses BuildGraph XML and POSTs jobs to the Horde REST API; generates EC2 Image Builder recipe + optional Packer HCL for building the required AMI |
+| `perforce` | `create`, `status`, `destroy`, `backup create\|list\|delete`, `restore` | Provisions a Perforce Helix Core EC2 instance with SG + SSM instance profile; tracks provisioning state; TCP probe on 1666; EBS backup/restore via SSM |
+| `horde` | `create`, `status`, `submit`, `destroy`, `ami build`, `agents create\|status\|destroy` | Provisions an Unreal Horde build coordinator (AMI-first, m7i.2xlarge) with SG + IAM SSM instance profile; probes port 5000; parses BuildGraph XML and POSTs jobs to the Horde REST API; generates EC2 Image Builder recipe + optional Packer HCL for building the required AMI; `agents` manages the ASG-backed agent pool |
 | `lore` | `create`, `status`, `destroy` | Provisions an Epic Lore (`loreserver`) EC2 instance (AMI-first, local/EBS store); probes `GET /health_check` on port 41339; parallel to Perforce |
 | `ddc` | `setup`, `status`, `destroy`, `region add` | Provisions Unreal Cloud DDC (Jupiter) on EC2 (AMI-first, home region + additional edge regions); hybrid EBS+S3; default `zen` backend; probes `GET /health/ready` |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Provisions a NICE DCV cloud workstation on EC2 (AMI-first, g4dn.xlarge default); allows TCP 8443 inbound; writes DCV session credentials to `.fabrica/workstation-credentials.yaml`; supports stop/start via EC2InstanceManager and permanent termination |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | CodeBuild orchestration over Horde; IAM role via Cloud Control, CodeBuild project via SDK auxiliary interface |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | GameLift blue/green deployment; fleet activation polling via SDK auxiliary interface |
 | `cost` | `report`, `forecast`, `alerts` | Offline config-derived reporting + local budget alerts |
-| `export` | `--format cloudformation\|terraform` | Generates IaC templates from recorded local state only — no live AWS calls; V1 covers state backend + horde/perforce/lore; secrets redacted |
+| `export` | `--format cloudformation\|terraform` | Generates IaC templates from recorded local state only — no live AWS calls; V2 covers all 8 modules (state backend, Horde, Perforce, Lore, DDC, Workstation, CI, Deploy); secrets redacted |
 | `mcp` | `mcp` | stdio MCP server exposing 6 read-only tools; reuses the same `internal/*` logic as the CLI |
 
 ## Current Known Limitations
@@ -312,7 +312,7 @@ git config core.hooksPath .githooks
 ```
 fabrica setup                               # guided first-run provisioning wizard
 fabrica status                              # health of all modules
-fabrica perforce create|status|destroy|backup|restore  # ✓ implemented
+fabrica perforce create|status|destroy|backup create\|list\|delete|restore  # ✓ implemented
 fabrica horde create|status|submit|destroy  # ✓ implemented
 fabrica lore create|status|destroy          # ✓ implemented (v0.2; parallel to Perforce)
 fabrica ddc setup|status|destroy|region add    # ✓ implemented (home region + edge regions)

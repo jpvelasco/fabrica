@@ -10,7 +10,7 @@ building, testing, and opening a pull request.
    ```bash
    git checkout -b feat/your-feature
    ```
-3. Install Go **1.25.12+**.
+3. Install Go **1.25.13+**.
 4. (Optional, once per clone) activate the tracked git hooks:
    ```bash
    git config core.hooksPath .githooks

@@ -53,7 +53,7 @@ affected.
 
 ## Requirements
 
-- Go 1.25.12+
+- Go 1.25.13+
 - AWS credentials with permissions to create EC2 instances, security groups, S3 buckets, and DynamoDB tables
 - IAM permission for `sts:GetCallerIdentity`
 

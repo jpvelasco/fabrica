@@ -28,9 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Go toolchain 1.25.13** — clears five reachable stdlib vulnerabilities reported by govulncheck on 1.25.12. (#318)
 - **Docs** — AGENTS.md refreshed to current architecture, locking semantics, and live road-test knowledge (provider capability delegates, bootstrap ordering, Perforce packaging generations); setup warns that it rewrites `fabrica.yaml` via Viper. (#328, #340, #341)
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.4.3...HEAD
-[0.4.3]: https://github.com/jpvelasco/fabrica/compare/v0.4.2...v0.4.3
-
 ## [0.4.2] - 2026-08-13
 
 ### Added
@@ -52,8 +49,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Export Lore IAM roles** — Lore IAM roles now include `AmazonSSMManagedInstanceCore` in exported IaC templates via `managedPolicyARNsForModule`. (#276)
 - **Export/Drift S3 coverage** — Lore S3 store resources (bucket, IAM role, instance profile) covered in export and drift checks. (#276)
-
-[0.4.2]: https://github.com/jpvelasco/fabrica/compare/v0.4.1...v0.4.2
 
 ## [0.4.1] - 2026-08-12
 
@@ -310,7 +305,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/jpvelasco/fabrica/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/jpvelasco/fabrica/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/jpvelasco/fabrica/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jpvelasco/fabrica/compare/v0.3.5...v0.4.0
