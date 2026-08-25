@@ -13,6 +13,12 @@ variable "aws_region" {
   description = "AWS region to build the AMI in."
 }
 
+variable "source_ami" {
+  type        = string
+  default     = "{{ .BaseImage }}"
+  description = "Region-local Ubuntu 22.04 x86_64 base AMI ID."
+}
+
 variable "lore_version" {
   type        = string
   default     = "{{ .Version }}"
@@ -38,7 +44,7 @@ source "amazon-ebs" "lore" {
   ami_name      = local.ami_name
   instance_type = var.instance_type
   region        = var.aws_region
-  source_ami    = "{{ .BaseImage }}"
+  source_ami    = var.source_ami
   ssh_username  = "ubuntu"
 
   ami_block_device_mappings {
@@ -65,28 +71,12 @@ build {
   }
 
   provisioner "shell" {
-    execute_command = "sudo -E bash -c '{{`{{ .Vars }}`}} {{`{{ .Path }}`}}'"
-    inline_shebang  = "/bin/bash -euo pipefail"
-    inline = [
-      "mkdir -p /opt/loreserver /etc/loreserver",
-      "cp /tmp/lore-bin/loreserver /opt/loreserver/",
-      "chmod +x /opt/loreserver/loreserver",
-      "ln -sf /opt/loreserver/loreserver /usr/local/bin/loreserver",
-      "cat >/etc/systemd/system/loreserver.service <<'UNIT'\n[Unit]\nDescription=Epic Lore Version Control Server\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart=/opt/loreserver/loreserver --config /etc/loreserver\nRestart=always\nRestartSec=10\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\nUNIT",
-      "systemctl daemon-reload",
-      "systemctl enable loreserver",
-      "systemctl enable amazon-ssm-agent",
-    ]
+    execute_command = "sudo -E bash '{{`{{ .Path }}`}}'"
+    scripts         = ["${path.root}/install-lore.sh"]
   }
 
   provisioner "shell" {
-    execute_command = "sudo -E bash -c '{{`{{ .Vars }}`}} {{`{{ .Path }}`}}'"
-    inline_shebang  = "/bin/bash -euo pipefail"
-    inline = [
-      "systemctl is-enabled loreserver",
-      "systemctl is-enabled amazon-ssm-agent",
-      "test -d /etc/loreserver",
-      "which loreserver",
-    ]
+    execute_command = "sudo -E bash '{{`{{ .Path }}`}}'"
+    scripts         = ["${path.root}/verify-lore-ami-bake.sh"]
   }
 }

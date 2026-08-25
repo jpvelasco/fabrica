@@ -5,49 +5,33 @@ description: Installs loreserver {{ .Version }} for use with fabrica lore create
 phases:
   - name: build
     steps:
-      - name: InstallLoreServer
+      - name: StageLicensedLoreDistribution
         action: ExecuteBash
         inputs:
           commands:
             - set -euo pipefail
-            - mkdir -p /opt/loreserver /etc/loreserver
-            - aws s3 sync s3://REPLACE_WITH_YOUR_BUCKET/loreserver-bin/ /opt/loreserver/ --exact-timestamps
-            - chmod +x /opt/loreserver/loreserver
-            - ln -sf /opt/loreserver/loreserver /usr/local/bin/loreserver
+            - mkdir -p /tmp/lore-bin
+            - aws s3 sync s3://REPLACE_WITH_YOUR_BUCKET/loreserver-bin/ /tmp/lore-bin/ --exact-timestamps
+      - name: InstallLoreContract
+        action: ExecuteBash
+        inputs:
+          commands:
             - |
-              cat >/etc/systemd/system/loreserver.service <<'UNIT'
-              [Unit]
-              Description=Epic Lore Version Control Server
-              After=network-online.target
-              Wants=network-online.target
-
-              [Service]
-              Type=simple
-              ExecStart=/opt/loreserver/loreserver --config /etc/loreserver
-              Restart=always
-              RestartSec=10
-              StandardOutput=journal
-              StandardError=journal
-
-              [Install]
-              WantedBy=multi-user.target
-              UNIT
-            - systemctl daemon-reload
-            - systemctl enable loreserver
+              cat >/tmp/install-lore.sh <<'SCRIPT'
+{{ indent 14 .InstallScript }}
+              SCRIPT
+            - chmod 0755 /tmp/install-lore.sh
+            - /tmp/install-lore.sh
 
   - name: validate
     steps:
-      - name: VerifyUnitsEnabled
+      - name: VerifyLoreContract
         action: ExecuteBash
         inputs:
           commands:
-            - set -euo pipefail
-            - systemctl is-enabled loreserver
-
-  - name: test
-    steps:
-      - name: LoreUnitDiscoverable
-        action: ExecuteBash
-        inputs:
-          commands:
-            - systemctl cat loreserver >/dev/null
+            - |
+              cat >/tmp/verify-lore-ami-bake.sh <<'SCRIPT'
+{{ indent 14 .BakeVerificationScript }}
+              SCRIPT
+            - chmod 0755 /tmp/verify-lore-ami-bake.sh
+            - /tmp/verify-lore-ami-bake.sh

@@ -119,6 +119,51 @@ func TestGenerateRawLocalStoreBackend(t *testing.T) {
 	}
 }
 
+func TestGenerateRawRemainsCompatibleWithDefaultAMIContract(t *testing.T) {
+	contract := DefaultAMIContract()
+	tests := []struct {
+		name         string
+		storeBackend string
+		storeBucket  string
+		wantStore    string
+	}{
+		{
+			name:         "local store",
+			storeBackend: StoreBackendLocal,
+			wantStore:    "mode = \"local\"",
+		},
+		{
+			name:         "S3 store",
+			storeBackend: StoreBackendS3,
+			storeBucket:  "fabrica-lore-store-test",
+			wantStore:    "mode = \"s3\"",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw, err := GenerateRaw(UserDataConfig{
+				StoreBackend: tt.storeBackend,
+				StoreBucket:  tt.storeBucket,
+			})
+			if err != nil {
+				t.Fatalf("GenerateRaw() error: %v", err)
+			}
+			for _, want := range []string{
+				"CONFIG_DIR=\"" + contract.ConfigDir + "\"",
+				"$CONFIG_DIR/local.toml",
+				"systemctl enable " + contract.ServiceName,
+				"systemctl restart " + contract.ServiceName,
+				tt.wantStore,
+			} {
+				if !strings.Contains(raw, want) {
+					t.Errorf("cloud-init missing AMI contract behavior %q", want)
+				}
+			}
+		})
+	}
+}
+
 func TestApplyDefaults(t *testing.T) {
 	t.Run("fills all zeros", func(t *testing.T) {
 		cfg := UserDataConfig{}
