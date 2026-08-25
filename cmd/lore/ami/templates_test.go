@@ -5,16 +5,22 @@ import (
 	"testing"
 )
 
-func TestRenderTemplates(t *testing.T) {
-	cfg := BuildConfig{
-		Version:   "5.5.0",
-		BaseImage: defaultBaseImage,
-		Region:    "us-west-2",
-		Name:      "fabrica-lore-5.5.0",
-		OutputDir: "lore-ami",
+func newRenderTestCommand(includePacker bool) *buildCommand {
+	return &buildCommand{
+		out: &bytes.Buffer{},
+		cfg: BuildConfig{
+			Version:       "5.5.0",
+			BaseImage:     defaultBaseImage,
+			Region:        "us-west-2",
+			Name:          "fabrica-lore-5.5.0",
+			OutputDir:     "lore-ami",
+			IncludePacker: includePacker,
+		},
 	}
+}
 
-	b := &buildCommand{out: &bytes.Buffer{}, cfg: cfg}
+func TestRenderTemplates(t *testing.T) {
+	b := newRenderTestCommand(false)
 	data, err := b.templateData()
 	if err != nil {
 		t.Fatalf("templateData() error: %v", err)
@@ -84,6 +90,32 @@ func TestRenderTemplates(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRenderedTemplatesUseLFNewlines(t *testing.T) {
+	b := newRenderTestCommand(true)
+	data, err := b.templateData()
+	if err != nil {
+		t.Fatalf("templateData() error: %v", err)
+	}
+
+	// Generated artifacts are consumed by AWS Image Builder and Packer on
+	// Linux; a CR byte (e.g. from a CRLF git checkout on Windows hosts)
+	// leaks into bash/YAML output and breaks execution.
+	for _, tmpl := range []string{
+		"image-builder.json.tmpl",
+		"component.yaml.tmpl",
+		"packer.hcl.tmpl",
+		"build-guide.md.tmpl",
+	} {
+		rendered, err := b.renderTemplate(tmpl, data)
+		if err != nil {
+			t.Fatalf("renderTemplate(%s) error: %v", tmpl, err)
+		}
+		if bytes.ContainsRune(rendered, '\r') {
+			t.Errorf("rendered %s contains CR bytes; want LF-only newlines", tmpl)
+		}
 	}
 }
 

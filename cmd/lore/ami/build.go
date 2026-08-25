@@ -53,6 +53,7 @@ type buildCommand struct {
 
 	writeFile func(path string, data []byte, perm os.FileMode) error
 	mkdirAll  func(path string, perm os.FileMode) error
+	contract  func() lore.AMIContract
 }
 
 type templateData struct {
@@ -103,6 +104,7 @@ Examples:
 				cfg:       cfg,
 				writeFile: os.WriteFile,
 				mkdirAll:  os.MkdirAll,
+				contract:  lore.DefaultAMIContract,
 			}
 			return bc.run()
 		},
@@ -239,7 +241,11 @@ func planVerb(dryRun bool) string {
 }
 
 func (b *buildCommand) templateData() (templateData, error) {
-	contract := lore.DefaultAMIContract()
+	contractFn := b.contract
+	if contractFn == nil {
+		contractFn = lore.DefaultAMIContract
+	}
+	contract := contractFn()
 	installScript, err := contract.InstallScript("/tmp/lore-bin")
 	if err != nil {
 		return templateData{}, fmt.Errorf("generating Lore AMI install script: %w", err)
@@ -293,6 +299,7 @@ func (b *buildCommand) renderTemplate(name string, data any) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading template %s: %w", name, err)
 	}
+	raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
 	tmpl, err := template.New(name).Funcs(template.FuncMap{"indent": indent}).Option("missingkey=error").Parse(string(raw))
 	if err != nil {
 		return nil, fmt.Errorf("parsing template %s: %w", name, err)

@@ -213,6 +213,84 @@ func TestBuildRunWriteError(t *testing.T) {
 	}
 }
 
+func TestBuildRunWriteErrorPerFile(t *testing.T) {
+	targets := []string{
+		"image-builder-recipe.json",
+		"component.yaml",
+		"install-lore.sh",
+		"verify-lore-ami-bake.sh",
+		"verify-lore-ami-runtime.sh",
+		"packer.pkr.hcl",
+		"build-guide.md",
+	}
+
+	for _, target := range targets {
+		t.Run(target, func(t *testing.T) {
+			var out bytes.Buffer
+			b := &buildCommand{
+				out: &out,
+				cfg: BuildConfig{
+					Version:       "5.5.0",
+					BaseImage:     defaultBaseImage,
+					Region:        defaultRegion,
+					Name:          "fabrica-lore-5.5.0",
+					OutputDir:     "out",
+					IncludePacker: true,
+				},
+				mkdirAll: func(path string, perm os.FileMode) error { return nil },
+				writeFile: func(path string, data []byte, perm os.FileMode) error {
+					if filepath.Base(path) == target {
+						return fmt.Errorf("disk full")
+					}
+					return nil
+				},
+			}
+
+			err := b.run()
+			if err == nil {
+				t.Fatalf("expected write failure for %s, got nil", target)
+			}
+			if !bytes.Contains([]byte(err.Error()), []byte(target)) {
+				t.Errorf("error %q does not mention failed file %s", err, target)
+			}
+		})
+	}
+}
+
+func TestBuildRunContractError(t *testing.T) {
+	contract := lore.DefaultAMIContract()
+	contract.ServiceName = ""
+
+	b := &buildCommand{
+		out: &bytes.Buffer{},
+		cfg: BuildConfig{
+			Version:   "5.5.0",
+			BaseImage: defaultBaseImage,
+			Region:    defaultRegion,
+			OutputDir: "out",
+		},
+		contract: func() lore.AMIContract { return contract },
+	}
+
+	err := b.run()
+	if err == nil {
+		t.Fatal("expected contract error, got nil")
+	}
+	want := "generating Lore AMI install script"
+	if !bytes.Contains([]byte(err.Error()), []byte(want)) {
+		t.Errorf("error %q does not contain %q", err, want)
+	}
+}
+
+func TestRenderTemplateReadError(t *testing.T) {
+	b := &buildCommand{out: &bytes.Buffer{}}
+	if _, err := b.renderTemplate("does-not-exist.tmpl", struct{}{}); err == nil {
+		t.Fatal("expected read error for missing template, got nil")
+	} else if !bytes.Contains([]byte(err.Error()), []byte("reading template")) {
+		t.Errorf("error %q does not mention reading failure", err)
+	}
+}
+
 func TestBuildRunInvalidTemplate(t *testing.T) {
 	var out bytes.Buffer
 	b := &buildCommand{
