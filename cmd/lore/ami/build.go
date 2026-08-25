@@ -9,10 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	// nosemgrep: go.lang.security.audit.xss.import-text-template.import-text-template — renders
 	// local YAML/JSON/HCL/MD build artifacts, not HTML; no server or browser consumes this output.
 	"text/template"
 
+	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/spf13/cobra"
 )
 
@@ -51,6 +53,14 @@ type buildCommand struct {
 
 	writeFile func(path string, data []byte, perm os.FileMode) error
 	mkdirAll  func(path string, perm os.FileMode) error
+}
+
+type templateData struct {
+	BuildConfig
+	InstallScript             string
+	BakeVerificationScript    string
+	RuntimeVerificationScript string
+	Contract                  lore.AMIContract
 }
 
 func newBuildCmd(out io.Writer) *cobra.Command {
@@ -115,8 +125,18 @@ func (b *buildCommand) run() error {
 	if b.cfg.Name == "" {
 		b.cfg.Name = fmt.Sprintf("fabrica-lore-%s", b.cfg.Version)
 	}
+	data, err := b.templateData()
+	if err != nil {
+		return err
+	}
 
-	plannedFiles := []string{"image-builder-recipe.json", "component.yaml"}
+	plannedFiles := []string{
+		"image-builder-recipe.json",
+		"component.yaml",
+		"install-lore.sh",
+		"verify-lore-ami-bake.sh",
+		"verify-lore-ami-runtime.sh",
+	}
 	if b.cfg.IncludePacker {
 		plannedFiles = append(plannedFiles, "packer.pkr.hcl")
 	}
@@ -135,18 +155,27 @@ func (b *buildCommand) run() error {
 		return fmt.Errorf("creating --output-dir %q: %w", b.cfg.OutputDir, err)
 	}
 
-	if err := b.writeRendered("image-builder.json.tmpl", "image-builder-recipe.json", validateImageBuilderJSON); err != nil {
+	if err := b.writeRendered("image-builder.json.tmpl", "image-builder-recipe.json", data, validateImageBuilderJSON); err != nil {
 		return err
 	}
-	if err := b.writeRendered("component.yaml.tmpl", "component.yaml", validateComponentYAML); err != nil {
+	if err := b.writeRendered("component.yaml.tmpl", "component.yaml", data, validateComponentYAML); err != nil {
+		return err
+	}
+	if err := b.writeScript("install-lore.sh", data.InstallScript); err != nil {
+		return err
+	}
+	if err := b.writeScript("verify-lore-ami-bake.sh", data.BakeVerificationScript); err != nil {
+		return err
+	}
+	if err := b.writeScript("verify-lore-ami-runtime.sh", data.RuntimeVerificationScript); err != nil {
 		return err
 	}
 	if b.cfg.IncludePacker {
-		if err := b.writeRendered("packer.hcl.tmpl", "packer.pkr.hcl", nil); err != nil {
+		if err := b.writeRendered("packer.hcl.tmpl", "packer.pkr.hcl", data, nil); err != nil {
 			return err
 		}
 	}
-	if err := b.writeRendered("build-guide.md.tmpl", "build-guide.md", nil); err != nil {
+	if err := b.writeRendered("build-guide.md.tmpl", "build-guide.md", data, nil); err != nil {
 		return err
 	}
 
@@ -209,18 +238,50 @@ func planVerb(dryRun bool) string {
 	return "Writing"
 }
 
-func (b *buildCommand) writeRendered(tmplName, outName string, validate func([]byte) error) error {
-	data, err := b.renderTemplate(tmplName, b.cfg)
+func (b *buildCommand) templateData() (templateData, error) {
+	contract := lore.DefaultAMIContract()
+	installScript, err := contract.InstallScript("/tmp/lore-bin")
+	if err != nil {
+		return templateData{}, fmt.Errorf("generating Lore AMI install script: %w", err)
+	}
+	bakeVerificationScript, err := contract.BakeVerificationScript()
+	if err != nil {
+		return templateData{}, fmt.Errorf("generating Lore AMI bake verification script: %w", err)
+	}
+	runtimeVerificationScript, err := contract.VerificationScript()
+	if err != nil {
+		return templateData{}, fmt.Errorf("generating Lore AMI runtime verification script: %w", err)
+	}
+	return templateData{
+		BuildConfig:               b.cfg,
+		InstallScript:             installScript,
+		BakeVerificationScript:    bakeVerificationScript,
+		RuntimeVerificationScript: runtimeVerificationScript,
+		Contract:                  contract,
+	}, nil
+}
+
+func (b *buildCommand) writeRendered(tmplName, outName string, data any, validate func([]byte) error) error {
+	rendered, err := b.renderTemplate(tmplName, data)
 	if err != nil {
 		return err
 	}
 	if validate != nil {
-		if err := validate(data); err != nil {
+		if err := validate(rendered); err != nil {
 			return fmt.Errorf("rendered %s is invalid: %w", outName, err)
 		}
 	}
 	path := filepath.Join(b.cfg.OutputDir, outName)
-	if err := b.writeFile(path, data, 0644); err != nil {
+	if err := b.writeFile(path, rendered, 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	fmt.Fprintf(b.out, "  wrote %s\n", path)
+	return nil
+}
+
+func (b *buildCommand) writeScript(name, script string) error {
+	path := filepath.Join(b.cfg.OutputDir, name)
+	if err := b.writeFile(path, []byte(script), 0755); err != nil {
 		return fmt.Errorf("writing %s: %w", path, err)
 	}
 	fmt.Fprintf(b.out, "  wrote %s\n", path)
@@ -232,7 +293,7 @@ func (b *buildCommand) renderTemplate(name string, data any) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading template %s: %w", name, err)
 	}
-	tmpl, err := template.New(name).Option("missingkey=error").Parse(string(raw))
+	tmpl, err := template.New(name).Funcs(template.FuncMap{"indent": indent}).Option("missingkey=error").Parse(string(raw))
 	if err != nil {
 		return nil, fmt.Errorf("parsing template %s: %w", name, err)
 	}
@@ -241,6 +302,11 @@ func (b *buildCommand) renderTemplate(name string, data any) ([]byte, error) {
 		return nil, fmt.Errorf("rendering template %s: %w", name, err)
 	}
 	return buf.Bytes(), nil
+}
+
+func indent(spaces int, value string) string {
+	prefix := strings.Repeat(" ", spaces)
+	return prefix + strings.ReplaceAll(strings.TrimSuffix(value, "\n"), "\n", "\n"+prefix)
 }
 
 func (b *buildCommand) printSuccess(files []string) {

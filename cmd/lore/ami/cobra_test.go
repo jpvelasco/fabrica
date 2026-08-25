@@ -44,12 +44,19 @@ func TestAMIBuildDefaults(t *testing.T) {
 	}
 
 	got := out.String()
-	if !bytes.Contains([]byte(got), []byte("Generated 3 files")) {
-		t.Errorf("expected 'Generated 3 files', got:\n%s", got)
+	if !bytes.Contains([]byte(got), []byte("Generated 6 files")) {
+		t.Errorf("expected 'Generated 6 files', got:\n%s", got)
 	}
 
 	// Check files were created
-	expectedFiles := []string{"image-builder-recipe.json", "component.yaml", "build-guide.md"}
+	expectedFiles := []string{
+		"image-builder-recipe.json",
+		"component.yaml",
+		"install-lore.sh",
+		"verify-lore-ami-bake.sh",
+		"verify-lore-ami-runtime.sh",
+		"build-guide.md",
+	}
 	for _, f := range expectedFiles {
 		path := filepath.Join(outputDir, f)
 		if _, err := os.Stat(path); err != nil {
@@ -68,8 +75,8 @@ func TestAMIBuildWithPacker(t *testing.T) {
 	}
 
 	got := out.String()
-	if !bytes.Contains([]byte(got), []byte("Generated 4 files")) {
-		t.Errorf("expected 'Generated 4 files', got:\n%s", got)
+	if !bytes.Contains([]byte(got), []byte("Generated 7 files")) {
+		t.Errorf("expected 'Generated 7 files', got:\n%s", got)
 	}
 
 	path := filepath.Join(outputDir, "packer.pkr.hcl")

@@ -15,6 +15,10 @@ func TestRenderTemplates(t *testing.T) {
 	}
 
 	b := &buildCommand{out: &bytes.Buffer{}, cfg: cfg}
+	data, err := b.templateData()
+	if err != nil {
+		t.Fatalf("templateData() error: %v", err)
+	}
 
 	tests := []struct {
 		template   string
@@ -37,7 +41,10 @@ func TestRenderTemplates(t *testing.T) {
 				"name: fabrica-lore-5.5.0",
 				"loreserver 5.5.0",
 				"REPLACE_WITH_YOUR_BUCKET",
-				"systemctl is-enabled loreserver",
+				"/tmp/lore-bin/ --exact-timestamps",
+				"cp -a /tmp/lore-bin/. /opt/loreserver/",
+				"systemctl is-enabled --quiet loreserver.service",
+				"fi\n              SCRIPT",
 			},
 		},
 		{
@@ -47,6 +54,7 @@ func TestRenderTemplates(t *testing.T) {
 				"us-west-2",
 				"fabrica lore create",
 				"REPLACE_WITH_CUSTOM_COMPONENT_ARN",
+				"verify-lore-ami-runtime.sh",
 			},
 		},
 		{
@@ -56,19 +64,22 @@ func TestRenderTemplates(t *testing.T) {
 				"us-west-2",
 				"m7i.xlarge",
 				"ami-0c7217cdde317cfec",
-				"loreserver",
+				"variable \"source_ami\"",
+				"source_ami    = var.source_ami",
+				"install-lore.sh",
+				"verify-lore-ami-bake.sh",
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.template, func(t *testing.T) {
-			data, err := b.renderTemplate(tt.template, cfg)
+			rendered, err := b.renderTemplate(tt.template, data)
 			if err != nil {
 				t.Fatalf("renderTemplate(%s) error: %v", tt.template, err)
 			}
 			for _, want := range tt.wantSubstr {
-				if !bytes.Contains(data, []byte(want)) {
+				if !bytes.Contains(rendered, []byte(want)) {
 					t.Errorf("rendered %s missing %q", tt.template, want)
 				}
 			}
@@ -153,6 +164,11 @@ func TestValidateComponentYAML(t *testing.T) {
 		{
 			name:    "missing name",
 			yaml:    "schemaVersion: 1.0\nphases:\n",
+			wantErr: true,
+		},
+		{
+			name:    "invalid YAML with required fields",
+			yaml:    "schemaVersion: 1.0\nname: test\nphases:\n  - name: build\n    steps: [\n",
 			wantErr: true,
 		},
 	}

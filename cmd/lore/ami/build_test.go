@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/lore"
 )
 
 func TestBuildValidate(t *testing.T) {
@@ -112,7 +115,14 @@ func TestBuildDryRun(t *testing.T) {
 		},
 	}
 
-	plannedFiles := []string{"image-builder-recipe.json", "component.yaml", "build-guide.md"}
+	plannedFiles := []string{
+		"image-builder-recipe.json",
+		"component.yaml",
+		"install-lore.sh",
+		"verify-lore-ami-bake.sh",
+		"verify-lore-ami-runtime.sh",
+		"build-guide.md",
+	}
 	b.printHeader(plannedFiles)
 	fmt.Fprintln(b.out, "Dry run — no files written.")
 	fmt.Fprintln(b.out)
@@ -127,6 +137,9 @@ func TestBuildDryRun(t *testing.T) {
 	}
 	if !bytes.Contains([]byte(got), []byte("5.5.0")) {
 		t.Errorf("expected version '5.5.0' in output, got:\n%s", got)
+	}
+	if !bytes.Contains([]byte(got), []byte("Would write 6 files")) {
+		t.Errorf("expected shared contract artifacts in output, got:\n%s", got)
 	}
 }
 
@@ -246,13 +259,88 @@ func TestBuildRunWithPacker(t *testing.T) {
 		t.Fatalf("run() unexpected error: %v", err)
 	}
 
-	// Should have written 4 files (recipe, component, packer, build-guide)
-	if len(writtenFiles) != 4 {
-		t.Errorf("expected 4 files written, got %d: %v", len(writtenFiles), writtenFiles)
+	// Should have written 7 files (recipe, component, three shared scripts, packer, build-guide)
+	if len(writtenFiles) != 7 {
+		t.Errorf("expected 7 files written, got %d: %v", len(writtenFiles), writtenFiles)
 	}
 
 	got := out.String()
 	if !bytes.Contains([]byte(got), []byte("packer.pkr.hcl")) {
 		t.Errorf("expected packer.pkr.hcl in output, got:\n%s", got)
+	}
+}
+
+func TestBuildRunEmitsSharedContractArtifacts(t *testing.T) {
+	outputDir := t.TempDir()
+	b := &buildCommand{
+		out: &bytes.Buffer{},
+		cfg: BuildConfig{
+			Version:       "5.5.0",
+			BaseImage:     defaultBaseImage,
+			Region:        defaultRegion,
+			Name:          "fabrica-lore-5.5.0",
+			OutputDir:     outputDir,
+			IncludePacker: true,
+		},
+		writeFile: os.WriteFile,
+		mkdirAll:  os.MkdirAll,
+	}
+	if err := b.run(); err != nil {
+		t.Fatalf("run() error: %v", err)
+	}
+
+	contract := lore.DefaultAMIContract()
+	installScript, err := contract.InstallScript("/tmp/lore-bin")
+	if err != nil {
+		t.Fatalf("InstallScript() error: %v", err)
+	}
+	bakeVerificationScript, err := contract.BakeVerificationScript()
+	if err != nil {
+		t.Fatalf("BakeVerificationScript() error: %v", err)
+	}
+	runtimeVerificationScript, err := contract.VerificationScript()
+	if err != nil {
+		t.Fatalf("VerificationScript() error: %v", err)
+	}
+
+	artifacts := map[string]string{
+		"install-lore.sh":            installScript,
+		"verify-lore-ami-bake.sh":    bakeVerificationScript,
+		"verify-lore-ami-runtime.sh": runtimeVerificationScript,
+	}
+	for name, want := range artifacts {
+		t.Run(name, func(t *testing.T) {
+			got, err := os.ReadFile(filepath.Join(outputDir, name))
+			if err != nil {
+				t.Fatalf("reading %s: %v", name, err)
+			}
+			if string(got) != want {
+				t.Errorf("%s does not match the shared AMI contract", name)
+			}
+		})
+	}
+
+	component, err := os.ReadFile(filepath.Join(outputDir, "component.yaml"))
+	if err != nil {
+		t.Fatalf("reading component.yaml: %v", err)
+	}
+	for _, want := range []string{
+		"aws s3 sync s3://REPLACE_WITH_YOUR_BUCKET/loreserver-bin/ /tmp/lore-bin/ --exact-timestamps",
+		"cp -a /tmp/lore-bin/. /opt/loreserver/",
+		"systemctl is-enabled --quiet loreserver.service",
+	} {
+		if !bytes.Contains(component, []byte(want)) {
+			t.Errorf("component.yaml missing shared contract behavior %q", want)
+		}
+	}
+
+	packer, err := os.ReadFile(filepath.Join(outputDir, "packer.pkr.hcl"))
+	if err != nil {
+		t.Fatalf("reading packer.pkr.hcl: %v", err)
+	}
+	for _, want := range []string{"install-lore.sh", "verify-lore-ami-bake.sh"} {
+		if !bytes.Contains(packer, []byte(want)) {
+			t.Errorf("packer.pkr.hcl does not consume %q", want)
+		}
 	}
 }

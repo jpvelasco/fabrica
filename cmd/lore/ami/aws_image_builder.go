@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"go.yaml.in/yaml/v3"
 )
 
 // imageBuilderRecipe mirrors the structure of an EC2 Image Builder recipe document
@@ -25,6 +27,11 @@ type componentReference struct {
 // has the required top-level fields. Placeholders like REPLACE_WITH_YOUR_BUCKET
 // are intentional — users substitute them before uploading to AWS.
 func validateComponentYAML(data []byte) error {
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return fmt.Errorf("invalid component YAML: %w", err)
+	}
+
 	for _, required := range []string{"schemaVersion:", "phases:", "name:"} {
 		found := false
 		for _, line := range strings.Split(string(data), "\n") {
