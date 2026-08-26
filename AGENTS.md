@@ -4,7 +4,7 @@
 
 Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, zero external dependencies. Sister tool to [Ludus](https://github.com/jpvelasco/ludus) — Ludus orchestrates game builds, Fabrica gives them somewhere to run.
 
-**Current state:** All phases implemented — Phase 0, Phase 1 (core pipeline), Lore (v0.2), and DDC (V1 + multi-region edge nodes) are complete; current stable release **v0.4.3** (2026-08-23). Modules implemented: `perforce`, `horde`, `lore`, `ddc`, `workstation`, `ci`, `deploy`, `cost`, plus read-only `status`, `doctor`, `drift`, `config show`, `export`, `mcp`, full-stack `destroy --all`, and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) for the authoritative, current module status.
+**Current state:** All phases implemented — Phase 0, Phase 1 (core pipeline), Lore (v0.3: S3 store, `ami build`, TLS config hooks), and DDC (V1 + multi-region edge nodes) are complete; current stable release **v0.4.3** (2026-08-23). Modules implemented: `perforce`, `horde`, `lore`, `ddc`, `workstation`, `ci`, `deploy`, `cost`, plus `status`, `doctor`, `drift` (read-only by default; `--fix` recreates Missing resources), `config show`, `export`, `mcp`, full-stack `destroy --all`, and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) for the authoritative, current module status.
 
 **Private designs:** Draft specs and implementation plans for future work live under `.private/` (gitignored — never commit). Suggested layout: `.private/designs/`, `.private/plans/`. Public user docs stay in `docs/` (AMI guides, deploy notes) and root `README.md` / `ROADMAP.md`.
 
@@ -12,10 +12,10 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 
 | Module | Commands | What it does |
 |--------|----------|--------------|
-| foundation | `setup`, `status`, `doctor`, `drift`, `config show`, `version` | S3 + DynamoDB state backend, aggregate health overview, env checks, read-only drift detection against live AWS, config display, version |
+| foundation | `setup`, `status`, `doctor`, `drift`, `config show`, `version` | S3 + DynamoDB state backend, aggregate health overview, env checks, drift detection against live AWS with `--fix` auto-remediation (Missing resources only), config display, version |
 | `perforce` | `create`, `status`, `destroy`, `backup create\|list\|delete`, `restore` | Provisions a Perforce Helix Core EC2 instance with SG + SSM instance profile; tracks provisioning state; TCP probe on 1666; EBS backup/restore via SSM |
-| `horde` | `create`, `status`, `submit`, `destroy`, `ami build`, `agents create\|status\|destroy` | Provisions an Unreal Horde build coordinator (AMI-first, m7i.2xlarge) with SG + IAM SSM instance profile; probes port 5000; parses BuildGraph XML and POSTs jobs to the Horde REST API; generates EC2 Image Builder recipe + optional Packer HCL for building the required AMI; `agents` manages the ASG-backed agent pool |
-| `lore` | `create`, `status`, `destroy` | Provisions an Epic Lore (`loreserver`) EC2 instance (AMI-first, local/EBS store); probes `GET /health_check` on port 41339; parallel to Perforce |
+| `horde` | `create`, `status`, `submit`, `destroy`, `ami build`, `agents create\|status\|destroy` | Provisions an Unreal Horde build coordinator (AMI-first, m7i.2xlarge) with SG + IAM SSM instance profile; probes port 5000; parses BuildGraph XML and POSTs jobs to the Horde REST API; generates EC2 Image Builder recipe + optional Packer HCL for building the required AMI; `agents` manages the ASG-backed agent pool (manual capacity or `--scaling-enabled` queue-based autoscaling) |
+| `lore` | `create`, `status`, `destroy`, `ami build` | Provisions an Epic Lore (`loreserver`) EC2 instance (AMI-first, local/EBS or S3 store); probes `GET /health_check` on port 41339; `ami build` generates Image Builder artifacts locally (no AWS calls); parallel to Perforce |
 | `ddc` | `setup`, `status`, `destroy`, `region add` | Provisions Unreal Cloud DDC (Jupiter) on EC2 (AMI-first, home region + additional edge regions); hybrid EBS+S3; default `zen` backend; probes `GET /health/ready` |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Provisions a NICE DCV cloud workstation on EC2 (AMI-first, g4dn.xlarge default); allows TCP 8443 inbound; writes DCV session credentials to `.fabrica/workstation-credentials.yaml`; supports stop/start via EC2InstanceManager and permanent termination |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | CodeBuild orchestration over Horde; IAM role via Cloud Control, CodeBuild project via SDK auxiliary interface |
@@ -78,7 +78,7 @@ go list -deps ./internal/cloud/...
 
 **Concurrency-safe lazy init** — the MCP server dispatches tool calls concurrently against one provider. All lazy client construction in `internal/cloud/aws` (`Resources()`, `resourceClients.ensureClient`, `ec2Service.ensureClient`) is mutex-guarded; keep new lazy-init sites synchronized.
 
-**Embedded templates** — `cmd/horde/ami` ships build artifacts as `embed.FS` templates rendered with `text/template`. New file-generator commands should follow this pattern: templates under `cmd/<cmd>/templates/`, rendered via a `renderTemplate` helper on the command struct. No `RuntimeSource`/`OptionsSource` needed when the command makes no AWS calls.
+**Embedded templates** — `cmd/horde/ami` and `cmd/lore/ami` ship build artifacts as `embed.FS` templates rendered with `text/template`. New file-generator commands should follow this pattern: templates under `cmd/<cmd>/templates/`, rendered via a `renderTemplate` helper on the command struct. No `RuntimeSource`/`OptionsSource` needed when the command makes no AWS calls.
 
 **Provider registration** — `internal/cloud/aws/aws.go` registers the AWS provider via a blank-import side-effect (`_ "github.com/jpvelasco/fabrica/internal/cloud/aws"` in `cmd/root`). New providers follow the same `init()` pattern against `internal/cloud/registry.go`.
 
@@ -127,7 +127,7 @@ go list -deps ./internal/cloud/...
 2. **Confirm Cloud Control support** for each resource type. If a type has no CREATE action, add an SDK-backed auxiliary interface in `internal/cloud` + `internal/cloud/aws` and reach it via type assertion — don't force it through `Resources()`.
 3. **Create `cmd/<module>/`** — Cobra command wired with `RuntimeSource` + `OptionsSource` closures (see `cmd/perforce/` or `cmd/horde/` as templates).
 4. **Add config struct** to `internal/config/config.go` (not inside `internal/<module>/`) to avoid circular imports. Add `mapstructure:` tags.
-5. **Register cost estimators** in the plan layer via `cost.Global.Register`. Do NOT register `AWS::EC2::Instance` or `AWS::EC2::Volume` from a second package — they're already registered.
+5. **Register cost estimators** in the plan layer via `cost.Global.Register` — every new resource type needs one. Do NOT register `AWS::EC2::Instance` or `AWS::EC2::Volume` from a second package; they're already registered in `internal/perforce/cost.go`.
 6. **Wire the parent command** in `cmd/root/root.go`.
 7. **Tests:** follow the two-file pattern. Cover partial failures, seam errors, confirmation rejection, `--dry-run`, `--json`. Reuse `cmd/internal/testutil` cobra/cloud fakes, and document every new leaf command in `README.md` or the doc-drift guard fails (`cmd/root/docs_drift_test.go`).
 
@@ -143,15 +143,7 @@ Reference: `cmd/perforce/` + `internal/perforce/` are the canonical Cloud-Contro
 
 **Imports:** stdlib group, blank line, then everything else. `gofmt` only — no goimports or gofumpt.
 
-**Config structs:** always add `mapstructure:` tags. Live in `internal/config/config.go`.
-
 **Error handling:** `fmt.Errorf("context: %w", err)`. Messages state what went wrong AND what to do. No ad-hoc sentinels in `cmd/*` or module layers; the narrow exception is `internal/cloud`, which defines package-level sentinels (`ErrResourceNotFound`, `ErrStateBucketNotEmpty`) that callers branch on via `errors.Is`.
-
-**State:** always written after each resource so partial runs are recoverable.
-
-**No logging library:** `fmt.Printf`/`Println` only.
-
-**Cost estimation:** every new resource type needs a cost estimator registered by `TypeName`. Do not re-register `AWS::EC2::Instance` or `AWS::EC2::Volume` — already registered in `internal/perforce/cost.go`.
 
 **Tests:**
 - No real AWS calls — mock SDK interfaces
@@ -174,6 +166,9 @@ golangci-lint run ./...
 go tool cover -func=coverage.out       # coverage summary
 gofmt -w .                             # format all Go files
 go list -deps ./internal/cloud/...     # layering check
+make ci                                # full local gate: lint + vet + build + test
+make release VERSION=vX.Y.Z            # release build with ldflags (Commit auto from git)
+make vuln                              # govulncheck @v1.1.4 — same pin as the CI vuln-scan job
 ```
 
 `make ci` (lint + vet + build + test) is the full local gate, but its `test`/`cover` targets use `-race` — run `go test ./...` directly on Windows instead.
@@ -184,7 +179,7 @@ go list -deps ./internal/cloud/...     # layering check
 
 ### CI
 
-`.github/workflows/ci.yml` runs lint + build + test cross-platform (ubuntu/windows/macos) plus a `goreleaser build --snapshot` validation job on every push/PR to `main`. On PRs macOS is skipped.
+`.github/workflows/ci.yml` runs on every push/PR to `main`: Lint (linux) + Lint (windows), `gosec`, a govulncheck vulnerability scan (pinned `@v1.1.4` — `make vuln` matches), Build + Test on an ubuntu/windows/macos matrix (`-race` only on linux/macos; Codecov upload via OIDC from the linux leg), and a `goreleaser build --snapshot` + npm-shim validation job (build-only, never publishes). Coverage is also pushed to Codacy (`.github/workflows/codacy-coverage.yml`).
 
 **CI troubleshooting:** If a job fails instantly with blank logs and no steps, the job was never scheduled — check GitHub Actions billing/minutes for your account. Verify the code locally first (`go test ./... && golangci-lint run ./...`) before pushing.
 
@@ -211,8 +206,6 @@ git config core.hooksPath .githooks
 - **pre-push** — fails if any changed (non-test) function is at 0.0% coverage (early warning; the CI Codecov `patch` ≥90% gate is the real authority)
 
 ## Test Strategy
-
-**Two-file pattern:** `*_test.go` (white-box, `package <cmd>`) + `cobra_test.go` (black-box, `package <cmd>_test`). Seam fields on the `command` struct for all I/O. `New()` wires real implementations; tests inject fakes.
 
 **E2E test harness:** `test/e2e/` is a black-box (`package e2e`) CLI end-to-end suite that drives the real `cmd/root` command tree against an in-memory fake `cloud.Provider` (registered as `"fake"`). No real AWS, no build tag — it runs in the default `go test ./...` and CI. The fake's store lives in a per-test holder (`currentFake`), reset by `setupE2E(t)`; tests are serial (no `t.Parallel()`). To add a flow: write a new `test/e2e/<flow>_test.go`, call `setupE2E(t)`, drive commands with `runCLI`, and assert the triad — exit code + output assertions (`assertContains`/`assertJSON`) + state assertions (read `.fabrica/state.json` and call `assertModule*` checkers). Real-AWS coverage remains the separate manual `//go:build integration` suite.
 
@@ -255,11 +248,13 @@ git config core.hooksPath .githooks
 - **`horde_service_token`** in credentials is optional; if empty the auth header is omitted.
 - **HTTP timeout** — all Horde API requests carry a 30-second client timeout (`hordeHTTPTimeout`); command contexts cancel sooner on interrupt.
 - **Agent SG direction** — agents dial the coordinator, so the agent SG has no inbound rules; a standalone `AWS::EC2::SecurityGroupIngress` on the coordinator SG (source: agent SG) authorizes enrollment. The rule is tracked with `role=agent` and deleted first during teardown.
+- **Queue-based autoscaling** — `agents create --scaling-enabled` provisions two CloudWatch alarms + two SimpleScaling policies (scale-out/scale-in) driven by an external metric (default `ASGQueueDepth`; tune with `--scale-out-threshold` / `--scale-in-threshold` / `--scale-in-cooldown`). Fabrica provisions the alarms/policies only — the agents must publish the metric to CloudWatch themselves. `agents status` surfaces that warning while scaling is enabled. See `docs/horde-scaling.md`.
 
 ### Lore
-- **AMI-first provisioning** — the AMI must already contain the `loreserver` binary.
+- **AMI-first provisioning** — the AMI must already contain the `loreserver` binary. `lore ami build` generates the Image Builder component + recipe, build guide, and optional Packer HCL locally (default output dir `lore-ami`; flags: `--lore-version`, `--base-image`, `--region`, `--name`, `--output-dir`, `--include-packer`). Bake/verification scripts are rendered from `lore.AMIContract` (`internal/lore/ami_contract.go`) — the typed OS surface (paths, systemd unit, health endpoint) the AMI must satisfy; keep the contract, the templates, and the runtime cloud-init in lockstep. See `docs/lore-ami.md`.
 - **Runs parallel to Perforce, not instead of it** — no interaction with the `perforce` module.
 - **Ports** — 41337 (gRPC/QUIC) and 41339 (HTTP health, `GET /health_check`). Status probes 41339 only.
+- **TLS config is parsed, not yet wired** — `lore.tls` (`Enabled`, `CertPath`, `KeyPath`) in `fabrica.yaml` is parsed but a no-op pending V2 (JWT/CA cert provisioning). See `docs/lore-tls.md`.
 - **Store path** — local/EBS by default (`DefaultStorePath = /opt/loreserver/store`); `lore.storeBackend: s3` adds a versioned S3 bucket, which destroy purges first via `cloud.S3BucketCleaner` (all versions + delete markers) before Cloud Control deletes the empty bucket.
 - **Built on the shared EC2 packages** — `internal/lore` is the reference consumer of `ec2plan`/`ec2state`/`ec2cost`/`userdata`. Use it as the template for a new single-instance module ahead of `internal/perforce`.
 
@@ -298,6 +293,8 @@ git config core.hooksPath .githooks
 - **Continue-on-failure + backend preserved** — failed modules are printed with errors; the backend is never deleted on any failure.
 
 ### Drift
+- **Read-only by default** — checks the state backend, EC2 instances (state, type, AMI), SGs, IAM roles, CodeBuild projects, and detects Extra (unmanaged) resources.
+- **`--fix` recreates Missing resources only** — from recorded state (EC2 instances and security groups); Mismatch/Extra stay report-only. Prompts for confirmation (`--yes` skips); `--fix --dry-run` previews the plan.
 - **Stopped workstation is in sync** — workstation ships supported stop/start commands, so a parked instance is not drift; stopped Horde/Perforce/Lore/DDC instances still report Mismatch.
 - **Terminated instances are always drift** — deletion outside Fabrica must surface.
 
@@ -307,23 +304,6 @@ git config core.hooksPath .githooks
 - **Deploy fleet cost counted only when a fleet exists** — zero cost until a fleet is promoted.
 - **Local thresholds only** — `cost alerts` work entirely on the local `fabrica.yaml` — no AWS Budgets resources. `alerts check` is informational (exit 0 always).
 
-## Planned Command Structure
+## Command Reference
 
-```
-fabrica setup                               # guided first-run provisioning wizard
-fabrica status                              # health of all modules
-fabrica perforce create|status|destroy|backup create\|list\|delete|restore  # ✓ implemented
-fabrica horde create|status|submit|destroy  # ✓ implemented
-fabrica lore create|status|destroy          # ✓ implemented (v0.2; parallel to Perforce)
-fabrica ddc setup|status|destroy|region add    # ✓ implemented (home region + edge regions)
-fabrica horde ami build                     # ✓ implemented; generates Image Builder recipe + optional Packer HCL
-fabrica ci setup|trigger|status|logs|destroy        # ✓ implemented; CodeBuild orchestration over Horde
-fabrica deploy setup|promote|rollback|status|destroy  # ✓ implemented; GameLift blue/green deployment
-fabrica workstation create|list|stop|start|terminate  # ✓ implemented
-fabrica cost report|forecast|alerts         # ✓ implemented; offline cost visibility + local budget alerts
-fabrica doctor                              # prerequisite validation
-fabrica drift                               # ✓ implemented; read-only drift detection vs live AWS
-fabrica mcp                                 # ✓ implemented; stdio MCP server (6 read-only tools)
-fabrica destroy --all                       # ✓ implemented; full-stack teardown
-fabrica export --format cloudformation      # ✓ implemented; IaC templates from local state
-```
+The full command surface lives in `README.md` — `cmd/root/docs_drift_test.go` fails the suite if a leaf command is missing from it, so add new commands to `README.md` in the same change.
