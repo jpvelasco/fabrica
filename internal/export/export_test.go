@@ -1,19 +1,29 @@
 package export
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/ddc"
+	"github.com/jpvelasco/fabrica/internal/iamrole"
 	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"go.yaml.in/yaml/v3"
 )
 
+// exportAccount/exportRegion are the account/region every export test fixture
+// records in state; export re-derives IAM inline policies from these.
+const (
+	exportAccount = "123456789012"
+	exportRegion  = "us-east-1"
+)
+
 func testStateWithHorde() *state.State {
-	st := state.NewState("123456789012", "us-east-1")
+	st := state.NewState(exportAccount, exportRegion)
 	st.UpsertModule("horde", "ami-0abc123def456", "ready", []state.ModuleResource{
 		{
 			TypeName:   "AWS::EC2::SecurityGroup",
@@ -513,7 +523,7 @@ func TestExtractPropertiesEC2Instance(t *testing.T) {
 		},
 	}
 	cfg := testConfigWithHorde()
-	props := extractProperties("horde", res, cfg)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
 
 	if props["InstanceType"] != "m7i.2xlarge" {
 		t.Errorf("unexpected instance type: %v", props["InstanceType"])
@@ -543,7 +553,7 @@ func TestExtractPropertiesSecurityGroup(t *testing.T) {
 		Properties: map[string]string{},
 	}
 	cfg := testConfigWithHorde()
-	props := extractProperties("horde", res, cfg)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
 
 	if props["GroupName"] != "fabrica-horde-sg" {
 		t.Errorf("unexpected group name: %v", props["GroupName"])
@@ -560,7 +570,7 @@ func TestExtractPropertiesIAMRole(t *testing.T) {
 		Properties: map[string]string{},
 	}
 	cfg := testConfigWithHorde()
-	props := extractProperties("horde", res, cfg)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
 
 	if props["RoleName"] != "fabrica-horde-role" {
 		t.Errorf("unexpected role name: %v", props["RoleName"])
@@ -577,7 +587,7 @@ func TestExtractPropertiesInstanceProfile(t *testing.T) {
 		Properties: map[string]string{},
 	}
 	cfg := testConfigWithHorde()
-	props := extractProperties("horde", res, cfg)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
 
 	if props["InstanceProfileName"] != "fabrica-horde-profile" {
 		t.Errorf("unexpected profile name: %v", props["InstanceProfileName"])
@@ -590,7 +600,7 @@ func TestExtractPropertiesNilConfig(t *testing.T) {
 		Identifier: "i-123",
 		Properties: map[string]string{},
 	}
-	props := extractProperties("horde", res, nil)
+	props := extractProperties("horde", res, nil, exportAccount, exportRegion)
 
 	// Should not crash with nil config
 	if props == nil {
@@ -641,7 +651,7 @@ func TestBuildPerforceModule(t *testing.T) {
 	cfg.Perforce.InstanceType = "c5.2xlarge"
 	cfg.Perforce.AllowedCIDR = "10.0.0.0/8"
 
-	mod := buildModule(ms, cfg)
+	mod := buildModule(ms, cfg, exportAccount, exportRegion)
 	if mod.Name != "perforce" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -674,7 +684,7 @@ func TestBuildPerforceModuleWithImageId(t *testing.T) {
 	}
 	cfg := config.Defaults()
 
-	mod := buildModule(ms, cfg)
+	mod := buildModule(ms, cfg, exportAccount, exportRegion)
 	if mod.Name != "perforce" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -706,7 +716,7 @@ func TestExtractPropertiesImageIdMapping(t *testing.T) {
 		},
 	}
 	cfg := config.Defaults()
-	props := extractProperties("perforce", r, cfg)
+	props := extractProperties("perforce", r, cfg, exportAccount, exportRegion)
 
 	if props["ImageId"] != "ami-abc" {
 		t.Errorf("ImageId = %v, want ami-abc", props["ImageId"])
@@ -742,7 +752,7 @@ func TestBuildLoreModule(t *testing.T) {
 	cfg.Lore.InstanceType = "m5.xlarge"
 	cfg.Lore.AllowedCIDR = "10.0.0.0/8"
 
-	mod := buildModule(ms, cfg)
+	mod := buildModule(ms, cfg, exportAccount, exportRegion)
 	if mod.Name != "lore" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -763,7 +773,7 @@ func TestBuildLoreModuleWithS3Store(t *testing.T) {
 	cfg.Lore.StoreBackend = "s3"
 	cfg.Lore.StoreBucket = "fabrica-lore-store-123456789012-us-east-1"
 
-	mod := buildModule(ms, cfg)
+	mod := buildModule(ms, cfg, exportAccount, exportRegion)
 	if mod.Name != "lore" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -812,7 +822,7 @@ func TestBuildLoreS3StoreTablesDistinctLogicalIDs(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Lore.AmiID = "ami-lore123"
 
-	mod := buildModule(ms, cfg)
+	mod := buildModule(ms, cfg, exportAccount, exportRegion)
 
 	want := map[string]string{
 		"fabrica-lore-store-123456789012-us-east-1-fragments": "LoreTableFRAGMENTS",
@@ -867,7 +877,7 @@ func TestCloudFormationLoreStoreTableOutputs(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Lore.AmiID = "ami-lore123"
 
-	mod := buildModule(ms, cfg)
+	mod := buildModule(ms, cfg, exportAccount, exportRegion)
 	gen := &cloudFormationGenerator{}
 	out, err := gen.Generate([]ExportModule{mod})
 	if err != nil {
@@ -894,7 +904,7 @@ func TestTerraformLoreStoreTableOutputs(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Lore.AmiID = "ami-lore123"
 
-	mod := buildModule(ms, cfg)
+	mod := buildModule(ms, cfg, exportAccount, exportRegion)
 	gen := &terraformGenerator{}
 	out, err := gen.Generate([]ExportModule{mod})
 	if err != nil {
@@ -1284,7 +1294,7 @@ func TestExtractPropertiesCamelCase(t *testing.T) {
 		},
 	}
 	cfg := testConfigWithHorde()
-	props := extractProperties("horde", res, cfg)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
 
 	// instanceType should be normalized to InstanceType
 	if props["InstanceType"] != "m7i.2xlarge" {
@@ -1360,7 +1370,7 @@ func TestWorkstationBlockDeviceMapping(t *testing.T) {
 	cfg.Workstation.AmiID = "ami-ws123"
 	cfg.Workstation.InstanceType = "g4dn.xlarge"
 
-	props := extractProperties("workstation", res, cfg)
+	props := extractProperties("workstation", res, cfg, exportAccount, exportRegion)
 	bdm, ok := props["BlockDeviceMappings"].([]map[string]any)
 	if !ok || len(bdm) == 0 {
 		t.Fatal("expected BlockDeviceMappings for workstation instance")
@@ -1383,7 +1393,7 @@ func TestHordeBlockDeviceMapping(t *testing.T) {
 	}
 	cfg := testConfigWithHorde()
 
-	props := extractProperties("horde", res, cfg)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
 	bdm, ok := props["BlockDeviceMappings"].([]map[string]any)
 	if !ok || len(bdm) == 0 {
 		t.Fatal("expected BlockDeviceMappings for horde instance")
@@ -1404,7 +1414,7 @@ func TestCodeBuildArtifactsNoArtifacts(t *testing.T) {
 	}
 	cfg := config.Defaults()
 
-	props := extractProperties("ci", res, cfg)
+	props := extractProperties("ci", res, cfg, exportAccount, exportRegion)
 	artifacts, ok := props["Artifacts"].(map[string]any)
 	if !ok {
 		t.Fatal("expected Artifacts in CI extractProperties")
@@ -1426,7 +1436,7 @@ func TestCodeBuildArtifactsStatePreserved(t *testing.T) {
 	}
 	cfg := config.Defaults()
 
-	props := extractProperties("ci", res, cfg)
+	props := extractProperties("ci", res, cfg, exportAccount, exportRegion)
 	// The state-provided Artifacts should be preserved (it's a string in state,
 	// not a map, so the !ok check won't trigger the default)
 	if _, ok := props["Artifacts"]; !ok {
@@ -2123,12 +2133,16 @@ func TestHclStringList(t *testing.T) {
 
 // ---- V2 module builder tests ----
 
+// testConfigWithDDC is a DDC config bound to the test account. The bucket
+// matches the identifier recorded in testDDCModuleState so export's bucket
+// resolution (ddc.BucketOrDefault) and the fixture agree.
 func testConfigWithDDC() *config.Config {
 	cfg := config.Defaults()
 	cfg.Cloud.AWS.AccountID = "123456789012"
 	cfg.DDC.AmiID = "ami-ddc123"
 	cfg.DDC.InstanceType = "m5.xlarge"
 	cfg.DDC.AllowedCIDR = "10.0.0.0/8"
+	cfg.DDC.Bucket = "fabrica-ddc-bucket-123"
 	return cfg
 }
 
@@ -2203,7 +2217,7 @@ func TestBuildDDCModule(t *testing.T) {
 		},
 	}
 	cfg := testConfigWithDDC()
-	mod := buildModule(ms, cfg)
+	mod := buildModule(ms, cfg, exportAccount, exportRegion)
 	if mod.Name != "ddc" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -2236,7 +2250,7 @@ func TestBuildDDCModuleEmpty(t *testing.T) {
 		Resources: []state.ModuleResource{},
 	}
 	cfg := testConfigWithDDC()
-	mod := buildModule(ms, cfg)
+	mod := buildModule(ms, cfg, exportAccount, exportRegion)
 	if mod.Name != "ddc" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -2269,7 +2283,7 @@ func TestBuildWorkstationModule(t *testing.T) {
 		},
 	}
 	cfg := testConfigWithWorkstation()
-	mod := buildModule(ms, cfg)
+	mod := buildModule(ms, cfg, exportAccount, exportRegion)
 	if mod.Name != "workstation" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -2284,7 +2298,7 @@ func TestBuildWorkstationModuleEmpty(t *testing.T) {
 		Status:    "ready",
 		Resources: []state.ModuleResource{},
 	}
-	mod := buildModule(ms, testConfigWithWorkstation())
+	mod := buildModule(ms, testConfigWithWorkstation(), exportAccount, exportRegion)
 	if len(mod.Resources) != 0 {
 		t.Errorf("expected 0 resources, got %d", len(mod.Resources))
 	}
@@ -2312,7 +2326,7 @@ func TestBuildCIModule(t *testing.T) {
 		},
 	}
 	cfg := testConfigWithCI()
-	mod := buildModule(ms, cfg)
+	mod := buildModule(ms, cfg, exportAccount, exportRegion)
 	if mod.Name != "ci" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -2341,7 +2355,7 @@ func TestBuildCIModuleEmpty(t *testing.T) {
 		Status:    "ready",
 		Resources: []state.ModuleResource{},
 	}
-	mod := buildModule(ms, testConfigWithCI())
+	mod := buildModule(ms, testConfigWithCI(), exportAccount, exportRegion)
 	if len(mod.Resources) != 0 {
 		t.Errorf("expected 0 resources, got %d", len(mod.Resources))
 	}
@@ -2384,7 +2398,7 @@ func TestBuildDeployModule(t *testing.T) {
 		},
 	}
 	cfg := testConfigWithDeploy()
-	mod := buildModule(ms, cfg)
+	mod := buildModule(ms, cfg, exportAccount, exportRegion)
 	if mod.Name != "deploy" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
@@ -2410,7 +2424,7 @@ func TestBuildDeployModuleEmpty(t *testing.T) {
 		Status:    "ready",
 		Resources: []state.ModuleResource{},
 	}
-	mod := buildModule(ms, testConfigWithDeploy())
+	mod := buildModule(ms, testConfigWithDeploy(), exportAccount, exportRegion)
 	if len(mod.Resources) != 0 {
 		t.Errorf("expected 0 resources, got %d", len(mod.Resources))
 	}
@@ -2426,7 +2440,7 @@ func TestExtractPropertiesCodeBuild(t *testing.T) {
 		},
 	}
 	cfg := testConfigWithCI()
-	props := extractProperties("ci", res, cfg)
+	props := extractProperties("ci", res, cfg, exportAccount, exportRegion)
 
 	if props["Name"] != "fabrica-ci" {
 		t.Errorf("unexpected project name: %v", props["Name"])
@@ -2452,7 +2466,7 @@ func TestExtractPropertiesGameLiftAlias(t *testing.T) {
 		Properties: map[string]string{},
 	}
 	cfg := testConfigWithDeploy()
-	props := extractProperties("deploy", res, cfg)
+	props := extractProperties("deploy", res, cfg, exportAccount, exportRegion)
 
 	if props["Name"] != "fabrica-deploy" {
 		t.Errorf("unexpected alias name: %v", props["Name"])
@@ -2468,7 +2482,7 @@ func TestExtractPropertiesGameLiftFleet(t *testing.T) {
 			"role": "active",
 		},
 	}
-	props := extractProperties("deploy", res, config.Defaults())
+	props := extractProperties("deploy", res, config.Defaults(), exportAccount, exportRegion)
 
 	if props["Name"] != "fabrica-deploy-fleet" {
 		t.Errorf("unexpected fleet name: %v", props["Name"])
@@ -2485,7 +2499,7 @@ func TestExtractPropertiesGameLiftBuild(t *testing.T) {
 		Identifier: "build-1",
 		Properties: map[string]string{},
 	}
-	props := extractProperties("deploy", res, config.Defaults())
+	props := extractProperties("deploy", res, config.Defaults(), exportAccount, exportRegion)
 
 	if props["Name"] != "fabrica-deploy-build" {
 		t.Errorf("unexpected build name: %v", props["Name"])
@@ -2501,7 +2515,7 @@ func TestExtractPropertiesS3Bucket(t *testing.T) {
 			"BucketName": "fabrica-ddc-bucket-123",
 		},
 	}
-	props := extractProperties("ddc", res, config.Defaults())
+	props := extractProperties("ddc", res, config.Defaults(), exportAccount, exportRegion)
 
 	if props["BucketName"] != "fabrica-ddc-bucket-123" {
 		t.Errorf("unexpected bucket name: %v", props["BucketName"])
@@ -2519,7 +2533,7 @@ func TestExtractPropertiesS3BucketDefault(t *testing.T) {
 		Identifier: "some-bucket",
 		Properties: map[string]string{},
 	}
-	props := extractProperties("ddc", res, config.Defaults())
+	props := extractProperties("ddc", res, config.Defaults(), exportAccount, exportRegion)
 
 	// Bucket name comes from the resource identifier (Cloud Control returns
 	// the bucket name as the resource identifier).
@@ -2544,7 +2558,7 @@ func TestDDCRedaction(t *testing.T) {
 			},
 		},
 	}
-	mod := buildModule(ms, testConfigWithDDC())
+	mod := buildModule(ms, testConfigWithDDC(), exportAccount, exportRegion)
 	for _, r := range mod.Resources {
 		if r.TypeName == "AWS::EC2::Instance" {
 			if u, ok := r.Properties["UserData"].(string); ok && strings.HasPrefix(u, "# REDACTED") {
@@ -2571,7 +2585,7 @@ func TestWorkstationRedaction(t *testing.T) {
 			},
 		},
 	}
-	mod := buildModule(ms, testConfigWithWorkstation())
+	mod := buildModule(ms, testConfigWithWorkstation(), exportAccount, exportRegion)
 	for _, r := range mod.Resources {
 		if r.TypeName == "AWS::EC2::Instance" {
 			if u, ok := r.Properties["UserData"].(string); ok && strings.HasPrefix(u, "# REDACTED") {
@@ -3338,7 +3352,7 @@ func TestExtractPropertiesASG(t *testing.T) {
 	}
 	cfg := config.Defaults()
 
-	props := extractProperties("horde", res, cfg)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
 	// AutoScalingGroupName falls back to default since it's not in state properties.
 	if props["AutoScalingGroupName"] != "fabrica-horde-agents-asg" {
 		t.Errorf("AutoScalingGroupName = %v, want fabrica-horde-agents-asg (default fallback)", props["AutoScalingGroupName"])
@@ -3374,7 +3388,7 @@ func TestExtractPropertiesInternalKeysDropped(t *testing.T) {
 			"imageId":           "ami-123456",
 		},
 	}
-	props := extractProperties("perforce", res, config.Defaults())
+	props := extractProperties("perforce", res, config.Defaults(), exportAccount, exportRegion)
 	for k := range internalStateKeys {
 		if _, ok := props[k]; ok {
 			t.Errorf("internal key %q leaked into exported properties", k)
@@ -3396,7 +3410,7 @@ func TestExtractPropertiesLaunchTemplate(t *testing.T) {
 	}
 	cfg := config.Defaults()
 
-	props := extractProperties("horde", res, cfg)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
 	// LaunchTemplateName falls back to default since it's not in state properties.
 	if props["LaunchTemplateName"] != "fabrica-horde-agents-lt" {
 		t.Errorf("LaunchTemplateName = %v, want fabrica-horde-agents-lt (default fallback)", props["LaunchTemplateName"])
@@ -3425,7 +3439,7 @@ func TestExtractPropertiesScalingPolicyFallback(t *testing.T) {
 	}
 	cfg := config.Defaults()
 
-	props := extractProperties("horde", res, cfg)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
 	// PolicyName falls back to default since it's not in state properties.
 	if props["PolicyName"] != "fabrica-horde-agents-scaling-policy" {
 		t.Errorf("PolicyName = %v, want fabrica-horde-agents-scaling-policy (default fallback)", props["PolicyName"])
@@ -3447,7 +3461,7 @@ func TestExtractPropertiesAlarmFallback(t *testing.T) {
 	}
 	cfg := config.Defaults()
 
-	props := extractProperties("horde", res, cfg)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
 	// AlarmName falls back to identifier since it's not in state properties.
 	if props["AlarmName"] != "my-alarm-name" {
 		t.Errorf("AlarmName = %v, want my-alarm-name (derived from identifier)", props["AlarmName"])
@@ -3567,4 +3581,666 @@ func TestExportHordeAgentsWithScaling(t *testing.T) {
 	if alarmCount != 2 {
 		t.Errorf("expected 2 cloudwatch alarms, got %d", alarmCount)
 	}
+}
+
+// ---- Inline IAM policies (one document, two renderers) ----
+
+// TestIAMRoleInlinePoliciesPerModule is the table-driven honesty gate for
+// export: every SSM module role must carry exactly the inline policies create
+// would send to Cloud Control. Expected documents are built with the same
+// shared helpers the plan layer uses (iamrole / lore), so the test asserts
+// equality against a single source of truth — no second policy text.
+func TestIAMRoleInlinePoliciesPerModule(t *testing.T) {
+	cases := []struct {
+		name   string
+		module string
+		state  state.ModuleState
+		cfg    *config.Config
+		want   []map[string]any
+	}{
+		{
+			name:   "horde coordinator: SSM output only",
+			module: "horde",
+			state: state.ModuleState{
+				Name:   "horde",
+				Status: "ready",
+				Resources: []state.ModuleResource{
+					{TypeName: "AWS::IAM::Role", Identifier: "fabrica-horde-role"},
+				},
+			},
+			cfg:  testConfigWithHorde(),
+			want: []map[string]any{iamrole.SSMOutputPolicy(exportRegion, exportAccount)},
+		},
+		{
+			name:   "horde agents: SSM output only",
+			module: "horde",
+			state: state.ModuleState{
+				Name:   "horde",
+				Status: "ready",
+				Resources: []state.ModuleResource{
+					{TypeName: "AWS::IAM::Role", Identifier: "fabrica-horde-agent-role", Properties: map[string]string{"role": "agent"}},
+				},
+			},
+			cfg:  testConfigWithHorde(),
+			want: []map[string]any{iamrole.SSMOutputPolicy(exportRegion, exportAccount)},
+		},
+		{
+			name:   "perforce: SSM output only (no backup S3)",
+			module: "perforce",
+			state: state.ModuleState{
+				Name:   "perforce",
+				Status: "ready",
+				Resources: []state.ModuleResource{
+					{TypeName: "AWS::IAM::Role", Identifier: "fabrica-perforce-role"},
+				},
+			},
+			cfg: func() *config.Config {
+				cfg := config.Defaults()
+				cfg.Perforce.InstanceType = "c5.2xlarge"
+				return cfg
+			}(),
+			want: []map[string]any{iamrole.SSMOutputPolicy(exportRegion, exportAccount)},
+		},
+		{
+			name:   "perforce: SSM output + backup S3 (explicit prefix)",
+			module: "perforce",
+			state: state.ModuleState{
+				Name:   "perforce",
+				Status: "ready",
+				Resources: []state.ModuleResource{
+					{TypeName: "AWS::IAM::Role", Identifier: "fabrica-perforce-role"},
+				},
+			},
+			cfg: func() *config.Config {
+				cfg := config.Defaults()
+				cfg.Perforce.Backup.S3Export = true
+				cfg.Perforce.Backup.S3Bucket = "backups-123456789012"
+				cfg.Perforce.Backup.S3Prefix = "p4-backups/"
+				return cfg
+			}(),
+			want: []map[string]any{
+				iamrole.SSMOutputPolicy(exportRegion, exportAccount),
+				iamrole.S3BucketPolicy("fabrica-perforce-backup-s3", "backups-123456789012",
+					[]string{"s3:ListBucket"},
+					[]string{"s3:PutObject", "s3:GetObject", "s3:DeleteObject"},
+					"p4-backups/*",
+				),
+			},
+		},
+		{
+			name:   "perforce: SSM output + backup S3 (default prefix)",
+			module: "perforce",
+			state: state.ModuleState{
+				Name:   "perforce",
+				Status: "ready",
+				Resources: []state.ModuleResource{
+					{TypeName: "AWS::IAM::Role", Identifier: "fabrica-perforce-role"},
+				},
+			},
+			cfg: func() *config.Config {
+				cfg := config.Defaults()
+				cfg.Perforce.Backup.S3Export = true
+				cfg.Perforce.Backup.S3Bucket = "backups-123456789012"
+				return cfg
+			}(),
+			want: []map[string]any{
+				iamrole.SSMOutputPolicy(exportRegion, exportAccount),
+				iamrole.S3BucketPolicy("fabrica-perforce-backup-s3", "backups-123456789012",
+					[]string{"s3:ListBucket"},
+					[]string{"s3:PutObject", "s3:GetObject", "s3:DeleteObject"},
+					perforce.DefaultS3Prefix+"*",
+				),
+			},
+		},
+		{
+			name:   "lore S3 store: store S3 + DynamoDB + SSM output",
+			module: "lore",
+			state:  loreS3StoreModuleState(),
+			cfg:    testConfigWithLoreS3(),
+			want: []map[string]any{
+				iamrole.S3BucketPolicy("fabrica-lore-store-s3", "fabrica-lore-store-123456789012-us-east-1",
+					[]string{"s3:ListBucket", "s3:GetBucketLocation", "s3:ListBucketVersions"},
+					[]string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"},
+					"*",
+				),
+				iamrole.SSMOutputPolicy(exportRegion, exportAccount),
+				lore.StoreDynamoDBPolicy(exportRegion, exportAccount, "fabrica-lore-store-123456789012-us-east-1",
+					lore.StoreTableNames("fabrica-lore-store-123456789012-us-east-1")),
+			},
+		},
+		{
+			name:   "ddc: bucket policy + SSM output",
+			module: "ddc",
+			state: state.ModuleState{
+				Name:   "ddc",
+				Status: "ready",
+				Resources: []state.ModuleResource{
+					{TypeName: "AWS::S3::Bucket", Identifier: "fabrica-ddc-bucket-123"},
+					{TypeName: "AWS::IAM::Role", Identifier: "fabrica-ddc-role"},
+				},
+			},
+			cfg: testConfigWithDDC(),
+			want: []map[string]any{
+				iamrole.S3BucketPolicy("fabrica-ddc-s3", "fabrica-ddc-bucket-123",
+					[]string{"s3:ListBucket", "s3:GetBucketLocation"},
+					[]string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject"},
+					"*",
+				),
+				iamrole.SSMOutputPolicy(exportRegion, exportAccount),
+			},
+		},
+		{
+			name:   "ci: no inline policies expected (out of scope)",
+			module: "ci",
+			state: state.ModuleState{
+				Name:   "ci",
+				Status: "ready",
+				Resources: []state.ModuleResource{
+					{TypeName: "AWS::IAM::Role", Identifier: "fabrica-ci-codebuild"},
+				},
+			},
+			cfg:  testConfigWithCI(),
+			want: nil,
+		},
+		{
+			name:   "deploy: no inline policies expected (out of scope)",
+			module: "deploy",
+			state: state.ModuleState{
+				Name:   "deploy",
+				Status: "ready",
+				Resources: []state.ModuleResource{
+					{TypeName: "AWS::IAM::Role", Identifier: "fabrica-deploy-gamelift"},
+				},
+			},
+			cfg:  testConfigWithDeploy(),
+			want: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mod := buildModule(tc.state, tc.cfg, exportAccount, exportRegion)
+			var got []map[string]any
+			for _, r := range mod.Resources {
+				if r.TypeName != "AWS::IAM::Role" {
+					continue
+				}
+				if policies, ok := r.Properties["Policies"].([]map[string]any); ok {
+					got = append(got, policies...)
+				}
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("inline policy count = %d, want %d: %v", len(got), len(tc.want), got)
+			}
+			for i, w := range tc.want {
+				gn, _ := got[i]["PolicyName"].(string)
+				wn, _ := w["PolicyName"].(string)
+				if gn != wn {
+					t.Errorf("policy[%d] name = %q, want %q", i, gn, wn)
+					continue
+				}
+				if !inlinePolicyEqual(t, tc.name, i, got[i], w) {
+					t.Errorf("policy[%d] %q: document differs from shared-helper output", i, wn)
+				}
+			}
+		})
+	}
+}
+
+// TestCloudFormationEmitsInlinePoliciesOnRole renders every SSM module role to
+// CloudFormation and asserts the inline Policies appear on the AWS::IAM::Role
+// (one model for all modules) with the exact document text from the shared
+// helpers.
+func TestCloudFormationEmitsInlinePoliciesOnRole(t *testing.T) {
+	cases := []struct {
+		name     string
+		state    state.ModuleState
+		cfg      *config.Config
+		roleName string
+		policy   map[string]any
+	}{
+		{
+			name: "horde coordinator",
+			state: state.ModuleState{
+				Name:      "horde",
+				Status:    "ready",
+				Resources: []state.ModuleResource{{TypeName: "AWS::IAM::Role", Identifier: "fabrica-horde-role"}},
+			},
+			cfg:      testConfigWithHorde(),
+			roleName: "fabrica-horde-role",
+			policy:   iamrole.SSMOutputPolicy(exportRegion, exportAccount),
+		},
+		{
+			name:     "ddc",
+			state:    testDDCModuleState(),
+			cfg:      testConfigWithDDC(),
+			roleName: "fabrica-ddc-role",
+			policy:   iamrole.SSMOutputPolicy(exportRegion, exportAccount),
+		},
+		{
+			name:     "lore S3 store",
+			state:    loreS3StoreModuleState(),
+			cfg:      testConfigWithLoreS3(),
+			roleName: "fabrica-lore-role",
+			policy:   iamrole.SSMOutputPolicy(exportRegion, exportAccount),
+		},
+		{
+			name: "perforce with backup S3",
+			state: state.ModuleState{
+				Name:      "perforce",
+				Status:    "ready",
+				Resources: []state.ModuleResource{{TypeName: "AWS::IAM::Role", Identifier: "fabrica-perforce-role"}},
+			},
+			cfg:      testPerforceBackupConfig(),
+			roleName: "fabrica-perforce-role",
+			policy: iamrole.S3BucketPolicy("fabrica-perforce-backup-s3", "backups-123456789012",
+				[]string{"s3:ListBucket"},
+				[]string{"s3:PutObject", "s3:GetObject", "s3:DeleteObject"},
+				perforce.DefaultS3Prefix+"*"),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mod := buildModule(tc.state, tc.cfg, exportAccount, exportRegion)
+			gen := &cloudFormationGenerator{}
+			out, err := gen.Generate([]ExportModule{mod})
+			if err != nil {
+				t.Fatalf("Generate: %v", err)
+			}
+			var tmpl map[string]any
+			if err := yaml.Unmarshal(out, &tmpl); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			resources, ok := tmpl["Resources"].(map[string]any)
+			if !ok {
+				t.Fatal("missing Resources section")
+			}
+			roleRes := findCFResourceByRoleName(t, resources, tc.roleName)
+			props, ok := roleRes["Properties"].(map[string]any)
+			if !ok {
+				t.Fatal("role has no Properties")
+			}
+			policies, ok := props["Policies"].([]any)
+			if !ok {
+				t.Fatalf("role Policies missing or wrong type: %v", props["Policies"])
+			}
+			gotDoc := policyDocumentText(t, tc.name, policies, tc.policy["PolicyName"].(string))
+			wantDoc, err := json.Marshal(tc.policy["PolicyDocument"])
+			if err != nil {
+				t.Fatalf("marshal shared-helper document: %v", err)
+			}
+			if gotDoc != string(wantDoc) {
+				t.Errorf("emitted policy document for %q differs from shared-helper output:\ngot  %s\nwant %s",
+					tc.policy["PolicyName"], gotDoc, wantDoc)
+			}
+		})
+	}
+}
+
+// TestTerraformEmitsInlinePolicyPerModule renders every SSM module role to
+// Terraform and asserts the aws_iam_role block carries an inline_policy map
+// with one entry per shared-helper policy document.
+func TestTerraformEmitsInlinePolicyPerModule(t *testing.T) {
+	cases := []struct {
+		name     string
+		state    state.ModuleState
+		cfg      *config.Config
+		polNames []string
+	}{
+		{name: "horde coordinator", state: state.ModuleState{
+			Name:      "horde",
+			Status:    "ready",
+			Resources: []state.ModuleResource{{TypeName: "AWS::IAM::Role", Identifier: "fabrica-horde-role"}},
+		}, cfg: testConfigWithHorde(), polNames: []string{"fabrica-ssm-output"}},
+		{name: "ddc", state: testDDCModuleState(), cfg: testConfigWithDDC(),
+			polNames: []string{"fabrica-ddc-s3", "fabrica-ssm-output"}},
+		{name: "lore S3 store", state: loreS3StoreModuleState(), cfg: testConfigWithLoreS3(),
+			polNames: []string{"fabrica-lore-store-s3", "fabrica-ssm-output", "fabrica-lore-store-dynamodb"}},
+		{name: "perforce with backup S3", state: state.ModuleState{
+			Name:      "perforce",
+			Status:    "ready",
+			Resources: []state.ModuleResource{{TypeName: "AWS::IAM::Role", Identifier: "fabrica-perforce-role"}},
+		}, cfg: testPerforceBackupConfig(),
+			polNames: []string{"fabrica-ssm-output", "fabrica-perforce-backup-s3"}},
+	}
+
+	ssmName := iamrole.SSMOutputPolicy(exportRegion, exportAccount)["PolicyName"].(string)
+	ssmWantDoc, err := json.Marshal(iamrole.SSMOutputPolicy(exportRegion, exportAccount)["PolicyDocument"])
+	if err != nil {
+		t.Fatalf("marshal shared SSM output document: %v", err)
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mod := buildModule(tc.state, tc.cfg, exportAccount, exportRegion)
+			// Find the actual TF resource name for the role (logical ID →
+			// snake_case; 12-char truncation makes it not a free-form guess).
+			var tfRoleName string
+			for _, r := range mod.Resources {
+				if r.TypeName == "AWS::IAM::Role" {
+					tfRoleName = (&terraformGenerator{}).tfResourceName(r.LogicalID)
+					break
+				}
+			}
+			out, err := (&terraformGenerator{}).Generate([]ExportModule{mod})
+			if err != nil {
+				t.Fatalf("Generate: %v", err)
+			}
+			block := extractTFBlock(t, string(out), "aws_iam_role", tfRoleName)
+			if !strings.Contains(block, "inline_policy") {
+				t.Fatalf("aws_iam_role.%s missing inline_policy:\n%s", tfRoleName, block)
+			}
+			for _, name := range tc.polNames {
+				if !strings.Contains(block, name) {
+					t.Errorf("aws_iam_role.%s inline_policy missing %q", tfRoleName, name)
+				}
+			}
+			// The SSM output document text must match the shared helper
+			// byte-for-byte (after unwrapping the HCL %q outer quotes).
+			gotDoc := inlinePolicyDocInHCL(t, block, ssmName)
+			if gotDoc != string(ssmWantDoc) {
+				t.Errorf("inline_policy SSM output document does not match iamrole.SSMOutputPolicy output:\ngot  %s\nwant %s", gotDoc, ssmWantDoc)
+			}
+		})
+	}
+}
+
+// TestExportSSMOutputGrepHitsEverySSMModuleRole is the end-to-end success
+// check: a grep of the full export output (both formats) for the shared
+// SSM-output policy name must hit every SSM module role.
+func TestExportSSMOutputGrepHitsEverySSMModuleRole(t *testing.T) {
+	st := state.NewState(exportAccount, exportRegion)
+	st.UpsertModule("perforce", "fabrica-perforce", "ready", []state.ModuleResource{
+		{TypeName: "AWS::IAM::Role", Identifier: "fabrica-perforce-role"},
+	})
+	st.UpsertModule("horde", "ami-coord123", "ready", []state.ModuleResource{
+		{TypeName: "AWS::IAM::Role", Identifier: "fabrica-horde-role"},
+		{TypeName: "AWS::IAM::Role", Identifier: "fabrica-horde-agent-role", Properties: map[string]string{"role": "agent"}},
+	})
+	st.UpsertModule("ddc", "ami-ddc123", "ready", testDDCModuleState().Resources)
+	st.UpsertModule("lore", "ami-lore123", "ready", loreS3StoreModuleState().Resources)
+
+	cfg := testConfigWithLoreS3()
+	cfg.Horde.AmiID = "ami-coord123"
+	cfg.Perforce.InstanceType = "c5.2xlarge"
+
+	// (roleName, module) pairs for each SSM module role.
+	roleCases := []struct{ role, module string }{
+		{"fabrica-perforce-role", "perforce"},
+		{"fabrica-horde-role", "horde"},
+		{"fabrica-horde-agent-role", "horde"},
+		{"fabrica-ddc-role", "ddc"},
+		{"fabrica-lore-role", "lore"},
+	}
+	for _, format := range []Format{CloudFormation, Terraform} {
+		out, err := GenerateOutput(format, st, cfg)
+		if err != nil {
+			t.Fatalf("GenerateOutput(%s): %v", format, err)
+		}
+		s := string(out)
+		// Every SSM module role must be present in the output, and the shared
+		// SSM output policy must be attached to each one. Per-role checks use
+		// the raw identifier (CFN outputs the RoleName) and the logical-ID
+		// forms — CamelCase for CFN template keys, snake_case for TF resource
+		// names. The policy name is checked globally.
+		if !strings.Contains(s, "fabrica-ssm-output") {
+			t.Fatalf("%s: output missing fabrica-ssm-output policy", format)
+		}
+		for _, rc := range roleCases {
+			logicalID := toLogicalID(rc.module, "AWS::IAM::Role", rc.role)
+			nameForms := []string{rc.role, logicalID}
+			if format == Terraform {
+				nameForms = append(nameForms, (&terraformGenerator{}).tfResourceName(logicalID))
+			}
+			if !containsAny(s, nameForms) {
+				t.Fatalf("%s: output missing role %q (tried %v)", format, rc.role, nameForms)
+			}
+		}
+		// One document: the policy name must appear, and its document text must
+		// be the shared helper's (MDS parameter + /fabrica/ssm/* sink).
+		if !strings.Contains(s, "parameter/MDS-*") {
+			t.Errorf("%s: SSM output policy document content missing", format)
+		}
+		if !strings.Contains(s, "/fabrica/ssm/*") {
+			t.Errorf("%s: SSM output log-group ARN missing", format)
+		}
+	}
+}
+
+// TestExportInlinePoliciesKeepSecretsRedacted asserts the inline-policy work
+// does not un-redact credential-like fields: a role whose state carries a long
+// base64 blob next to its inline policies exports the policies intact and the
+// blob redacted.
+func TestExportInlinePoliciesKeepSecretsRedacted(t *testing.T) {
+	blob := strings.Repeat("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", 20)
+	ms := state.ModuleState{
+		Name:   "ddc",
+		Status: "ready",
+		Resources: []state.ModuleResource{
+			{TypeName: "AWS::S3::Bucket", Identifier: "fabrica-ddc-bucket-123"},
+			{TypeName: "AWS::IAM::Role", Identifier: "fabrica-ddc-role", Properties: map[string]string{"PasswordData": blob}},
+		},
+	}
+	cfg := testConfigWithDDC()
+	mod := buildModule(ms, cfg, exportAccount, exportRegion)
+	for _, r := range mod.Resources {
+		if r.TypeName != "AWS::IAM::Role" {
+			continue
+		}
+		if v, ok := r.Properties["PasswordData"].(string); !ok || !strings.HasPrefix(v, "# REDACTED") {
+			t.Fatalf("PasswordData not redacted alongside inline policies: %v", r.Properties["PasswordData"])
+		}
+		if _, ok := r.Properties["Policies"].([]map[string]any); !ok {
+			t.Fatal("inline Policies missing on DDC role")
+		}
+	}
+}
+
+// ---- helpers for the inline-policy tests ----
+
+// testConfigWithLoreS3 is a lore s3-store config bound to the test account.
+func testConfigWithLoreS3() *config.Config {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = exportAccount
+	cfg.Lore.AmiID = "ami-lore123"
+	cfg.Lore.InstanceType = "m5.xlarge"
+	cfg.Lore.AllowedCIDR = "10.0.0.0/8"
+	cfg.Lore.StoreBackend = "s3"
+	cfg.Lore.StoreBucket = "fabrica-lore-store-123456789012-us-east-1"
+	return cfg
+}
+
+// testPerforceBackupConfig is a perforce config with backup S3 export enabled.
+func testPerforceBackupConfig() *config.Config {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = exportAccount
+	cfg.Perforce.InstanceType = "c5.2xlarge"
+	cfg.Perforce.AllowedCIDR = "10.0.0.0/8"
+	cfg.Perforce.Backup.S3Export = true
+	cfg.Perforce.Backup.S3Bucket = "backups-123456789012"
+	return cfg
+}
+
+// testDDCModuleState is the recorded DDC module state (home region only).
+func testDDCModuleState() state.ModuleState {
+	return state.ModuleState{
+		Name:   "ddc",
+		Status: "ready",
+		Resources: []state.ModuleResource{
+			{
+				TypeName:   "AWS::EC2::SecurityGroup",
+				Identifier: "sg-ddc123",
+				Properties: map[string]string{"GroupName": "fabrica-ddc-sg"},
+			},
+			{
+				TypeName:   "AWS::EC2::Instance",
+				Identifier: "i-ddc-coord",
+				Properties: map[string]string{"instanceType": "m5.xlarge", "volumeSize": "500", "role": "coordinator"},
+			},
+			{
+				TypeName:   "AWS::S3::Bucket",
+				Identifier: "fabrica-ddc-bucket-123",
+				Properties: map[string]string{"BucketName": "fabrica-ddc-bucket-123"},
+			},
+			{
+				TypeName:   "AWS::IAM::Role",
+				Identifier: "fabrica-ddc-role",
+				Properties: map[string]string{"RoleName": "fabrica-ddc-role"},
+			},
+			{
+				TypeName:   "AWS::IAM::InstanceProfile",
+				Identifier: "fabrica-ddc-profile",
+				Properties: map[string]string{"InstanceProfileName": "fabrica-ddc-profile"},
+			},
+		},
+	}
+}
+
+// findCFResourceByRoleName finds an AWS::IAM::Role resource in a CFN template
+// by its RoleName property.
+func findCFResourceByRoleName(t *testing.T, resources map[string]any, roleName string) map[string]any {
+	t.Helper()
+	for id, res := range resources {
+		m, ok := res.(map[string]any)
+		if !ok || m["Type"] != "AWS::IAM::Role" {
+			continue
+		}
+		props, ok := m["Properties"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, _ := props["RoleName"].(string); name == roleName {
+			return m
+		}
+		_ = id
+	}
+	t.Fatalf("AWS::IAM::Role %q not found in CloudFormation Resources", roleName)
+	return nil
+}
+
+// policyDocumentText returns the emitted PolicyDocument (as compact JSON) for
+// one named policy in a CFN Policies array.
+func policyDocumentText(t *testing.T, testName string, policies []any, policyName string) string {
+	t.Helper()
+	for _, p := range policies {
+		pm, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+		if pm["PolicyName"] == policyName {
+			doc, err := json.Marshal(pm["PolicyDocument"])
+			if err != nil {
+				t.Fatalf("%s: marshal emitted policy document: %v", testName, err)
+			}
+			return string(doc)
+		}
+	}
+	t.Fatalf("%s: policy %q not present in emitted Policies", testName, policyName)
+	return ""
+}
+
+// inlinePolicyEqual reports that the emitted inline policy equals the
+// shared-helper output: same name, and a PolicyDocument that is byte-identical
+// after JSON round-trip (key order normalized).
+func inlinePolicyEqual(t *testing.T, testName string, idx int, got, want map[string]any) bool {
+	t.Helper()
+	gotDoc, err := json.Marshal(got["PolicyDocument"])
+	if err != nil {
+		t.Fatalf("%s: policy[%d]: marshal got document: %v", testName, idx, err)
+	}
+	wantDoc, err := json.Marshal(want["PolicyDocument"])
+	if err != nil {
+		t.Fatalf("%s: policy[%d]: marshal want document: %v", testName, idx, err)
+	}
+	if string(gotDoc) != string(wantDoc) {
+		t.Errorf("%s: policy[%d]:\ngot  %s\nwant %s", testName, idx, gotDoc, wantDoc)
+		return false
+	}
+	return true
+}
+
+// containsAny reports whether s contains any of the given substrings.
+func containsAny(s string, subs []string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractTFBlock returns the body of a Terraform resource block.
+// inlinePolicyDocInHCL returns the raw JSON document of one named policy from
+// the inline_policy block of an aws_iam_role resource, unwrapping the HCL %q
+// outer quotes. The entry shape is:  <name> = "<doc>"
+func inlinePolicyDocInHCL(t *testing.T, block, policyName string) string {
+	t.Helper()
+	marker := policyName + " = \""
+	idx := strings.Index(block, marker)
+	if idx < 0 {
+		t.Fatalf("inline_policy block missing %q", policyName)
+	}
+	rest := block[idx+len(marker):]
+	// The value is %q-emitted: JSON double-quotes are escaped as \", so the
+	// first unescaped " ends the HCL string.
+	var doc strings.Builder
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '\\' {
+			// Copy the escape sequence as-is.
+			doc.WriteByte(rest[i])
+			if i+1 < len(rest) {
+				i++
+				doc.WriteByte(rest[i])
+			}
+			continue
+		}
+		if rest[i] == '"' {
+			break
+		}
+		doc.WriteByte(rest[i])
+	}
+	return unquoteTFString(t, doc.String())
+}
+
+// unquoteTFString unwraps the outer quotes of an HCL %q-emitted string value,
+// returning the raw string the generator emitted. It walks the escape
+// sequences left by the scanner in inlinePolicyDocInHCL and undoes them.
+func unquoteTFString(t *testing.T, val string) string {
+	t.Helper()
+	var out strings.Builder
+	for i := 0; i < len(val); i++ {
+		if val[i] == '\\' && i+1 < len(val) {
+			i++
+			switch val[i] {
+			case '"', '\\':
+				out.WriteByte(val[i])
+			default:
+				// %q only emits \x5c sequences for quotes and backslashes in
+				// these documents; anything else is unexpected — preserve it.
+				out.WriteByte('\\')
+				out.WriteByte(val[i])
+			}
+			continue
+		}
+		out.WriteByte(val[i])
+	}
+	return out.String()
+}
+
+func extractTFBlock(t *testing.T, output, resourceType, resourceName string) string {
+	t.Helper()
+	open := fmt.Sprintf("resource %q %q {", resourceType, resourceName)
+	idx := strings.Index(output, open)
+	if idx < 0 {
+		t.Fatalf("terraform resource block %s.%s not found", resourceType, resourceName)
+		return ""
+	}
+	rest := output[idx+len(open):]
+	end := strings.Index(rest, "\n}")
+	if end < 0 {
+		t.Fatalf("unterminated terraform resource block %s.%s", resourceType, resourceName)
+		return ""
+	}
+	return rest[:end]
 }

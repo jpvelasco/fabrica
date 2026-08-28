@@ -81,7 +81,7 @@ func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region s
 	}
 
 	storeBackend := normalizeStoreBackend(cfg.StoreBackend)
-	storeBucket := resolveStoreBucket(cfg.StoreBucket, account, region, storeBackend)
+	storeBucket := ResolveStoreBucket(cfg.StoreBucket, account, region, storeBackend)
 
 	vpcID, subnetID, defaultVPC, err := topology.ResolveVPC(ctx, cfg.VPCId, cfg.SubnetId, resolver)
 	if err != nil {
@@ -123,7 +123,10 @@ func normalizeStoreBackend(raw string) string {
 	return b
 }
 
-func resolveStoreBucket(bucket, account, region, backend string) string {
+// ResolveStoreBucket returns the configured Lore store S3 bucket, or the
+// default fabrica-lore-store-<account>-<region> name when unset. Empty for
+// any backend that does not use an S3 store.
+func ResolveStoreBucket(bucket, account, region, backend string) string {
 	if backend != StoreBackendS3 {
 		return ""
 	}

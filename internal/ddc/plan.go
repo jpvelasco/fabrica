@@ -172,7 +172,7 @@ func resolveDefaults(cfg config.DDCConfig, account, region string) ddcDefaults {
 		internalPort: internalPortOrDefault(cfg.InternalPort),
 		allowedCIDR:  cidrOrDefault(cfg.AllowedCIDR),
 		internalCIDR: internalCIDROrDefault(cfg.InternalCIDR),
-		bucket:       bucketOrDefault(cfg.Bucket, account, region),
+		bucket:       BucketOrDefault(cfg.Bucket, account, region),
 		namespace:    namespaceOrDefault(cfg.Namespace),
 	}
 }
@@ -240,7 +240,9 @@ func namespaceOrDefault(v string) string {
 	return v
 }
 
-func bucketOrDefault(v, account, region string) string {
+// BucketOrDefault returns the configured DDC S3 bucket, or the default
+// fabrica-ddc-<account>-<region> name when unset.
+func BucketOrDefault(v, account, region string) string {
 	if v == "" {
 		return fmt.Sprintf("fabrica-ddc-%s-%s", account, region)
 	}
