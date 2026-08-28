@@ -2,6 +2,7 @@
 package iamrole
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -138,6 +139,30 @@ func TestSSMOutputPolicy_Shared(t *testing.T) {
 	for _, a := range wantActions {
 		if !seen[a] {
 			t.Errorf("SSM output policy missing action %q", a)
+		}
+	}
+}
+
+// TestSSMOutputPolicy_EmptyRegionAccount asserts the partition-agnostic
+// fallback: callers that don't have region/account (tests, dry-runs) get
+// "*" placeholders rather than malformed ARNs.
+func TestSSMOutputPolicy_EmptyRegionAccount(t *testing.T) {
+	p := SSMOutputPolicy("", "")
+	stmts := p["PolicyDocument"].(map[string]any)["Statement"].([]map[string]any)
+	if len(stmts) != 3 {
+		t.Fatalf("Statement len = %d, want 3", len(stmts))
+	}
+	for _, sm := range stmts {
+		for _, rs := range sm["Resource"].([]string) {
+			if !strings.Contains(rs, ":parameter/MDS-*") &&
+				!strings.Contains(rs, ":log-group:/fabrica/ssm/*") {
+				t.Errorf("unexpected resource shape %q", rs)
+			}
+			// Both the region and account segments must be the wildcard.
+			segments := strings.Split(strings.TrimPrefix(rs, "arn:aws:"), ":")
+			if segments[1] != "*" || segments[2] != "*" {
+				t.Errorf("resource %q does not use */* fallback for region/account", rs)
+			}
 		}
 	}
 }
