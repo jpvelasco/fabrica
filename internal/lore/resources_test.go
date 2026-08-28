@@ -262,8 +262,96 @@ func TestRoleDesiredStateOmitsDynamoDBWithoutTables(t *testing.T) {
 	}
 	doc := ec2state.UnmarshalDesiredState(t, raw)
 	policies := doc["Policies"].([]any)
-	if len(policies) != 1 {
-		t.Fatalf("Policies len = %d, want 1 (S3 only)", len(policies))
+	if len(policies) != 2 {
+		t.Fatalf("Policies len = %d, want 2 (S3 + SSM output)", len(policies))
+	}
+	var sawDynamoDB, sawSSMOutput bool
+	for _, p := range policies {
+		pm := p.(map[string]any)
+		switch pm["PolicyName"] {
+		case "fabrica-lore-store-dynamodb":
+			sawDynamoDB = true
+		case "fabrica-ssm-output":
+			sawSSMOutput = true
+		}
+	}
+	if sawDynamoDB {
+		t.Error("DynamoDB policy must be absent when StoreTables is empty")
+	}
+	if !sawSSMOutput {
+		t.Error("SSM output policy must be present regardless of StoreTables")
+	}
+}
+
+// TestRoleDesiredStateSSMOutput asserts the SSM output inline policy: this
+// account's AmazonSSMManagedInstanceCore is a narrowed variant without
+// ssm:PutParameter or logs:*, so the instance role needs an explicit
+// least-privilege policy to publish SSM command output to the MDS parameter
+// and the /fabrica/ssm/* CloudWatch Logs sink (the reliable retrieval path).
+func TestRoleDesiredStateSSMOutput(t *testing.T) {
+	plan := &CreatePlan{
+		RoleName:    "fabrica-lore-role",
+		StoreBucket: "fabrica-lore-store-123456789012-us-west-2",
+		Region:      "us-west-2",
+		Account:     "123456789012",
+	}
+	raw, err := RoleDesiredState(plan)
+	if err != nil {
+		t.Fatalf("RoleDesiredState: %v", err)
+	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+
+	var ssmPolicy map[string]any
+	for _, p := range doc["Policies"].([]any) {
+		pm := p.(map[string]any)
+		if pm["PolicyName"] == "fabrica-ssm-output" {
+			ssmPolicy = pm
+		}
+	}
+	if ssmPolicy == nil {
+		t.Fatal("fabrica-ssm-output policy not found")
+	}
+	pd := ssmPolicy["PolicyDocument"].(map[string]any)
+	if pd["Version"] != "2012-10-17" {
+		t.Errorf("PolicyDocument.Version = %v", pd["Version"])
+	}
+	stmts := pd["Statement"].([]any)
+	if len(stmts) != 3 {
+		t.Fatalf("Statement len = %d, want 3 (MDS param, log group, log stream)", len(stmts))
+	}
+
+	wantActions := []string{
+		"ssm:PutParameter", "ssm:GetParameter", "ssm:DescribeParameters",
+		"logs:CreateLogGroup",
+		"logs:CreateLogStream", "logs:PutLogEvents",
+	}
+	seen := map[string]bool{}
+	for _, s := range stmts {
+		sm := s.(map[string]any)
+		if sm["Effect"] != "Allow" {
+			t.Errorf("statement %v has Effect %v, want Allow", sm["Sid"], sm["Effect"])
+		}
+		actions := sm["Action"].([]any)
+		resources := sm["Resource"].([]any)
+		for _, a := range actions {
+			seen[a.(string)] = true
+		}
+		allowed := map[string]bool{
+			"arn:aws:ssm:us-west-2:123456789012:parameter/MDS-*":             true,
+			"arn:aws:logs:us-west-2:123456789012:log-group:/fabrica/ssm/*":   true,
+			"arn:aws:logs:us-west-2:123456789012:log-group:/fabrica/ssm/*:*": true,
+		}
+		for _, r := range resources {
+			rs, _ := r.(string)
+			if !allowed[rs] {
+				t.Errorf("unexpected SSM output resource %q (must stay scoped to MDS-* and /fabrica/ssm/*)", rs)
+			}
+		}
+	}
+	for _, a := range wantActions {
+		if !seen[a] {
+			t.Errorf("SSM output policy missing action %q", a)
+		}
 	}
 }
 
@@ -412,8 +500,8 @@ func TestRoleDesiredStateStoreTables(t *testing.T) {
 	doc := ec2state.UnmarshalDesiredState(t, raw)
 
 	policies := doc["Policies"].([]any)
-	if len(policies) != 2 {
-		t.Fatalf("Policies len = %d, want 2 (S3 + DynamoDB)", len(policies))
+	if len(policies) != 3 {
+		t.Fatalf("Policies len = %d, want 3 (S3 + DynamoDB + SSM output)", len(policies))
 	}
 
 	// Collect the S3 statement resources (must include ListBucketVersions + DeleteObjectVersion).
