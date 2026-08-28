@@ -4079,6 +4079,43 @@ func TestIAMRoleInlinePoliciesNilWhenStoreCannotResolve(t *testing.T) {
 	}
 }
 
+// TestIAMRoleInlinePoliciesDDCDefaultBucket pins the DDC default-bucket path:
+// with no bucket configured, the S3 policy is scoped to the derived
+// fabrica-ddc-<account>-<region> name (BucketOrDefault's fallback).
+func TestIAMRoleInlinePoliciesDDCDefaultBucket(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = exportAccount
+	ms := state.ModuleState{
+		Name:   "ddc",
+		Status: "ready",
+		Resources: []state.ModuleResource{
+			{TypeName: "AWS::IAM::Role", Identifier: "fabrica-ddc-role"},
+		},
+	}
+	var got []map[string]any
+	for _, r := range buildModule(ms, cfg, exportAccount, exportRegion).Resources {
+		if r.TypeName != "AWS::IAM::Role" {
+			continue
+		}
+		got, _ = r.Properties["Policies"].([]map[string]any)
+	}
+	want := []map[string]any{
+		iamrole.S3BucketPolicy("fabrica-ddc-s3", "fabrica-ddc-123456789012-us-east-1",
+			[]string{"s3:ListBucket", "s3:GetBucketLocation"},
+			[]string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject"},
+			"*"),
+		iamrole.SSMOutputPolicy(exportRegion, exportAccount),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ddc default-bucket inline policy count = %d, want %d", len(got), len(want))
+	}
+	for i, w := range want {
+		if !inlinePolicyEqual(t, "ddc default bucket", i, got[i], w) {
+			t.Errorf("policy[%d] differs from shared-helper output", i)
+		}
+	}
+}
+
 // TestSanitizeValueRedactsNestedCredentialBlobs covers the slice branches of
 // the redaction pass: base64-looking strings are replaced wherever they sit —
 // top of a []any, nested in a []map[string]any, or inside a policy document.
