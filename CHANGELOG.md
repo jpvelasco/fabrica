@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Lore AMI build bakes from the pinned GitHub release** - the Image Builder component now downloads the pinned `loreserver` release tarball directly (no staging bucket or `REPLACE_WITH_YOUR_BUCKET` placeholder), normalizes the 0644 tarball mode, and enables the SSM agent best-effort so bakes on base images without `amazon-ssm-agent.service` do not abort. Recipe emits `supportedOsVersions`. Known-good row recorded for lore v0.8.6 in us-west-2 (AMI `ami-0cb86d7ebcd1a4487`, base `ami-0bdb09211df876db4`), SSM-verified boot with health 200 on the local store.
+- **Lore 0.8.6 S3 store backend documented as unsupported** - the `aws` store plugin requires S3 plus four DynamoDB tables (fragments, metadata, mutable, locks) and DynamoDB permissions on the instance role; the module provisions only the versioned bucket, so `storeBackend: s3` deployments fail at boot on lore 0.8.6. Use `storeBackend: local` until the DynamoDB resources land.
+
 ## [0.4.3] - 2026-08-23
 
 ### Fixed

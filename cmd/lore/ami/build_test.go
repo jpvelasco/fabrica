@@ -403,13 +403,19 @@ func TestBuildRunEmitsSharedContractArtifacts(t *testing.T) {
 		t.Fatalf("reading component.yaml: %v", err)
 	}
 	for _, want := range []string{
-		"aws s3 sync s3://REPLACE_WITH_YOUR_BUCKET/loreserver-bin/ /tmp/lore-bin/ --exact-timestamps",
+		"DownloadPinnedLoreRelease",
+		"curl -fsSL --retry 5",
+		"https://github.com/EpicGames/lore/releases/download/v5.5.0/",
+		"loreserver-v5.5.0-x86_64-unknown-linux-gnu.tar.gz",
 		"cp -a /tmp/lore-bin/. /opt/loreserver/",
 		"systemctl is-enabled --quiet loreserver.service",
 	} {
 		if !bytes.Contains(component, []byte(want)) {
 			t.Errorf("component.yaml missing shared contract behavior %q", want)
 		}
+	}
+	if bytes.Contains(component, []byte("REPLACE_WITH_YOUR_BUCKET")) {
+		t.Errorf("component.yaml still contains the studio S3 placeholder; the pinned OSS release must be fetched directly from GitHub")
 	}
 
 	packer, err := os.ReadFile(filepath.Join(outputDir, "packer.pkr.hcl"))
