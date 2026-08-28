@@ -295,9 +295,8 @@ func TestStoreTableDesiredStateFragments(t *testing.T) {
 	if !ok || len(attrs) != 2 {
 		t.Fatalf("AttributeDefinitions = %v, want hash + repository_context", doc["AttributeDefinitions"])
 	}
-	billing, ok := doc["BillingMode"].([]any)
-	if !ok || len(billing) != 1 || billing[0] != "PAY_PER_REQUEST" {
-		t.Errorf("BillingMode = %v, want [PAY_PER_REQUEST]", doc["BillingMode"])
+	if billing := doc["BillingMode"]; billing != "PAY_PER_REQUEST" {
+		t.Errorf("BillingMode = %v, want PAY_PER_REQUEST (Cloud Control string)", billing)
 	}
 }
 

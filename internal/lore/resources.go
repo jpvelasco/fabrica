@@ -89,7 +89,7 @@ func StoreTableDesiredState(plan *CreatePlan, suffix string) (json.RawMessage, e
 		"TableName":            plan.StoreBucket + "-" + suffix,
 		"KeySchema":            keySchema,
 		"AttributeDefinitions": attributeDefinitions,
-		"BillingMode":          []string{"PAY_PER_REQUEST"},
+		"BillingMode":          "PAY_PER_REQUEST",
 		"Tags": []map[string]string{
 			{"Key": "ManagedBy", "Value": "fabrica"},
 			{"Key": "Name", "Value": plan.StoreBucket + "-" + suffix},
