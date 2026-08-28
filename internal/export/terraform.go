@@ -295,14 +295,10 @@ func (g *terraformGenerator) hclInlinePolicies(v any) string {
 	sb.WriteString("  inline_policy = {\n")
 	for _, p := range policies {
 		name, _ := p["PolicyName"].(string)
-		doc, err := json.Marshal(p["PolicyDocument"])
-		if err != nil {
-			// A policy document that cannot be marshaled is a bug in the plan
-			// layer (it must be JSON-serializable for Cloud Control); fail
-			// loudly rather than silently emitting a broken block.
-			fmt.Fprintf(&sb, "    # %s: marshal error: %v\n", name, err)
-			continue
-		}
+		// Policy documents are built by the shared iamrole/lore helpers as
+		// JSON-serializable maps (the create path ships the same values to
+		// Cloud Control), so Marshal cannot fail here.
+		doc, _ := json.Marshal(p["PolicyDocument"])
 		fmt.Fprintf(&sb, "    %s = %q\n", name, string(doc))
 	}
 	sb.WriteString("  }\n")

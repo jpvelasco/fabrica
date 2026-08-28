@@ -3878,6 +3878,22 @@ func TestCloudFormationEmitsInlinePoliciesOnRole(t *testing.T) {
 	}
 }
 
+// TestHclInlinePoliciesEmptyOrUntypedGuards covers the empty/wrong-type guard
+// in the Terraform inline_policy renderer: nothing must be emitted when the
+// value is absent or not a policy list.
+func TestHclInlinePoliciesEmptyOrUntypedGuards(t *testing.T) {
+	g := &terraformGenerator{}
+	if got := g.hclInlinePolicies(nil); got != "" {
+		t.Errorf("hclInlinePolicies(nil) = %q, want empty", got)
+	}
+	if got := g.hclInlinePolicies("not-a-list"); got != "" {
+		t.Errorf("hclInlinePolicies(string) = %q, want empty", got)
+	}
+	if got := g.hclInlinePolicies([]map[string]any{}); got != "" {
+		t.Errorf("hclInlinePolicies(empty) = %q, want empty", got)
+	}
+}
+
 // TestTerraformEmitsInlinePolicyPerModule renders every SSM module role to
 // Terraform and asserts the aws_iam_role block carries an inline_policy map
 // with one entry per shared-helper policy document.
@@ -4034,6 +4050,73 @@ func TestExportInlinePoliciesKeepSecretsRedacted(t *testing.T) {
 		if _, ok := r.Properties["Policies"].([]map[string]any); !ok {
 			t.Fatal("inline Policies missing on DDC role")
 		}
+	}
+}
+
+// TestIAMRoleInlinePoliciesNilWhenStoreCannotResolve covers the lore
+// non-S3-store path (no S3 store to scope policies to) and the default
+// ci/deploy fallthrough: no inline Policies are re-derived, so the role
+// carries none in export output.
+func TestIAMRoleInlinePoliciesNilWhenStoreCannotResolve(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = exportAccount
+	cfg.Lore.AmiID = "ami-lore123"
+	cfg.Lore.StoreBackend = "local"
+	ms := state.ModuleState{
+		Name:   "lore",
+		Status: "ready",
+		Resources: []state.ModuleResource{
+			{TypeName: "AWS::IAM::Role", Identifier: "fabrica-lore-role"},
+		},
+	}
+	for _, r := range buildModule(ms, cfg, exportAccount, exportRegion).Resources {
+		if r.TypeName != "AWS::IAM::Role" {
+			continue
+		}
+		if _, ok := r.Properties["Policies"]; ok {
+			t.Fatalf("lore local-store role must not carry re-derived inline policies, got %v", r.Properties["Policies"])
+		}
+	}
+}
+
+// TestSanitizeValueRedactsNestedCredentialBlobs covers the slice branches of
+// the redaction pass: base64-looking strings are replaced wherever they sit —
+// top of a []any, nested in a []map[string]any, or inside a policy document.
+func TestSanitizeValueRedactsNestedCredentialBlobs(t *testing.T) {
+	blob := strings.Repeat("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", 20)
+
+	gotAny, ok := sanitizeValue([]any{"plain", blob}).([]any)
+	if !ok {
+		t.Fatalf("sanitizeValue([]any) = %T, want []any", gotAny)
+	}
+	if gotAny[0] != "plain" {
+		t.Errorf("plain string not preserved: %v", gotAny[0])
+	}
+	if s, _ := gotAny[1].(string); !strings.HasPrefix(s, "# REDACTED") {
+		t.Errorf("nested blob not redacted: %q", gotAny[1])
+	}
+
+	wantDoc := map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{"Resource": blob}}}
+	gotMaps, ok := sanitizeValue([]map[string]any{{"PolicyName": "x", "PolicyDocument": wantDoc}}).([]map[string]any)
+	if !ok {
+		t.Fatalf("sanitizeValue([]map[string]any) = %T, want []map[string]any", gotMaps)
+	}
+	// sanitizeValue preserves the concrete slice type, so a []any statement
+	// stays []any — walk the entries generically.
+	doc, ok := gotMaps[0]["PolicyDocument"].(map[string]any)
+	if !ok {
+		t.Fatal("policy document not a map after sanitize")
+	}
+	stmts, ok := doc["Statement"].([]any)
+	if !ok {
+		t.Fatalf("policy statement = %T, want []any", doc["Statement"])
+	}
+	stmt, ok := stmts[0].(map[string]any)
+	if !ok {
+		t.Fatal("statement entry not a map after sanitize")
+	}
+	if res, _ := stmt["Resource"].(string); !strings.HasPrefix(res, "# REDACTED") {
+		t.Errorf("policy-document blob not redacted: %q", res)
 	}
 }
 
