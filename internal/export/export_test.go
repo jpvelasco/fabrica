@@ -752,47 +752,10 @@ func TestBuildLoreModule(t *testing.T) {
 }
 
 func TestBuildLoreModuleWithS3Store(t *testing.T) {
-	// Lore with S3 store backend includes S3 bucket, IAM role, and instance profile.
-	ms := state.ModuleState{
-		Name:   "lore",
-		Status: "ready",
-		Resources: []state.ModuleResource{
-			{
-				TypeName:   "AWS::EC2::SecurityGroup",
-				Identifier: "sg-lore",
-				Properties: map[string]string{},
-			},
-			{
-				TypeName:   "AWS::S3::Bucket",
-				Identifier: "fabrica-lore-store-123456789012-us-east-1",
-				Properties: map[string]string{
-					"BucketName": "fabrica-lore-store-123456789012-us-east-1",
-				},
-			},
-			{
-				TypeName:   "AWS::IAM::Role",
-				Identifier: "fabrica-lore-role",
-				Properties: map[string]string{
-					"RoleName": "fabrica-lore-role",
-				},
-			},
-			{
-				TypeName:   "AWS::IAM::InstanceProfile",
-				Identifier: "fabrica-lore-profile",
-				Properties: map[string]string{
-					"InstanceProfileName": "fabrica-lore-profile",
-				},
-			},
-			{
-				TypeName:   "AWS::EC2::Instance",
-				Identifier: "i-lore",
-				Properties: map[string]string{
-					"instanceType": "m5.xlarge",
-					"volumeSize":   "500",
-				},
-			},
-		},
-	}
+	// Lore with S3 store backend includes S3 bucket, four DynamoDB store
+	// tables, IAM role, and instance profile.
+	ms := loreS3StoreModuleState()
+
 	cfg := config.Defaults()
 	cfg.Lore.AmiID = "ami-lore123"
 	cfg.Lore.InstanceType = "m5.xlarge"
@@ -804,8 +767,8 @@ func TestBuildLoreModuleWithS3Store(t *testing.T) {
 	if mod.Name != "lore" {
 		t.Errorf("unexpected module name: %s", mod.Name)
 	}
-	if len(mod.Resources) != 5 {
-		t.Errorf("expected 5 resources (SG + S3 + Role + Profile + Instance), got %d", len(mod.Resources))
+	if len(mod.Resources) != 9 {
+		t.Errorf("expected 9 resources (SG + S3 + 4 DDB tables + Role + Profile + Instance), got %d", len(mod.Resources))
 	}
 
 	// Verify S3 bucket is included in export.
@@ -838,6 +801,218 @@ func TestBuildLoreModuleWithS3Store(t *testing.T) {
 	}
 	if !foundProfile {
 		t.Error("Instance profile not found in exported lore module")
+	}
+}
+
+func TestBuildLoreS3StoreTablesDistinctLogicalIDs(t *testing.T) {
+	// The four DynamoDB store tables all derive from the same bucket name, so
+	// identifier-based logical IDs would collide. The loreTable state property
+	// must yield distinct, per-suffix logical IDs.
+	ms := loreS3StoreModuleState()
+	cfg := config.Defaults()
+	cfg.Lore.AmiID = "ami-lore123"
+
+	mod := buildModule(ms, cfg)
+
+	want := map[string]string{
+		"fabrica-lore-store-123456789012-us-east-1-fragments": "LoreTableFRAGMENTS",
+		"fabrica-lore-store-123456789012-us-east-1-metadata":  "LoreTableMETADATA",
+		"fabrica-lore-store-123456789012-us-east-1-mutable":   "LoreTableMUTABLE",
+		"fabrica-lore-store-123456789012-us-east-1-locks":     "LoreTableLOCKS",
+	}
+	seen := map[string]bool{}
+	for _, r := range mod.Resources {
+		if r.TypeName != "AWS::DynamoDB::Table" {
+			continue
+		}
+		w, ok := want[r.Identifier]
+		if !ok {
+			t.Errorf("unexpected DynamoDB table %q in export", r.Identifier)
+			continue
+		}
+		if r.LogicalID != w {
+			t.Errorf("table %s: LogicalID = %q, want %q", r.Identifier, r.LogicalID, w)
+		}
+		seen[r.LogicalID] = true
+		if tn, ok := r.Properties["TableName"]; !ok || tn != r.Identifier {
+			t.Errorf("table %s: TableName = %v, want the identifier", r.Identifier, tn)
+		}
+		if bm, ok := r.Properties["BillingMode"]; !ok || bm != "PAY_PER_REQUEST" {
+			t.Errorf("table %s: BillingMode = %v, want PAY_PER_REQUEST", r.Identifier, bm)
+		}
+		if _, leaked := r.Properties["loreTable"]; leaked {
+			t.Errorf("table %s: internal state key loreTable leaked into exported properties", r.Identifier)
+		}
+	}
+	if len(seen) != 4 {
+		t.Errorf("expected 4 distinct table LogicalIDs, got %d: %v", len(seen), seen)
+	}
+}
+
+// loreS3StoreTableOutputs maps each store table's per-suffix logical ID to
+// the output name its table name is exposed under.
+func loreS3StoreTableOutputs() map[string]string {
+	return map[string]string{
+		"LoreTableFRAGMENTS": "LoreStoreFragmentsTableName",
+		"LoreTableMETADATA":  "LoreStoreMetadataTableName",
+		"LoreTableMUTABLE":   "LoreStoreMutableTableName",
+		"LoreTableLOCKS":     "LoreStoreLocksTableName",
+	}
+}
+
+func TestCloudFormationLoreStoreTableOutputs(t *testing.T) {
+	// Exporting an s3-backed Lore must emit a per-table name output for each
+	// store table (logical IDs are distinct, so output names must be too).
+	ms := loreS3StoreModuleState()
+	cfg := config.Defaults()
+	cfg.Lore.AmiID = "ami-lore123"
+
+	mod := buildModule(ms, cfg)
+	gen := &cloudFormationGenerator{}
+	out, err := gen.Generate([]ExportModule{mod})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	var tmpl map[string]any
+	if err := yaml.Unmarshal(out, &tmpl); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	outputs, ok := tmpl["Outputs"].(map[string]any)
+	if !ok {
+		t.Fatal("missing Outputs section")
+	}
+	for _, name := range loreS3StoreTableOutputs() {
+		if _, ok := outputs[name]; !ok {
+			t.Errorf("missing CloudFormation output %q", name)
+		}
+	}
+}
+
+func TestTerraformLoreStoreTableOutputs(t *testing.T) {
+	ms := loreS3StoreModuleState()
+	cfg := config.Defaults()
+	cfg.Lore.AmiID = "ami-lore123"
+
+	mod := buildModule(ms, cfg)
+	gen := &terraformGenerator{}
+	out, err := gen.Generate([]ExportModule{mod})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	s := string(out)
+
+	resources := map[string]string{
+		"LoreTableFRAGMENTS": "lore_table_f_r_a_g_m_e_n_t_s",
+		"LoreTableMETADATA":  "lore_table_m_e_t_a_d_a_t_a",
+		"LoreTableMUTABLE":   "lore_table_m_u_t_a_b_l_e",
+		"LoreTableLOCKS":     "lore_table_l_o_c_k_s",
+	}
+	for logicalID, outputName := range loreS3StoreTableOutputs() {
+		// Resource block name must match the snake_cased logical ID.
+		if !strings.Contains(s, "resource \"aws_dynamodb_table\" \""+resources[logicalID]+"\"") {
+			t.Errorf("missing terraform resource block for %s", logicalID)
+			continue
+		}
+		// Output must expose the table name.
+		if !strings.Contains(s, "output \""+outputName+"\"") {
+			t.Errorf("missing terraform output %q", outputName)
+		}
+	}
+}
+
+func TestGenerateOutputLoreS3Store(t *testing.T) {
+	// End-to-end: recorded s3-backed Lore state produces an export in both
+	// formats that includes all four DynamoDB store tables.
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("lore", "ami-lore123", "ready", loreS3StoreModuleState().Resources)
+	cfg := config.Defaults()
+	cfg.Lore.AmiID = "ami-lore123"
+
+	for _, format := range []Format{CloudFormation, Terraform} {
+		out, err := GenerateOutput(format, st, cfg)
+		if err != nil {
+			t.Fatalf("GenerateOutput(%s): %v", format, err)
+		}
+		s := string(out)
+		for _, suffix := range []string{"fragments", "metadata", "mutable", "locks"} {
+			if !strings.Contains(s, "fabrica-lore-store-123456789012-us-east-1-"+suffix) {
+				t.Errorf("%s output missing table %q", format, suffix)
+			}
+		}
+	}
+}
+
+// loreS3StoreModuleState returns the recorded module state for an s3-backed
+// Lore deployment (the shape lore create writes after the S3 store work).
+func loreS3StoreModuleState() state.ModuleState {
+	return state.ModuleState{
+		Name:   "lore",
+		Status: "ready",
+		Resources: []state.ModuleResource{
+			{
+				TypeName:   "AWS::EC2::SecurityGroup",
+				Identifier: "sg-lore",
+				Properties: map[string]string{},
+			},
+			{
+				TypeName:   "AWS::S3::Bucket",
+				Identifier: "fabrica-lore-store-123456789012-us-east-1",
+				Properties: map[string]string{
+					"BucketName": "fabrica-lore-store-123456789012-us-east-1",
+				},
+			},
+			{
+				TypeName:   "AWS::DynamoDB::Table",
+				Identifier: "fabrica-lore-store-123456789012-us-east-1-fragments",
+				Properties: map[string]string{
+					"loreTable": "fragments",
+				},
+			},
+			{
+				TypeName:   "AWS::DynamoDB::Table",
+				Identifier: "fabrica-lore-store-123456789012-us-east-1-metadata",
+				Properties: map[string]string{
+					"loreTable": "metadata",
+				},
+			},
+			{
+				TypeName:   "AWS::DynamoDB::Table",
+				Identifier: "fabrica-lore-store-123456789012-us-east-1-mutable",
+				Properties: map[string]string{
+					"loreTable": "mutable",
+				},
+			},
+			{
+				TypeName:   "AWS::DynamoDB::Table",
+				Identifier: "fabrica-lore-store-123456789012-us-east-1-locks",
+				Properties: map[string]string{
+					"loreTable": "locks",
+				},
+			},
+			{
+				TypeName:   "AWS::IAM::Role",
+				Identifier: "fabrica-lore-role",
+				Properties: map[string]string{
+					"RoleName": "fabrica-lore-role",
+				},
+			},
+			{
+				TypeName:   "AWS::IAM::InstanceProfile",
+				Identifier: "fabrica-lore-profile",
+				Properties: map[string]string{
+					"InstanceProfileName": "fabrica-lore-profile",
+				},
+			},
+			{
+				TypeName:   "AWS::EC2::Instance",
+				Identifier: "i-lore",
+				Properties: map[string]string{
+					"instanceType": "m5.xlarge",
+					"volumeSize":   "500",
+				},
+			},
+		},
 	}
 }
 

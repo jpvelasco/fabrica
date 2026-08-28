@@ -155,12 +155,16 @@ func TestLoreResourceOrder_S3Enabled(t *testing.T) {
 			{TypeName: "AWS::S3::Bucket", Identifier: "fabrica-lore-store-12345"},
 			{TypeName: "AWS::IAM::Role", Identifier: "fabrica-lore-s3-role"},
 			{TypeName: "AWS::IAM::InstanceProfile", Identifier: "fabrica-lore-s3-profile"},
+			{TypeName: "AWS::DynamoDB::Table", Identifier: "fabrica-lore-store-12345-fragments"},
+			{TypeName: "AWS::DynamoDB::Table", Identifier: "fabrica-lore-store-12345-metadata"},
+			{TypeName: "AWS::DynamoDB::Table", Identifier: "fabrica-lore-store-12345-mutable"},
+			{TypeName: "AWS::DynamoDB::Table", Identifier: "fabrica-lore-store-12345-locks"},
 		},
 	}
 
 	resources := loreResourceOrder(m)
-	if len(resources) != 5 {
-		t.Fatalf("loreResourceOrder returned %d resources, want 5", len(resources))
+	if len(resources) != 9 {
+		t.Fatalf("loreResourceOrder returned %d resources, want 9", len(resources))
 	}
 
 	// Build index of each resource by identifier for order assertions.
@@ -189,25 +193,41 @@ func TestLoreResourceOrder_S3Enabled(t *testing.T) {
 		t.Errorf("InstanceProfile (idx %d) must be deleted before Role (idx %d)", profileIdx, roIdx)
 	}
 
-	// Role must come before S3 Bucket.
+	// Tables must be deleted after the instance and role, before the bucket:
+	// the store is live-writable while the instance runs, and the tables are
+	// provable empty only once the instance is gone.
 	bucketIdx, hasBucket := byID["fabrica-lore-store-12345"]
 	if !hasBucket {
 		t.Error("S3 Bucket not found")
-	} else if roIdx >= bucketIdx {
-		t.Errorf("Role (idx %d) must be deleted before S3 Bucket (idx %d)", roIdx, bucketIdx)
+	}
+	for _, table := range []string{
+		"fabrica-lore-store-12345-fragments",
+		"fabrica-lore-store-12345-metadata",
+		"fabrica-lore-store-12345-mutable",
+		"fabrica-lore-store-12345-locks",
+	} {
+		tblIdx, hasTable := byID[table]
+		if !hasTable {
+			t.Errorf("table %s not found in destroy order", table)
+			continue
+		}
+		if hasRole && tblIdx <= roIdx {
+			t.Errorf("table %s (idx %d) must be deleted after the IAM role (idx %d)", table, tblIdx, roIdx)
+		}
+		if tblIdx >= bucketIdx {
+			t.Errorf("table %s (idx %d) must be deleted before the S3 bucket (idx %d)", table, tblIdx, bucketIdx)
+		}
 	}
 
-	// S3 Bucket must come before Security Group.
+	// S3 Bucket must come before Security Group, which is last.
 	sgIdx, hasSG := byID["sg-lore123"]
 	if !hasSG {
 		t.Error("SecurityGroup not found")
 	} else if bucketIdx >= sgIdx {
 		t.Errorf("S3 Bucket (idx %d) must be deleted before SecurityGroup (idx %d)", bucketIdx, sgIdx)
 	}
-
-	// Verify SG is last.
-	if sgIdx != 4 {
-		t.Errorf("SecurityGroup at index %d, want 4 (last)", sgIdx)
+	if sgIdx != 8 {
+		t.Errorf("SecurityGroup at index %d, want 8 (last)", sgIdx)
 	}
 }
 

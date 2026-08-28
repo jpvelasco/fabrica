@@ -262,9 +262,17 @@ func (g *cloudFormationGenerator) addOutput(t *cfTemplate, r ExportResource, mod
 			desc = fmt.Sprintf("%s S3 bucket name", moduleName)
 		}
 	case "AWS::DynamoDB::Table":
-		outputName = "StateLockTableName"
 		value = map[string]any{"Ref": r.LogicalID}
-		desc = "Fabrica state lock DynamoDB table name"
+		if r.Module == "state-backend" {
+			// The state lock table keeps its dedicated output name.
+			outputName = "StateLockTableName"
+			desc = "Fabrica state lock DynamoDB table name"
+		} else {
+			// Module-managed tables (Lore S3 store tables) get per-table
+			// outputs; logical IDs are distinct, so the names are too.
+			outputName = ddbTableNameOutput(r.LogicalID)
+			desc = fmt.Sprintf("%s %s DynamoDB table name", r.Module, r.Identifier)
+		}
 	case "AWS::IAM::Role":
 		outputName = r.LogicalID + "RoleARN"
 		value = map[string]any{"Fn::GetAtt": []any{r.LogicalID, "Arn"}}
@@ -297,6 +305,19 @@ func (g *cloudFormationGenerator) addOutput(t *cfTemplate, r ExportResource, mod
 }
 
 // moduleNames returns a comma-separated list of module names.
+// ddbTableNameOutput maps a DynamoDB table's logical ID to its table-name
+// output. Lore store tables get stable per-suffix names (LoreTableFRAGMENTS →
+// LoreStoreFragmentsTableName); any other module table falls back to the
+// logical-ID form.
+func ddbTableNameOutput(logicalID string) string {
+	for _, suffix := range []string{"fragments", "metadata", "mutable", "locks"} {
+		if logicalID == "LoreTable"+strings.ToUpper(suffix) {
+			return "LoreStore" + strings.ToUpper(suffix[:1]) + suffix[1:] + "TableName"
+		}
+	}
+	return logicalID + "TableName"
+}
+
 func moduleNames(modules []ExportModule) string {
 	names := make([]string, len(modules))
 	for i, m := range modules {

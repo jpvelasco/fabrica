@@ -2,6 +2,7 @@ package lore
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/jpvelasco/fabrica/internal/ec2state"
 	"github.com/jpvelasco/fabrica/internal/iamrole"
@@ -47,6 +48,61 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMess
 	return ec2state.Build(spec, dsOpts...)
 }
 
+// StoreTableDesiredState returns the Cloud Control desired-state for one Lore
+// store DynamoDB table (suffix is one of the StoreTables() suffixes). Only used
+// when StoreBackend is "s3". The key schema, attribute types, and the locks
+// table's three GSIs match the Lore 0.8.6 aws store plugin.
+func StoreTableDesiredState(plan *CreatePlan, suffix string) (json.RawMessage, error) {
+	spec, ok := StoreTableSpecByName(suffix)
+	if !ok {
+		return nil, fmt.Errorf("unknown Lore store table %q — known suffixes: fragments, metadata, mutable, locks", suffix)
+	}
+
+	// Attribute declarations: every key attribute of the base key and each
+	// GSI needs a type declaration before KeySchema can reference it.
+	attrs := map[string]string{spec.PK: spec.PKType}
+	if spec.SK != "" {
+		attrs[spec.SK] = spec.SKType
+	}
+	for _, gsi := range spec.GSIs {
+		attrs[gsi.PK] = gsi.PKType
+		attrs[gsi.SK] = gsi.SKType
+	}
+	attributeDefinitions := make([]map[string]any, 0, len(attrs))
+	for name, typ := range attrs {
+		attributeDefinitions = append(attributeDefinitions, map[string]any{"AttributeName": name, "AttributeType": typ})
+	}
+
+	keySchema := []map[string]any{{"AttributeName": spec.PK, "KeyType": "HASH"}}
+	if spec.SK != "" {
+		keySchema = append(keySchema, map[string]any{"AttributeName": spec.SK, "KeyType": "RANGE"})
+	}
+
+	doc := map[string]any{
+		"TableName":            plan.StoreBucket + "-" + suffix,
+		"KeySchema":            keySchema,
+		"AttributeDefinitions": attributeDefinitions,
+		"BillingMode":          "PAY_PER_REQUEST",
+		"Tags": []map[string]string{
+			{"Key": "ManagedBy", "Value": "fabrica"},
+			{"Key": "Name", "Value": plan.StoreBucket + "-" + suffix},
+			{"Key": "FabricaModule", "Value": "lore"},
+		},
+	}
+	if len(spec.GSIs) > 0 {
+		gsis := make([]map[string]any, 0, len(spec.GSIs))
+		for _, gsi := range spec.GSIs {
+			gsis = append(gsis, map[string]any{
+				"IndexName":  gsi.Name,
+				"KeySchema":  []map[string]any{{"AttributeName": gsi.PK, "KeyType": "HASH"}, {"AttributeName": gsi.SK, "KeyType": "RANGE"}},
+				"Projection": map[string]any{"ProjectionType": "ALL"},
+			})
+		}
+		doc["GlobalSecondaryIndexes"] = gsis
+	}
+	return json.Marshal(doc)
+}
+
 // BucketDesiredState returns Cloud Control desired-state for the Lore S3 store
 // bucket. Only used when StoreBackend is "s3".
 func BucketDesiredState(plan *CreatePlan) (json.RawMessage, error) {
@@ -74,19 +130,53 @@ func BucketDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 }
 
 // RoleDesiredState returns the EC2 instance role for S3 access on the Lore
-// store bucket + SSM core. Only used when StoreBackend is "s3".
+// store bucket + SSM core. Only used when StoreBackend is "s3". When
+// StoreTables is non-empty a second inline policy grants the DynamoDB
+// permissions the 0.8.6 aws store plugin needs on the four store tables (and
+// the locks table's GSIs), scoped to arn:aws:dynamodb:<region>:<account>:
+// table/<name>. Region/Account fall back to partition-agnostic placeholders
+// when unset (tests).
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
+	region, account := plan.Region, plan.Account
+	if region == "" {
+		region = "*"
+	}
+	if account == "" {
+		account = "*"
+	}
+	policies := []map[string]any{
+		iamrole.S3BucketPolicy("fabrica-lore-store-s3", plan.StoreBucket,
+			[]string{"s3:ListBucket", "s3:GetBucketLocation", "s3:ListBucketVersions"},
+			[]string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"},
+			"*",
+		),
+	}
+	if len(plan.StoreTables) > 0 {
+		tableARNs := make([]string, 0, len(plan.StoreTables))
+		for _, name := range plan.StoreTables {
+			tableARNs = append(tableARNs, fmt.Sprintf("arn:aws:dynamodb:%s:%s:table/%s", region, account, name))
+		}
+		// The plugin queries through the locks table's GSIs; grant on its index/*.
+		tableARNs = append(tableARNs, fmt.Sprintf("arn:aws:dynamodb:%s:%s:table/%s-locks/index/*", region, account, plan.StoreBucket))
+		policies = append(policies, map[string]any{
+			"PolicyName": "fabrica-lore-store-dynamodb",
+			"PolicyDocument": map[string]any{
+				"Version": "2012-10-17",
+				"Statement": []map[string]any{
+					{
+						"Effect":   "Allow",
+						"Action":   []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:BatchGetItem", "dynamodb:DescribeTable", "dynamodb:TransactWriteItems"},
+						"Resource": tableARNs,
+					},
+				},
+			},
+		})
+	}
 	return iamrole.RoleDocument(
 		plan.RoleName,
 		iamrole.ServiceEC2,
 		[]string{"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"},
-		[]map[string]any{
-			iamrole.S3BucketPolicy("fabrica-lore-store-s3", plan.StoreBucket,
-				[]string{"s3:ListBucket", "s3:GetBucketLocation"},
-				[]string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject"},
-				"*",
-			),
-		},
+		policies,
 		map[string]string{"FabricaModule": "lore"},
 	)
 }

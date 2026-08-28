@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
@@ -52,12 +53,15 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 Creates resources in order:
   1. EC2 Security Group — TCP 41337 (gRPC), UDP 41337 (QUIC), TCP 41339 (HTTP)
   2. S3 Store Bucket (optional) — enabled when lore.storeBackend is "s3"
-  3. IAM Role + Instance Profile (optional) — S3 access for the Lore instance
-  4. EC2 Instance — runs loreserver using a user-provided AMI
+  3. DynamoDB store tables (optional) — fragments, metadata, mutable, locks
+     (required by the Lore 0.8.6 aws store plugin, s3 backend only)
+  4. IAM Role + Instance Profile (optional) — S3 + DynamoDB access for the Lore instance
+  5. EC2 Instance — runs loreserver using a user-provided AMI
 
 Store backend:
   - "local" (default): EBS-backed store on the instance volume
-  - "s3": S3-backed store with dedicated bucket and IAM role
+  - "s3": S3 + DynamoDB-backed store (versioned bucket, four DynamoDB tables,
+    and an IAM role with matching S3 + DynamoDB permissions)
 
 State is written after each resource so a partial failure is recoverable:
 re-running create will detect the already-provisioned module and exit cleanly.
@@ -158,8 +162,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	// S3 store resources (bucket + IAM role + instance profile) — created before
 	// the instance so the instance profile is available at launch.
 	if plan.StoreBackend == lore.StoreBackendS3 {
-		var err error
-		resources, _, _, _, err = c.createS3StoreResources(ctx, plan, resources, st)
+		resources, err = c.createS3StoreResources(ctx, plan, resources, st)
 		if err != nil {
 			return err
 		}
@@ -173,6 +176,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		HTTPPort:     plan.HTTPPort,
 		StoreBackend: plan.StoreBackend,
 		StoreBucket:  plan.StoreBucket,
+		StoreTables:  plan.StoreTables,
 	})
 	if err != nil {
 		return fmt.Errorf("generating user data: %w", err)
@@ -199,7 +203,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	return nil
 }
 
-func (c command) createS3StoreResources(ctx context.Context, plan *lore.CreatePlan, resources []fabricastate.ModuleResource, st *fabricastate.State) ([]fabricastate.ModuleResource, string, string, string, error) {
+func (c command) createS3StoreResources(ctx context.Context, plan *lore.CreatePlan, resources []fabricastate.ModuleResource, st *fabricastate.State) ([]fabricastate.ModuleResource, error) {
 	// S3 Bucket
 	fmt.Fprintf(c.out, "Creating S3 store bucket %s...\n", plan.StoreBucket)
 	oplog.WithModule("lore").Debug("creating S3 store bucket", "bucket", plan.StoreBucket)
@@ -212,9 +216,29 @@ func (c command) createS3StoreResources(ctx context.Context, plan *lore.CreatePl
 		},
 	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return resources, "", "", "", fmt.Errorf("creating S3 store bucket: %w", err)
+		return resources, fmt.Errorf("creating S3 store bucket: %w", err)
 	}
-	storeBucketID := resources[len(resources)-1].Identifier
+
+	// DynamoDB store tables — required by the Lore 0.8.6 aws store plugin.
+	// The plugin checks each table exists (DescribeTable) at startup, so all
+	// four must exist before the instance launches.
+	for _, spec := range lore.StoreTables() {
+		suffix := spec.Suffix
+		fmt.Fprintf(c.out, "Creating DynamoDB table %s...\n", plan.StoreBucket+"-"+suffix)
+		oplog.WithModule("lore").Debug("creating DynamoDB store table", "table", plan.StoreBucket+"-"+suffix)
+		resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+			Label:    "DynamoDB table",
+			TypeName: cloud.TypeAWSDynamoDBTable,
+			BuildDesiredState: func() ([]byte, error) {
+				return lore.StoreTableDesiredState(plan, suffix)
+			},
+			ResourceIdentifier: func(*cloud.Resource) string { return plan.StoreBucket + "-" + suffix },
+			Properties:         map[string]string{"loreTable": suffix},
+		}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+		if err != nil {
+			return resources, fmt.Errorf("creating DynamoDB table %s: %w", plan.StoreBucket+"-"+suffix, err)
+		}
+	}
 
 	// IAM Role
 	fmt.Fprintf(c.out, "Creating IAM role %s...\n", plan.RoleName)
@@ -227,9 +251,8 @@ func (c command) createS3StoreResources(ctx context.Context, plan *lore.CreatePl
 		},
 	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return resources, storeBucketID, "", "", fmt.Errorf("creating IAM role: %w", err)
+		return resources, fmt.Errorf("creating IAM role: %w", err)
 	}
-	roleName := resources[len(resources)-1].Identifier
 
 	// IAM Instance Profile
 	fmt.Fprintf(c.out, "Creating instance profile %s...\n", plan.InstanceProfileName)
@@ -242,11 +265,10 @@ func (c command) createS3StoreResources(ctx context.Context, plan *lore.CreatePl
 		},
 	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return resources, storeBucketID, roleName, "", fmt.Errorf("creating instance profile: %w", err)
+		return resources, fmt.Errorf("creating instance profile: %w", err)
 	}
-	profileName := resources[len(resources)-1].Identifier
 
-	return resources, storeBucketID, roleName, profileName, nil
+	return resources, nil
 }
 
 func (c command) printDryRun(plan *lore.CreatePlan) {
@@ -257,6 +279,7 @@ func (c command) printDryRun(plan *lore.CreatePlan) {
 	if plan.StoreBackend == lore.StoreBackendS3 {
 		resources = append(resources,
 			"S3 Bucket:        "+plan.StoreBucket,
+			"DynamoDB Tables:  "+strings.Join(plan.StoreTables, ", "),
 			"IAM Role:         "+plan.RoleName,
 			"Instance Profile: "+plan.InstanceProfileName,
 		)
@@ -299,6 +322,7 @@ func (c command) printApplyPlan(plan *lore.CreatePlan) {
 	if plan.StoreBackend == lore.StoreBackendS3 {
 		resources = append(resources,
 			"S3 Bucket:        "+plan.StoreBucket,
+			"DynamoDB Tables:  "+strings.Join(plan.StoreTables, ", "),
 			"IAM Role:         "+plan.RoleName,
 			"Instance Profile: "+plan.InstanceProfileName,
 		)

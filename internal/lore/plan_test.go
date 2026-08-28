@@ -96,6 +96,120 @@ func TestNewCreatePlanS3StoreCustomBucket(t *testing.T) {
 	}
 }
 
+func TestNewCreatePlanS3StoreTables(t *testing.T) {
+	cfg := config.LoreConfig{
+		AmiID:        "ami-abc123",
+		StoreBackend: "s3",
+	}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{
+		"fabrica-lore-store-123456789012-us-east-1-fragments",
+		"fabrica-lore-store-123456789012-us-east-1-metadata",
+		"fabrica-lore-store-123456789012-us-east-1-mutable",
+		"fabrica-lore-store-123456789012-us-east-1-locks",
+	}
+	if len(plan.StoreTables) != len(want) {
+		t.Fatalf("StoreTables = %v, want %v", plan.StoreTables, want)
+	}
+	for i, w := range want {
+		if plan.StoreTables[i] != w {
+			t.Errorf("StoreTables[%d] = %q, want %q", i, plan.StoreTables[i], w)
+		}
+	}
+}
+
+func TestNewCreatePlanLocalStoreNoTables(t *testing.T) {
+	cfg := config.LoreConfig{AmiID: "ami-abc123"}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(plan.StoreTables) != 0 {
+		t.Errorf("StoreTables = %v, want empty for local backend", plan.StoreTables)
+	}
+}
+
+func TestStoreTableNamesDeriveFromBucket(t *testing.T) {
+	got := StoreTableNames("my-lore-bucket")
+	want := []string{
+		"my-lore-bucket-fragments",
+		"my-lore-bucket-metadata",
+		"my-lore-bucket-mutable",
+		"my-lore-bucket-locks",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("StoreTableNames = %v, want %v", got, want)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("StoreTableNames[%d] = %q, want %q", i, got[i], w)
+		}
+	}
+}
+
+func TestStoreTableSpecsMatchPluginSchema(t *testing.T) {
+	tables := StoreTables()
+	if len(tables) != 4 {
+		t.Fatalf("StoreTables len = %d, want 4", len(tables))
+	}
+
+	// fragments: PK hash (B) + SK repository_context (B), no GSIs.
+	f := tables[0]
+	if f.Suffix != "fragments" || f.PK != "hash" || f.PKType != "B" {
+		t.Errorf("fragments key = %s (%s), want hash (B)", f.PK, f.PKType)
+	}
+	if f.SK != "repository_context" || f.SKType != "B" {
+		t.Errorf("fragments sort key = %s (%s), want repository_context (B)", f.SK, f.SKType)
+	}
+	if len(f.GSIs) != 0 {
+		t.Errorf("fragments GSIs = %v, want none", f.GSIs)
+	}
+
+	// metadata: PK hash (B) only.
+	m := tables[1]
+	if m.Suffix != "metadata" || m.PK != "hash" || m.PKType != "B" {
+		t.Errorf("metadata key = %s (%s), want hash (B)", m.PK, m.PKType)
+	}
+	if m.SK != "" || len(m.GSIs) != 0 {
+		t.Errorf("metadata SK/GSIs = %q/%v, want none", m.SK, m.GSIs)
+	}
+
+	// mutable: PK repository_id (B) + SK key (B).
+	um := tables[2]
+	if um.Suffix != "mutable" || um.PK != "repository_id" || um.PKType != "B" {
+		t.Errorf("mutable key = %s (%s), want repository_id (B)", um.PK, um.PKType)
+	}
+	if um.SK != "key" || um.SKType != "B" {
+		t.Errorf("mutable sort key = %s (%s), want key (B)", um.SK, um.SKType)
+	}
+
+	// locks: PK hash (B) + SK repositoryBranch (B), three GSIs.
+	l := tables[3]
+	if l.Suffix != "locks" || l.PK != "hash" || l.PKType != "B" {
+		t.Errorf("locks key = %s (%s), want hash (B)", l.PK, l.PKType)
+	}
+	if l.SK != "repositoryBranch" || l.SKType != "B" {
+		t.Errorf("locks sort key = %s (%s), want repositoryBranch (B)", l.SK, l.SKType)
+	}
+	if len(l.GSIs) != 3 {
+		t.Fatalf("locks GSIs len = %d, want 3", len(l.GSIs))
+	}
+	wantGSIs := []GSI{
+		{Name: "owner-repo-branch", PK: "ownerId", PKType: "S", SK: "repositoryBranch", SKType: "B"},
+		{Name: "repo-branch", PK: "repository", PKType: "B", SK: "branch", SKType: "B"},
+		{Name: "repo-branch-description", PK: "repositoryBranch", PKType: "B", SK: "description", SKType: "S"},
+	}
+	for i, w := range wantGSIs {
+		g := l.GSIs[i]
+		if g != w {
+			t.Errorf("locks GSI[%d] = %+v, want %+v", i, g, w)
+		}
+	}
+}
+
 func TestNewCreatePlanInvalidStoreBackend(t *testing.T) {
 	cfg := config.LoreConfig{
 		AmiID:        "ami-abc123",

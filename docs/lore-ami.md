@@ -240,9 +240,10 @@ instance profile, so do not assume it is reachable through SSM.
    root. It must pass. This is an additional contract check; it does not
    replace `fabrica lore status --wait`.
 4. Run `fabrica lore destroy`, inspect the plan, and approve cleanup. Confirm
-   that the instance is terminated and that the S3-store bucket is purged and
-   deleted. Repeat steps 1–4 with `storeBackend: s3` if local was first (or
-   with `local` if S3 was first).
+   that the instance is terminated, the four DynamoDB store tables are
+   deleted, and the S3-store bucket is purged and deleted. Repeat steps 1–4
+   with `storeBackend: s3` if local was first (or with `local` if S3 was
+   first).
 5. Remove Image Builder/Packer build resources, candidate AMIs, and snapshots
    that did not pass. Retain only the AMI and evidence associated with a
    successful known-good row.
@@ -257,7 +258,7 @@ region-specific. The table intentionally has no pre-filled candidate.
 
 | Date (UTC) | Region | AMI ID | Base AMI | Lore/UE revision | Bake backend | Local: boot/status/destroy | S3: boot/status/destroy | Evidence link |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2026-08-28 | us-west-2 | `ami-0cb86d7ebcd1a4487` | `ami-0bdb09211df876db4` | lore v0.8.6 | Image Builder (component `fabrica-lore-0-8-6` 1.0.0/3, recipe 1.0.2) | boot: SSM-verified (binary + symlink + unit active, health 200 on 127.0.0.1); status/destroy: not run (operator hold) | not run — 0.8.6 S3 store needs DynamoDB tables the module does not yet provision | `.fabrica/state.json` (instance `i-00f157d811295f322`); SSM verify session 2026-08-28 04:1x UTC |
+| 2026-08-28 | us-west-2 | `ami-0cb86d7ebcd1a4487` | `ami-0bdb09211df876db4` | lore v0.8.6 | Image Builder (component `fabrica-lore-0-8-6` 1.0.0/3, recipe 1.0.2) | boot: SSM-verified (binary + symlink + unit active, health 200 on 127.0.0.1); status/destroy: not run (operator hold) | in progress — S3 store now provisions the four DynamoDB tables + instance-role policy; live S3-backed boot being verified via SSM | `.fabrica/state.json` (instance `i-00f157d811295f322`); SSM verify session 2026-08-28 04:1x UTC |
 
 This row is **partial** against the checklist above: boot was verified through
 SSM from a laptop with no VPC path, so `fabrica lore status --wait` and the
@@ -274,15 +275,19 @@ the remaining checklist results before treating this AMI as production-ready.
   verifier during baking and the runtime verifier only after boot.
 - **Health probe cannot reach the instance:** run `fabrica lore status` from a
   permitted private/VPN network and restrict `allowedCidr` to that network.
-- **Lore 0.8.6 S3 store cannot start with an S3 bucket alone:** the `aws`
+- **Lore 0.8.6 S3 store needs the full store surface:** the `aws`
   store plugin requires S3 **and** four DynamoDB tables (fragment
   associations, fragment metadata, mutable store, and locks with three
   global secondary indexes) plus DynamoDB permissions on the instance role.
-  Fabrica's `storeBackend: s3` path provisions only the versioned bucket, so a
-  0.8.6 S3-backed deployment fails at boot with
-  `Failed to create immutable store plugin` until the tables and role policy
-  exist. Use `storeBackend: local` on this shape, or add the DynamoDB
-  resources to the lore module first.
+  Fabrica's `storeBackend: s3` path provisions all of it: the versioned
+  bucket, the four tables named `<bucket>-fragments` / `-metadata` /
+  `-mutable` / `-locks` (locks carries the three GSIs), and an instance-role
+  policy granting DynamoDB access on the four tables and the locks table's
+  `index/*`. The tables are created before the instance and torn down with
+  the bucket purge on destroy. If a manually created deployment still fails
+  with `Failed to create immutable store plugin`, confirm the tables and the
+  role policy exist and that the config uses the `s3_bucket` key (not
+  `bucket`) under `[plugins.aws.immutable_store]`.
 - **Image Builder cannot fetch the payload or contact SSM:** verify private S3
   access, VPC endpoints/NAT, DNS, and the worker instance profile; do not make
   the payload bucket or build subnet public.

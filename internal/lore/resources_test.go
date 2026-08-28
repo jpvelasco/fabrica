@@ -1,6 +1,7 @@
 package lore
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/ec2state"
@@ -239,6 +240,256 @@ func TestRoleDesiredStateShape(t *testing.T) {
 	}
 	if len(policies) == 0 {
 		t.Error("Expected at least one inline policy (S3 bucket access)")
+	}
+
+	// No tables recorded -> no DynamoDB policy.
+	for _, p := range policies {
+		pm := p.(map[string]any)
+		if pm["PolicyName"] == "fabrica-lore-store-dynamodb" {
+			t.Error("DynamoDB policy must be absent when StoreTables is empty")
+		}
+	}
+}
+
+func TestRoleDesiredStateOmitsDynamoDBWithoutTables(t *testing.T) {
+	plan := &CreatePlan{
+		RoleName:    "fabrica-lore-role",
+		StoreBucket: "fabrica-lore-store-123456789012-us-east-1",
+	}
+	raw, err := RoleDesiredState(plan)
+	if err != nil {
+		t.Fatalf("RoleDesiredState: %v", err)
+	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+	policies := doc["Policies"].([]any)
+	if len(policies) != 1 {
+		t.Fatalf("Policies len = %d, want 1 (S3 only)", len(policies))
+	}
+}
+
+func TestStoreTableDesiredStateFragments(t *testing.T) {
+	plan := &CreatePlan{StoreBucket: "lore-store-123", StoreTables: []string{"lore-store-123-fragments"}}
+	raw, err := StoreTableDesiredState(plan, "fragments")
+	if err != nil {
+		t.Fatalf("StoreTableDesiredState: %v", err)
+	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+
+	if doc["TableName"] != "lore-store-123-fragments" {
+		t.Errorf("TableName = %v", doc["TableName"])
+	}
+	ks, ok := doc["KeySchema"].([]any)
+	if !ok || len(ks) != 2 {
+		t.Fatalf("KeySchema = %v, want 2 entries", doc["KeySchema"])
+	}
+	if ks[0].(map[string]any)["AttributeName"] != "hash" || ks[0].(map[string]any)["KeyType"] != "HASH" {
+		t.Errorf("KeySchema[0] = %v", ks[0])
+	}
+	if ks[1].(map[string]any)["AttributeName"] != "repository_context" || ks[1].(map[string]any)["KeyType"] != "RANGE" {
+		t.Errorf("KeySchema[1] = %v", ks[1])
+	}
+	if _, hasGSIs := doc["GlobalSecondaryIndexes"]; hasGSIs {
+		t.Error("fragments table must not have GSIs")
+	}
+	attrs, ok := doc["AttributeDefinitions"].([]any)
+	if !ok || len(attrs) != 2 {
+		t.Fatalf("AttributeDefinitions = %v, want hash + repository_context", doc["AttributeDefinitions"])
+	}
+	if billing := doc["BillingMode"]; billing != "PAY_PER_REQUEST" {
+		t.Errorf("BillingMode = %v, want PAY_PER_REQUEST (Cloud Control string)", billing)
+	}
+}
+
+func TestStoreTableDesiredStateLocks(t *testing.T) {
+	plan := &CreatePlan{StoreBucket: "lore-store-123", StoreTables: []string{"lore-store-123-locks"}}
+	raw, err := StoreTableDesiredState(plan, "locks")
+	if err != nil {
+		t.Fatalf("StoreTableDesiredState: %v", err)
+	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+
+	if doc["TableName"] != "lore-store-123-locks" {
+		t.Errorf("TableName = %v", doc["TableName"])
+	}
+	// KeySchema: hash (HASH) + repositoryBranch (RANGE).
+	ks := doc["KeySchema"].([]any)
+	if ks[0].(map[string]any)["AttributeName"] != "hash" || ks[1].(map[string]any)["AttributeName"] != "repositoryBranch" {
+		t.Errorf("locks KeySchema = %v", ks)
+	}
+	// All attribute declarations needed by the key + GSI key types.
+	wantAttrs := map[string]string{
+		"hash": "B", "repositoryBranch": "B",
+		"ownerId": "S", "repository": "B", "branch": "B", "description": "S",
+	}
+	attrs := doc["AttributeDefinitions"].([]any)
+	if len(attrs) != len(wantAttrs) {
+		t.Fatalf("AttributeDefinitions len = %d, want %d", len(attrs), len(wantAttrs))
+	}
+	seen := map[string]string{}
+	for _, a := range attrs {
+		m := a.(map[string]any)
+		seen[m["AttributeName"].(string)] = m["AttributeType"].(string)
+	}
+	for name, typ := range wantAttrs {
+		if seen[name] != typ {
+			t.Errorf("attribute %s = %q, want %q", name, seen[name], typ)
+		}
+	}
+	// Three GSIs, each projecting ALL.
+	gsis, ok := doc["GlobalSecondaryIndexes"].([]any)
+	if !ok || len(gsis) != 3 {
+		t.Fatalf("GlobalSecondaryIndexes = %v, want 3", doc["GlobalSecondaryIndexes"])
+	}
+	gsiNames := map[string]map[string]any{}
+	for _, g := range gsis {
+		gm := g.(map[string]any)
+		gsiNames[gm["IndexName"].(string)] = gm
+		if gm["Projection"].(map[string]any)["ProjectionType"] != "ALL" {
+			t.Errorf("GSI %s projection = %v, want ALL", gm["IndexName"], gm["Projection"])
+		}
+	}
+	or := gsiNames["owner-repo-branch"]
+	if or == nil {
+		t.Fatal("GSI owner-repo-branch missing")
+	}
+	orKeys := or["KeySchema"].([]any)
+	if orKeys[0].(map[string]any)["AttributeName"] != "ownerId" || orKeys[0].(map[string]any)["KeyType"] != "HASH" {
+		t.Errorf("owner-repo-branch key = %v", orKeys)
+	}
+	if orKeys[1].(map[string]any)["AttributeName"] != "repositoryBranch" || orKeys[1].(map[string]any)["KeyType"] != "RANGE" {
+		t.Errorf("owner-repo-branch range = %v", orKeys[1])
+	}
+	rb := gsiNames["repo-branch"]
+	if rb == nil {
+		t.Fatal("GSI repo-branch missing")
+	}
+	rbKeys := rb["KeySchema"].([]any)
+	if rbKeys[0].(map[string]any)["AttributeName"] != "repository" || rbKeys[1].(map[string]any)["AttributeName"] != "branch" {
+		t.Errorf("repo-branch keys = %v", rbKeys)
+	}
+	rbd := gsiNames["repo-branch-description"]
+	if rbd == nil {
+		t.Fatal("GSI repo-branch-description missing")
+	}
+	rbdKeys := rbd["KeySchema"].([]any)
+	if rbdKeys[0].(map[string]any)["AttributeName"] != "repositoryBranch" || rbdKeys[1].(map[string]any)["AttributeName"] != "description" {
+		t.Errorf("repo-branch-description keys = %v", rbdKeys)
+	}
+}
+
+func TestStoreTableDesiredStateUnknownSuffix(t *testing.T) {
+	plan := &CreatePlan{StoreBucket: "lore-store-123", StoreTables: []string{"lore-store-123-fragments"}}
+	_, err := StoreTableDesiredState(plan, "nope")
+	if err == nil {
+		t.Fatal("expected error for unknown table suffix")
+	}
+}
+
+func TestStoreTableDesiredStateManagedByTag(t *testing.T) {
+	plan := &CreatePlan{StoreBucket: "lore-store-123", StoreTables: []string{"lore-store-123-locks"}}
+	raw, err := StoreTableDesiredState(plan, "locks")
+	if err != nil {
+		t.Fatalf("StoreTableDesiredState: %v", err)
+	}
+	ec2state.AssertManagedByTag(t, raw)
+}
+
+func TestRoleDesiredStateStoreTables(t *testing.T) {
+	plan := &CreatePlan{
+		RoleName:    "fabrica-lore-role",
+		StoreBucket: "fabrica-lore-store-123456789012-us-east-1",
+		StoreTables: []string{
+			"fabrica-lore-store-123456789012-us-east-1-fragments",
+			"fabrica-lore-store-123456789012-us-east-1-metadata",
+			"fabrica-lore-store-123456789012-us-east-1-mutable",
+			"fabrica-lore-store-123456789012-us-east-1-locks",
+		},
+	}
+	raw, err := RoleDesiredState(plan)
+	if err != nil {
+		t.Fatalf("RoleDesiredState: %v", err)
+	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+
+	policies := doc["Policies"].([]any)
+	if len(policies) != 2 {
+		t.Fatalf("Policies len = %d, want 2 (S3 + DynamoDB)", len(policies))
+	}
+
+	// Collect the S3 statement resources (must include ListBucketVersions + DeleteObjectVersion).
+	var s3BucketActions, dynamoActions []string
+	for _, p := range policies {
+		pm := p.(map[string]any)
+		pd := pm["PolicyDocument"].(map[string]any)
+		stmts := pd["Statement"].([]any)
+		for _, s := range stmts {
+			sm := s.(map[string]any)
+			actions, _ := sm["Action"].([]any)
+			resources, _ := sm["Resource"].([]any)
+			for _, r := range resources {
+				rs, _ := r.(string)
+				switch {
+				case rs == "arn:aws:s3:::fabrica-lore-store-123456789012-us-east-1":
+					for _, a := range actions {
+						s3BucketActions = append(s3BucketActions, a.(string))
+					}
+				case strings.HasPrefix(rs, "arn:aws:dynamodb:"):
+					for _, a := range actions {
+						dynamoActions = append(dynamoActions, a.(string))
+					}
+				}
+			}
+		}
+	}
+
+	hasS3 := func(a string) bool {
+		for _, x := range s3BucketActions {
+			if x == a {
+				return true
+			}
+		}
+		return false
+	}
+	for _, a := range []string{"s3:ListBucket", "s3:GetBucketLocation", "s3:ListBucketVersions"} {
+		if !hasS3(a) {
+			t.Errorf("S3 bucket actions missing %q (got %v)", a, s3BucketActions)
+		}
+	}
+	hasDynamo := func(a string) bool {
+		for _, x := range dynamoActions {
+			if x == a {
+				return true
+			}
+		}
+		return false
+	}
+	for _, a := range []string{
+		"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:Query",
+		"dynamodb:BatchGetItem", "dynamodb:DescribeTable", "dynamodb:TransactWriteItems",
+	} {
+		if !hasDynamo(a) {
+			t.Errorf("DynamoDB actions missing %q (got %v)", a, dynamoActions)
+		}
+	}
+
+	// The locks GSI resource ARN must be present (plugin writes to indexes).
+	var sawLocksGSI bool
+	for _, p := range policies {
+		pm := p.(map[string]any)
+		pd := pm["PolicyDocument"].(map[string]any)
+		stmts := pd["Statement"].([]any)
+		for _, s := range stmts {
+			sm := s.(map[string]any)
+			resources, _ := sm["Resource"].([]any)
+			for _, r := range resources {
+				if rs, _ := r.(string); strings.HasSuffix(rs, "fabrica-lore-store-123456789012-us-east-1-locks/index/*") {
+					sawLocksGSI = true
+				}
+			}
+		}
+	}
+	if !sawLocksGSI {
+		t.Error("locks GSI index/* ARN missing from role policy")
 	}
 }
 

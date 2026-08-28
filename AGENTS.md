@@ -255,7 +255,7 @@ git config core.hooksPath .githooks
 - **Runs parallel to Perforce, not instead of it** — no interaction with the `perforce` module.
 - **Ports** — 41337 (gRPC/QUIC) and 41339 (HTTP health, `GET /health_check`). Status probes 41339 only.
 - **TLS config is parsed, not yet wired** — `lore.tls` (`Enabled`, `CertPath`, `KeyPath`) in `fabrica.yaml` is parsed but a no-op pending V2 (JWT/CA cert provisioning). See `docs/lore-tls.md`.
-- **Store path** — local/EBS by default (`DefaultStorePath = /opt/loreserver/store`); `lore.storeBackend: s3` adds a versioned S3 bucket, which destroy purges first via `cloud.S3BucketCleaner` (all versions + delete markers) before Cloud Control deletes the empty bucket.
+- **Store path** — local/EBS by default (`DefaultStorePath = /opt/loreserver/store`); `lore.storeBackend: s3` adds a versioned S3 bucket plus four DynamoDB store tables (`<bucket>-fragments/-metadata/-mutable/-locks`, locks with three GSIs) and DynamoDB permissions on the instance role — the full surface the 0.8.6 `aws` store plugin requires (schema in `internal/lore/storetables.go`, verified against the 0.8.6 plugin source). Destroy purges the bucket first via `cloud.S3BucketCleaner` (all versions + delete markers) before Cloud Control deletes the empty bucket; the tables are deleted between the instance and the bucket.
 - **Built on the shared EC2 packages** — `internal/lore` is the reference consumer of `ec2plan`/`ec2state`/`ec2cost`/`userdata`. Use it as the template for a new single-instance module ahead of `internal/perforce`.
 
 ### DDC

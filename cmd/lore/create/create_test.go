@@ -298,6 +298,14 @@ func TestCreateS3StoreDryRun(t *testing.T) {
 	assert.Contains(t, got, "IAM Role")
 	assert.Contains(t, got, "Instance Profile")
 	assert.Contains(t, got, "fabrica-lore-store")
+	for _, want := range []string{
+		"fabrica-lore-store-123456789012-us-east-1-fragments",
+		"fabrica-lore-store-123456789012-us-east-1-metadata",
+		"fabrica-lore-store-123456789012-us-east-1-mutable",
+		"fabrica-lore-store-123456789012-us-east-1-locks",
+	} {
+		assert.Contains(t, got, want)
+	}
 }
 
 func TestCreateS3StoreHappyPath(t *testing.T) {
@@ -314,25 +322,26 @@ func TestCreateS3StoreHappyPath(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	// SG + S3 bucket + IAM role + instance profile + instance = 5 creates
-	if provider.CreateCalls != 5 {
-		t.Fatalf("expected 5 create calls for S3 store, got %d", provider.CreateCalls)
+	// SG + S3 bucket + 4 DDB tables + IAM role + instance profile + instance = 9 creates
+	if provider.CreateCalls != 9 {
+		t.Fatalf("expected 9 create calls for S3 store, got %d: %v", provider.CreateCalls, provider.CreatedTypes)
 	}
-	// Verify creation order: SG -> S3 bucket -> IAM role -> instance profile -> instance
-	if provider.CreatedTypes[0] != "AWS::EC2::SecurityGroup" {
-		t.Errorf("first created = %q, want SG", provider.CreatedTypes[0])
+	// Verify creation order: SG -> S3 bucket -> 4 tables -> IAM role -> instance profile -> instance
+	wantOrder := []string{
+		"AWS::EC2::SecurityGroup",
+		"AWS::S3::Bucket",
+		"AWS::DynamoDB::Table",
+		"AWS::DynamoDB::Table",
+		"AWS::DynamoDB::Table",
+		"AWS::DynamoDB::Table",
+		"AWS::IAM::Role",
+		"AWS::IAM::InstanceProfile",
+		"AWS::EC2::Instance",
 	}
-	if provider.CreatedTypes[1] != "AWS::S3::Bucket" {
-		t.Errorf("second created = %q, want S3 bucket", provider.CreatedTypes[1])
-	}
-	if provider.CreatedTypes[2] != "AWS::IAM::Role" {
-		t.Errorf("third created = %q, want IAM role", provider.CreatedTypes[2])
-	}
-	if provider.CreatedTypes[3] != "AWS::IAM::InstanceProfile" {
-		t.Errorf("fourth created = %q, want instance profile", provider.CreatedTypes[3])
-	}
-	if provider.CreatedTypes[4] != "AWS::EC2::Instance" {
-		t.Errorf("fifth created = %q, want instance", provider.CreatedTypes[4])
+	for i, w := range wantOrder {
+		if provider.CreatedTypes[i] != w {
+			t.Errorf("created[%d] = %q, want %q", i, provider.CreatedTypes[i], w)
+		}
 	}
 	final := capture.Last()
 	m := final.GetModule("lore")
@@ -340,8 +349,63 @@ func TestCreateS3StoreHappyPath(t *testing.T) {
 		t.Fatal("lore module not in final state")
 		return
 	}
-	if len(m.Resources) != 5 {
-		t.Fatalf("final state has %d resources, want 5", len(m.Resources))
+	if len(m.Resources) != 9 {
+		t.Fatalf("final state has %d resources, want 9", len(m.Resources))
+	}
+	wantTables := map[string]bool{
+		"fabrica-lore-store-123456789012-us-east-1-fragments": false,
+		"fabrica-lore-store-123456789012-us-east-1-metadata":  false,
+		"fabrica-lore-store-123456789012-us-east-1-mutable":   false,
+		"fabrica-lore-store-123456789012-us-east-1-locks":     false,
+	}
+	for _, r := range m.Resources {
+		if r.TypeName != cloud.TypeAWSDynamoDBTable {
+			continue
+		}
+		if _, ok := wantTables[r.Identifier]; !ok {
+			t.Errorf("unexpected table %q in state", r.Identifier)
+			continue
+		}
+		wantTables[r.Identifier] = true
+	}
+	for name, seen := range wantTables {
+		if !seen {
+			t.Errorf("table %q not recorded in state", name)
+		}
+	}
+}
+
+func TestCreateS3StoreTableFailurePreservesPartialState(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{CreateErr: map[string]error{cloud.TypeAWSDynamoDBTable: errors.New("ddb quota")}}
+	st := testutil.NewTestState()
+	capture := &testutil.StateWriteCapture{}
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.writeState = capture.WriteFunc()
+	c.runtime.Config.Lore.StoreBackend = "s3"
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error on table create failure")
+	}
+	assert.Contains(t, err.Error(), "DynamoDB table")
+	if capture.Last() == nil {
+		t.Fatal("state was never written")
+	}
+	// SG + bucket are recorded before the table failure; nothing after.
+	_, hasSG := capture.Last().GetModuleResource("lore", "AWS::EC2::SecurityGroup")
+	if !hasSG {
+		t.Error("SG resource not recorded in state after table failure")
+	}
+	_, hasBucket := capture.Last().GetModuleResource("lore", "AWS::S3::Bucket")
+	if !hasBucket {
+		t.Error("S3 bucket not recorded in state after table failure")
+	}
+	_, hasInstance := capture.Last().GetModuleResource("lore", "AWS::EC2::Instance")
+	if hasInstance {
+		t.Error("instance must not be created after a table failure")
 	}
 }
 

@@ -133,10 +133,13 @@ type LoreConfig struct {
 	AllowedCIDR  string `mapstructure:"allowedCidr"  yaml:"allowedCidr"`
 	// StoreBackend selects the Lore store backend: "local" (default, EBS-only)
 	// or "s3" (S3-backed immutable/mutable/lock stores). When "s3", Fabrica
-	// provisions an S3 bucket + IAM role/instance profile for the Lore instance.
+	// provisions the versioned S3 bucket, the four DynamoDB store tables the
+	// 0.8.6 aws store plugin requires (fragments, metadata, mutable, locks),
+	// and an IAM role/instance profile with S3 + DynamoDB permissions.
 	StoreBackend string `mapstructure:"storeBackend" yaml:"storeBackend"`
 	// StoreBucket is the S3 bucket name for the Lore store (used when storeBackend
 	// is "s3"). Defaults to "fabrica-lore-store-<account>-<region>" if empty.
+	// DynamoDB table names derive from it: <bucket>-fragments/-metadata/-mutable/-locks.
 	StoreBucket string `mapstructure:"storeBucket" yaml:"storeBucket"`
 	// TLSConfig holds optional TLS settings for the Lore server.
 	TLSConfig LoreTLSConfig `mapstructure:"tls" yaml:"tls"`

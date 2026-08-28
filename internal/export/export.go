@@ -58,8 +58,12 @@ type ExportModule struct {
 
 // ExportResource is a single resource to be exported.
 type ExportResource struct {
-	TypeName   string
-	LogicalID  string
+	TypeName  string
+	LogicalID string
+	// Identifier is the state-internal identifier (e.g. the DynamoDB table
+	// name). Generators use it for outputs and table names that a logical ID
+	// alone cannot express.
+	Identifier string
 	Properties map[string]any
 	Module     string
 }
@@ -278,16 +282,48 @@ func buildModule(ms state.ModuleState, cfg *config.Config) ExportModule {
 		Status: ms.Status,
 	}
 
-	for _, r := range ms.Resources {
-		res := ExportResource{
-			TypeName:   r.TypeName,
-			LogicalID:  toLogicalID(ms.Name, r.TypeName, r.Identifier),
-			Properties: sanitize(extractProperties(ms.Name, r, cfg)),
-			Module:     ms.Name,
+	// Multiple DynamoDB tables in one module (Lore S3 store tables) collide
+	// on identifier-truncated logical IDs, so tables recorded with a loreTable
+	// kind get a unique, stable per-suffix ID instead.
+	tableLogicalIDs := loreStoreTableLogicalIDs(ms)
+
+	for i := range ms.Resources {
+		r := &ms.Resources[i]
+		logicalID := toLogicalID(ms.Name, r.TypeName, r.Identifier)
+		if id, ok := tableLogicalIDs[i]; ok {
+			logicalID = id
 		}
-		mod.Resources = append(mod.Resources, res)
+		mod.Resources = append(mod.Resources, ExportResource{
+			TypeName:   r.TypeName,
+			LogicalID:  logicalID,
+			Identifier: r.Identifier,
+			Properties: sanitize(extractProperties(ms.Name, *r, cfg)),
+			Module:     ms.Name,
+		})
 	}
+
 	return mod
+}
+
+// loreStoreTableLogicalIDs maps state-index positions of DynamoDB tables
+// recorded with a loreTable kind to their per-suffix logical IDs
+// (LoreTableFRAGMENTS, LoreTableMETADATA, ...). Such tables all share the
+// store-bucket name prefix, so identifier-truncated IDs would collide; the
+// per-suffix form is unique and stable across exports.
+func loreStoreTableLogicalIDs(ms state.ModuleState) map[int]string {
+	ids := make(map[int]string)
+	for i := range ms.Resources {
+		r := &ms.Resources[i]
+		if r.TypeName != "AWS::DynamoDB::Table" {
+			continue
+		}
+		suffix := r.Properties["loreTable"]
+		if suffix == "" {
+			continue
+		}
+		ids[i] = "LoreTable" + strings.ToUpper(suffix)
+	}
+	return ids
 }
 
 // extractProperties builds resource properties from state properties and config.
@@ -308,6 +344,7 @@ var internalStateKeys = map[string]struct{}{
 	"scalingAlarm":      {},
 	"scaleOutThreshold": {},
 	"scaleInThreshold":  {},
+	"loreTable":         {},
 }
 
 func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Config) map[string]any {
@@ -413,6 +450,25 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			// Use the resource identifier as the bucket name (Cloud Control
 			// returns the bucket name as the resource identifier).
 			props["BucketName"] = r.Identifier
+		}
+		if _, ok := props["Tags"]; !ok {
+			props["Tags"] = defaultTags(moduleName)
+		}
+	case "AWS::DynamoDB::Table":
+		// Module-managed DynamoDB tables (Lore S3 store tables; the state
+		// backend lock table is built explicitly in buildStateBackendModule).
+		// TableName comes from the recorded identifier; Lore table schemas are
+		// rebuilt from the module's spec table when the suffix is known.
+		props["TableName"] = r.Identifier
+		if spec, ok := lore.StoreTableSpecByName(r.Properties["loreTable"]); ok {
+			props["KeySchema"] = loreStoreTableKeySchema(spec)
+			props["AttributeDefinitions"] = loreStoreTableAttributeDefinitions(spec)
+			if len(spec.GSIs) > 0 {
+				props["GlobalSecondaryIndexes"] = loreStoreTableGSIs(spec)
+			}
+		}
+		if _, ok := props["BillingMode"]; !ok {
+			props["BillingMode"] = "PAY_PER_REQUEST"
 		}
 		if _, ok := props["Tags"]; !ok {
 			props["Tags"] = defaultTags(moduleName)
@@ -707,6 +763,49 @@ func defaultTags(module string) []map[string]string {
 		{"Key": "Name", "Value": "fabrica-" + module},
 		{"Key": "FabricaModule", "Value": module},
 	}
+}
+
+// loreStoreTableKeySchema renders a Lore store table spec's primary key as
+// CloudFormation KeySchema entries (order matches the module's spec: the same
+// source the create path provisions against).
+func loreStoreTableKeySchema(spec lore.StoreTableSpec) []map[string]any {
+	schema := []map[string]any{
+		{"AttributeName": spec.PK, "KeyType": "HASH"},
+	}
+	if spec.SK != "" {
+		schema = append(schema, map[string]any{"AttributeName": spec.SK, "KeyType": "RANGE"})
+	}
+	return schema
+}
+
+// loreStoreTableAttributeDefinitions renders the primary key attributes for
+// KeySchema in CloudFormations AttributeDefinitions format.
+func loreStoreTableAttributeDefinitions(spec lore.StoreTableSpec) []map[string]any {
+	defs := []map[string]any{
+		{"AttributeName": spec.PK, "AttributeType": spec.PKType},
+	}
+	if spec.SK != "" {
+		defs = append(defs, map[string]any{"AttributeName": spec.SK, "AttributeType": spec.SKType})
+	}
+	return defs
+}
+
+// loreStoreTableGSIs renders the locks table's global secondary indexes in
+// CloudFormation format. All Lore store GSIs project all attributes.
+func loreStoreTableGSIs(spec lore.StoreTableSpec) []map[string]any {
+	gsis := make([]map[string]any, 0, len(spec.GSIs))
+	for _, gsi := range spec.GSIs {
+		keySchema := []map[string]any{
+			{"AttributeName": gsi.PK, "KeyType": "HASH"},
+			{"AttributeName": gsi.SK, "KeyType": "RANGE"},
+		}
+		gsis = append(gsis, map[string]any{
+			"IndexName":      gsi.Name,
+			"KeySchema":      keySchema,
+			"ProjectionType": "ALL",
+		})
+	}
+	return gsis
 }
 
 // ciProjectNameForModule returns the CodeBuild project name for the CI module.
