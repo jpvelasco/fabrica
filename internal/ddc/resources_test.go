@@ -76,6 +76,27 @@ func TestRoleAndProfile(t *testing.T) {
 	if !strings.Contains(string(role), "fabrica-ddc-test") {
 		t.Fatalf("role missing bucket: %s", role)
 	}
+	// Both the S3 bucket policy and the SSM output policy must be attached.
+	var doc map[string]any
+	if err := json.Unmarshal(role, &doc); err != nil {
+		t.Fatal(err)
+	}
+	policies, ok := doc["Policies"].([]any)
+	if !ok {
+		t.Fatal("Policies not found in role")
+	}
+	if len(policies) != 2 {
+		t.Fatalf("Policies len = %d, want 2 (S3 + SSM output)", len(policies))
+	}
+	found := false
+	for _, p := range policies {
+		if pm := p.(map[string]any); pm["PolicyName"] == "fabrica-ssm-output" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("fabrica-ssm-output policy missing from DDC role")
+	}
 	prof, err := InstanceProfileDesiredState(testPlan(BackendZen))
 	if err != nil {
 		t.Fatal(err)

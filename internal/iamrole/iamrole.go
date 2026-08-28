@@ -3,7 +3,10 @@
 // IAM roles via Cloud Control.
 package iamrole
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // AssumeRolePolicyDocument builds the standard IAM trust policy envelope that
 // allows a specific AWS service to assume the role. The service parameter should
@@ -59,6 +62,51 @@ func RoleDocument(roleName string, service string, managedArns []string, policie
 	}
 	doc["Tags"] = RoleTags(roleName, tags)
 	return json.Marshal(doc)
+}
+
+// SSMOutputPolicy builds the inline policy that lets an EC2 instance publish
+// SSM command output to the MDS parameter and the /fabrica/ssm/* CloudWatch
+// Logs log group — the reliable output-retrieval sink, because the account's
+// AmazonSSMManagedInstanceCore is a narrowed variant without ssm:PutParameter
+// or logs:*. Scoped to those resources only; no wildcard beyond the
+// /fabrica/ssm/* prefix. Attached to every Fabrica-managed instance role that
+// uses SSM (perforce, horde, horde agents, lore, ddc).
+func SSMOutputPolicy(region, account string) map[string]any {
+	if region == "" {
+		region = "*"
+	}
+	if account == "" {
+		account = "*"
+	}
+	return map[string]any{
+		"PolicyName": "fabrica-ssm-output",
+		"PolicyDocument": map[string]any{
+			"Version": "2012-10-17",
+			"Statement": []map[string]any{
+				{
+					"Sid":      "SSMOutputParams",
+					"Effect":   "Allow",
+					"Action":   []string{"ssm:PutParameter", "ssm:GetParameter", "ssm:DescribeParameters"},
+					"Resource": []string{fmt.Sprintf("arn:aws:ssm:%s:%s:parameter/MDS-*", region, account)},
+				},
+				{
+					"Sid":      "CloudWatchLogsGroup",
+					"Effect":   "Allow",
+					"Action":   []string{"logs:CreateLogGroup"},
+					"Resource": []string{fmt.Sprintf("arn:aws:logs:%s:%s:log-group:/fabrica/ssm/*", region, account)},
+				},
+				{
+					"Sid":    "CloudWatchLogsStream",
+					"Effect": "Allow",
+					"Action": []string{"logs:CreateLogStream", "logs:PutLogEvents"},
+					"Resource": []string{
+						fmt.Sprintf("arn:aws:logs:%s:%s:log-group:/fabrica/ssm/*", region, account),
+						fmt.Sprintf("arn:aws:logs:%s:%s:log-group:/fabrica/ssm/*:*", region, account),
+					},
+				},
+			},
+		},
+	}
 }
 
 // S3BucketPolicy builds an inline policy document that grants S3 access to a

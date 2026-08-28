@@ -54,7 +54,7 @@ func AgentToCoordinatorIngressDesiredState(plan *AgentsCreatePlan, agentSGID str
 func AgentRoleDesiredState(plan *AgentsCreatePlan) (json.RawMessage, error) {
 	return iamrole.RoleDocument(plan.RoleName, iamrole.ServiceEC2, []string{
 		"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-	}, nil, map[string]string{
+	}, []map[string]any{iamrole.SSMOutputPolicy(plan.Region, plan.Account)}, map[string]string{
 		"FabricaModule": "horde",
 		"FabricaRole":   "agent",
 	})
