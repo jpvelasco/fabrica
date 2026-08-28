@@ -130,12 +130,13 @@ func BucketDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 }
 
 // RoleDesiredState returns the EC2 instance role for S3 access on the Lore
-// store bucket + SSM core. Only used when StoreBackend is "s3". When
-// StoreTables is non-empty a second inline policy grants the DynamoDB
-// permissions the 0.8.6 aws store plugin needs on the four store tables (and
-// the locks table's GSIs), scoped to arn:aws:dynamodb:<region>:<account>:
-// table/<name>. Region/Account fall back to partition-agnostic placeholders
-// when unset (tests).
+// store bucket + SSM core. Only used when StoreBackend is "s3". Inline
+// policies: the store bucket (S3), SSM command output publication (MDS
+// parameter + /fabrica/ssm/* CloudWatch Logs), and — when StoreTables is
+// non-empty — the DynamoDB permissions the 0.8.6 aws store plugin needs on
+// the four store tables (and the locks table's GSIs), scoped to
+// arn:aws:dynamodb:<region>:<account>:table/<name>. Region/Account fall back
+// to partition-agnostic placeholders when unset (tests).
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 	region, account := plan.Region, plan.Account
 	if region == "" {
@@ -150,6 +151,11 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 			[]string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"},
 			"*",
 		),
+		// This account's AmazonSSMManagedInstanceCore is a narrowed variant
+		// without ssm:PutParameter or logs:*, so the instance role needs an
+		// explicit least-privilege policy to publish SSM command output to
+		// the MDS parameter and the /fabrica/ssm/* CloudWatch Logs sink.
+		SSMOutputPolicy(region, account),
 	}
 	if len(plan.StoreTables) > 0 {
 		tableARNs := make([]string, 0, len(plan.StoreTables))
@@ -179,6 +185,42 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 		policies,
 		map[string]string{"FabricaModule": "lore"},
 	)
+}
+
+// SSMOutputPolicy builds the inline policy that lets the instance publish
+// SSM command output to the MDS parameter and the /fabrica/ssm/* CloudWatch
+// Logs log group (the reliable output-retrieval sink in this account).
+// Scoped to those resources only; no wildcard beyond the /fabrica/ssm/* prefix.
+func SSMOutputPolicy(region, account string) map[string]any {
+	return map[string]any{
+		"PolicyName": "fabrica-ssm-output",
+		"PolicyDocument": map[string]any{
+			"Version": "2012-10-17",
+			"Statement": []map[string]any{
+				{
+					"Sid":      "SSMOutputParams",
+					"Effect":   "Allow",
+					"Action":   []string{"ssm:PutParameter", "ssm:GetParameter", "ssm:DescribeParameters"},
+					"Resource": []string{fmt.Sprintf("arn:aws:ssm:%s:%s:parameter/MDS-*", region, account)},
+				},
+				{
+					"Sid":      "CloudWatchLogsGroup",
+					"Effect":   "Allow",
+					"Action":   []string{"logs:CreateLogGroup"},
+					"Resource": []string{fmt.Sprintf("arn:aws:logs:%s:%s:log-group:/fabrica/ssm/*", region, account)},
+				},
+				{
+					"Sid":    "CloudWatchLogsStream",
+					"Effect": "Allow",
+					"Action": []string{"logs:CreateLogStream", "logs:PutLogEvents"},
+					"Resource": []string{
+						fmt.Sprintf("arn:aws:logs:%s:%s:log-group:/fabrica/ssm/*", region, account),
+						fmt.Sprintf("arn:aws:logs:%s:%s:log-group:/fabrica/ssm/*:*", region, account),
+					},
+				},
+			},
+		},
+	}
 }
 
 // InstanceProfileDesiredState wraps the Lore role for EC2 attachment.
