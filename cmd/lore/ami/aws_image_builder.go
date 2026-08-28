@@ -11,12 +11,13 @@ import (
 // imageBuilderRecipe mirrors the structure of an EC2 Image Builder recipe document
 // for validation. The canonical output is the rendered template.
 type imageBuilderRecipe struct {
-	Name            string               `json:"name"`
-	SemanticVersion string               `json:"semanticVersion"`
-	Description     string               `json:"description"`
-	ParentImage     string               `json:"parentImage"`
-	Components      []componentReference `json:"components"`
-	Tags            map[string]string    `json:"tags"`
+	Name                string               `json:"name"`
+	SemanticVersion     string               `json:"semanticVersion"`
+	Description         string               `json:"description"`
+	ParentImage         string               `json:"parentImage"`
+	SupportedOsVersions []string             `json:"supportedOsVersions"`
+	Components          []componentReference `json:"components"`
+	Tags                map[string]string    `json:"tags"`
 }
 
 type componentReference struct {

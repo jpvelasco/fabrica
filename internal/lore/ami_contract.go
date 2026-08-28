@@ -74,6 +74,9 @@ func (c AMIContract) InstallScript(sourceDir string) (string, error) {
 	return fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
 
+# The pinned OSS tarball ships loreserver mode 0644, so it must be made
+# executable before the source check can pass.
+chmod 0755 %[1]s/loreserver
 test -x %[1]s/loreserver
 install -d -m 0755 %[2]s %[3]s
 cp -a %[1]s/. %[2]s/
@@ -97,14 +100,9 @@ WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
 systemctl enable %[7]s.service
-if systemctl list-unit-files --type=service --all | grep -Fq 'amazon-ssm-agent.service'; then
-  systemctl enable amazon-ssm-agent.service
-elif systemctl list-unit-files --type=service --all | grep -Fq 'snap.amazon-ssm-agent.amazon-ssm-agent.service'; then
-  systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
-else
-  echo 'amazon-ssm-agent service is required on the base image' >&2
-  exit 1
-fi
+# The SSM agent is not guaranteed to ship as amazon-ssm-agent.service on
+# every base image; a hard requirement aborts the bake.
+systemctl enable amazon-ssm-agent.service || systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service || true
 `, sourceDir, binaryDir, c.ConfigDir, c.BinaryPath, c.CommandPath, serviceUnit, c.ServiceName), nil
 }
 

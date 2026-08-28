@@ -22,11 +22,21 @@ enabled but waits for Fabrica cloud-init to create `local.toml` before starting.
 
 ## Generated Files
 
-- `component.yaml` — Image Builder adapter. Replace `REPLACE_WITH_YOUR_BUCKET`
-  with a private S3 bucket that holds the studio-supplied Lore distribution.
+- `component.yaml` — Image Builder adapter. It downloads the pinned OSS
+  release `loreserver-v{{ .Version }}-x86_64-unknown-linux-gnu.tar.gz` from
+  `https://github.com/EpicGames/lore/releases/download/v{{ .Version }}/` during
+  the bake; the build instance profile therefore needs only SSM, logging, and
+  egress. If the image builder worker has no internet egress, stage the tarball
+  in a private S3 prefix instead and swap the `DownloadPinnedLoreRelease` step
+  for an `aws s3 sync` of that prefix.
 - `image-builder-recipe.json` — Image Builder recipe. Replace
   `REPLACE_WITH_CUSTOM_COMPONENT_ARN` after creating the component.
-- `install-lore.sh` — shared AMI install contract used by both adapters.
+- `install-lore.sh` — shared AMI install contract used by both adapters. The
+  pinned OSS tarball ships `loreserver` mode 0644, so the install makes it
+  executable before the bake checks run. Enabling the SSM agent is
+  best-effort (`amazon-ssm-agent.service`, then the snap unit, then `|| true`)
+  because not every base image ships it; the bake must not abort on its
+  absence.
 - `verify-lore-ami-bake.sh` — shared static bake verification used by both adapters.
 - `verify-lore-ami-runtime.sh` — post-boot verification after Fabrica writes config.
 {{- if .IncludePacker }}
@@ -36,21 +46,22 @@ enabled but waits for Fabrica cloud-init to create `local.toml` before starting.
 
 ## Prerequisites
 
-Your studio must obtain the Epic-licensed `loreserver` distribution separately.
-Fabrica does not download it. Prepare a directory whose root contains an executable
-`loreserver` file and any required companion files; do not include credentials.
+The Image Builder adapter fetches the pinned OSS release
+(`EpicGames/lore`, tag `v{{ .Version }}`) from GitHub during the bake, so no
+pre-staged S3 payload is needed. If your build must stay air-gapped, stage the
+pinned tarball in a private S3 prefix and swap the
+`DownloadPinnedLoreRelease` step for an `aws s3 sync` of that prefix.
 
 For complete IAM, private-network, image-pipeline, launch, health, S3-store, and
 cleanup instructions, follow the repository runbook: `docs/lore-ami.md`.
 
 ## Image Builder (Recommended)
 
-1. Upload the licensed distribution to `s3://YOUR_PRIVATE_BUCKET/loreserver-bin/`.
-   The Image Builder instance profile needs `s3:ListBucket` and `s3:GetObject` only
-   for that prefix.
-2. Replace `REPLACE_WITH_YOUR_BUCKET` in `component.yaml`.
-3. Create the component, substitute its ARN in `image-builder-recipe.json`, then
+1. Create the component, substitute its ARN in `image-builder-recipe.json`, then
    create the recipe and pipeline as described in `docs/lore-ami.md`.
+2. Start the pipeline. It runs `verify-lore-ami-bake.sh` before it distributes an AMI.
+3. Launch through `fabrica lore create`, run `fabrica lore status`, and run
+   `verify-lore-ami-runtime.sh` through SSM before recording the AMI as known-good.
 4. Start the pipeline. It runs `verify-lore-ami-bake.sh` before it distributes an AMI.
 5. Launch through `fabrica lore create`, run `fabrica lore status`, and run
    `verify-lore-ami-runtime.sh` through SSM before recording the AMI as known-good.

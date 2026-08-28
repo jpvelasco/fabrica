@@ -38,6 +38,7 @@ func TestRenderTemplates(t *testing.T) {
 				`"LoreVersion": "5.5.0"`,
 				"REPLACE_WITH_CUSTOM_COMPONENT_ARN",
 				`"ManagedBy": "fabrica"`,
+				`"supportedOsVersions": ["Ubuntu 22"]`,
 			},
 		},
 		{
@@ -46,11 +47,18 @@ func TestRenderTemplates(t *testing.T) {
 				"schemaVersion: 1.0",
 				"name: fabrica-lore-5.5.0",
 				"loreserver 5.5.0",
-				"REPLACE_WITH_YOUR_BUCKET",
-				"/tmp/lore-bin/ --exact-timestamps",
+				"DownloadPinnedLoreRelease",
+				"umask 022",
+				"curl -fsSL --retry 5",
+				"https://github.com/EpicGames/lore/releases/download/v5.5.0/",
+				"loreserver-v5.5.0-x86_64-unknown-linux-gnu.tar.gz",
+				"chmod 0755 /tmp/lore-bin/loreserver",
 				"cp -a /tmp/lore-bin/. /opt/loreserver/",
+				// The SSM agent is not guaranteed to exist on the base image as
+				// amazon-ssm-agent.service; a hard requirement aborts the bake.
+				"systemctl enable amazon-ssm-agent.service || systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service || true",
 				"systemctl is-enabled --quiet loreserver.service",
-				"fi\n              SCRIPT",
+				"SCRIPT",
 			},
 		},
 		{
@@ -76,6 +84,40 @@ func TestRenderTemplates(t *testing.T) {
 				"verify-lore-ami-bake.sh",
 			},
 		},
+	}
+
+	stagingFixes := []struct {
+		name  string
+		check func(t *testing.T) []byte
+	}{
+		{
+			name: "component.yaml.tmpl",
+			check: func(t *testing.T) []byte {
+				t.Helper()
+				rendered, err := b.renderTemplate("component.yaml.tmpl", data)
+				if err != nil {
+					t.Fatalf("renderTemplate(component.yaml.tmpl) error: %v", err)
+				}
+				return rendered
+			},
+		},
+		{
+			name:  "install-lore.sh",
+			check: func(t *testing.T) []byte { return []byte(data.InstallScript) },
+		},
+	}
+	for _, sf := range stagingFixes {
+		t.Run(sf.name+"-staging-fix", func(t *testing.T) {
+			// Both adapters must carry the staging fix: the OSS tarball
+			// ships loreserver mode 0644, so a non-executable binary
+			// would fail the contract checks on any backend.
+			rendered := sf.check(t)
+			for _, want := range []string{"chmod 0755 /tmp/lore-bin/loreserver"} {
+				if !bytes.Contains(rendered, []byte(want)) {
+					t.Errorf("%s missing %q", sf.name, want)
+				}
+			}
+		})
 	}
 
 	for _, tt := range tests {

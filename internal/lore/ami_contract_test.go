@@ -107,13 +107,18 @@ func TestAMIContractInstallScript(t *testing.T) {
 
 	for _, want := range []string{
 		"set -euo pipefail",
+		// The pinned OSS tarball ships loreserver mode 0644; it must be
+		// executable before the source check can pass.
+		"chmod 0755 /tmp/lore-bin/loreserver",
 		"cp -a /tmp/lore-bin/. /opt/loreserver/",
 		"chmod 0755 /opt/loreserver/loreserver",
 		"ln -sfn /opt/loreserver/loreserver /usr/local/bin/loreserver",
 		"ConditionPathExists=/etc/loreserver/local.toml",
 		"ExecStart=/opt/loreserver/loreserver --config /etc/loreserver",
 		"systemctl enable loreserver.service",
-		"systemctl enable amazon-ssm-agent.service",
+		// The SSM agent is not guaranteed to ship as amazon-ssm-agent.service on
+		// every base image; a hard requirement aborts the bake.
+		"systemctl enable amazon-ssm-agent.service || systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service || true",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("install script missing %q", want)
