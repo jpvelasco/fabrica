@@ -61,6 +61,7 @@ func RoleDesiredState(plan *SetupPlan) (json.RawMessage, error) {
 				[]string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject"},
 				"*",
 			),
+			iamrole.SSMOutputPolicy(plan.Region, plan.Account),
 		},
 		map[string]string{"FabricaModule": "ddc"},
 	)

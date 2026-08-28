@@ -49,44 +49,30 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName,
 }
 
 // RoleDesiredState returns Cloud Control desired-state for the Perforce EC2
-// instance role (SSM managed instance core + optional S3 backup export).
+// instance role (SSM managed instance core + shared SSM output policy +
+// optional S3 backup export).
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
-	managed := []string{
-		"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-	}
-	doc := map[string]any{
-		"RoleName":                 plan.RoleName,
-		"AssumeRolePolicyDocument": iamrole.AssumeRolePolicyDocument(iamrole.ServiceEC2),
-		"ManagedPolicyArns":        managed,
-		"Tags":                     iamrole.RoleTags(plan.RoleName, map[string]string{"FabricaModule": "perforce"}),
-	}
+	policies := []map[string]any{iamrole.SSMOutputPolicy(plan.Region, plan.Account)}
 	if plan.BackupS3Export && plan.BackupS3Bucket != "" {
 		prefix := plan.BackupS3Prefix
 		if prefix == "" {
 			prefix = DefaultS3Prefix
 		}
-		doc["Policies"] = []map[string]any{
-			{
-				"PolicyName": "fabrica-perforce-backup-s3",
-				"PolicyDocument": map[string]any{
-					"Version": "2012-10-17",
-					"Statement": []map[string]any{
-						{
-							"Effect":   "Allow",
-							"Action":   []string{"s3:ListBucket"},
-							"Resource": []string{"arn:aws:s3:::" + plan.BackupS3Bucket},
-						},
-						{
-							"Effect":   "Allow",
-							"Action":   []string{"s3:PutObject", "s3:GetObject", "s3:DeleteObject"},
-							"Resource": []string{"arn:aws:s3:::" + plan.BackupS3Bucket + "/" + prefix + "*"},
-						},
-					},
-				},
-			},
-		}
+		policies = append(policies, iamrole.S3BucketPolicy(
+			"fabrica-perforce-backup-s3",
+			plan.BackupS3Bucket,
+			[]string{"s3:ListBucket"},
+			[]string{"s3:PutObject", "s3:GetObject", "s3:DeleteObject"},
+			prefix+"*",
+		))
 	}
-	return json.Marshal(doc)
+	return iamrole.RoleDocument(
+		plan.RoleName,
+		iamrole.ServiceEC2,
+		[]string{"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"},
+		policies,
+		map[string]string{"FabricaModule": "perforce"},
+	)
 }
 
 // InstanceProfileDesiredState returns Cloud Control desired-state for the

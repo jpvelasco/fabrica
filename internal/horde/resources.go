@@ -53,7 +53,7 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName 
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 	return iamrole.RoleDocument(plan.RoleName, iamrole.ServiceEC2, []string{
 		"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-	}, nil, map[string]string{"FabricaModule": "horde"})
+	}, []map[string]any{iamrole.SSMOutputPolicy(plan.Region, plan.Account)}, map[string]string{"FabricaModule": "horde"})
 }
 
 // InstanceProfileDesiredState returns Cloud Control desired-state for the

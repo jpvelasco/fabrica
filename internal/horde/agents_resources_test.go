@@ -132,6 +132,18 @@ func TestAgentRoleDesiredState(t *testing.T) {
 	if !found {
 		t.Error("SSM managed policy not found in ManagedPolicyArns")
 	}
+
+	// The SSM output inline policy must be attached.
+	policies, ok := doc["Policies"].([]any)
+	if !ok {
+		t.Fatal("Policies not found in role")
+	}
+	if len(policies) != 1 {
+		t.Fatalf("Policies len = %d, want 1 (SSM output)", len(policies))
+	}
+	if pm := policies[0].(map[string]any); pm["PolicyName"] != "fabrica-ssm-output" {
+		t.Errorf("Policies[0] = %v, want fabrica-ssm-output", pm["PolicyName"])
+	}
 }
 
 func TestAgentInstanceProfileDesiredState(t *testing.T) {

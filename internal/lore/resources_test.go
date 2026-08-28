@@ -233,22 +233,25 @@ func TestRoleDesiredStateShape(t *testing.T) {
 		t.Error("SSM managed policy not found in ManagedPolicyArns")
 	}
 
-	// Verify S3 inline policy is present.
+	// Verify S3 + SSM output inline policies are present (DynamoDB policy is
+	// absent because StoreTables is empty).
 	policies, ok := doc["Policies"].([]any)
 	if !ok {
 		t.Fatal("Policies not found")
 	}
-	if len(policies) == 0 {
-		t.Error("Expected at least one inline policy (S3 bucket access)")
+	if len(policies) != 2 {
+		t.Fatalf("Policies len = %d, want 2 (S3 + SSM output)", len(policies))
 	}
-
-	// No tables recorded -> no DynamoDB policy.
 	for _, p := range policies {
 		pm := p.(map[string]any)
 		if pm["PolicyName"] == "fabrica-lore-store-dynamodb" {
 			t.Error("DynamoDB policy must be absent when StoreTables is empty")
 		}
+		if pm["PolicyName"] == "fabrica-ssm-output" {
+			return
+		}
 	}
+	t.Error("SSM output policy must be present in the Lore instance role")
 }
 
 func TestRoleDesiredStateOmitsDynamoDBWithoutTables(t *testing.T) {

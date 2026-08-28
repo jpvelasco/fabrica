@@ -124,6 +124,17 @@ func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 	if len(arns) != 1 || !strings.Contains(arns[0].(string), "AmazonSSMManagedInstanceCore") {
 		t.Errorf("ManagedPolicyArns = %v", arns)
 	}
+	// The SSM output inline policy must be attached even without S3 backup.
+	policies, ok := doc["Policies"].([]any)
+	if !ok {
+		t.Fatal("Policies not found in role")
+	}
+	if len(policies) != 1 {
+		t.Fatalf("Policies len = %d, want 1 (SSM output)", len(policies))
+	}
+	if pm := policies[0].(map[string]any); pm["PolicyName"] != "fabrica-ssm-output" {
+		t.Errorf("Policies[0] = %v, want fabrica-ssm-output", pm["PolicyName"])
+	}
 }
 
 func TestRoleDesiredState_S3ExportPolicy(t *testing.T) {
@@ -140,6 +151,24 @@ func TestRoleDesiredState_S3ExportPolicy(t *testing.T) {
 	s := string(raw)
 	if !strings.Contains(s, "s3:PutObject") || !strings.Contains(s, "my-bucket") {
 		t.Fatalf("expected S3 policy in role: %s", s)
+	}
+	// The SSM output policy must be present alongside the backup policy.
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	policies := doc["Policies"].([]any)
+	if len(policies) != 2 {
+		t.Fatalf("Policies len = %d, want 2 (SSM output + S3 backup)", len(policies))
+	}
+	found := false
+	for _, p := range policies {
+		if pm := p.(map[string]any); pm["PolicyName"] == "fabrica-ssm-output" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("fabrica-ssm-output policy missing alongside backup policy")
 	}
 }
 
