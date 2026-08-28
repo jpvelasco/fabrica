@@ -133,6 +133,36 @@ func TestGenerateRawLocalStoreBackend(t *testing.T) {
 	}
 }
 
+func TestGenerateRawHealthPollAfterRestart(t *testing.T) {
+	raw, err := GenerateRaw(UserDataConfig{
+		StorePath:    "/opt/loreserver/store",
+		ConfigDir:    "/etc/loreserver",
+		GRPCPort:     41337,
+		HTTPPort:     41339,
+		StoreBackend: StoreBackendS3,
+		StoreBucket:  "my-lore-bucket",
+		StoreTables:  []string{"my-lore-bucket-fragments", "my-lore-bucket-metadata", "my-lore-bucket-mutable", "my-lore-bucket-locks"},
+	})
+	if err != nil {
+		t.Fatalf("GenerateRaw: %v", err)
+	}
+	// The health endpoint is resolved from the configured HTTP port so a
+	// non-default port is probed correctly.
+	if !strings.Contains(raw, `HEALTH_URL="http://127.0.0.1:41339/health_check"`) {
+		t.Errorf("userdata missing HEALTH_URL with HTTP port")
+	}
+	// Bounded poll with a final restart as the authoritative state.
+	for _, want := range []string{
+		"health_ok()",
+		"for i in $(seq 1 60); do",
+		"systemctl restart loreserver || true",
+	} {
+		if !strings.Contains(raw, want) {
+			t.Errorf("userdata missing health-poll behavior %q", want)
+		}
+	}
+}
+
 func TestGenerateRawRemainsCompatibleWithDefaultAMIContract(t *testing.T) {
 	contract := DefaultAMIContract()
 	tests := []struct {

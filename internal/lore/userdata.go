@@ -135,10 +135,29 @@ mode = "local"
 {{- end }}
 LOREEOF
 
-# Prefer AMI-provided systemd unit; otherwise start loreserver in background
+# Prefer AMI-provided systemd unit; otherwise start loreserver in background.
+# After start, bounded-poll the health endpoint: the plugin performs
+# DescribeTable/ensure-table against all four DynamoDB tables on startup,
+# which exceeds systemd's default TimeoutStartSec and leaves the unit in
+# failed state otherwise. A genuinely broken store still fails loud — after
+# the poll budget the final restart leaves the unit state authoritative.
+HEALTH_URL="http://127.0.0.1:{{ .HTTPPort }}/health_check"
+health_ok() {
+  curl -sf -o /dev/null --max-time 5 "$HEALTH_URL"
+}
 if systemctl list-unit-files 2>/dev/null | grep -q '^loreserver\.service'; then
   systemctl enable loreserver || true
   systemctl restart loreserver
+  ok=0
+  for i in $(seq 1 60); do
+    if health_ok; then ok=1; break; fi
+    sleep 10
+    if [ "$i" -eq 60 ]; then break; fi
+  done
+  if [ "$ok" -ne 1 ]; then
+    echo "WARNING: health check did not return 200 within 600s; restarting loreserver for a final state"
+    systemctl restart loreserver || true
+  fi
 elif command -v loreserver >/dev/null 2>&1; then
   nohup loreserver --config "$CONFIG_DIR" >> /var/log/loreserver.log 2>&1 &
 else
