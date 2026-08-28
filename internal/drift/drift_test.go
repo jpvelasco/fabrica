@@ -599,18 +599,28 @@ func TestRun_ImageIdPropertiesFallbackToVersion(t *testing.T) {
 	}
 }
 
-func TestRun_LoreS3StoreInSync(t *testing.T) {
-	// Lore with S3 store backend includes S3 bucket, IAM role, instance profile, and instance.
-	st := state.NewState("123456789012", "us-east-1")
-	st.UpsertModule("lore", "ami-lore123", "ready", []state.ModuleResource{
+// loreS3StoreResources is the full resource set recorded by an s3-backed
+// lore create: SG, S3 bucket, four DynamoDB store tables, role, profile,
+// and instance.
+func loreS3StoreResources() []state.ModuleResource {
+	return []state.ModuleResource{
 		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-lore"},
 		{TypeName: "AWS::S3::Bucket", Identifier: "fabrica-lore-store-123456789012-us-east-1"},
+		{TypeName: cloud.TypeAWSDynamoDBTable, Identifier: "fabrica-lore-store-123456789012-us-east-1-fragments", Properties: map[string]string{"loreTable": "fragments"}},
+		{TypeName: cloud.TypeAWSDynamoDBTable, Identifier: "fabrica-lore-store-123456789012-us-east-1-metadata", Properties: map[string]string{"loreTable": "metadata"}},
+		{TypeName: cloud.TypeAWSDynamoDBTable, Identifier: "fabrica-lore-store-123456789012-us-east-1-mutable", Properties: map[string]string{"loreTable": "mutable"}},
+		{TypeName: cloud.TypeAWSDynamoDBTable, Identifier: "fabrica-lore-store-123456789012-us-east-1-locks", Properties: map[string]string{"loreTable": "locks"}},
 		{TypeName: "AWS::IAM::Role", Identifier: "fabrica-lore-role"},
 		{TypeName: "AWS::IAM::InstanceProfile", Identifier: "fabrica-lore-profile"},
-		{TypeName: "AWS::EC2::Instance", Identifier: "i-lore", Properties: map[string]string{
-			"instanceType": "m5.xlarge",
-		}},
-	})
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-lore", Properties: map[string]string{"instanceType": "m5.xlarge"}},
+	}
+}
+
+func TestRun_LoreS3StoreInSync(t *testing.T) {
+	// Lore with S3 store backend includes S3 bucket, four DynamoDB store
+	// tables, IAM role, instance profile, and instance.
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("lore", "ami-lore123", "ready", loreS3StoreResources())
 
 	engine := &Engine{
 		State: st,
@@ -625,14 +635,69 @@ func TestRun_LoreS3StoreInSync(t *testing.T) {
 
 	report := engine.Run(context.Background())
 
-	if report.Checked != 5 {
-		t.Errorf("expected 5 checked, got %d", report.Checked)
+	if report.Checked != 9 {
+		t.Errorf("expected 9 checked, got %d", report.Checked)
 	}
-	if report.InSync != 5 {
-		t.Errorf("expected 5 inSync, got %d", report.InSync)
+	if report.InSync != 9 {
+		t.Errorf("expected 9 inSync, got %d", report.InSync)
 	}
 	if report.Missing != 0 {
 		t.Errorf("expected 0 missing, got %d", report.Missing)
+	}
+	// Every store table must be reported in sync with no "unsupported"
+	// details — DynamoDB tables have an explicit existence check, not the
+	// fallback for unknown types.
+	for _, md := range report.Modules {
+		for _, r := range md.Resources {
+			if r.TypeName != cloud.TypeAWSDynamoDBTable {
+				continue
+			}
+			if r.Status != InSync {
+				t.Errorf("table %s: status = %s, want InSync", r.Identifier, r.Status)
+			}
+			if r.Details != "" {
+				t.Errorf("table %s: unexpected details %q", r.Identifier, r.Details)
+			}
+		}
+	}
+}
+
+func TestRun_LoreS3StoreTableMissing(t *testing.T) {
+	// A store table deleted outside Fabrica must surface as Missing.
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("lore", "ami-lore123", "ready", loreS3StoreResources())
+
+	engine := &Engine{
+		State: st,
+		ResourceGet: func(_ context.Context, r *cloud.Resource) error {
+			if r.TypeName == cloud.TypeAWSDynamoDBTable && r.Identifier == "fabrica-lore-store-123456789012-us-east-1-locks" {
+				return cloud.ErrResourceNotFound
+			}
+			if r.TypeName == "AWS::EC2::Instance" {
+				r.ActualState = json.RawMessage(`{"State":{"Name":"running"},"InstanceType":"m5.xlarge","ImageId":"ami-lore123"}`)
+			}
+			return nil
+		},
+	}
+
+	report := engine.Run(context.Background())
+
+	if report.Missing != 1 {
+		t.Fatalf("expected 1 missing (locks table), got %d", report.Missing)
+	}
+	found := false
+	for _, md := range report.Modules {
+		for _, r := range md.Resources {
+			if r.Status == Missing && r.TypeName == cloud.TypeAWSDynamoDBTable {
+				found = true
+				if r.Identifier != "fabrica-lore-store-123456789012-us-east-1-locks" {
+					t.Errorf("missing identifier = %q, want the locks table", r.Identifier)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("expected the locks table to be reported as Missing")
 	}
 }
 

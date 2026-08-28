@@ -40,7 +40,11 @@ perforce: {}
 horde: {}
 
 # Lore: Epic loreserver (parallel VCS option alongside Perforce).
-# AMI-first — see docs/lore-ami.md. Local/EBS store in V1.
+# AMI-first — see docs/lore-ami.md.
+# Store backend: "local" (default, EBS only) or "s3". With "s3", Fabrica
+# provisions the versioned store bucket plus four DynamoDB store tables and
+# DynamoDB permissions on the instance role (required by the 0.8.6 aws
+# store plugin).
 # lore:
 #   amiId: ami-xxxxxxxxxxxxxxxxx   # required
 #   instanceType: m5.xlarge
@@ -48,6 +52,8 @@ horde: {}
 #   allowedCidr: 10.0.0.0/8
 #   vpcId: ""
 #   subnetId: ""
+#   storeBackend: local            # or "s3" (provisions S3 bucket + 4 DynamoDB tables + role policy)
+#   storeBucket: ""                # default "fabrica-lore-store-<account>-<region>"; table names derive from it
 
 # DDC: Unreal Cloud DDC (Jupiter / Zen) — single home-region V1.
 # AMI-first — see docs/ddc-ami.md. Default backend zen; scylla is optional

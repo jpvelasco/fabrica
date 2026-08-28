@@ -378,6 +378,11 @@ func (e *Engine) checkAttributes(res DriftResult, m *state.ModuleState, recorded
 		// IAM instance profile existence is sufficient for V1 drift.
 		res.Status = InSync
 		return res
+	case cloud.TypeAWSDynamoDBTable:
+		// DynamoDB table existence is sufficient for V1 drift (Lore S3
+		// store tables).
+		res.Status = InSync
+		return res
 	case cloud.TypeAWSAutoScalingScalingPolicy:
 		// Scaling policy existence is sufficient for V1 drift.
 		res.Status = InSync

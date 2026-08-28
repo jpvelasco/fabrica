@@ -60,26 +60,40 @@ func TestGenerateRawS3StoreBackend(t *testing.T) {
 		HTTPPort:     41339,
 		StoreBackend: StoreBackendS3,
 		StoreBucket:  "my-lore-bucket",
+		StoreTables: []string{
+			"my-lore-bucket-fragments",
+			"my-lore-bucket-metadata",
+			"my-lore-bucket-mutable",
+			"my-lore-bucket-locks",
+		},
 	})
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
 	}
 
-	// S3 store config should be present.
-	if !strings.Contains(raw, `mode = "s3"`) {
-		t.Errorf("expected s3 store mode in userdata")
+	// AWS store plugin config should be present (mode = "aws" per
+	// config-aws.toml). The legacy mode = "s3" workaround must be gone.
+	if !strings.Contains(raw, `mode = "aws"`) {
+		t.Errorf("expected aws store mode in userdata")
 	}
-	if !strings.Contains(raw, `bucket = "my-lore-bucket"`) {
-		t.Errorf("expected S3 bucket name in userdata")
+	if strings.Contains(raw, `mode = "s3"`) {
+		t.Errorf("legacy s3 store mode must not appear in userdata")
 	}
-	if !strings.Contains(raw, `prefix = "immutable"`) {
-		t.Errorf("expected immutable prefix in userdata")
+	if !strings.Contains(raw, `s3_bucket = "my-lore-bucket"`) {
+		t.Errorf("expected s3_bucket name in userdata")
 	}
-	if !strings.Contains(raw, `prefix = "mutable"`) {
-		t.Errorf("expected mutable prefix in userdata")
-	}
-	if !strings.Contains(raw, `prefix = "lock"`) {
-		t.Errorf("expected lock prefix in userdata")
+	for _, want := range []string{
+		"dynamodb_fragments_table = \"my-lore-bucket-fragments\"",
+		"dynamodb_metadata_table = \"my-lore-bucket-metadata\"",
+		"dynamodb_table = \"my-lore-bucket-mutable\"",
+		"dynamodb_table = \"my-lore-bucket-locks\"",
+		"[plugins.aws.immutable_store]",
+		"[plugins.aws.mutable_store]",
+		"[plugins.aws.lock_store]",
+	} {
+		if !strings.Contains(raw, want) {
+			t.Errorf("userdata missing %q", want)
+		}
 	}
 
 	// Local store paths should NOT appear when S3 backend is used.
@@ -136,7 +150,7 @@ func TestGenerateRawRemainsCompatibleWithDefaultAMIContract(t *testing.T) {
 			name:         "S3 store",
 			storeBackend: StoreBackendS3,
 			storeBucket:  "fabrica-lore-store-test",
-			wantStore:    "mode = \"s3\"",
+			wantStore:    "mode = \"aws\"",
 		},
 	}
 
@@ -242,10 +256,10 @@ func TestGenerateBase64S3Store(t *testing.T) {
 		t.Fatalf("not valid base64: %v", err)
 	}
 	s := string(decoded)
-	if !strings.Contains(s, `mode = "s3"`) {
-		t.Error("decoded S3 userdata missing s3 mode")
+	if !strings.Contains(s, `mode = "aws"`) {
+		t.Error("decoded S3 userdata missing aws mode")
 	}
-	if !strings.Contains(s, `bucket = "test-bucket"`) {
-		t.Error("decoded S3 userdata missing bucket name")
+	if !strings.Contains(s, `s3_bucket = "test-bucket"`) {
+		t.Error("decoded S3 userdata missing s3_bucket name")
 	}
 }

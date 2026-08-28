@@ -7,10 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Lore S3 store now provisions the full 0.8.6 store surface** - with `lore.storeBackend: s3`, `fabrica lore create` now provisions the four DynamoDB tables the 0.8.6 `aws` store plugin requires (`<bucket>-fragments`, `<bucket>-metadata`, `<bucket>-mutable`, `<bucket>-locks`, with the locks table's three global secondary indexes) in addition to the versioned store bucket, and grants the instance role DynamoDB permissions (`GetItem`, `PutItem`, `DeleteItem`, `Query`, `BatchGetItem`, `DescribeTable`, `TransactWriteItems` on the four tables + the locks table's GSIs) on top of the existing S3 policy. Cloud-init renders the 0.8.6 `[plugins.aws.*]` config (`mode = "aws"`, `s3_bucket` + table names). Destroy tears the tables down after the instance and with the bucket purge; export emits the tables as distinct logical IDs with per-table name outputs and full key/GSI schemas; drift checks table existence. Cost estimation includes the four tables. `storeBackend: local` is unchanged (no bucket, no tables, no instance profile).
+
 ### Changed
 
 - **Lore AMI build bakes from the pinned GitHub release** - the Image Builder component now downloads the pinned `loreserver` release tarball directly (no staging bucket or `REPLACE_WITH_YOUR_BUCKET` placeholder), normalizes the 0644 tarball mode, and enables the SSM agent best-effort so bakes on base images without `amazon-ssm-agent.service` do not abort. Recipe emits `supportedOsVersions`. Known-good row recorded for lore v0.8.6 in us-west-2 (AMI `ami-0cb86d7ebcd1a4487`, base `ami-0bdb09211df876db4`), SSM-verified boot with health 200 on the local store.
-- **Lore 0.8.6 S3 store backend documented as unsupported** - the `aws` store plugin requires S3 plus four DynamoDB tables (fragments, metadata, mutable, locks) and DynamoDB permissions on the instance role; the module provisions only the versioned bucket, so `storeBackend: s3` deployments fail at boot on lore 0.8.6. Use `storeBackend: local` until the DynamoDB resources land.
+- **Lore S3 store config format updated for 0.8.6** - cloud-init now emits the 0.8.6 `config-aws.toml` shape: `[immutable_store]`/`[mutable_store]`/`[lock_store]` with `mode = "aws"`, and `[plugins.aws.immutable_store]` (`s3_bucket`, `dynamodb_fragments_table`, `dynamodb_metadata_table`), `[plugins.aws.mutable_store]` (`dynamodb_table`), `[plugins.aws.lock_store]` (`dynamodb_table`). The local-store config uses the 0.8.6 `[immutable_store.local]` subtable form with `path`.
 
 ## [0.4.3] - 2026-08-23
 

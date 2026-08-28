@@ -566,9 +566,18 @@ func (g *terraformGenerator) addOutputHCL(sb *strings.Builder, res ExportResourc
 			desc = fmt.Sprintf("%s S3 bucket name", moduleName)
 		}
 	case "AWS::DynamoDB::Table":
-		outputName = "state_lock_table_name"
-		value = "aws_dynamodb_table.fabrica_state_lock_table.id"
-		desc = "Fabrica state lock DynamoDB table name"
+		if res.Module == "state-backend" {
+			// The state lock table keeps its dedicated output name.
+			outputName = "state_lock_table_name"
+			value = "aws_dynamodb_table.fabrica_state_lock_table.id"
+			desc = "Fabrica state lock DynamoDB table name"
+		} else {
+			// Module-managed tables (Lore S3 store tables): per-table output
+			// named after the table's own suffix.
+			outputName = ddbTableNameOutput(res.LogicalID)
+			value = "aws_dynamodb_table." + g.tfResourceName(res.LogicalID) + ".id"
+			desc = fmt.Sprintf("%s %s DynamoDB table name", moduleName, res.Identifier)
+		}
 	case "AWS::IAM::Role":
 		outputName = g.tfResourceName(res.LogicalID) + "_arn"
 		value = fmt.Sprintf("%s.%s.arn", g.tfResourceType(res.TypeName), g.tfResourceName(res.LogicalID))

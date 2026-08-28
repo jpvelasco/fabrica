@@ -49,6 +49,7 @@ type CreatePlan struct {
 	// S3 store (optional, enabled when storeBackend is "s3").
 	StoreBackend        string
 	StoreBucket         string
+	StoreTables         []string
 	RoleName            string
 	InstanceProfileName string
 
@@ -103,6 +104,7 @@ func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region s
 		InstanceName:        "fabrica-lore",
 		StoreBackend:        storeBackend,
 		StoreBucket:         storeBucket,
+		StoreTables:         s3StoreTables(storeBackend, storeBucket),
 		RoleName:            "fabrica-lore-role",
 		InstanceProfileName: "fabrica-lore-profile",
 		TLSConfig:           cfg.TLSConfig,
@@ -129,4 +131,13 @@ func resolveStoreBucket(bucket, account, region, backend string) string {
 		return bucket
 	}
 	return fmt.Sprintf("fabrica-lore-store-%s-%s", account, region)
+}
+
+// s3StoreTables returns the four store table names for the s3 backend, or nil
+// for any other backend (local omits DynamoDB entirely).
+func s3StoreTables(backend, bucket string) []string {
+	if backend != StoreBackendS3 {
+		return nil
+	}
+	return StoreTableNames(bucket)
 }

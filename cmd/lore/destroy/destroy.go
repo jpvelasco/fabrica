@@ -50,8 +50,11 @@ func wireSDKDelete(tc *teardown.Command, rt globals.Runtime) {
 }
 
 // loreResourceOrder returns the deletion sequence for the Lore module.
-// Standard: Instance → IAM profile → IAM role → S3 bucket → SG.
-// When S3 store backend is disabled: Instance → SG (profiles/role/bucket absent).
+// Standard: Instance → IAM profile → IAM role → DynamoDB tables → S3 bucket → SG.
+// When S3 store backend is disabled: Instance → SG (profiles/role/tables/bucket absent).
+// Tables are deleted after the instance and role (the store is provably
+// quiescent) and before the bucket (the bucket purge doesn't touch DynamoDB,
+// but the tables must not outlive the store they describe).
 func loreResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 	type phase struct {
 		matchFn func(fabricastate.ModuleResource) bool
@@ -61,6 +64,7 @@ func loreResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::EC2::Instance" }},
 		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::IAM::InstanceProfile" }},
 		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::IAM::Role" }},
+		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::DynamoDB::Table" }},
 		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::S3::Bucket" }},
 		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::EC2::SecurityGroup" }},
 	}
@@ -94,8 +98,9 @@ Resources are deleted in reverse-creation order to respect dependencies:
   1. EC2 Instance (terminated first)
   2. IAM Instance Profile (if S3 store enabled)
   3. IAM Role (if S3 store enabled)
-  4. S3 Store Bucket (if S3 store enabled)
-  5. EC2 Security Group
+  4. DynamoDB store tables (if S3 store enabled)
+  5. S3 Store Bucket (if S3 store enabled)
+  6. EC2 Security Group
 
 State is updated after each deletion so a partial failure leaves a recoverable
 record. Re-running destroy will skip resources that are already gone.

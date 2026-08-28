@@ -24,6 +24,14 @@ func CostResources(cfg config.LoreConfig) []cost.Resource {
 			TypeName: cloud.TypeAWSS3Bucket,
 			Name:     bucket,
 		})
+		// The 0.8.6 aws store plugin also requires four DynamoDB tables.
+		// Table names derive from the bucket, matching NewCreatePlan.
+		for _, table := range StoreTableNames(bucket) {
+			resources = append(resources, cost.Resource{
+				TypeName: cloud.TypeAWSDynamoDBTable,
+				Name:     table,
+			})
+		}
 	}
 
 	return resources
