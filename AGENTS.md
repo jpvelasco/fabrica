@@ -21,7 +21,7 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | CodeBuild orchestration over Horde; IAM role via Cloud Control, CodeBuild project via SDK auxiliary interface |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | GameLift blue/green deployment; fleet activation polling via SDK auxiliary interface |
 | `cost` | `report`, `forecast`, `alerts` | Offline config-derived reporting + local budget alerts |
-| `export` | `--format cloudformation\|terraform` | Generates IaC templates from recorded local state only — no live AWS calls; V2 covers all 8 modules (state backend, Horde, Perforce, Lore, DDC, Workstation, CI, Deploy); secrets redacted |
+| `export` | `--format cloudformation\|terraform` | Generates IaC templates from recorded local state only — no live AWS calls; V2 covers all 8 modules (state backend, Horde, Perforce, Lore, DDC, Workstation, CI, Deploy); inline IAM policies (`Policies`) re-derived from the shared `iamrole` helpers and emitted on the role (CFN) / `inline_policy` (TF); secrets redacted |
 | `mcp` | `mcp` | stdio MCP server exposing 6 read-only tools; reuses the same `internal/*` logic as the CLI |
 
 ## Current Known Limitations

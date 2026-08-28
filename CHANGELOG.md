@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Export emits the inline IAM policies create actually attaches** — `fabrica export` printed only `ManagedPolicyArns` on `AWS::IAM::Role`, so CloudFormation and Terraform output omitted the inline policies `iamrole.RoleDocument` sends to Cloud Control (the shared `fabrica-ssm-output` on perforce, horde coordinator, horde agents, ddc, and lore, plus the Lore store S3/DynamoDB and DDC/Perforce-Backup S3 bucket policies). Both formats now re-derive the same desired-state `Policies` from the shared helpers (no second copy of the policy text): CloudFormation carries them on the role `Policies`, Terraform on the `aws_iam_role` `inline_policy` map. Secrets stay redacted.
+
 ### Added
 
 - **Lore S3 store now provisions the full 0.8.6 store surface** - with `lore.storeBackend: s3`, `fabrica lore create` now provisions the four DynamoDB tables the 0.8.6 `aws` store plugin requires (`<bucket>-fragments`, `<bucket>-metadata`, `<bucket>-mutable`, `<bucket>-locks`, with the locks table's three global secondary indexes) in addition to the versioned store bucket, and grants the instance role DynamoDB permissions (`GetItem`, `PutItem`, `DeleteItem`, `Query`, `BatchGetItem`, `DescribeTable`, `TransactWriteItems` on the four tables + the locks table's GSIs) on top of the existing S3 policy. Cloud-init renders the 0.8.6 `[plugins.aws.*]` config (`mode = "aws"`, `s3_bucket` + table names). Destroy tears the tables down after the instance and with the bucket purge; export emits the tables as distinct logical IDs with per-table name outputs and full key/GSI schemas; drift checks table existence. Cost estimation includes the four tables. `storeBackend: local` is unchanged (no bucket, no tables, no instance profile).

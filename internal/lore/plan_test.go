@@ -150,6 +150,36 @@ func TestStoreTableNamesDeriveFromBucket(t *testing.T) {
 	}
 }
 
+// TestStoreDynamoDBPolicyRegionAccountFallbacks covers the partition-agnostic
+// fallback when region/account are unset (test callers that build the policy
+// without a live state).
+func TestStoreDynamoDBPolicyRegionAccountFallbacks(t *testing.T) {
+	pol := StoreDynamoDBPolicy("", "", "bkt", []string{"bkt-fragments", "bkt-locks"})
+	if pol["PolicyName"] != "fabrica-lore-store-dynamodb" {
+		t.Fatalf("PolicyName = %v, want fabrica-lore-store-dynamodb", pol["PolicyName"])
+	}
+	doc := pol["PolicyDocument"].(map[string]any)
+	stmt := doc["Statement"].([]map[string]any)[0]
+	actions := stmt["Action"].([]string)
+	if len(actions) != 7 || actions[0] != "dynamodb:GetItem" {
+		t.Errorf("statement actions = %v, want the seven store actions", actions)
+	}
+	res := stmt["Resource"].([]string)
+	want := []string{
+		"arn:aws:dynamodb:*:*:table/bkt-fragments",
+		"arn:aws:dynamodb:*:*:table/bkt-locks",
+		"arn:aws:dynamodb:*:*:table/bkt-locks/index/*",
+	}
+	if len(res) != len(want) {
+		t.Fatalf("statement resources = %v, want %v", res, want)
+	}
+	for i, w := range want {
+		if res[i] != w {
+			t.Errorf("resource[%d] = %q, want %q", i, res[i], w)
+		}
+	}
+}
+
 func TestStoreTableSpecsMatchPluginSchema(t *testing.T) {
 	tables := StoreTables()
 	if len(tables) != 4 {

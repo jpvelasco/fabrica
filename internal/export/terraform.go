@@ -1,6 +1,7 @@
 package export
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -78,6 +79,8 @@ func (g *terraformGenerator) resourceToHCL(res ExportResource) (string, error) {
 			sb.WriteString(g.hclPolicyDoc(v))
 		case "ManagedPolicyArns":
 			sb.WriteString(g.hclPolicyArns(v))
+		case "Policies":
+			sb.WriteString(g.hclInlinePolicies(v))
 		case "BlockDeviceMappings":
 			sb.WriteString(g.hclBlockDevices(v))
 		case "KeySchema":
@@ -278,6 +281,28 @@ func (g *terraformGenerator) hclPolicyArns(v any) string {
 		return sb.String()
 	}
 	return ""
+}
+
+// hclInlinePolicies converts inline IAM policies to HCL format. Each policy's
+// document is emitted as a JSON string so the raw policy text (from the
+// shared iamrole/lore helpers) appears verbatim in the block.
+func (g *terraformGenerator) hclInlinePolicies(v any) string {
+	policies, ok := v.([]map[string]any)
+	if !ok || len(policies) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("  inline_policy = {\n")
+	for _, p := range policies {
+		name, _ := p["PolicyName"].(string)
+		// Policy documents are built by the shared iamrole/lore helpers as
+		// JSON-serializable maps (the create path ships the same values to
+		// Cloud Control), so Marshal cannot fail here.
+		doc, _ := json.Marshal(p["PolicyDocument"])
+		fmt.Fprintf(&sb, "    %s = %q\n", name, string(doc))
+	}
+	sb.WriteString("  }\n")
+	return sb.String()
 }
 
 // hclBlockDevices converts block device mappings to HCL format.

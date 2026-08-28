@@ -423,6 +423,34 @@ func TestRun_IAMRoleInSync(t *testing.T) {
 	}
 }
 
+// TestRun_IAMRolePolicyContentIgnored proves V1 drift is existence-only for
+// IAM roles: a live role whose policy documents differ from what was recorded
+// is still InSync. (Drift is state-vs-live; it never compares policy
+// documents, so a policy drift can only surface via export comparison.)
+func TestRun_IAMRolePolicyContentIgnored(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("perforce", "fabrica-perforce", "ready", []state.ModuleResource{
+		{TypeName: "AWS::IAM::Role", Identifier: "fabrica-perforce-role"},
+	})
+
+	livePolicies := `{"Statement":[{"Action":["s3:PutObject"],"Effect":"Allow","Resource":["arn:aws:s3:::tampered-bucket/*"],"Sid":"Tampered"}],"Version":"2012-10-17"}`
+	engine := &Engine{
+		State: st,
+		ResourceGet: func(_ context.Context, r *cloud.Resource) error {
+			// Live role exists, but its inline policies no longer match the
+			// recorded state (e.g. someone edited the role in the console).
+			r.ActualState = json.RawMessage(`{"RoleName":"fabrica-perforce-role","Policies":[` + livePolicies + `]}`)
+			return nil
+		},
+	}
+
+	report := engine.Run(context.Background())
+
+	if report.InSync != 1 {
+		t.Errorf("expected 1 inSync for IAM role with divergent live policies, got %d", report.InSync)
+	}
+}
+
 func TestRun_MultipleModules(t *testing.T) {
 	st := state.NewState("123456789012", "us-east-1")
 	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{

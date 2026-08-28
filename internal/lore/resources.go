@@ -158,25 +158,7 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 		iamrole.SSMOutputPolicy(region, account),
 	}
 	if len(plan.StoreTables) > 0 {
-		tableARNs := make([]string, 0, len(plan.StoreTables))
-		for _, name := range plan.StoreTables {
-			tableARNs = append(tableARNs, fmt.Sprintf("arn:aws:dynamodb:%s:%s:table/%s", region, account, name))
-		}
-		// The plugin queries through the locks table's GSIs; grant on its index/*.
-		tableARNs = append(tableARNs, fmt.Sprintf("arn:aws:dynamodb:%s:%s:table/%s-locks/index/*", region, account, plan.StoreBucket))
-		policies = append(policies, map[string]any{
-			"PolicyName": "fabrica-lore-store-dynamodb",
-			"PolicyDocument": map[string]any{
-				"Version": "2012-10-17",
-				"Statement": []map[string]any{
-					{
-						"Effect":   "Allow",
-						"Action":   []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:BatchGetItem", "dynamodb:DescribeTable", "dynamodb:TransactWriteItems"},
-						"Resource": tableARNs,
-					},
-				},
-			},
-		})
+		policies = append(policies, StoreDynamoDBPolicy(region, account, plan.StoreBucket, plan.StoreTables))
 	}
 	return iamrole.RoleDocument(
 		plan.RoleName,

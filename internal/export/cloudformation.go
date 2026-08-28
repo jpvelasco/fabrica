@@ -98,6 +98,11 @@ func (g *cloudFormationGenerator) propertiesToCF(props map[string]any) map[strin
 			out[k] = v
 		case "ManagedPolicyArns":
 			out[k] = cfPolicyArns(v)
+		case "Policies":
+			// Inline IAM policies: pass through as-is — the plan layer
+			// (iamrole.RoleDocument) already shapes them for Cloud Control,
+			// which is the same target CFN applies here.
+			out[k] = v
 		case "BlockDeviceMappings":
 			out[k] = cfBlockDevices(v)
 		case "KeySchema":

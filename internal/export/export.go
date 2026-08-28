@@ -17,6 +17,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/ddc"
 	"github.com/jpvelasco/fabrica/internal/horde"
+	"github.com/jpvelasco/fabrica/internal/iamrole"
 	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
@@ -104,7 +105,10 @@ func GenerateOutput(format Format, st *state.State, cfg *config.Config) ([]byte,
 	return gen.Generate(modules)
 }
 
-// buildModules constructs export modules from state and config.
+// buildModules constructs export modules from state and config. The account
+// and region come from the recorded state: inline IAM policies are
+// re-derived from the same shared helpers create uses, scoped to this
+// account/region.
 func buildModules(st *state.State, cfg *config.Config) ([]ExportModule, error) {
 	var modules []ExportModule
 
@@ -123,7 +127,7 @@ func buildModules(st *state.State, cfg *config.Config) ([]ExportModule, error) {
 	for _, ms := range st.Modules {
 		switch ms.Name {
 		case "horde", "perforce", "lore", "ddc", "workstation", "ci", "deploy":
-			mod := buildModule(ms, cfg)
+			mod := buildModule(ms, cfg, st.Account, st.Region)
 			if len(mod.Resources) > 0 {
 				modules = append(modules, mod)
 			}
@@ -134,7 +138,9 @@ func buildModules(st *state.State, cfg *config.Config) ([]ExportModule, error) {
 }
 
 // sanitize strips credential-like fields from resource properties.
-// UserData base64 blobs are replaced with a redacted placeholder.
+// UserData base64 blobs are replaced with a redacted placeholder. Map and
+// slice values are recursed into so nested credential-like strings (and the
+// string values inside inline IAM policy documents) are handled the same way.
 func sanitize(props map[string]any) map[string]any {
 	out := make(map[string]any, len(props))
 	for k, v := range props {
@@ -144,14 +150,38 @@ func sanitize(props map[string]any) map[string]any {
 		case "PasswordData":
 			out[k] = "# REDACTED"
 		default:
-			if s, ok := v.(string); ok && looksLikeBase64Blob(s) {
-				out[k] = "# REDACTED — credential-like field"
-			} else {
-				out[k] = v
-			}
+			out[k] = sanitizeValue(v)
 		}
 	}
 	return out
+}
+
+// sanitizeValue applies redaction to one property value, recursing into maps
+// and slices so nested credential-like strings are redacted too.
+func sanitizeValue(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		return sanitize(v)
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = sanitizeValue(item)
+		}
+		return out
+	case []map[string]any:
+		out := make([]map[string]any, len(v))
+		for i, item := range v {
+			out[i] = sanitize(item)
+		}
+		return out
+	case string:
+		if looksLikeBase64Blob(v) {
+			return "# REDACTED — credential-like field"
+		}
+		return v
+	default:
+		return v
+	}
 }
 
 // looksLikeBase64Blob returns true if the string looks like a base64-encoded blob
@@ -276,7 +306,7 @@ func buildStateBackendModule(st *state.State, cfg *config.Config) (*ExportModule
 // buildModule generates export resources for any module. All modules share
 // the same transformation: iterate resources, assign logical IDs, sanitize
 // properties, and enrich with config-derived defaults via extractProperties.
-func buildModule(ms state.ModuleState, cfg *config.Config) ExportModule {
+func buildModule(ms state.ModuleState, cfg *config.Config, account, region string) ExportModule {
 	mod := ExportModule{
 		Name:   ms.Name,
 		Status: ms.Status,
@@ -297,7 +327,7 @@ func buildModule(ms state.ModuleState, cfg *config.Config) ExportModule {
 			TypeName:   r.TypeName,
 			LogicalID:  logicalID,
 			Identifier: r.Identifier,
-			Properties: sanitize(extractProperties(ms.Name, *r, cfg)),
+			Properties: sanitize(extractProperties(ms.Name, *r, cfg, account, region)),
 			Module:     ms.Name,
 		})
 	}
@@ -347,7 +377,7 @@ var internalStateKeys = map[string]struct{}{
 	"loreTable":         {},
 }
 
-func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Config) map[string]any {
+func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Config, account, region string) map[string]any {
 	props := make(map[string]any)
 
 	// Copy state properties, normalizing camelCase keys to their IaC forms
@@ -432,6 +462,16 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		if _, ok := props["ManagedPolicyArns"]; !ok {
 			if managedPolicyARNs := managedPolicyARNsForModule(moduleName); managedPolicyARNs != nil {
 				props["ManagedPolicyArns"] = managedPolicyARNs
+			}
+		}
+		// Inline policies: re-derive the same documents the plan layer attaches
+		// via iamrole.RoleDocument, so export emits what create sends to Cloud
+		// Control. One document, two renderers (CFN Policies / TF
+		// inline_policy). State-driven inputs (store bucket, backup S3) come
+		// from config/the module's recorded resources.
+		if _, ok := props["Policies"]; !ok {
+			if policies := inlinePoliciesForRole(moduleName, cfg, account, region); policies != nil {
+				props["Policies"] = policies
 			}
 		}
 		if _, ok := props["Tags"]; !ok {
@@ -751,6 +791,64 @@ func managedPolicyARNsForModule(module string) []map[string]any {
 	case "perforce", "horde", "lore", "ddc":
 		return []map[string]any{
 			{"arn": "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"},
+		}
+	}
+	return nil
+}
+
+// inlinePoliciesForRole re-derives the inline IAM policies a module's EC2
+// instance role carries, using the same shared helpers the plan layer's
+// RoleDesiredState uses (one document, two renderers). Order matches the
+// create path per module. Returns nil for modules whose inline policy
+// documents export does not re-derive (ci/deploy build them by hand).
+func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, region string) []map[string]any {
+	switch moduleName {
+	case "perforce":
+		policies := []map[string]any{iamrole.SSMOutputPolicy(region, account)}
+		// Same gating as the plan layer: only when backup S3 export is on and a
+		// bucket is configured.
+		if cfg.Perforce.Backup.S3Export && cfg.Perforce.Backup.S3Bucket != "" {
+			prefix := cfg.Perforce.Backup.S3Prefix
+			if prefix == "" {
+				prefix = perforce.DefaultS3Prefix
+			}
+			policies = append(policies, iamrole.S3BucketPolicy(
+				"fabrica-perforce-backup-s3",
+				cfg.Perforce.Backup.S3Bucket,
+				[]string{"s3:ListBucket"},
+				[]string{"s3:PutObject", "s3:GetObject", "s3:DeleteObject"},
+				prefix+"*",
+			))
+		}
+		return policies
+	case "horde":
+		return []map[string]any{iamrole.SSMOutputPolicy(region, account)}
+	case "lore":
+		bucket := lore.ResolveStoreBucket(cfg.Lore.StoreBucket, account, region, cfg.Lore.StoreBackend)
+		if bucket == "" {
+			return nil
+		}
+		policies := []map[string]any{
+			iamrole.S3BucketPolicy("fabrica-lore-store-s3", bucket,
+				[]string{"s3:ListBucket", "s3:GetBucketLocation", "s3:ListBucketVersions"},
+				[]string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"},
+				"*",
+			),
+			iamrole.SSMOutputPolicy(region, account),
+			lore.StoreDynamoDBPolicy(region, account, bucket, lore.StoreTableNames(bucket)),
+		}
+		return policies
+	case "ddc":
+		// BucketOrDefault always falls back to fabrica-ddc-<account>-<region>,
+		// so the bucket is never empty here.
+		bucket := ddc.BucketOrDefault(cfg.DDC.Bucket, account, region)
+		return []map[string]any{
+			iamrole.S3BucketPolicy("fabrica-ddc-s3", bucket,
+				[]string{"s3:ListBucket", "s3:GetBucketLocation"},
+				[]string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject"},
+				"*",
+			),
+			iamrole.SSMOutputPolicy(region, account),
 		}
 	}
 	return nil
