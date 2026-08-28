@@ -53,21 +53,14 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMess
 // when StoreBackend is "s3". The key schema, attribute types, and the locks
 // table's three GSIs match the Lore 0.8.6 aws store plugin.
 func StoreTableDesiredState(plan *CreatePlan, suffix string) (json.RawMessage, error) {
-	var spec *StoreTableSpec
-	for i := range StoreTables() {
-		if StoreTables()[i].Suffix == suffix {
-			spec = &StoreTables()[i]
-			break
-		}
-	}
-	if spec == nil {
+	spec, ok := StoreTableSpecByName(suffix)
+	if !ok {
 		return nil, fmt.Errorf("unknown Lore store table %q — known suffixes: fragments, metadata, mutable, locks", suffix)
 	}
 
 	// Attribute declarations: every key attribute of the base key and each
 	// GSI needs a type declaration before KeySchema can reference it.
-	attrs := map[string]string{}
-	attrs[spec.PK] = spec.PKType
+	attrs := map[string]string{spec.PK: spec.PKType}
 	if spec.SK != "" {
 		attrs[spec.SK] = spec.SKType
 	}
