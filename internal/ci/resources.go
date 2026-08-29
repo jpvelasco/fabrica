@@ -61,13 +61,5 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 // inline policy grants CloudWatch Logs writes (scoped to this project's log
 // group) and ec2:DescribeInstances (to resolve coordinator addresses).
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
-	doc := map[string]any{
-		"RoleName":                 plan.RoleName,
-		"AssumeRolePolicyDocument": iamrole.AssumeRolePolicyDocument(iamrole.ServiceCodeBuild),
-		"Policies": []map[string]any{
-			iamrole.CICodeBuildInlinePolicy(plan.Region, plan.Account, plan.ProjectName),
-		},
-		"Tags": iamrole.RoleTags(plan.RoleName, nil),
-	}
-	return json.Marshal(doc)
+	return iamrole.RoleDocument(plan.RoleName, iamrole.ServiceCodeBuild, nil, []map[string]any{iamrole.CICodeBuildInlinePolicy(plan.Region, plan.Account, plan.ProjectName)}, map[string]string{"FabricaModule": "ci"})
 }

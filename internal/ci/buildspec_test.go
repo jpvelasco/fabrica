@@ -2,8 +2,11 @@ package ci
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/iamrole"
 )
 
 func TestBuildspecRawSubmitsToHorde(t *testing.T) {
@@ -33,14 +36,20 @@ func TestBuildspecIsBase64OfRaw(t *testing.T) {
 }
 
 func TestInlinePolicyScopedToProjectLogGroup(t *testing.T) {
-	doc := inlinePolicyDocument(testPlan())
+	plan := testPlan()
+	pol := iamrole.CICodeBuildInlinePolicy(plan.Region, plan.Account, plan.ProjectName)
+	b, _ := json.Marshal(pol["PolicyDocument"])
+	doc := string(b)
 	if !strings.Contains(doc, "/aws/codebuild/"+defaultProjectName) {
 		t.Errorf("inline policy not scoped to project log group:\n%s", doc)
 	}
 }
 
 func TestInlinePolicyIncludesVPCDescribePermissions(t *testing.T) {
-	doc := inlinePolicyDocument(testPlan())
+	plan := testPlan()
+	pol := iamrole.CICodeBuildInlinePolicy(plan.Region, plan.Account, plan.ProjectName)
+	b, _ := json.Marshal(pol["PolicyDocument"])
+	doc := string(b)
 	for _, want := range []string{
 		"ec2:CreateNetworkInterface",
 		"ec2:CreateNetworkInterfacePermission",
