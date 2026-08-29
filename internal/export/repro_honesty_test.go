@@ -31,17 +31,6 @@ func TestReproHordeLogicalIDCollision(t *testing.T) {
 // TestReproHordeExportBothRoles verifies export of coordinator + agents yields two distinct roles.
 func TestReproHordeExportBothRoles(t *testing.T) {
 	st := state.NewState(exportAccount, exportRegion)
-	// Horde module contains both coordinator and agent roles as recorded state would.
-	st.UpsertModule("horde", "ami-coord", "ready", []state.ModuleResource{
-		{TypeName: "AWS::IAM::Role", Identifier: "fabrica-horde-role", Properties: map[string]string{"RoleName": "fabrica-horde-role"}},
-		{TypeName: "AWS::IAM::Role", Identifier: "fabrica-horde-agents-role", Properties: map[string]string{"role": "agent", "RoleName": "fabrica-horde-agents-role"}},
-		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord", Properties: map[string]string{"instanceType": "m7i.2xlarge", "volumeSize": "100"}},
-		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-coord", Properties: map[string]string{}},
-		{TypeName: "AWS::IAM::Role", Identifier: "fabrica-horde-role", Properties: map[string]string{}}, // duplicate to ensure handling? Actually we have two roles already
-	})
-	// Use distinct identifiers: we already added both roles, but need to avoid duplicate identical identifier; remove duplicate
-	// Rebuild state with correct resources (2 roles)
-	st = state.NewState(exportAccount, exportRegion)
 	st.UpsertModule("horde", "ami-coord", "ready", []state.ModuleResource{
 		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-coord", Properties: map[string]string{"GroupName": "fabrica-horde-sg"}},
 		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord", Properties: map[string]string{"instanceType": "m7i.2xlarge", "volumeSize": "100"}},

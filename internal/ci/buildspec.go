@@ -2,9 +2,6 @@ package ci
 
 import (
 	"encoding/base64"
-	"encoding/json"
-
-	"github.com/jpvelasco/fabrica/internal/iamrole"
 )
 
 // buildspecTemplate is the inline CodeBuild buildspec. On each build it submits
@@ -61,14 +58,4 @@ func BuildspecRaw(plan *CreatePlan) string {
 	// the other modules' generators and to allow future per-plan customisation.
 	_ = plan
 	return buildspecTemplate
-}
-
-// inlinePolicyDocument returns the least-privilege inline IAM policy granting the
-// CodeBuild role CloudWatch Logs write access and EC2 permissions for VPC
-// networking (ENI lifecycle + describe) and coordinator address resolution.
-// It re-uses the shared iamrole helper so create and export stay byte-equal.
-func inlinePolicyDocument(plan *CreatePlan) string {
-	pol := iamrole.CICodeBuildInlinePolicy(plan.Region, plan.Account, plan.ProjectName)
-	b, _ := json.Marshal(pol["PolicyDocument"])
-	return string(b)
 }

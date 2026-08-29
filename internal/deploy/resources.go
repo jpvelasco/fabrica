@@ -9,13 +9,7 @@ import (
 // RoleDesiredState returns the Cloud Control desired-state JSON for the IAM role
 // GameLift assumes to read the build from S3.
 func RoleDesiredState(plan *SetupPlan) (json.RawMessage, error) {
-	doc := map[string]any{
-		"RoleName":                 plan.RoleName,
-		"AssumeRolePolicyDocument": iamrole.AssumeRolePolicyDocument(iamrole.ServiceGameLift),
-		"Policies":                 []map[string]any{iamrole.DeployS3ReadPolicy(plan.BuildBucket)},
-		"Tags":                     iamrole.RoleTags(plan.RoleName, nil),
-	}
-	return json.Marshal(doc)
+	return iamrole.RoleDocument(plan.RoleName, iamrole.ServiceGameLift, nil, []map[string]any{iamrole.DeployS3ReadPolicy(plan.BuildBucket)}, map[string]string{"FabricaModule": "deploy"})
 }
 
 // AliasDesiredState returns the desired state for the setup alias. Until the
