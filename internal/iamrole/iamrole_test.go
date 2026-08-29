@@ -185,3 +185,127 @@ func TestRoleTags_TagShape(t *testing.T) {
 		}
 	}
 }
+
+func TestCICodeBuildInlinePolicy_Shared(t *testing.T) {
+	p := CICodeBuildInlinePolicy("us-west-2", "123456789012", "fabrica-ci")
+	if p["PolicyName"] != "fabrica-ci-inline" {
+		t.Fatalf("PolicyName = %v, want fabrica-ci-inline", p["PolicyName"])
+	}
+	pd := p["PolicyDocument"].(map[string]any)
+	if pd["Version"] != "2012-10-17" {
+		t.Errorf("Version = %v, want 2012-10-17", pd["Version"])
+	}
+	stmts := pd["Statement"].([]map[string]any)
+	if len(stmts) != 2 {
+		t.Fatalf("Statement len = %d, want 2 (logs + ec2)", len(stmts))
+	}
+	// Logs statement
+	logsStmt := stmts[0]
+	if logsStmt["Effect"] != "Allow" {
+		t.Errorf("logs Effect = %v, want Allow", logsStmt["Effect"])
+	}
+	if got, want := logsStmt["Action"], []string{"logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"}; len(got.([]string)) != len(want) {
+		t.Errorf("logs Action len = %d, want %d", len(got.([]string)), len(want))
+	}
+	resources := logsStmt["Resource"].([]string)
+	if len(resources) != 2 {
+		t.Fatalf("logs Resource len = %d, want 2", len(resources))
+	}
+	if !strings.Contains(resources[0], "arn:aws:logs:us-west-2:123456789012:log-group:/aws/codebuild/fabrica-ci*") {
+		t.Errorf("logs resource 0 = %q", resources[0])
+	}
+	if !strings.Contains(resources[1], "arn:aws:logs:us-west-2:123456789012:log-group:/aws/codebuild/fabrica-ci*:*") {
+		t.Errorf("logs resource 1 = %q", resources[1])
+	}
+	// EC2 statement
+	ec2Stmt := stmts[1]
+	if ec2Stmt["Resource"] != "*" {
+		t.Errorf("ec2 Resource = %v, want *", ec2Stmt["Resource"])
+	}
+	actions := ec2Stmt["Action"].([]string)
+	wantEC2 := map[string]bool{
+		"ec2:CreateNetworkInterface":           true,
+		"ec2:CreateNetworkInterfacePermission": true,
+		"ec2:DeleteNetworkInterface":           true,
+		"ec2:DescribeDhcpOptions":              true,
+		"ec2:DescribeInstances":                true,
+		"ec2:DescribeNetworkInterfaces":        true,
+		"ec2:DescribeSecurityGroups":           true,
+		"ec2:DescribeSubnets":                  true,
+		"ec2:DescribeTags":                     true,
+		"ec2:DescribeVpcs":                     true,
+		"ec2:CreateTags":                       true,
+		"ec2:DeleteTags":                       true,
+	}
+	for _, a := range actions {
+		if !wantEC2[a] {
+			t.Errorf("unexpected ec2 action %q", a)
+		}
+		delete(wantEC2, a)
+	}
+	for missing := range wantEC2 {
+		t.Errorf("missing ec2 action %q", missing)
+	}
+}
+
+func TestCICodeBuildInlinePolicy_EmptyRegionAccount(t *testing.T) {
+	p := CICodeBuildInlinePolicy("", "", "fabrica-ci")
+	stmts := p["PolicyDocument"].(map[string]any)["Statement"].([]map[string]any)
+	logsRes := stmts[0]["Resource"].([]string)[0]
+	if !strings.Contains(logsRes, "arn:aws:logs:*:*:log-group:/aws/codebuild/fabrica-ci*") {
+		t.Errorf("empty fallback resource = %q, want */*", logsRes)
+	}
+}
+
+func TestDeployS3ReadPolicy_Shared(t *testing.T) {
+	p := DeployS3ReadPolicy("my-bucket")
+	if p["PolicyName"] != "fabrica-deploy-s3-read" {
+		t.Fatalf("PolicyName = %v, want fabrica-deploy-s3-read", p["PolicyName"])
+	}
+	pd := p["PolicyDocument"].(map[string]any)
+	stmts := pd["Statement"].([]map[string]any)
+	if len(stmts) != 1 {
+		t.Fatalf("Statement len = %d, want 1", len(stmts))
+	}
+	stmt := stmts[0]
+	if stmt["Effect"] != "Allow" {
+		t.Errorf("Effect = %v, want Allow", stmt["Effect"])
+	}
+	actions := stmt["Action"].([]string)
+	if len(actions) != 1 || actions[0] != "s3:GetObject" {
+		t.Errorf("Action = %v, want [s3:GetObject]", actions)
+	}
+	if stmt["Resource"] != "arn:aws:s3:::my-bucket/*" {
+		t.Errorf("Resource = %v, want arn:aws:s3:::my-bucket/*", stmt["Resource"])
+	}
+}
+
+func TestRoleDocument_Basic(t *testing.T) {
+	raw, err := RoleDocument("my-role", ServiceEC2, []string{"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"}, []map[string]any{SSMOutputPolicy("us-east-1", "123")}, nil)
+	if err != nil {
+		t.Fatalf("RoleDocument: %v", err)
+	}
+	if len(raw) == 0 {
+		t.Fatal("RoleDocument returned empty")
+	}
+	// Ensure it round-trips to valid JSON with expected keys
+	if !strings.Contains(string(raw), "my-role") {
+		t.Errorf("RoleDocument missing role name")
+	}
+	if !strings.Contains(string(raw), "ec2.amazonaws.com") {
+		t.Errorf("RoleDocument missing trust service")
+	}
+}
+
+func TestRoleDocument_NilPolicies(t *testing.T) {
+	raw, err := RoleDocument("my-role", ServiceEC2, nil, nil, map[string]string{"Env": "test"})
+	if err != nil {
+		t.Fatalf("RoleDocument: %v", err)
+	}
+	if strings.Contains(string(raw), "Policies") {
+		t.Errorf("RoleDocument with nil policies should not contain Policies")
+	}
+	if !strings.Contains(string(raw), "Env") {
+		t.Errorf("RoleDocument missing extra tag")
+	}
+}

@@ -2049,10 +2049,15 @@ func TestToLogicalIDNoCollision(t *testing.T) {
 		t.Errorf("Deploy fleets should have distinct IDs: both %s", fleet1)
 	}
 
-	// Long identifiers should be truncated to 12 chars
+	// Long identifiers are capped to 32 sanitized chars plus 8-char hash
 	longID := toLogicalID("deploy", "AWS::GameLift::Fleet", "fleet-verylongidentifier12345")
-	if len(longID) > len("DEPLOYFleet")+12 {
-		t.Errorf("long ID should be truncated: %s (len %d)", longID, len(longID))
+	if len(longID) > len("DEPLOYFleet")+32+8 {
+		t.Errorf("long ID too long: %s (len %d)", longID, len(longID))
+	}
+	// Same prefix but different tail must still be distinct (hash preserves entropy)
+	longID2 := toLogicalID("deploy", "AWS::GameLift::Fleet", "fleet-verylongidentifier12346")
+	if longID == longID2 {
+		t.Errorf("long IDs with different tails should be distinct: both %s", longID)
 	}
 }
 
@@ -3730,7 +3735,7 @@ func TestIAMRoleInlinePoliciesPerModule(t *testing.T) {
 			},
 		},
 		{
-			name:   "ci: no inline policies expected (out of scope)",
+			name:   "ci: codebuild logs + EC2 describe",
 			module: "ci",
 			state: state.ModuleState{
 				Name:   "ci",
@@ -3740,10 +3745,10 @@ func TestIAMRoleInlinePoliciesPerModule(t *testing.T) {
 				},
 			},
 			cfg:  testConfigWithCI(),
-			want: nil,
+			want: []map[string]any{iamrole.CICodeBuildInlinePolicy(exportRegion, exportAccount, "fabrica-ci")},
 		},
 		{
-			name:   "deploy: no inline policies expected (out of scope)",
+			name:   "deploy: S3 read on build bucket",
 			module: "deploy",
 			state: state.ModuleState{
 				Name:   "deploy",
@@ -3752,8 +3757,12 @@ func TestIAMRoleInlinePoliciesPerModule(t *testing.T) {
 					{TypeName: "AWS::IAM::Role", Identifier: "fabrica-deploy-gamelift"},
 				},
 			},
-			cfg:  testConfigWithDeploy(),
-			want: nil,
+			cfg: func() *config.Config {
+				cfg := testConfigWithDeploy()
+				cfg.Deploy.BuildBucket = "fabrica-deploy-bucket"
+				return cfg
+			}(),
+			want: []map[string]any{iamrole.DeployS3ReadPolicy("fabrica-deploy-bucket")},
 		},
 	}
 

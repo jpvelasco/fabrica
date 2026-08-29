@@ -2,7 +2,6 @@ package deploy
 
 import (
 	"encoding/json"
-	"fmt"
 
 	"github.com/jpvelasco/fabrica/internal/iamrole"
 )
@@ -10,22 +9,11 @@ import (
 // RoleDesiredState returns the Cloud Control desired-state JSON for the IAM role
 // GameLift assumes to read the build from S3.
 func RoleDesiredState(plan *SetupPlan) (json.RawMessage, error) {
-	bucketArn := fmt.Sprintf("arn:aws:s3:::%s/*", plan.BuildBucket)
 	doc := map[string]any{
 		"RoleName":                 plan.RoleName,
 		"AssumeRolePolicyDocument": iamrole.AssumeRolePolicyDocument(iamrole.ServiceGameLift),
-		"Policies": []map[string]any{{
-			"PolicyName": "fabrica-deploy-s3-read",
-			"PolicyDocument": map[string]any{
-				"Version": "2012-10-17",
-				"Statement": []map[string]any{{
-					"Effect":   "Allow",
-					"Action":   []string{"s3:GetObject"},
-					"Resource": bucketArn,
-				}},
-			},
-		}},
-		"Tags": iamrole.RoleTags(plan.RoleName, nil),
+		"Policies":                 []map[string]any{iamrole.DeployS3ReadPolicy(plan.BuildBucket)},
+		"Tags":                     iamrole.RoleTags(plan.RoleName, nil),
 	}
 	return json.Marshal(doc)
 }

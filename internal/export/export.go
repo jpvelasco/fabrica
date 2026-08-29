@@ -12,6 +12,7 @@ package export
 
 import (
 	"fmt"
+	"hash/fnv"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/internal/config"
@@ -203,27 +204,38 @@ func looksLikeBase64Blob(s string) bool {
 }
 
 // toLogicalID converts a resource identifier to a valid CloudFormation logical ID
-// (alphanumeric, no spaces or special chars). It uses the full sanitized
-// identifier (truncated to 12 chars) so that multiple resources of the same
-// type within one module get distinct IDs — e.g. DDC home vs. edge SGs,
-// or Deploy fleets and builds.
+// (alphanumeric, no spaces or special chars). It sanitizes the identifier to
+// alphanumerics only, uppercases it, and appends an 8-char FNV-1a hash of the
+// original identifier so distinct names never collide — e.g. fabrica-horde-role
+// vs fabrica-horde-agents-role (both truncated to FABRICAHORDE before) now get
+// unique hashes. The sanitized portion is capped at 32 chars so even long ARNs
+// stay within the 255-char CFN limit; the hash suffix preserves tail entropy
+// when truncation occurs. The result is deterministic and stable.
 func toLogicalID(module, typeName, identifier string) string {
-	id := strings.ReplaceAll(identifier, "-", "")
-	id = strings.ReplaceAll(id, "_", "")
-	id = strings.ReplaceAll(id, ".", "")
-
-	if len(id) == 0 {
-		id = "X"
+	var b strings.Builder
+	b.Grow(len(identifier))
+	for _, r := range identifier {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
 	}
-
-	if len(id) > 12 {
-		id = id[:12]
+	sanitized := b.String()
+	if sanitized == "" {
+		sanitized = "X"
 	}
-
-	return fmt.Sprintf("%s%s%s",
+	sanitized = strings.ToUpper(sanitized)
+	const maxSanitized = 32
+	if len(sanitized) > maxSanitized {
+		sanitized = sanitized[:maxSanitized]
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(identifier))
+	hash := fmt.Sprintf("%08X", h.Sum32())
+	return fmt.Sprintf("%s%s%s%s",
 		strings.ToTitle(module),
 		typeNameShort(typeName),
-		strings.ToUpper(id))
+		sanitized,
+		hash)
 }
 
 // typeNameShort returns a short form of a CloudFormation type name for logical IDs.
@@ -799,10 +811,21 @@ func managedPolicyARNsForModule(module string) []map[string]any {
 // inlinePoliciesForRole re-derives the inline IAM policies a module's EC2
 // instance role carries, using the same shared helpers the plan layer's
 // RoleDesiredState uses (one document, two renderers). Order matches the
-// create path per module. Returns nil for modules whose inline policy
-// documents export does not re-derive (ci/deploy build them by hand).
+// create path per module.
 func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, region string) []map[string]any {
 	switch moduleName {
+	case "ci":
+		projectName := ciProjectNameForModule(moduleName, cfg)
+		return []map[string]any{iamrole.CICodeBuildInlinePolicy(region, account, projectName)}
+	case "deploy":
+		bucket := ""
+		if cfg != nil {
+			bucket = cfg.Deploy.BuildBucket
+		}
+		if bucket == "" {
+			return nil
+		}
+		return []map[string]any{iamrole.DeployS3ReadPolicy(bucket)}
 	case "perforce":
 		policies := []map[string]any{iamrole.SSMOutputPolicy(region, account)}
 		// Same gating as the plan layer: only when backup S3 export is on and a
