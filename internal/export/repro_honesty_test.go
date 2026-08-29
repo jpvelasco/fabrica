@@ -9,7 +9,6 @@ import (
 	"github.com/jpvelasco/fabrica/internal/ci"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/deploy"
-	"github.com/jpvelasco/fabrica/internal/iamrole"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"go.yaml.in/yaml/v3"
 )
@@ -138,7 +137,6 @@ func TestReproCIInlinePolicyExport(t *testing.T) {
 	for _, p := range got {
 		if p["PolicyName"] == "fabrica-ci-inline" {
 			found = true
-			// Verify actions contain logs and ec2 bits
 			doc, _ := p["PolicyDocument"].(map[string]any)
 			j, _ := json.Marshal(doc)
 			s := string(j)
@@ -147,12 +145,6 @@ func TestReproCIInlinePolicyExport(t *testing.T) {
 					t.Errorf("ci inline policy missing %q", want)
 				}
 			}
-			// Verify helper equality: create path document must equal export's
-			plan, _ := ci.NewCreatePlan(context.TODO(), config.CIConfig{ProjectName: cfg.CI.ProjectName}, exportAccount, exportRegion, "", nil)
-			// Build expected via helper (to be implemented) or via current create path
-			// For now, ensure at least the document came from shared helper if helper exists
-			_ = plan
-			_ = iamrole.SSMOutputPolicy // ensure import used
 		}
 	}
 	if !found {
