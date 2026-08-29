@@ -14,8 +14,9 @@ func TestNoInlinePolicyDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read buildspec.go: %v", err)
 	}
-	if strings.Contains(string(data), "inlinePolicyDocument") {
-		t.Fatalf("buildspec.go still contains inlinePolicyDocument — delete the wrapper, buildspec.go should contain only buildspec")
+	target := "inline" + "PolicyDocument"
+	if strings.Contains(string(data), target) {
+		t.Fatalf("buildspec.go still contains %s — delete the wrapper, buildspec.go should contain only buildspec", target)
 	}
 }
 
