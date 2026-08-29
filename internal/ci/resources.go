@@ -65,10 +65,7 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 		"RoleName":                 plan.RoleName,
 		"AssumeRolePolicyDocument": iamrole.AssumeRolePolicyDocument(iamrole.ServiceCodeBuild),
 		"Policies": []map[string]any{
-			{
-				"PolicyName":     "fabrica-ci-inline",
-				"PolicyDocument": json.RawMessage(inlinePolicyDocument(plan)),
-			},
+			iamrole.CICodeBuildInlinePolicy(plan.Region, plan.Account, plan.ProjectName),
 		},
 		"Tags": iamrole.RoleTags(plan.RoleName, nil),
 	}

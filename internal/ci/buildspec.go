@@ -2,8 +2,9 @@ package ci
 
 import (
 	"encoding/base64"
-	"fmt"
-	"strings"
+	"encoding/json"
+
+	"github.com/jpvelasco/fabrica/internal/iamrole"
 )
 
 // buildspecTemplate is the inline CodeBuild buildspec. On each build it submits
@@ -65,35 +66,9 @@ func BuildspecRaw(plan *CreatePlan) string {
 // inlinePolicyDocument returns the least-privilege inline IAM policy granting the
 // CodeBuild role CloudWatch Logs write access and EC2 permissions for VPC
 // networking (ENI lifecycle + describe) and coordinator address resolution.
+// It re-uses the shared iamrole helper so create and export stay byte-equal.
 func inlinePolicyDocument(plan *CreatePlan) string {
-	logsARN := fmt.Sprintf("arn:aws:logs:%s:%s:log-group:/aws/codebuild/%s*",
-		plan.Region, plan.Account, plan.ProjectName)
-	return strings.NewReplacer("\n", "", "\t", "").Replace(fmt.Sprintf(`{
-	"Version": "2012-10-17",
-	"Statement": [
-		{
-			"Effect": "Allow",
-			"Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
-			"Resource": ["%s", "%s:*"]
-		},
-		{
-			"Effect": "Allow",
-			"Action": [
-				"ec2:CreateNetworkInterface",
-				"ec2:CreateNetworkInterfacePermission",
-				"ec2:DeleteNetworkInterface",
-				"ec2:DescribeDhcpOptions",
-				"ec2:DescribeInstances",
-				"ec2:DescribeNetworkInterfaces",
-				"ec2:DescribeSecurityGroups",
-				"ec2:DescribeSubnets",
-				"ec2:DescribeTags",
-				"ec2:DescribeVpcs",
-				"ec2:CreateTags",
-				"ec2:DeleteTags"
-			],
-			"Resource": "*"
-		}
-	]
-}`, logsARN, logsARN))
+	pol := iamrole.CICodeBuildInlinePolicy(plan.Region, plan.Account, plan.ProjectName)
+	b, _ := json.Marshal(pol["PolicyDocument"])
+	return string(b)
 }

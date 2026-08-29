@@ -137,3 +137,67 @@ func S3BucketPolicy(policyName, bucketName string, bucketActions, objectActions 
 		},
 	}
 }
+
+// CICodeBuildInlinePolicy builds the least-privilege inline IAM policy the
+// CodeBuild role needs: CloudWatch Logs writes scoped to this project's log
+// group plus the EC2/VPC actions for ENI lifecycle and coordinator address
+// resolution. One document, two renderers (create desired-state + export).
+func CICodeBuildInlinePolicy(region, account, projectName string) map[string]any {
+	if region == "" {
+		region = "*"
+	}
+	if account == "" {
+		account = "*"
+	}
+	logsARN := fmt.Sprintf("arn:aws:logs:%s:%s:log-group:/aws/codebuild/%s*", region, account, projectName)
+	return map[string]any{
+		"PolicyName": "fabrica-ci-inline",
+		"PolicyDocument": map[string]any{
+			"Version": "2012-10-17",
+			"Statement": []map[string]any{
+				{
+					"Effect":   "Allow",
+					"Action":   []string{"logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"},
+					"Resource": []string{logsARN, logsARN + ":*"},
+				},
+				{
+					"Effect": "Allow",
+					"Action": []string{
+						"ec2:CreateNetworkInterface",
+						"ec2:CreateNetworkInterfacePermission",
+						"ec2:DeleteNetworkInterface",
+						"ec2:DescribeDhcpOptions",
+						"ec2:DescribeInstances",
+						"ec2:DescribeNetworkInterfaces",
+						"ec2:DescribeSecurityGroups",
+						"ec2:DescribeSubnets",
+						"ec2:DescribeTags",
+						"ec2:DescribeVpcs",
+						"ec2:CreateTags",
+						"ec2:DeleteTags",
+					},
+					"Resource": "*",
+				},
+			},
+		},
+	}
+}
+
+// DeployS3ReadPolicy builds the inline policy the GameLift role needs to
+// read a build artifact from S3: s3:GetObject on the bucket's objects.
+func DeployS3ReadPolicy(bucket string) map[string]any {
+	bucketArn := fmt.Sprintf("arn:aws:s3:::%s/*", bucket)
+	return map[string]any{
+		"PolicyName": "fabrica-deploy-s3-read",
+		"PolicyDocument": map[string]any{
+			"Version": "2012-10-17",
+			"Statement": []map[string]any{
+				{
+					"Effect":   "Allow",
+					"Action":   []string{"s3:GetObject"},
+					"Resource": bucketArn,
+				},
+			},
+		},
+	}
+}
