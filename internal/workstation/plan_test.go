@@ -228,3 +228,21 @@ func TestNewCreatePlanMountPerforce(t *testing.T) {
 		t.Errorf("PerforceServerAddr = %q, want 10.0.1.5:1666", plan.PerforceServerAddr)
 	}
 }
+
+func TestNewCreatePlanSSMRoleAndProfile(t *testing.T) {
+	cfg := config.WorkstationConfig{
+		AmiID:    "ami-abc123",
+		VPCId:    "vpc-x",
+		SubnetId: "subnet-x",
+	}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if plan.RoleName != "fabrica-workstation-role" {
+		t.Errorf("RoleName = %q, want fabrica-workstation-role", plan.RoleName)
+	}
+	if plan.InstanceProfileName != "fabrica-workstation-profile" {
+		t.Errorf("InstanceProfileName = %q, want fabrica-workstation-profile", plan.InstanceProfileName)
+	}
+}

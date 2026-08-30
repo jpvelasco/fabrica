@@ -5,6 +5,8 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
+	"github.com/jpvelasco/fabrica/internal/cloud"
+	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
 )
 
@@ -16,8 +18,30 @@ var spec = teardown.Spec{
 	NotProvisioned: "Workstation is not provisioned. Nothing to terminate.",
 	PlanHeader:     "Cloud Workstation — terminate plan",
 	DryRunHeader:   "Cloud Workstation (terminate dry run)",
-	Irreversible:   "IRREVERSIBLE: This will permanently delete the workstation and its data.",
+	Irreversible:   "IRREVERSIBLE: This will permanently delete the workstation, IAM role/profile, and its data.",
 	SuccessMessage: "Cloud workstation terminated.",
+	// Instance → profile → role → SG (reverse of create: SG → role → profile → instance).
+	ResourceOrder: workstationResourceOrder,
+}
+
+func workstationResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
+	order := []string{
+		"AWS::EC2::Instance",
+		"AWS::IAM::InstanceProfile",
+		"AWS::IAM::Role",
+		"AWS::EC2::SecurityGroup",
+	}
+	byType := map[string]fabricastate.ModuleResource{}
+	for _, r := range m.Resources {
+		byType[r.TypeName] = r
+	}
+	out := make([]cloud.Resource, 0, len(order))
+	for _, t := range order {
+		if r, ok := byType[t]; ok && r.Identifier != "" {
+			out = append(out, cloud.Resource{TypeName: r.TypeName, Identifier: r.Identifier})
+		}
+	}
+	return out
 }
 
 // NewTeardown builds this module's teardown.Command for orchestrated use by
@@ -37,7 +61,9 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 
 Resources are deleted in reverse-creation order to respect dependencies:
   1. EC2 Instance (terminated first)
-  2. EC2 Security Group
+  2. IAM Instance Profile
+  3. IAM Role
+  4. EC2 Security Group
 
 State is updated after each deletion so a partial failure leaves a recoverable
 record. Re-running terminate will skip resources that are already gone.

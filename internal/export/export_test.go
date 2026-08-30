@@ -3077,7 +3077,7 @@ func TestAssumeRolePolicyForModule(t *testing.T) {
 // TestManagedPolicyARNsForModule verifies which modules get SSM managed policies.
 func TestManagedPolicyARNsForModule(t *testing.T) {
 	// EC2-based modules should get SSM policy
-	for _, mod := range []string{"perforce", "horde", "lore", "ddc"} {
+	for _, mod := range []string{"perforce", "horde", "lore", "ddc", "workstation"} {
 		arns := managedPolicyARNsForModule(mod)
 		if arns == nil {
 			t.Errorf("module %s: expected SSM managed policy ARN", mod)
@@ -3088,8 +3088,8 @@ func TestManagedPolicyARNsForModule(t *testing.T) {
 		}
 	}
 
-	// CI, Deploy, and Workstation should NOT get SSM managed policy in export
-	for _, mod := range []string{"ci", "deploy", "workstation"} {
+	// CI and Deploy should NOT get SSM managed policy in export
+	for _, mod := range []string{"ci", "deploy"} {
 		arns := managedPolicyARNsForModule(mod)
 		if arns != nil {
 			t.Errorf("module %s: expected nil managed policy ARNs, got %v", mod, arns)

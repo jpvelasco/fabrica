@@ -352,7 +352,7 @@ Deletes edge nodes first (each in its region), then home resources (instances �
 
 #### `fabrica workstation create`
 
-Provisions a NICE DCV cloud workstation: creates an EC2 security group (port 8443) and launches an EC2 instance. Generates a DCV session password to `.fabrica/workstation-credentials.yaml` (mode 0600).
+Provisions a NICE DCV cloud workstation: creates an EC2 security group (port 8443), an IAM role (`AmazonSSMManagedInstanceCore` + `fabrica-ssm-output` inline policy) with instance profile, and launches an EC2 instance attached to the profile for SSM access. Generates a DCV session password to `.fabrica/workstation-credentials.yaml` (mode 0600).
 
 Key flags:
 
@@ -379,7 +379,7 @@ Starts a previously stopped workstation. Supports `--dry-run`, `--yes`, `--json`
 
 #### `fabrica workstation terminate`
 
-Permanently terminates the workstation EC2 instance and security group. Deletes resources in reverse-creation order. Idempotent — already-terminated instances are skipped. Supports `--dry-run`, `--yes`, `--json`.
+Permanently terminates the workstation EC2 instance, IAM instance profile, IAM role, and security group (in reverse-creation order). Idempotent — already-terminated instances are skipped. Supports `--dry-run`, `--yes`, `--json`.
 
 ### CI
 

@@ -54,9 +54,11 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Short: "Provision a cloud workstation",
 		Long: `Provision a NICE DCV cloud workstation on AWS.
 
-Creates two resources in order:
+Creates four resources in order:
   1. EC2 Security Group — allows TCP 8443 inbound (NICE DCV HTTPS)
-  2. EC2 Instance — runs NICE DCV from the provided AMI
+  2. IAM Role — AmazonSSMManagedInstanceCore + fabrica-ssm-output inline policy
+  3. IAM Instance Profile — wraps the role for EC2 attachment
+  4. EC2 Instance — runs NICE DCV from the provided AMI (attached to the instance profile for SSM access)
 
 State is written after each resource so a partial failure is recoverable:
 re-running create will detect the already-provisioned module and exit cleanly.
@@ -215,6 +217,30 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	}
 	sgID := resources[len(resources)-1].Identifier
 
+	fmt.Fprintf(c.out, "Creating IAM role %s...\n", plan.RoleName)
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:    "IAM role",
+		TypeName: cloud.TypeAWSIAMRole,
+		BuildDesiredState: func() ([]byte, error) {
+			return workstation.RoleDesiredState(plan)
+		},
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return fmt.Errorf("creating IAM role: %w", err)
+	}
+
+	fmt.Fprintf(c.out, "Creating instance profile %s...\n", plan.InstanceProfileName)
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:    "Instance profile",
+		TypeName: cloud.TypeAWSIAMInstanceProfile,
+		BuildDesiredState: func() ([]byte, error) {
+			return workstation.InstanceProfileDesiredState(plan)
+		},
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return fmt.Errorf("creating instance profile: %w", err)
+	}
+
 	fmt.Fprintf(c.out, "Creating instance %s...\n", plan.InstanceName)
 	userData, err := workstation.Generate(workstation.UserDataConfig{
 		SessionPassword:    sessionPass,
@@ -269,6 +295,8 @@ func (c command) printDryRun(plan *workstation.CreatePlan) {
 		ExtraFields: extraFields,
 		Resources: []string{
 			"Security Group:   " + plan.SGName,
+			"IAM Role:         " + plan.RoleName,
+			"Instance Profile: " + plan.InstanceProfileName,
 			"EC2 Instance:     " + plan.InstanceName,
 		},
 		CostResources: plan.CostResources,
@@ -298,8 +326,10 @@ func (c command) printApplyPlan(plan *workstation.CreatePlan) {
 		CompactLabels: true,
 		Resources: []string{
 			// Compact resource labels match pre-#162 workstation apply.
-			"Security Group: " + plan.SGName,
-			"EC2 Instance:   " + plan.InstanceName,
+			"Security Group:   " + plan.SGName,
+			"IAM Role:         " + plan.RoleName,
+			"Instance Profile: " + plan.InstanceProfileName,
+			"EC2 Instance:     " + plan.InstanceName,
 		},
 		BeforeResources: func(w io.Writer) {
 			if plan.AllowedCIDR != "0.0.0.0/0" {
