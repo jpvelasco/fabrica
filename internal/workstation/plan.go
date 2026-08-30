@@ -45,8 +45,10 @@ type CreatePlan struct {
 	MountPerforce      bool
 	PerforceServerAddr string
 
-	SGName       string
-	InstanceName string
+	SGName              string
+	InstanceName        string
+	RoleName            string
+	InstanceProfileName string
 
 	CostResources []cost.Resource
 }
@@ -110,21 +112,23 @@ func NewCreatePlan(ctx context.Context, cfg config.WorkstationConfig, account, r
 	}
 
 	return &CreatePlan{
-		Account:            account,
-		Region:             region,
-		AmiID:              cfg.AmiID,
-		InstanceType:       instanceType,
-		VolumeSize:         volumeSize,
-		DCVPort:            dcvPort,
-		IdleTimeoutMinutes: idleTimeout,
-		AllowedCIDR:        allowedCIDR,
-		VPCID:              vpcID,
-		SubnetID:           subnetID,
-		DefaultVPC:         defaultVPC,
-		MountPerforce:      perforceAddr != "",
-		PerforceServerAddr: perforceAddr,
-		SGName:             "fabrica-workstation-sg",
-		InstanceName:       "fabrica-workstation",
-		CostResources:      CostResourcesFor(instanceType, volumeSize),
+		Account:             account,
+		Region:              region,
+		AmiID:               cfg.AmiID,
+		InstanceType:        instanceType,
+		VolumeSize:          volumeSize,
+		DCVPort:             dcvPort,
+		IdleTimeoutMinutes:  idleTimeout,
+		AllowedCIDR:         allowedCIDR,
+		VPCID:               vpcID,
+		SubnetID:            subnetID,
+		DefaultVPC:          defaultVPC,
+		MountPerforce:       perforceAddr != "",
+		PerforceServerAddr:  perforceAddr,
+		SGName:              "fabrica-workstation-sg",
+		InstanceName:        "fabrica-workstation",
+		RoleName:            "fabrica-workstation-role",
+		InstanceProfileName: "fabrica-workstation-profile",
+		CostResources:       CostResourcesFor(instanceType, volumeSize),
 	}, nil
 }
