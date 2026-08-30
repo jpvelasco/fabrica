@@ -55,18 +55,25 @@ func wireSDKDelete(tc *teardown.Command, rt globals.Runtime) {
 // Tables are deleted after the instance and role (the store is provably
 // quiescent) and before the bucket (the bucket purge doesn't touch DynamoDB,
 // but the tables must not outlive the store they describe).
+//
+// Honesty: this function honors every AWS::DynamoDB::Table row already present
+// in state — it does not guess table names from the bucket string. State is
+// the source of truth; a previous bug dropped tables from the plan when the
+// table list was derived only from config.storeBackend / bucket, leaving four
+// orphans after destroy. Table-only leftovers (instance/role/bucket already
+// gone) are still returned so a re-run can clean them.
 func loreResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 	type phase struct {
 		matchFn func(fabricastate.ModuleResource) bool
 	}
 
 	phases := []phase{
-		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::EC2::Instance" }},
-		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::IAM::InstanceProfile" }},
-		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::IAM::Role" }},
-		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::DynamoDB::Table" }},
-		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::S3::Bucket" }},
-		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == "AWS::EC2::SecurityGroup" }},
+		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == cloud.TypeAWSEC2Instance }},
+		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == cloud.TypeAWSIAMInstanceProfile }},
+		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == cloud.TypeAWSIAMRole }},
+		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == cloud.TypeAWSDynamoDBTable }},
+		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == cloud.TypeAWSS3Bucket }},
+		{matchFn: func(r fabricastate.ModuleResource) bool { return r.TypeName == cloud.TypeAWSEC2SecurityGroup }},
 	}
 
 	out := make([]cloud.Resource, 0, len(m.Resources))
