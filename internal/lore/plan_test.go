@@ -276,6 +276,36 @@ func TestNewCreatePlanTLSConfig(t *testing.T) {
 	}
 }
 
+func TestNewCreatePlanTLSEnabledRequiresAbsolutePaths(t *testing.T) {
+	cfg := config.LoreConfig{
+		AmiID: "ami-abc123",
+		TLSConfig: config.LoreTLSConfig{
+			Enabled:  true,
+			CertPath: "relative.crt",
+			KeyPath:  "/etc/ssl/private/lore.key",
+		},
+	}
+	if _, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil); err == nil {
+		t.Fatal("expected error for relative certPath")
+	}
+	cfg.TLSConfig.CertPath = "/etc/ssl/certs/lore.crt"
+	cfg.TLSConfig.KeyPath = ""
+	if _, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil); err == nil {
+		t.Fatal("expected error for empty keyPath")
+	}
+}
+
+func TestNewCreatePlanTLSDisabledAllowsEmptyPaths(t *testing.T) {
+	cfg := config.LoreConfig{AmiID: "ami-abc123"}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	if err != nil {
+		t.Fatalf("disabled TLS must not require paths: %v", err)
+	}
+	if plan.TLSConfig.Enabled {
+		t.Fatal("TLS should be disabled by default")
+	}
+}
+
 func TestNewCreatePlanExplicitValues(t *testing.T) {
 	cfg := config.LoreConfig{
 		AmiID:        "ami-abc123",

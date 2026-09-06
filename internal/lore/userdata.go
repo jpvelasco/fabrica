@@ -133,7 +133,25 @@ path = "{{ .StorePath }}/mutable"
 [lock_store]
 mode = "local"
 {{- end }}
+{{- if .TLSEnabled }}
+
+[server]
+tls_cert = "{{ .CertPath }}"
+tls_key = "{{ .KeyPath }}"
+{{- end }}
 LOREEOF
+{{- if .TLSEnabled }}
+
+# TLS files must already be on the AMI at the configured paths.
+if [ ! -f "{{ .CertPath }}" ]; then
+  echo "ERROR: lore.tls.certPath {{ .CertPath }} is missing on the AMI"
+  exit 1
+fi
+if [ ! -f "{{ .KeyPath }}" ]; then
+  echo "ERROR: lore.tls.keyPath {{ .KeyPath }} is missing on the AMI"
+  exit 1
+fi
+{{- end }}
 
 # Prefer AMI-provided systemd unit; otherwise start loreserver in background.
 # After start, bounded-poll the health endpoint: the plugin performs
@@ -166,7 +184,7 @@ else
 fi
 
 touch /var/lib/cloud/instance/lore-ready
-echo "Lore cloud-init complete (gRPC/QUIC {{ .GRPCPort }}, HTTP {{ .HTTPPort }}, store={{ .StoreBackend }})"
+echo "Lore cloud-init complete (gRPC/QUIC {{ .GRPCPort }}, HTTP {{ .HTTPPort }}, store={{ .StoreBackend }}{{ if .TLSEnabled }}, tls={{ .CertPath }}{{ end }})"
 `)))
 
 // storeTable returns the table name at the given index, or "" when the slice

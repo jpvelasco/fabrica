@@ -107,6 +107,42 @@ func TestGenerateRawS3StoreBackend(t *testing.T) {
 	}
 }
 
+func TestGenerateRawTLSEnabledWritesServerBlockAndChecksFiles(t *testing.T) {
+	raw, err := GenerateRaw(UserDataConfig{
+		TLSEnabled: true,
+		CertPath:   "/etc/loreserver/certs/server.crt",
+		KeyPath:    "/etc/loreserver/certs/server.key",
+	})
+	if err != nil {
+		t.Fatalf("GenerateRaw: %v", err)
+	}
+	for _, want := range []string{
+		"[server]",
+		`tls_cert = "/etc/loreserver/certs/server.crt"`,
+		`tls_key = "/etc/loreserver/certs/server.key"`,
+		"ERROR: lore.tls.certPath /etc/loreserver/certs/server.crt is missing on the AMI",
+		"ERROR: lore.tls.keyPath /etc/loreserver/certs/server.key is missing on the AMI",
+		"tls=/etc/loreserver/certs/server.crt",
+	} {
+		if !strings.Contains(raw, want) {
+			t.Errorf("TLS userdata missing %q", want)
+		}
+	}
+}
+
+func TestGenerateRawTLSDisabledOmitsServerBlock(t *testing.T) {
+	raw, err := GenerateRaw(UserDataConfig{})
+	if err != nil {
+		t.Fatalf("GenerateRaw: %v", err)
+	}
+	if strings.Contains(raw, "[server]") || strings.Contains(raw, "tls_cert") {
+		t.Error("disabled TLS must not emit a [server] TLS block")
+	}
+	if strings.Contains(raw, "tls=") {
+		t.Error("disabled TLS must not emit tls= in the completion line")
+	}
+}
+
 func TestGenerateRawLocalStoreBackend(t *testing.T) {
 	raw, err := GenerateRaw(UserDataConfig{
 		StorePath:    "/opt/loreserver/store",

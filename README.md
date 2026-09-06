@@ -296,7 +296,7 @@ Permanently deletes the agent pool and its AWS resources (ASG, launch template, 
 
 #### `fabrica lore create`
 
-Provisions an Epic Lore (`loreserver`) server: security group opens TCP 41337 (gRPC), UDP 41337 (QUIC), and TCP 41339 (HTTP health); EC2 instance uses your pre-baked AMI with a gp3 data volume for local store. Connection notes go to `.fabrica/lore-credentials.yaml` (mode 0600). V1 uses local/EBS storage, self-signed TLS, and no JWT. With `lore.storeBackend: s3` the create also provisions the versioned store bucket, the four DynamoDB store tables the 0.8.6 `aws` store plugin requires, and the instance role with S3 + DynamoDB permissions.
+Provisions an Epic Lore (`loreserver`) server: security group opens TCP 41337 (gRPC), UDP 41337 (QUIC), and TCP 41339 (HTTP health); EC2 instance uses your pre-baked AMI with a gp3 data volume for local store. Connection notes go to `.fabrica/lore-credentials.yaml` (mode 0600). Default store is local/EBS. Set `lore.tls.enabled` with absolute AMI `certPath`/`keyPath` to enable TLS (certs must already be on the AMI). JWT is operator-configured. With `lore.storeBackend: s3` the create also provisions the versioned store bucket, the four DynamoDB store tables the 0.8.6 `aws` store plugin requires, and the instance role with S3 + DynamoDB permissions.
 
 #### `fabrica lore status`
 

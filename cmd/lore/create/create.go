@@ -66,8 +66,8 @@ Store backend:
 State is written after each resource so a partial failure is recoverable:
 re-running create will detect the already-provisioned module and exit cleanly.
 
-Connection notes are written to .fabrica/lore-credentials.yaml (self-signed TLS;
-no JWT in V1).
+Connection notes are written to .fabrica/lore-credentials.yaml.
+Set lore.tls.enabled and bake cert/key files into the AMI to enable TLS.
 
 With --dry-run, shows the provisioning plan and a monthly cost estimate without
 making any AWS calls.`,
@@ -179,6 +179,9 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		StoreBackend: plan.StoreBackend,
 		StoreBucket:  plan.StoreBucket,
 		StoreTables:  plan.StoreTables,
+		TLSEnabled:   plan.TLSConfig.Enabled,
+		CertPath:     plan.TLSConfig.CertPath,
+		KeyPath:      plan.TLSConfig.KeyPath,
 	})
 	if err != nil {
 		return fmt.Errorf("generating user data: %w", err)
@@ -297,13 +300,13 @@ func (c command) printDryRun(plan *lore.CreatePlan) {
 			VPCID:        plan.VPCID,
 			DefaultVPC:   plan.DefaultVPC,
 		},
-		ExtraFields: []provision.PlanField{
+		ExtraFields: append([]provision.PlanField{
 			{Key: "AMI ID", Value: plan.AmiID},
 			{Key: "gRPC/QUIC port", Value: fmt.Sprintf("%d (tcp+udp)", plan.GRPCPort)},
 			{Key: "HTTP port", Value: fmt.Sprintf("%d", plan.HTTPPort)},
 			{Key: "Store backend", Value: plan.StoreBackend},
 			{Key: "Allowed CIDR", Value: plan.AllowedCIDR},
-		},
+		}, tlsPlanFields(plan)...),
 		Resources:     resources,
 		CostResources: plan.CostResources,
 		Costs:         c.costs,
@@ -334,10 +337,21 @@ func (c command) printApplyPlan(plan *lore.CreatePlan) {
 		Region:       plan.Region,
 		InstanceType: plan.InstanceType,
 		VolumeSize:   plan.VolumeSize,
-	}, []provision.PlanField{
+	}, append([]provision.PlanField{
 		{Key: "AMI ID", Value: plan.AmiID},
 		{Key: "Store backend", Value: plan.StoreBackend},
-	}, resources)
+	}, tlsPlanFields(plan)...), resources)
+}
+
+func tlsPlanFields(plan *lore.CreatePlan) []provision.PlanField {
+	if !plan.TLSConfig.Enabled {
+		return []provision.PlanField{{Key: "TLS", Value: "disabled"}}
+	}
+	return []provision.PlanField{
+		{Key: "TLS", Value: "enabled (AMI certs)"},
+		{Key: "TLS cert", Value: plan.TLSConfig.CertPath},
+		{Key: "TLS key", Value: plan.TLSConfig.KeyPath},
+	}
 }
 
 func (c command) printPostCreate(plan *lore.CreatePlan, instanceID string) {
@@ -358,7 +372,11 @@ func (c command) printPostCreate(plan *lore.CreatePlan, instanceID string) {
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, "  Note: Lore is accessible via the instance's private IP. Ensure your")
 			fmt.Fprintln(w, "        machine can reach it (VPN, VPC peering, or same-VPC access).")
-			fmt.Fprintln(w, "        TLS is self-signed in V1; clients must trust the cert.")
+			if plan.TLSConfig.Enabled {
+				fmt.Fprintf(w, "        TLS is enabled; AMI must contain %s and %s.\n", plan.TLSConfig.CertPath, plan.TLSConfig.KeyPath)
+			} else {
+				fmt.Fprintln(w, "        TLS is disabled (lore.tls.enabled=false).")
+			}
 			if plan.AllowedCIDR == "0.0.0.0/0" {
 				fmt.Fprintln(w)
 				fmt.Fprintln(w, "  Warning: lore.allowedCidr is 0.0.0.0/0 — ports are open to the internet.")

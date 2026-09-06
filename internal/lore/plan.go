@@ -3,6 +3,7 @@ package lore
 import (
 	"context"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
@@ -66,6 +67,9 @@ func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region s
 	if cfg.AmiID == "" {
 		return nil, fmt.Errorf("lore.amiId is required. Provide an AMI ID that contains the loreserver binary.\nSee: docs/lore-ami.md")
 	}
+	if err := validateTLSConfig(cfg.TLSConfig); err != nil {
+		return nil, err
+	}
 
 	instanceType := cfg.InstanceType
 	if instanceType == "" {
@@ -110,6 +114,20 @@ func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region s
 		TLSConfig:           cfg.TLSConfig,
 		CostResources:       CostResources(cfg),
 	}, nil
+}
+
+// validateTLSConfig requires absolute cert/key paths when TLS is enabled.
+func validateTLSConfig(tls config.LoreTLSConfig) error {
+	if !tls.Enabled {
+		return nil
+	}
+	if !path.IsAbs(tls.CertPath) {
+		return fmt.Errorf("lore.tls.certPath must be an absolute path on the AMI when tls.enabled is true (got %q)", tls.CertPath)
+	}
+	if !path.IsAbs(tls.KeyPath) {
+		return fmt.Errorf("lore.tls.keyPath must be an absolute path on the AMI when tls.enabled is true (got %q)", tls.KeyPath)
+	}
+	return nil
 }
 
 func normalizeStoreBackend(raw string) string {

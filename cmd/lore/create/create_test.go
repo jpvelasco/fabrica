@@ -70,6 +70,7 @@ func TestCreateDryRunOutputFields(t *testing.T) {
 		"fabrica-lore",
 		"41337",
 		"41339",
+		"TLS:              disabled",
 		"Cost estimate:",
 	} {
 		assert.Contains(t, got, want)
@@ -279,6 +280,38 @@ func TestCreateFlagOverridesConfig(t *testing.T) {
 	}
 	assert.Contains(t, out.String(), "m5.2xlarge")
 	assert.Contains(t, out.String(), "1000 GiB")
+}
+
+func TestCreateTLSDryRunShowsAMIPaths(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCommand(&out, &testutil.TestProvider{}, testutil.NewTestState())
+	c.dryRun = true
+	c.runtime.Config.Lore.TLSConfig.Enabled = true
+	c.runtime.Config.Lore.TLSConfig.CertPath = "/etc/loreserver/certs/server.crt"
+	c.runtime.Config.Lore.TLSConfig.KeyPath = "/etc/loreserver/certs/server.key"
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := out.String()
+	assert.Contains(t, got, "TLS:              enabled (AMI certs)")
+	assert.Contains(t, got, "/etc/loreserver/certs/server.crt")
+	assert.Contains(t, got, "/etc/loreserver/certs/server.key")
+}
+
+func TestCreateTLSEnabledRejectsRelativeCertPath(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCommand(&out, &testutil.TestProvider{}, testutil.NewTestState())
+	c.dryRun = true
+	c.runtime.Config.Lore.TLSConfig.Enabled = true
+	c.runtime.Config.Lore.TLSConfig.CertPath = "server.crt"
+	c.runtime.Config.Lore.TLSConfig.KeyPath = "/etc/loreserver/certs/server.key"
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected relative certPath to fail")
+	}
+	assert.Contains(t, err.Error(), "lore.tls.certPath")
 }
 
 func TestCreateS3StoreDryRun(t *testing.T) {

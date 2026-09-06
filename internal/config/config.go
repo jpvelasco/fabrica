@@ -142,12 +142,14 @@ type LoreConfig struct {
 	// DynamoDB table names derive from it: <bucket>-fragments/-metadata/-mutable/-locks.
 	StoreBucket string `mapstructure:"storeBucket" yaml:"storeBucket"`
 	// TLSConfig holds optional TLS settings for the Lore server.
+	// When Enabled, create writes the cert/key paths into cloud-init and
+	// the instance verifies those files exist on the AMI at boot.
 	TLSConfig LoreTLSConfig `mapstructure:"tls" yaml:"tls"`
 }
 
 // LoreTLSConfig holds optional TLS settings for the Lore server.
-// The fields are parsed from fabrica.yaml but are not yet wired into
-// cloud-init. Setting tls.enabled is a no-op until V2 implementation.
+// When Enabled is true, CertPath and KeyPath must be absolute AMI paths;
+// Fabrica does not provision or rotate the files.
 type LoreTLSConfig struct {
 	Enabled  bool   `mapstructure:"enabled"  yaml:"enabled"`
 	CertPath string `mapstructure:"certPath" yaml:"certPath"`
