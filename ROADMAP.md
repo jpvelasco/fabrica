@@ -58,8 +58,8 @@ Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. Dedicated
 ## Possible Future Work
 
 - Deeper day-2 operations: scheduled Perforce backups, DR rehydrate, attach-role migration for pre-SSM stacks
-- Lore follow-ups (shipped): S3-backed store, `lore ami build`, TLS config foundation
-- Lore V2: JWT/CA TLS with certificate provisioning, ACM integration, HTTPS health probe
+- Lore follow-ups (shipped): S3-backed store, `lore ami build`, AMI-path TLS on create
+- Lore later: JWT/CA certificate provisioning, ACM integration, HTTPS health probe
 - DDC: OIDC, production Scylla, replication-peer automation
 - MCP server V2: destructive tools, streaming, resource management
 - Optional observability: monitoring, alerts, operational dashboards
