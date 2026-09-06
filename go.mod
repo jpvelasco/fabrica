@@ -4,17 +4,17 @@ go 1.25.13
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.45.1
-	github.com/aws/aws-sdk-go-v2/config v1.32.40
-	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.74.0
-	github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.34.0
-	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.83.0
-	github.com/aws/aws-sdk-go-v2/service/codebuild v1.74.0
-	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.64.0
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.324.0
-	github.com/aws/aws-sdk-go-v2/service/gamelift v1.62.0
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.108.0
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.75.1
-	github.com/aws/aws-sdk-go-v2/service/sts v1.46.0
+	github.com/aws/aws-sdk-go-v2/config v1.33.2
+	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.76.0
+	github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.36.0
+	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.85.0
+	github.com/aws/aws-sdk-go-v2/service/codebuild v1.76.0
+	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.66.0
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.328.0
+	github.com/aws/aws-sdk-go-v2/service/gamelift v1.64.0
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.110.0
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.76.0
+	github.com/aws/aws-sdk-go-v2/service/sts v1.48.0
 	github.com/aws/smithy-go v1.28.1
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/spf13/cobra v1.10.2
@@ -24,19 +24,19 @@ require (
 
 require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.20 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.39 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.40 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.20.2 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.19.1 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.1 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.1 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.41 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.19 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.10.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.12.17 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.40 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.41 // indirect
-	github.com/aws/aws-sdk-go-v2/service/signin v1.6.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.34.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.39.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.11.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.13.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.20.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/signin v1.8.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.36.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.41.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
