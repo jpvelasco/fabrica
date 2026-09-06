@@ -20,6 +20,17 @@ func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobr
 	return root
 }
 
+func TestDestroyHelpDocumentsIAM(t *testing.T) {
+	var out bytes.Buffer
+	cmd := destroy.New(testutil.NewTestRuntime(&testutil.TestProvider{}), func() globals.Options { return globals.Options{} }, &out)
+	testutil.AssertLongHelpMatches(t, cmd.Long,
+		"IAM Instance Profile",
+		"IAM Role",
+		"EC2 Security Group",
+		"data volume is retained",
+	)
+}
+
 func runDestroy(t *testing.T, runtimeSource globals.RuntimeSource, args ...string) (string, error) {
 	t.Helper()
 	var out bytes.Buffer

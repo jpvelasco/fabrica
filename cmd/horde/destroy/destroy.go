@@ -91,8 +91,18 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Long: `Permanently delete the Unreal Horde build coordinator and all its AWS resources.
 
 Resources are deleted in reverse-creation order to respect dependencies:
-  1. EC2 Instance (terminated first)
-  2. EC2 Security Group
+  1. Agent Security Group Ingress (if agents exist)
+  2. Scaling Policies (if queue scaling is enabled)
+  3. CloudWatch Alarms (if queue scaling is enabled)
+  4. Auto Scaling Group (if agents exist)
+  5. Launch Template (if agents exist)
+  6. Coordinator EC2 Instance
+  7. Agent IAM Instance Profile (if agents exist)
+  8. Coordinator IAM Instance Profile
+  9. Agent IAM Role (if agents exist)
+  10. Coordinator IAM Role
+  11. Agent Security Group (if agents exist)
+  12. Coordinator Security Group
 
 State is updated after each deletion so a partial failure leaves a recoverable
 record. Re-running destroy will skip resources that are already gone.

@@ -48,6 +48,11 @@ func TestBuildTestRoot(t *testing.T) {
 	}
 }
 
+func TestAssertLongHelpMatches(t *testing.T) {
+	ok := "Resources:\n  1. EC2 Instance (terminated first)\n  2. IAM Role\n  3. EC2 Security Group"
+	AssertLongHelpMatches(t, ok, "IAM Role", "EC2 Security Group")
+}
+
 func TestBuildTestSubcommand(t *testing.T) {
 	var out bytes.Buffer
 	root, optionsSource := BuildTestSubcommand(&out)
