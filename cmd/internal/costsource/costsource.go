@@ -12,6 +12,7 @@ import (
 	"strconv"
 
 	"github.com/jpvelasco/fabrica/internal/ci"
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/ddc"
@@ -79,7 +80,11 @@ func costInputs(cfg *config.Config, m *state.ModuleState) ([]cost.Resource, stri
 	case "perforce":
 		return applyStopped(ec2CostResources(m, perforce.CostResources(cfg.Perforce)), m.Status)
 	case "horde":
-		return applyStopped(ec2CostResources(m, horde.CostResources(cfg.Horde)), m.Status)
+		res, note := applyStopped(ec2CostResources(m, horde.CostResources(cfg.Horde)), m.Status)
+		if hasResource(m, cloud.TypeAWSAutoScalingAutoScalingGroup) {
+			res = append(res, horde.AgentsCostResources(cfg.Horde.Agents)...)
+		}
+		return res, note
 	case "lore":
 		return applyStopped(ec2CostResources(m, lore.CostResources(cfg.Lore)), m.Status)
 	case "workstation":
@@ -109,10 +114,18 @@ func ec2CostResources(m *state.ModuleState, cfgResources []cost.Resource) []cost
 	if inst["instanceType"] == "" || inst["volumeSize"] == "" {
 		return cfgResources
 	}
-	return []cost.Resource{
-		{TypeName: "AWS::EC2::Instance", Name: inst["instanceType"]},
-		{TypeName: "AWS::EC2::Volume", Name: "gp3-" + inst["volumeSize"] + "GiB"},
+	out := make([]cost.Resource, 0, len(cfgResources))
+	for _, r := range cfgResources {
+		switch r.TypeName {
+		case cloud.TypeAWSEC2Instance:
+			out = append(out, cost.Resource{TypeName: r.TypeName, Name: inst["instanceType"]})
+		case cloud.TypeAWSEC2Volume:
+			out = append(out, cost.Resource{TypeName: r.TypeName, Name: "gp3-" + inst["volumeSize"] + "GiB"})
+		default:
+			out = append(out, r)
+		}
 	}
+	return out
 }
 
 // deployCostResources prefers the fleet shape recorded in state (instance type +
@@ -132,7 +145,7 @@ func deployCostResources(m *state.ModuleState, cfg config.DeployConfig) []cost.R
 // or nil if none is tracked.
 func instanceProperties(m *state.ModuleState) map[string]string {
 	for _, r := range m.Resources {
-		if r.TypeName == "AWS::EC2::Instance" {
+		if r.TypeName == cloud.TypeAWSEC2Instance {
 			return r.Properties
 		}
 	}
@@ -170,7 +183,7 @@ func applyStopped(resources []cost.Resource, status string) ([]cost.Resource, st
 	}
 	kept := resources[:0:0]
 	for _, r := range resources {
-		if r.TypeName == "AWS::EC2::Instance" {
+		if r.TypeName == cloud.TypeAWSEC2Instance {
 			continue
 		}
 		kept = append(kept, r)
