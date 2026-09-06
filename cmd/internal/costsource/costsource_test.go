@@ -3,9 +3,11 @@ package costsource
 import (
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/deploy"
+	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
 )
@@ -109,6 +111,27 @@ func TestEC2CostResourcesPrefersState(t *testing.T) {
 	}
 }
 
+func TestEC2CostResourcesKeepsNonComputeLines(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Lore.StoreBackend = "s3"
+	cfg.Lore.StoreBucket = "lore-store"
+	cfg.Lore.AmiID = "ami-lore"
+	got := ec2CostResources(
+		&state.ModuleState{Resources: []state.ModuleResource{{
+			TypeName:   cloud.TypeAWSEC2Instance,
+			Identifier: "i-1",
+			Properties: map[string]string{"instanceType": "m5.2xlarge", "volumeSize": "800"},
+		}}},
+		lore.CostResources(cfg.Lore),
+	)
+	if !containsType(got, cloud.TypeAWSS3Bucket) || !containsType(got, cloud.TypeAWSDynamoDBTable) {
+		t.Fatalf("lore storage lines dropped: %+v", got)
+	}
+	if got[0].Name != "m5.2xlarge" {
+		t.Errorf("instance overlay = %q, want m5.2xlarge", got[0].Name)
+	}
+}
+
 func TestEC2CostResourcesFallsBackWhenPropertiesMissing(t *testing.T) {
 	// Old state (no Properties) must fall back to the config-derived shape.
 	cfg := config.Defaults()
@@ -199,6 +222,65 @@ func TestMapBudgets(t *testing.T) {
 	if len(MapBudgets(nil)) != 0 {
 		t.Error("MapBudgets(nil) should be empty")
 	}
+}
+
+func TestAggregateLoreKeepsStorageWhenStateHasInstanceProps(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Lore.StoreBackend = "s3"
+	cfg.Lore.StoreBucket = "lore-store"
+	cfg.Lore.AmiID = "ami-lore"
+	st := state.NewState("acct", "us-east-1")
+	st.Modules = []state.ModuleState{
+		mod("lore", "ready",
+			state.ModuleResource{
+				TypeName:   cloud.TypeAWSEC2Instance,
+				Identifier: "i-1",
+				Properties: map[string]string{"instanceType": "m5.2xlarge", "volumeSize": "800"},
+			}),
+	}
+	b := Aggregate(cfg, st, cost.Global)
+	if !reportHasType(b.Modules[0].Report, cloud.TypeAWSS3Bucket) || !reportHasType(b.Modules[0].Report, cloud.TypeAWSDynamoDBTable) {
+		t.Fatalf("lore storage dropped from aggregate: %+v", b.Modules[0].Report.Results)
+	}
+}
+
+func TestAggregateHordeIncludesAgentsWhenASGPresent(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Horde.AmiID = "ami-h"
+	cfg.Horde.Agents.AmiID = "ami-a"
+	cfg.Horde.Agents.DesiredCapacity = 3
+	st := state.NewState("acct", "us-east-1")
+	st.Modules = []state.ModuleState{
+		mod("horde", "ready",
+			state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-1"},
+			state.ModuleResource{TypeName: cloud.TypeAWSAutoScalingAutoScalingGroup, Identifier: "asg-1"}),
+	}
+	withAgents := Aggregate(cfg, st, cost.Global)
+	st.Modules[0].Resources = st.Modules[0].Resources[:1]
+	withoutAgents := Aggregate(cfg, st, cost.Global)
+	if withAgents.Modules[0].Subtotal <= withoutAgents.Modules[0].Subtotal {
+		t.Fatalf("agents should add cost: with=%v without=%v", withAgents.Modules[0].Subtotal, withoutAgents.Modules[0].Subtotal)
+	}
+	if !reportHasType(withAgents.Modules[0].Report, cloud.TypeAWSAutoScalingAutoScalingGroup) {
+		t.Fatal("expected ASG cost line when agents exist in state")
+	}
+}
+
+func reportHasType(r cost.Report, typeName string) bool {
+	res := make([]cost.Resource, len(r.Results))
+	for i, item := range r.Results {
+		res[i] = item.Resource
+	}
+	return containsType(res, typeName)
+}
+
+func containsType(res []cost.Resource, typeName string) bool {
+	for _, r := range res {
+		if r.TypeName == typeName {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAggregateUnknownModule(t *testing.T) {
