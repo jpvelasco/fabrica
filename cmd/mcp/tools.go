@@ -20,8 +20,20 @@ import (
 )
 
 // redactKeys is the denylist of suffixes for config field names that should be
-// redacted. Matching is case-insensitive ends-with.
-var redactKeys = []string{"password", "token", "secret", "api_key", "access_key"}
+// redacted. Matching is case-insensitive ends-with after camelCase is split
+// into snake_case, so accessKeyId / access_key_id / keyPath / certPath match.
+var redactKeys = []string{
+	"password",
+	"token",
+	"secret",
+	"api_key",
+	"access_key",
+	"access_key_id",
+	"private_key",
+	"secret_key",
+	"key_path",
+	"cert_path",
+}
 
 // Result types
 
@@ -279,11 +291,37 @@ func redactMap(m map[string]any) {
 }
 
 func shouldRedact(key string) bool {
-	lower := strings.ToLower(key)
+	normalized := normalizeRedactKey(key)
 	for _, suffix := range redactKeys {
-		if strings.HasSuffix(lower, suffix) {
+		if strings.HasSuffix(normalized, suffix) {
 			return true
 		}
 	}
 	return false
+}
+
+// normalizeRedactKey lowercases and inserts '_' at lower→upper boundaries so
+// YAML camelCase (keyPath, accessKeyId) matches the snake_case denylist.
+func normalizeRedactKey(key string) string {
+	var b strings.Builder
+	b.Grow(len(key) + 4)
+	prevLower := false
+	for _, r := range key {
+		if prevLower && r >= 'A' && r <= 'Z' {
+			b.WriteByte('_')
+		}
+		if r >= 'A' && r <= 'Z' {
+			b.WriteByte(byte(r - 'A' + 'a'))
+			prevLower = false
+			continue
+		}
+		if r >= 'a' && r <= 'z' {
+			b.WriteByte(byte(r))
+			prevLower = true
+			continue
+		}
+		b.WriteRune(r)
+		prevLower = false
+	}
+	return b.String()
 }
