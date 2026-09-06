@@ -29,6 +29,30 @@ func runBackup(t *testing.T, rt globals.RuntimeSource, args ...string) (string, 
 	return testutil.RunCommandWithOut(t, root, &out, append([]string{"backup"}, args...)...)
 }
 
+func TestBackupScheduleCobra(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Perforce.Backup.Schedule = "0 4 * * *"
+	src := func() (globals.Runtime, error) {
+		return globals.Runtime{Config: cfg}, nil
+	}
+	got, err := runBackup(t, src, "schedule")
+	if err != nil {
+		t.Fatalf("schedule: %v", err)
+	}
+	testutil.AssertContains(t, got, "0 4 * * *")
+}
+
+func TestBackupVerifyCobra(t *testing.T) {
+	src := func() (globals.Runtime, error) {
+		return globals.Runtime{Config: config.Defaults()}, nil
+	}
+	got, err := runBackup(t, src, "verify", "ckpt-9")
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	testutil.AssertContains(t, got, "ckpt-9")
+}
+
 func writeReadyState(t *testing.T) {
 	t.Helper()
 	t.Chdir(t.TempDir())

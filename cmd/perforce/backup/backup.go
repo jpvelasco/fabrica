@@ -83,6 +83,8 @@ With no subcommand, creates a new backup.`,
 
 	cmd.AddCommand(newList(runtimeSource, optionsSource, out))
 	cmd.AddCommand(newDelete(runtimeSource, optionsSource, out))
+	cmd.AddCommand(newSchedule(runtimeSource, optionsSource, out))
+	cmd.AddCommand(newVerify(runtimeSource, optionsSource, out))
 	return cmd
 }
 

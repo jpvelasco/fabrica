@@ -78,7 +78,9 @@ func Aggregate(cfg *config.Config, st *state.State, reg *cost.Registry) Breakdow
 func costInputs(cfg *config.Config, m *state.ModuleState) ([]cost.Resource, string) {
 	switch m.Name {
 	case "perforce":
-		return applyStopped(ec2CostResources(m, perforce.CostResources(cfg.Perforce)), m.Status)
+		res, note := applyStopped(ec2CostResources(m, perforce.CostResources(cfg.Perforce)), m.Status)
+		res = append(res, perforce.BackupCostResources(cfg.Perforce.Backup)...)
+		return res, note
 	case "horde":
 		res, note := applyStopped(ec2CostResources(m, horde.CostResources(cfg.Horde)), m.Status)
 		if hasResource(m, cloud.TypeAWSAutoScalingAutoScalingGroup) {

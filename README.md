@@ -232,6 +232,14 @@ Lists backups on the server (reads `metadata.json` over SSM). Supports `--json`.
 
 Deletes a backup by id from the EBS volume (and S3 when metadata has `s3Uri`).
 
+#### `fabrica perforce backup schedule`
+
+Prints the configured backup cron (`perforce.backup.schedule`, 5 fields) plus the restore/verify runbook. Fabrica does not install cron or EventBridge — wire `fabrica perforce backup --yes` yourself. When a schedule is set, `cost report` includes a retained-backup storage line (`perforce.backup.retain`, default 7).
+
+#### `fabrica perforce backup verify <backup-id>`
+
+Prints the documented verify + restore path for a backup id. V1 does not open an SSM session.
+
 #### `fabrica perforce restore`
 
 Restores Helix Core from a backup id: stops `helix-p4d`, restores checkpoint/journal artifacts, restarts. Requires `--force` when the server is ready (serving clients). Confirmation phrase: `restore perforce <account-id>`.

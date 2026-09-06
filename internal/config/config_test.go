@@ -155,6 +155,21 @@ state:
 	assertState(t, cfg, "my-fabrica-state", "custom-lock", "alias/fabrica-key")
 }
 
+func TestLoadPerforceBackupSchedule(t *testing.T) {
+	path := writeConfig(t, `perforce:
+  backup:
+    schedule: "15 3 * * *"
+    retain: 4
+`)
+	cfg := loadConfig(t, path)
+	if cfg.Perforce.Backup.Schedule != "15 3 * * *" {
+		t.Fatalf("schedule = %q", cfg.Perforce.Backup.Schedule)
+	}
+	if cfg.Perforce.Backup.Retain != 4 {
+		t.Fatalf("retain = %d", cfg.Perforce.Backup.Retain)
+	}
+}
+
 func TestLoadPerforceBackupConfig(t *testing.T) {
 	path := writeConfig(t, `perforce:
   version: "2024.2"

@@ -27,6 +27,8 @@ state:
 #     s3Export: false
 #     s3Bucket: ""
 #     s3Prefix: perforce-backups/
+#     schedule: ""                 # 5-field cron, e.g. "15 3 * * *"; empty = off
+#     retain: 7                    # retained copies priced when schedule is set
 perforce: {}
 # Horde: Unreal build coordinator — AMI-first, see docs/horde-ami.md.
 # allowedCidr defaults to 10.0.0.0/8 — this does NOT cover AWS default VPCs
