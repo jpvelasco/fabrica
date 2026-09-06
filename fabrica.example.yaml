@@ -104,3 +104,10 @@ deploy:
 #       warnPct: 80
 #     - scope: perforce
 #       monthly: 150
+
+# Optional observability (V1): local export hooks only — no CloudWatch
+# resources are created. When enabled, cost report includes standing lines.
+# ops:
+#   enabled: false
+#   modules: [perforce, horde, ddc, ci, deploy]
+#   logRetentionDays: 30

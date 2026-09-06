@@ -50,6 +50,7 @@ Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. Dedicated
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | ✅ Complete — CodeBuild orchestration over Horde; `destroy` removes CodeBuild project + IAM role |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | ✅ Complete — GameLift blue/green deploy orchestration |
 | `cost` | `report`, `forecast`, `alerts` | ✅ Complete — offline config-derived report/forecast + local budget alerts |
+| `ops` | `export` | ✅ Complete (V1) — optional local dashboard/log/alarm hooks; cost lines when `ops.enabled` |
 | `destroy --all` | clean teardown | ✅ Complete — tears down all modules (deploy→ci→workstation→ddc→horde→lore→perforce) then the state backend; backend deleted only on full success |
 | `export` | `--format cloudformation\|terraform` | ✅ Complete (V2) — CloudFormation YAML and Terraform HCL from local state; all modules (state backend, Horde, Perforce, Lore, DDC, Workstation, CI, Deploy); secrets redacted |
 | `mcp` | `mcp` | ✅ Complete — stdio MCP server (6 read-only tools) |
@@ -62,7 +63,7 @@ Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. Dedicated
 - Lore later: JWT/CA certificate provisioning, ACM integration, HTTPS health probe
 - DDC: OIDC, production Scylla, replication-peer automation
 - MCP server V2: destructive tools, streaming, resource management
-- Optional observability: monitoring, alerts, operational dashboards
+- Optional observability (shipped V1): local `ops export` hooks + cost lines; later: provision CloudWatch dashboards/alarms
 - Multi-cloud / provider extensibility (GCP/Azure against the existing `cloud.Provider` interface)
 - Multi-region state, state encryption key rotation
 

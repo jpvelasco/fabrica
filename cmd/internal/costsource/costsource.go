@@ -19,6 +19,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/deploy"
 	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/lore"
+	"github.com/jpvelasco/fabrica/internal/ops"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/workstation"
@@ -52,23 +53,30 @@ func Aggregate(cfg *config.Config, st *state.State, reg *cost.Registry) Breakdow
 	for i := range st.Modules {
 		m := &st.Modules[i]
 		resources, note := costInputs(cfg, m)
-		report := reg.EstimateAll(resources)
-		mc := ModuleCost{
-			Name:     m.Name,
-			Status:   m.Status,
-			Report:   report,
-			Subtotal: report.Total,
-			Note:     note,
-		}
-		b.Modules = append(b.Modules, mc)
-		b.Total += report.Total
-		b.PerScope[m.Name] += report.Total
-		if report.Confidence > b.Confidence {
-			b.Confidence = report.Confidence
+		addModule(&b, m.Name, m.Status, note, reg.EstimateAll(resources))
+	}
+	if cfg.Ops.Enabled {
+		if res := ops.CostResources(cfg.Ops); len(res) > 0 {
+			addModule(&b, "ops", "enabled", "local observability hooks — CloudWatch not provisioned by Fabrica", reg.EstimateAll(res))
 		}
 	}
 	b.PerScope["total"] = b.Total
 	return b
+}
+
+func addModule(b *Breakdown, name, status, note string, report cost.Report) {
+	b.Modules = append(b.Modules, ModuleCost{
+		Name:     name,
+		Status:   status,
+		Report:   report,
+		Subtotal: report.Total,
+		Note:     note,
+	})
+	b.Total += report.Total
+	b.PerScope[name] += report.Total
+	if report.Confidence > b.Confidence {
+		b.Confidence = report.Confidence
+	}
 }
 
 // costInputs returns the cost resources for a module plus an optional note.

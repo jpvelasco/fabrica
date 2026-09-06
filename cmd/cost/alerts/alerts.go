@@ -24,7 +24,7 @@ import (
 // knownScopes are the valid budget scopes: "total" plus each module name.
 var knownScopes = map[string]bool{
 	"total": true, "perforce": true, "horde": true, "lore": true,
-	"ddc": true, "workstation": true, "ci": true, "deploy": true,
+	"ddc": true, "workstation": true, "ci": true, "deploy": true, "ops": true,
 }
 
 // knownScopesList renders the accepted scopes for error messages, derived from

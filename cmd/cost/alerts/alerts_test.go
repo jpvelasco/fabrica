@@ -111,7 +111,7 @@ func TestSetValidation(t *testing.T) {
 	}
 	// The error must enumerate the real scope list (derived from knownScopes),
 	// including modules like lore and ddc.
-	for _, want := range []string{"total", "lore", "ddc", "workstation", "deploy"} {
+	for _, want := range []string{"total", "lore", "ddc", "workstation", "deploy", "ops"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("scope error missing %q: %v", want, err)
 		}
@@ -133,6 +133,21 @@ func TestSetDDCScopeAccepted(t *testing.T) {
 	}
 	if saved == nil || len(saved.Cost.Budgets) != 1 || saved.Cost.Budgets[0].Scope != "ddc" {
 		t.Fatalf("expected ddc budget saved, got %+v", saved)
+	}
+}
+
+func TestSetOpsScopeAccepted(t *testing.T) {
+	var saved *config.Config
+	c := setCommand{
+		cfg:     config.Defaults(),
+		out:     &bytes.Buffer{},
+		cfgSave: func(cfg *config.Config, _ string) error { saved = cfg; return nil },
+	}
+	if err := c.run("ops", 20, 0); err != nil {
+		t.Fatalf("ops scope rejected: %v", err)
+	}
+	if saved == nil || saved.Cost.Budgets[0].Scope != "ops" {
+		t.Fatalf("expected ops budget saved, got %+v", saved)
 	}
 }
 

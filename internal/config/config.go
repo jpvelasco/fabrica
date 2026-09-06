@@ -62,6 +62,7 @@ type Config struct {
 	Deploy      DeployConfig      `mapstructure:"deploy"      yaml:"deploy"`
 	DDC         DDCConfig         `mapstructure:"ddc"         yaml:"ddc"`
 	Cost        CostConfig        `mapstructure:"cost"        yaml:"cost"`
+	Ops         OpsConfig         `mapstructure:"ops"         yaml:"ops"`
 }
 
 // PerforceConfig holds the perforce: section of fabrica.yaml.
@@ -228,6 +229,16 @@ type CostConfig struct {
 	Budgets []BudgetThreshold `mapstructure:"budgets" yaml:"budgets"`
 }
 
+// OpsConfig holds the optional ops: observability section of fabrica.yaml.
+// When Enabled, `fabrica ops export` writes local dashboard/log/alarm hooks
+// and cost report includes the standing CloudWatch lines. Fabrica does not
+// provision dashboards or alarms in V1.
+type OpsConfig struct {
+	Enabled          bool     `mapstructure:"enabled"          yaml:"enabled"`
+	Modules          []string `mapstructure:"modules"          yaml:"modules"`
+	LogRetentionDays int      `mapstructure:"logRetentionDays" yaml:"logRetentionDays"`
+}
+
 // BudgetThreshold is a single local budget guardrail. Scope is "total" or a
 // module name; Monthly is the USD/month ceiling; WarnPct is the warn threshold
 // as a percent of Monthly (0 → engine default of 80).
@@ -266,6 +277,7 @@ type fileConfig struct {
 	Deploy      DeployConfig      `yaml:"deploy"`
 	DDC         DDCConfig         `yaml:"ddc"`
 	Cost        CostConfig        `yaml:"cost"`
+	Ops         OpsConfig         `yaml:"ops"`
 }
 
 func (c *Config) fileConfig() fileConfig {
@@ -280,6 +292,7 @@ func (c *Config) fileConfig() fileConfig {
 		Deploy:      c.Deploy,
 		DDC:         c.DDC,
 		Cost:        c.Cost,
+		Ops:         c.Ops,
 	}
 }
 
@@ -304,6 +317,9 @@ func (c *Config) Clone() *Config {
 	out := *c
 	out.Cloud.AWS.Tags = make(map[string]string, len(c.Cloud.AWS.Tags))
 	maps.Copy(out.Cloud.AWS.Tags, c.Cloud.AWS.Tags)
+	if c.Ops.Modules != nil {
+		out.Ops.Modules = append([]string(nil), c.Ops.Modules...)
+	}
 	return &out
 }
 
