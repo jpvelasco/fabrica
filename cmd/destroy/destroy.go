@@ -94,7 +94,7 @@ func runAll(ctx context.Context, rt globals.Runtime, opts globals.Options, out i
 
 	// One aggregate lock spans every module teardown plus backend deletion;
 	// inner orchestrated teardowns inherit it via ctx and no-op.
-	ctx, releaseLock, err := provision.AcquireStateLock(ctx, rt, "destroy --all")
+	ctx, releaseLock, err := provision.AcquireStateLockUnlessDryRun(ctx, rt, "destroy --all", opts.DryRun)
 	if err != nil {
 		return err
 	}

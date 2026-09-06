@@ -29,6 +29,15 @@ var ErrStateLocked = errors.New("another fabrica run holds the state lock")
 // No-op (nil-safe release) when the provider lacks cloud.StateLockManager —
 // fake providers in tests/E2E — or when this context already holds the lock,
 // so nested orchestration (destroy --all → module teardowns) acquires once.
+// AcquireStateLockUnlessDryRun is a no-op on --dry-run so previews stay
+// read-only and do not contend with live mutators or leave lock rows.
+func AcquireStateLockUnlessDryRun(ctx context.Context, rt globals.Runtime, operation string, dryRun bool) (context.Context, func(), error) {
+	if dryRun {
+		return ctx, func() {}, nil
+	}
+	return AcquireStateLock(ctx, rt, operation)
+}
+
 func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string) (context.Context, func(), error) {
 	noop := func() {}
 	if ctx.Value(lockHeldKey) != nil {
