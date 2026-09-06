@@ -283,6 +283,20 @@ func containsType(res []cost.Resource, typeName string) bool {
 	return false
 }
 
+func TestAggregatePerforceIncludesScheduledBackup(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Perforce.Backup.Schedule = "0 3 * * *"
+	cfg.Perforce.Backup.Retain = 5
+	st := state.NewState("acct", "us-east-1")
+	st.Modules = []state.ModuleState{mod("perforce", "ready",
+		state.ModuleResource{TypeName: "AWS::EC2::Instance", Identifier: "i-1"})}
+	withSched := Aggregate(cfg, st, cost.Global)
+	without := Aggregate(config.Defaults(), st, cost.Global)
+	if withSched.Modules[0].Subtotal <= without.Modules[0].Subtotal {
+		t.Fatalf("schedule should add cost: with=%v without=%v", withSched.Modules[0].Subtotal, without.Modules[0].Subtotal)
+	}
+}
+
 func TestAggregateUnknownModule(t *testing.T) {
 	cfg := config.Defaults()
 	st := state.NewState("acct", "us-east-1")

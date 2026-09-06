@@ -57,7 +57,7 @@ Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. Dedicated
 
 ## Possible Future Work
 
-- Deeper day-2 operations: scheduled Perforce backups, DR rehydrate, attach-role migration for pre-SSM stacks
+- Deeper day-2 operations (shipped V1): scheduled Perforce backup runbook + verify; later: install cron/EventBridge and live SSM verify
 - Lore follow-ups (shipped): S3-backed store, `lore ami build`, AMI-path TLS on create
 - Lore later: JWT/CA certificate provisioning, ACM integration, HTTPS health probe
 - DDC: OIDC, production Scylla, replication-peer automation

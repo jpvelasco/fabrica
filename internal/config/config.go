@@ -82,6 +82,12 @@ type PerforceBackupConfig struct {
 	S3Export bool   `mapstructure:"s3Export" yaml:"s3Export"`
 	S3Bucket string `mapstructure:"s3Bucket" yaml:"s3Bucket"`
 	S3Prefix string `mapstructure:"s3Prefix" yaml:"s3Prefix"`
+	// Schedule is a cron expression (5 fields). Empty means no schedule.
+	// When set, cost report includes backup-storage lines and `backup schedule`
+	// prints the runbook for cron/EventBridge + restore/verify.
+	Schedule string `mapstructure:"schedule" yaml:"schedule"`
+	// Retain is how many completed backups to keep when a schedule is set.
+	Retain int `mapstructure:"retain" yaml:"retain"`
 }
 
 // HordeConfig holds the horde: section of fabrica.yaml.
