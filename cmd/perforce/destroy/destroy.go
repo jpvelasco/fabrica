@@ -63,7 +63,11 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 
 Resources are deleted in reverse-creation order to respect dependencies:
   1. EC2 Instance (terminated first)
-  2. EC2 Security Group
+  2. IAM Instance Profile
+  3. IAM Role
+  4. EC2 Security Group
+
+The data volume is retained (DeleteOnTermination=false). S3 exports are not deleted.
 
 State is updated after each deletion so a partial failure leaves a recoverable
 record. Re-running destroy will skip resources that are already gone.

@@ -131,6 +131,16 @@ func AssertNotContains(t assertionT, s, substr string) {
 	}
 }
 
+// AssertLongHelpMatches checks command Long help contains every required
+// fragment and does not still advertise the stale Instance → SG-only order.
+func AssertLongHelpMatches(t assertionT, long string, required ...string) {
+	t.Helper()
+	for _, want := range required {
+		AssertContains(t, long, want)
+	}
+	AssertNotContains(t, long, "1. EC2 Instance (terminated first)\n  2. EC2 Security Group")
+}
+
 // BuildTestSubcommand wires a subcommand into a minimal root command. It is
 // designed for use with subcommands that accept a pre-built optionsSource.
 // The caller constructs the subcommand using the returned optionsSource closure.

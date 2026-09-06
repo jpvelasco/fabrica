@@ -20,6 +20,17 @@ func buildTestRoot(runtimeSource globals.RuntimeSource, out *bytes.Buffer) *cobr
 	return root
 }
 
+func TestDestroyHelpDocumentsIAMAndAgents(t *testing.T) {
+	var out bytes.Buffer
+	cmd := destroy.New(testutil.NewTestRuntime(&testutil.TestProvider{}), func() globals.Options { return globals.Options{} }, &out)
+	testutil.AssertLongHelpMatches(t, cmd.Long,
+		"Agent Security Group Ingress",
+		"Auto Scaling Group",
+		"Coordinator IAM Role",
+		"Coordinator Security Group",
+	)
+}
+
 func runDestroy(t *testing.T, runtimeSource globals.RuntimeSource, args ...string) (string, error) {
 	t.Helper()
 	var out bytes.Buffer
