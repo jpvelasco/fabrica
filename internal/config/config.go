@@ -113,6 +113,8 @@ type HordeAgentsConfig struct {
 	MinSize         int                      `mapstructure:"minSize"         yaml:"minSize"`
 	DesiredCapacity int                      `mapstructure:"desiredCapacity" yaml:"desiredCapacity"`
 	MaxSize         int                      `mapstructure:"maxSize"         yaml:"maxSize"`
+	Spot            bool                     `mapstructure:"spot"            yaml:"spot"`
+	Schedule        CapacitySchedule         `mapstructure:"schedule"        yaml:"schedule"`
 	Scaling         HordeAgentsScalingConfig `mapstructure:"scaling"        yaml:"scaling"`
 }
 
@@ -215,13 +217,25 @@ type DDCConfig struct {
 
 // WorkstationConfig holds the workstation: section of fabrica.yaml.
 type WorkstationConfig struct {
-	AmiID              string `mapstructure:"amiId"              yaml:"amiId"`
-	InstanceType       string `mapstructure:"instanceType"       yaml:"instanceType"`
-	VolumeSize         int    `mapstructure:"volumeSize"         yaml:"volumeSize"`
-	VPCId              string `mapstructure:"vpcId"              yaml:"vpcId"`
-	SubnetId           string `mapstructure:"subnetId"           yaml:"subnetId"`
-	IdleTimeoutMinutes int    `mapstructure:"idleTimeoutMinutes" yaml:"idleTimeoutMinutes"`
-	AllowedCIDR        string `mapstructure:"allowedCidr"        yaml:"allowedCidr"`
+	AmiID              string           `mapstructure:"amiId"              yaml:"amiId"`
+	InstanceType       string           `mapstructure:"instanceType"       yaml:"instanceType"`
+	VolumeSize         int              `mapstructure:"volumeSize"         yaml:"volumeSize"`
+	VPCId              string           `mapstructure:"vpcId"              yaml:"vpcId"`
+	SubnetId           string           `mapstructure:"subnetId"           yaml:"subnetId"`
+	IdleTimeoutMinutes int              `mapstructure:"idleTimeoutMinutes" yaml:"idleTimeoutMinutes"`
+	AllowedCIDR        string           `mapstructure:"allowedCidr"        yaml:"allowedCidr"`
+	Spot               bool             `mapstructure:"spot"               yaml:"spot"`
+	Schedule           CapacitySchedule `mapstructure:"schedule"           yaml:"schedule"`
+}
+
+// CapacitySchedule is a weekly on/off window used by Horde agents and
+// workstations. Hours are 0–23 in timezone (IANA, default UTC).
+type CapacitySchedule struct {
+	Enabled  bool   `mapstructure:"enabled"  yaml:"enabled"`
+	Timezone string `mapstructure:"timezone" yaml:"timezone"`
+	Days     string `mapstructure:"days"     yaml:"days"` // e.g. Mon-Fri
+	Start    string `mapstructure:"start"    yaml:"start"`
+	Stop     string `mapstructure:"stop"     yaml:"stop"`
 }
 
 // CostConfig holds the cost: section of fabrica.yaml.

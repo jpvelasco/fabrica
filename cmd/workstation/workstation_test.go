@@ -52,8 +52,8 @@ func TestNewSubcommandCount(t *testing.T) {
 	opts := func() globals.Options { return globals.Options{} }
 	cmd := New(rt, opts, io.Discard)
 
-	if got := len(cmd.Commands()); got != 5 {
-		t.Errorf("expected 5 subcommands, got %d", got)
+	if got := len(cmd.Commands()); got != 6 {
+		t.Errorf("expected 6 subcommands, got %d", got)
 	}
 }
 

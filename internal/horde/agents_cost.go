@@ -6,6 +6,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/schedule"
 )
 
 // AgentsCostResources returns the cost inputs for the Horde agents module.
@@ -22,8 +23,9 @@ func AgentsCostResources(cfg config.HordeAgentsConfig) []cost.Resource {
 		desired = 1
 	}
 
+	name := schedule.EncodeFactor(fmt.Sprintf("%s x%d", instanceType, desired), schedule.CostFactor(cfg.Spot, cfg.Schedule))
 	resources := []cost.Resource{
-		{TypeName: cloud.TypeAWSAutoScalingAutoScalingGroup, Name: fmt.Sprintf("%s x%d", instanceType, desired)},
+		{TypeName: cloud.TypeAWSAutoScalingAutoScalingGroup, Name: name},
 	}
 
 	// When queue scaling is enabled, add the two CloudWatch alarms to the cost model.
@@ -42,9 +44,10 @@ type asgEstimator struct{}
 
 func (asgEstimator) Estimate(r cost.Resource) (cost.Monthly, error) {
 	// Parse "c7i.xlarge x2" from the Name field.
+	base, factor := schedule.DecodeFactor(r.Name)
 	var instanceType string
 	var count int
-	_, err := fmt.Sscanf(r.Name, "%s x%d", &instanceType, &count)
+	_, err := fmt.Sscanf(base, "%s x%d", &instanceType, &count)
 	if err != nil || count <= 0 {
 		return cost.Monthly{}, fmt.Errorf("cannot parse ASG instance spec from %q (expected 'type xN')", r.Name)
 	}
@@ -56,10 +59,14 @@ func (asgEstimator) Estimate(r cost.Resource) (cost.Monthly, error) {
 		return cost.Monthly{}, fmt.Errorf("estimating %s: %w", instanceType, err)
 	}
 
+	note := fmt.Sprintf("%d x %s instances (ASG desired capacity)", count, instanceType)
+	if factor < 1 {
+		note += fmt.Sprintf("; Spot/schedule factor %.2f", factor)
+	}
 	return cost.Monthly{
-		Amount:     unitMonthly.Amount * float64(count),
+		Amount:     unitMonthly.Amount * float64(count) * factor,
 		Confidence: cost.High,
-		Note:       fmt.Sprintf("%d x %s instances (ASG desired capacity)", count, instanceType),
+		Note:       note,
 	}, nil
 }
 
