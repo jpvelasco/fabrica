@@ -77,7 +77,14 @@ func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string)
 	}
 	token = tok
 
+	// Heartbeat keeps AcquiredAt fresh so a live promote (default 45m wait)
+	// cannot be taken over after DefaultLockTTL. A crashed process stops
+	// renewing and the next run still takes over after the TTL.
+	renewCtx, stopRenew := context.WithCancel(context.WithoutCancel(ctx))
+	go store.Heartbeat(renewCtx, lockID, token, holder)
+
 	release := func() {
+		stopRenew()
 		// WithoutCancel: a cancelled command must still free the lock.
 		// state.Release swallows takeover races and logs storage failures.
 		_ = store.Release(context.WithoutCancel(ctx), lockID, token)
