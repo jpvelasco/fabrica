@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	fabricaops "github.com/jpvelasco/fabrica/internal/ops"
@@ -43,6 +44,7 @@ type exportCommand struct {
 	out     io.Writer
 
 	writeFile func(path string, data []byte, perm os.FileMode) error
+	mkdirAll  func(path string, perm os.FileMode) error
 }
 
 func newExport(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
@@ -68,6 +70,7 @@ without writing a file.`,
 				output:    output,
 				out:       out,
 				writeFile: os.WriteFile,
+				mkdirAll:  os.MkdirAll,
 			}
 			return c.run()
 		},
@@ -97,12 +100,16 @@ func (c exportCommand) run() error {
 	if path == "" {
 		path = defaultOutput
 	}
+	path = filepath.Clean(path)
+	if filepath.IsAbs(path) || strings.HasPrefix(path, "..") {
+		return fmt.Errorf("ops export path %q must be a relative path under the current directory", path)
+	}
 	if dir := filepath.Dir(path); dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil { // #nosec G301 -- local export dir
+		if err := c.mkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("creating ops export dir %s: %w", dir, err)
 		}
 	}
-	if err := c.writeFile(path, payload, 0o644); err != nil { // #nosec G306 -- local export file
+	if err := c.writeFile(path, payload, 0o600); err != nil {
 		return fmt.Errorf("writing %s: %w", path, err)
 	}
 	fmt.Fprintf(c.out, "Wrote %s (%d modules). Import into CloudWatch or Grafana — Fabrica does not provision these resources.\n", path, len(doc.Modules))

@@ -3,7 +3,6 @@ package ops
 import (
 	"bytes"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -38,26 +37,102 @@ func TestExportDryRun(t *testing.T) {
 }
 
 func TestExportWritesFile(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "hooks.json")
+	t.Chdir(t.TempDir())
 	cfg := config.Defaults()
 	cfg.Ops.Enabled = true
 	var out bytes.Buffer
 	c := exportCommand{
 		rt:        globals.Runtime{Config: cfg},
-		output:    path,
+		output:    "hooks.json",
 		out:       &out,
 		writeFile: os.WriteFile,
+		mkdirAll:  os.MkdirAll,
 	}
 	if err := c.run(); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile("hooks.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(data), "perforce") || !strings.Contains(out.String(), "Wrote") {
 		t.Fatalf("file/output incomplete: file=%s out=%s", data, out.String())
+	}
+}
+
+func TestExportJSONOut(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Ops.Enabled = true
+	cfg.Ops.Modules = []string{"ci"}
+	var out bytes.Buffer
+	c := exportCommand{rt: globals.Runtime{Config: cfg}, jsonOut: true, out: &out}
+	if err := c.run(); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if !strings.Contains(out.String(), `"module": "ci"`) {
+		t.Fatalf("json output: %s", out.String())
+	}
+}
+
+func TestExportWriteError(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Ops.Enabled = true
+	c := exportCommand{
+		rt:     globals.Runtime{Config: cfg},
+		output: "hooks.json",
+		out:    ioDiscard(),
+		writeFile: func(string, []byte, os.FileMode) error {
+			return os.ErrPermission
+		},
+	}
+	if err := c.run(); err == nil || !strings.Contains(err.Error(), "writing") {
+		t.Fatalf("write error = %v", err)
+	}
+}
+
+func TestExportMkdirError(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Ops.Enabled = true
+	c := exportCommand{
+		rt:     globals.Runtime{Config: cfg},
+		output: "nested/hooks.json",
+		out:    ioDiscard(),
+		mkdirAll: func(string, os.FileMode) error {
+			return os.ErrPermission
+		},
+	}
+	if err := c.run(); err == nil || !strings.Contains(err.Error(), "creating ops export dir") {
+		t.Fatalf("mkdir error = %v", err)
+	}
+}
+
+func TestExportRejectsAbsolutePath(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Ops.Enabled = true
+	c := exportCommand{rt: globals.Runtime{Config: cfg}, output: "/tmp/hooks.json", out: ioDiscard()}
+	if err := c.run(); err == nil || !strings.Contains(err.Error(), "relative path") {
+		t.Fatalf("abs path error = %v", err)
+	}
+}
+
+func TestExportDefaultPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	cfg := config.Defaults()
+	cfg.Ops.Enabled = true
+	cfg.Ops.Modules = []string{"ddc"}
+	var out bytes.Buffer
+	c := exportCommand{
+		rt:        globals.Runtime{Config: cfg},
+		out:       &out,
+		writeFile: os.WriteFile,
+		mkdirAll:  os.MkdirAll,
+	}
+	if err := c.run(); err != nil {
+		t.Fatalf("default path: %v", err)
+	}
+	if _, err := os.Stat(defaultOutput); err != nil {
+		t.Fatalf("expected %s: %v", defaultOutput, err)
 	}
 }
 

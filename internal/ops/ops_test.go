@@ -67,6 +67,19 @@ func TestBuildExportAndCost(t *testing.T) {
 	}
 }
 
+func TestResolveModulesDedupAndCostError(t *testing.T) {
+	got, err := ResolveModules(config.OpsConfig{Enabled: true, Modules: []string{"Horde", "horde", "ci"}})
+	if err != nil {
+		t.Fatalf("dedup: %v", err)
+	}
+	if len(got) != 2 || got[0] != "ci" || got[1] != "horde" {
+		t.Fatalf("dedup = %v", got)
+	}
+	if CostResources(config.OpsConfig{Enabled: true, Modules: []string{"mystery"}}) != nil {
+		t.Fatal("unknown module should yield no cost resources")
+	}
+}
+
 func TestRetentionDefault(t *testing.T) {
 	if RetentionDays(config.OpsConfig{}) != DefaultLogRetentionDays {
 		t.Fatalf("default retention = %d", RetentionDays(config.OpsConfig{}))

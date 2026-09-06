@@ -2,6 +2,7 @@ package ops_test
 
 import (
 	"bytes"
+	"os"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -30,6 +31,17 @@ func TestOpsExportCobraDryRun(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 	testutil.AssertContains(t, got, "logGroup")
+}
+
+func TestOpsExportCobraRuntimeError(t *testing.T) {
+	src := func() (globals.Runtime, error) {
+		return globals.Runtime{}, os.ErrNotExist
+	}
+	var out bytes.Buffer
+	root := buildTestRoot(src, &out)
+	if _, err := testutil.RunCommandWithOut(t, root, &out, "ops", "export"); err == nil {
+		t.Fatal("expected runtime error")
+	}
 }
 
 func TestOpsExportCobraDisabled(t *testing.T) {
