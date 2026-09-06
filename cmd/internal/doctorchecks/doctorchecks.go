@@ -51,7 +51,11 @@ func checkCreds(ctx context.Context, rt globals.Runtime) DoctorCheck {
 	}
 	_, _, _, err := rt.Provider.Identity(ctx)
 	if err != nil {
-		return DoctorCheck{"AWS credentials", "fail", "could not authenticate — check your credentials and region"}
+		msg := "could not authenticate — check cloud.aws.profile / AWS_PROFILE and region"
+		if cloud.IsExpiredSSOSession(err.Error()) {
+			msg = "SSO session expired or invalid — run 'aws sso login' for the configured profile and retry"
+		}
+		return DoctorCheck{"AWS credentials", "fail", msg}
 	}
 	return DoctorCheck{"AWS credentials", "ok", "authenticated"}
 }
