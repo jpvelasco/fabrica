@@ -41,6 +41,18 @@ func newTestCmd(rt globals.Runtime, out *bytes.Buffer) *command {
 	}
 }
 
+func TestSetupLockHeldAborts(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCmd(baseRuntime(), &out)
+	c.assumeYes = true
+	c.runtime.Provider = &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}
+
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "another fabrica run holds the state lock") {
+		t.Fatalf("err = %v, want held-lock abort", err)
+	}
+}
+
 func TestSetupCreatesRoleAndAlias(t *testing.T) {
 	var out bytes.Buffer
 	c := newTestCmd(baseRuntime(), &out)

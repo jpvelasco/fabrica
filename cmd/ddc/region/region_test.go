@@ -64,6 +64,22 @@ func testCommand(buf *bytes.Buffer, st *fabricastate.State, fp *testutil.TestPro
 	}
 }
 
+func TestRunLockHeldAborts(t *testing.T) {
+	var buf bytes.Buffer
+	st := provisionedState()
+	c := testCommand(&buf, st, nil)
+	c.runtime.Provider = &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}
+	c.readState = func() (*fabricastate.State, error) {
+		t.Fatal("should not read state when lock is held")
+		return nil, nil
+	}
+
+	err := c.run(context.Background(), "eu-west-1")
+	if err == nil || !strings.Contains(err.Error(), "another fabrica run holds the state lock") {
+		t.Fatalf("err = %v, want held-lock abort", err)
+	}
+}
+
 func TestRunDryRun(t *testing.T) {
 	var buf bytes.Buffer
 	fp := &testutil.TestProvider{}

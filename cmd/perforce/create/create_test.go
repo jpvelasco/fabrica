@@ -401,6 +401,25 @@ func TestCreateVersionFlagInvalidAbortsBeforeAWS(t *testing.T) {
 	}
 }
 
+func TestCreateLockHeldAborts(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}
+	c := newTestCommand(&out, provider, testutil.NewTestState())
+	c.assumeYes = true
+	c.readState = func() (*fabricastate.State, error) {
+		t.Fatal("should not read state when lock is held")
+		return nil, nil
+	}
+
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "another fabrica run holds the state lock") {
+		t.Fatalf("err = %v, want held-lock abort", err)
+	}
+	if provider.CreateCalls != 0 {
+		t.Fatal("held lock: create was called")
+	}
+}
+
 // TestCreateReadStateError verifies error is surfaced before any AWS call.
 func TestCreateReadStateError(t *testing.T) {
 	var out bytes.Buffer

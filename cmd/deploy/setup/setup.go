@@ -108,6 +108,12 @@ func (c command) run(ctx context.Context) error {
 		return nil
 	}
 
+	ctx, releaseLock, err := provision.AcquireStateLock(ctx, c.runtime, "deploy setup")
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
+
 	c.printPlan(plan)
 	if !provision.ConfirmSetup(c.out, provision.CreateResourcesPrompt, c.assumeYes, c.confirm) {
 		return nil

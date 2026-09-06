@@ -109,6 +109,12 @@ func (c command) run(ctx context.Context) error {
 		return nil
 	}
 
+	ctx, releaseLock, err := provision.AcquireStateLock(ctx, c.runtime, "ddc setup")
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
+
 	st, err := c.readState()
 	if err != nil {
 		return fmt.Errorf("reading state: %w", err)
