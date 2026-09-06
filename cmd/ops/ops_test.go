@@ -109,9 +109,11 @@ func TestExportMkdirError(t *testing.T) {
 func TestExportRejectsAbsolutePath(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Ops.Enabled = true
-	c := exportCommand{rt: globals.Runtime{Config: cfg}, output: "/tmp/hooks.json", out: ioDiscard()}
-	if err := c.run(); err == nil || !strings.Contains(err.Error(), "relative path") {
-		t.Fatalf("abs path error = %v", err)
+	for _, path := range []string{"/tmp/hooks.json", `\windows\hooks.json`} {
+		c := exportCommand{rt: globals.Runtime{Config: cfg}, output: path, out: ioDiscard()}
+		if err := c.run(); err == nil || !strings.Contains(err.Error(), "relative path") {
+			t.Fatalf("abs path %q error = %v", path, err)
+		}
 	}
 }
 

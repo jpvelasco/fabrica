@@ -101,7 +101,7 @@ func (c exportCommand) run() error {
 		path = defaultOutput
 	}
 	path = filepath.Clean(path)
-	if filepath.IsAbs(path) || strings.HasPrefix(path, "..") {
+	if !relativeExportPath(path) {
 		return fmt.Errorf("ops export path %q must be a relative path under the current directory", path)
 	}
 	if dir := filepath.Dir(path); dir != "." {
@@ -114,4 +114,15 @@ func (c exportCommand) run() error {
 	}
 	fmt.Fprintf(c.out, "Wrote %s (%d modules). Import into CloudWatch or Grafana — Fabrica does not provision these resources.\n", path, len(doc.Modules))
 	return nil
+}
+
+func relativeExportPath(path string) bool {
+	if path == "" || filepath.IsAbs(path) || strings.HasPrefix(path, "..") {
+		return false
+	}
+	// Unix-style absolute paths stay absolute on Windows (filepath.IsAbs is false).
+	if strings.HasPrefix(path, "/") || strings.HasPrefix(path, `\`) {
+		return false
+	}
+	return true
 }
