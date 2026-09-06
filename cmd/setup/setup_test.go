@@ -380,3 +380,26 @@ func TestSetupRunLockHeldAborts(t *testing.T) {
 		t.Error("bootstrap ran despite held lock")
 	}
 }
+
+func TestSetupDryRunDoesNotAcquireLock(t *testing.T) {
+	var buf strings.Builder
+	locker := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}
+	rt := testApplyRuntime()
+	rt.Provider = locker
+	cmd := command{
+		runtime: rt,
+		dryRun:  true,
+		out:     &buf,
+		costs:   fabricacost.Global,
+		bootstrap: func(_ context.Context, _ fabricac.Provider, _ *config.Config) ([]fabricastate.BootstrapResult, error) {
+			t.Fatal("dry-run must not bootstrap")
+			return nil, nil
+		},
+	}
+	if err := cmd.run(context.Background()); err != nil {
+		t.Fatalf("dry-run must skip lock: %v", err)
+	}
+	if locker.Acquires != 0 {
+		t.Errorf("dry-run acquires = %d, want 0", locker.Acquires)
+	}
+}

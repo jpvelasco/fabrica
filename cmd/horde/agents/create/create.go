@@ -154,7 +154,7 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 
-	ctx, releaseLock, err := provision.AcquireStateLock(ctx, c.runtime, "horde agents create")
+	ctx, releaseLock, err := provision.AcquireStateLockUnlessDryRun(ctx, c.runtime, "horde agents create", c.dryRun)
 	if err != nil {
 		return err
 	}

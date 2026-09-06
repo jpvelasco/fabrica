@@ -547,6 +547,21 @@ func TestPromoteWaitCancelled(t *testing.T) {
 
 // TestPromoteLockHeldAborts verifies a held state lock aborts promote before
 // any state read or AWS call.
+func TestPromoteDryRunDoesNotAcquireLock(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	c := newTestCmd(&out, st)
+	c.dryRun = true
+	locker := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}
+	c.runtime.Provider = locker
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("dry-run must skip lock: %v", err)
+	}
+	if locker.Acquires != 0 {
+		t.Errorf("dry-run acquires = %d, want 0", locker.Acquires)
+	}
+}
+
 func TestPromoteLockHeldAborts(t *testing.T) {
 	var out bytes.Buffer
 	st := seededState()

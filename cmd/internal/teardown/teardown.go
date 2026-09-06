@@ -110,7 +110,7 @@ func (c Command) Run(ctx context.Context) error {
 	// Serialize concurrent runs so read-modify-write state updates cannot
 	// clobber each other (road test D10). Nested orchestrated calls inherit
 	// the aggregate lock via ctx and no-op here.
-	ctx, releaseLock, err := provision.AcquireStateLock(ctx, c.Runtime, c.Spec.ModuleName+" destroy")
+	ctx, releaseLock, err := provision.AcquireStateLockUnlessDryRun(ctx, c.Runtime, c.Spec.ModuleName+" destroy", c.DryRun)
 	if err != nil {
 		return err
 	}

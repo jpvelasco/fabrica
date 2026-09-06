@@ -82,7 +82,7 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("could not resolve AWS identity: %w", err)
 	}
 
-	ctx, releaseLock, err := provision.AcquireStateLock(ctx, c.runtime, "setup")
+	ctx, releaseLock, err := provision.AcquireStateLockUnlessDryRun(ctx, c.runtime, "setup", c.dryRun)
 	if err != nil {
 		return err
 	}

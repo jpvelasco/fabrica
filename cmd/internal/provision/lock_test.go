@@ -184,6 +184,35 @@ func TestShortHostnameTrimsDomain(t *testing.T) {
 	}
 }
 
+func TestAcquireStateLockUnlessDryRunSkipsAcquire(t *testing.T) {
+	locker := &fakeLockManager{}
+	rt := testRuntimeWithLocker(locker)
+	ctx, release, err := AcquireStateLockUnlessDryRun(context.Background(), rt, "setup", true)
+	if err != nil {
+		t.Fatalf("dry-run lock: %v", err)
+	}
+	release()
+	if locker.acquires != 0 {
+		t.Errorf("dry-run acquires = %d, want 0", locker.acquires)
+	}
+	if ctx.Value(lockHeldKey) != nil {
+		t.Error("dry-run must not set the lock sentinel")
+	}
+}
+
+func TestAcquireStateLockUnlessDryRunAcquiresWhenLive(t *testing.T) {
+	locker := &fakeLockManager{}
+	rt := testRuntimeWithLocker(locker)
+	_, release, err := AcquireStateLockUnlessDryRun(context.Background(), rt, "setup", false)
+	if err != nil {
+		t.Fatalf("live lock: %v", err)
+	}
+	release()
+	if locker.acquires != 1 {
+		t.Errorf("live acquires = %d, want 1", locker.acquires)
+	}
+}
+
 func TestAcquireStateLockMissingTableProceedsUnlocked(t *testing.T) {
 	locker := &fakeLockManager{acquireErr: cloud.ErrLockTableMissing}
 	rt := testRuntimeWithLocker(locker)

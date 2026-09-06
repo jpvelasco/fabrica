@@ -132,7 +132,7 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("no cloud provider configured — check your config and credentials")
 	}
 
-	ctx, releaseLock, err := provision.AcquireStateLock(ctx, c.runtime, "deploy promote")
+	ctx, releaseLock, err := provision.AcquireStateLockUnlessDryRun(ctx, c.runtime, "deploy promote", c.dryRun)
 	if err != nil {
 		return err
 	}
