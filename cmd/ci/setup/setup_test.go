@@ -71,6 +71,21 @@ func TestSetupConfirmYesCreatesBoth(t *testing.T) {
 	}
 }
 
+func TestSetupLockHeldAborts(t *testing.T) {
+	var out bytes.Buffer
+	c, created := newCmd(&out, nil, true)
+	c.assumeYes = true
+	c.runtime.Provider = &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}
+
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "another fabrica run holds the state lock") {
+		t.Fatalf("err = %v, want held-lock abort", err)
+	}
+	if len(*created) != 0 {
+		t.Fatalf("created %v, want none when lock is held", *created)
+	}
+}
+
 func TestSetupConfirmNoCancels(t *testing.T) {
 	var out bytes.Buffer
 	c, created := newCmd(&out, nil, false)

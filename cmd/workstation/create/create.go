@@ -152,6 +152,8 @@ func (c command) run(ctx context.Context) error {
 		PrintDryRun:     c.printDryRun,
 		PrintApplyPlan:  c.printApplyPlan,
 		Apply:           c.applyCreate,
+		Runtime:         c.runtime,
+		Operation:       "workstation create",
 	})
 }
 

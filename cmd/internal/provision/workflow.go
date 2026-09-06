@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/jpvelasco/fabrica/cmd/globals"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -24,16 +25,29 @@ type CreateSpec[P any] struct {
 	PrintDryRun     func(P)
 	PrintApplyPlan  func(P)
 	Apply           func(context.Context, *fabricastate.State, P) error
+	Runtime         globals.Runtime
+	Operation       string
 }
 
 // RunCreate enforces the shared create lifecycle: dry runs stop before state
 // access, existing modules stop before confirmation, and resource creation only
-// begins after confirmation succeeds.
+// begins after confirmation succeeds. Non-dry-run paths take the account-level
+// state lock so concurrent creates cannot interleave the local/remote RMW.
 func RunCreate[P any](ctx context.Context, spec CreateSpec[P]) error {
 	if spec.DryRun {
 		spec.PrintDryRun(spec.Plan)
 		return nil
 	}
+
+	operation := spec.Operation
+	if operation == "" {
+		operation = spec.ModuleName + " create"
+	}
+	ctx, releaseLock, err := AcquireStateLock(ctx, spec.Runtime, operation)
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
 
 	st, err := spec.ReadState()
 	if err != nil {

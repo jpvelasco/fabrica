@@ -141,6 +141,12 @@ func (c command) run(ctx context.Context, region string) error {
 		return nil
 	}
 
+	ctx, releaseLock, err := provision.AcquireStateLock(ctx, c.runtime, "ddc region add")
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
+
 	st, err := c.readState()
 	if err != nil {
 		return fmt.Errorf("reading state: %w", err)

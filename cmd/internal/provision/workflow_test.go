@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
+	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -147,6 +150,55 @@ func TestRunCreate_AssumeYesBypassesConfirmerAndReturnsApplyError(t *testing.T) 
 	}
 	if got := spec.Out.(*bytes.Buffer).String(); !strings.Contains(got, "--yes flag set") {
 		t.Fatalf("output = %q, want confirmation bypass message", got)
+	}
+}
+
+func TestRunCreate_LockHeldAbortsBeforeReadState(t *testing.T) {
+	var events []string
+	spec := workflowTestSpec(&events)
+	spec.Runtime = globals.Runtime{
+		Config:   config.Defaults(),
+		Provider: &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true},
+	}
+
+	err := RunCreate(context.Background(), spec)
+	if err == nil || !errors.Is(err, ErrStateLocked) {
+		t.Fatalf("RunCreate() error = %v, want ErrStateLocked", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("events = %v, want none before lock abort", events)
+	}
+}
+
+func TestRunCreate_LockAcquiredAndReleased(t *testing.T) {
+	locker := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}}
+	var events []string
+	spec := workflowTestSpec(&events)
+	spec.Runtime = globals.Runtime{Config: config.Defaults(), Provider: locker}
+
+	if err := RunCreate(context.Background(), spec); err != nil {
+		t.Fatalf("RunCreate() error = %v", err)
+	}
+	if locker.Acquires != 1 {
+		t.Fatalf("acquires = %d, want 1", locker.Acquires)
+	}
+	if want := []string{"read-state", "apply-plan", "confirm", "apply"}; !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
+}
+
+func TestRunCreate_DryRunDoesNotLock(t *testing.T) {
+	locker := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}}
+	var events []string
+	spec := workflowTestSpec(&events)
+	spec.DryRun = true
+	spec.Runtime = globals.Runtime{Config: config.Defaults(), Provider: locker}
+
+	if err := RunCreate(context.Background(), spec); err != nil {
+		t.Fatalf("RunCreate() error = %v", err)
+	}
+	if locker.Acquires != 0 {
+		t.Fatalf("dry-run acquires = %d, want 0", locker.Acquires)
 	}
 }
 
