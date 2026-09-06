@@ -26,12 +26,15 @@ status, tear down — with typed-phrase confirmations and recoverable partial st
 
 ## Current Status
 
-**Current stable: v0.3.2.** Phase 0, Phase 1, Lore (v0.2), and DDC (V1 +
-multi-region edge nodes) are complete: Perforce, Horde, Lore, Distributed DDC
-(home + edge regions), Workstation, CI, Deploy, Cost, drift detection with
-auto-remediation (`--fix`), MCP server, IaC export, full-stack `destroy --all`,
-offline cost visibility, and a CLI E2E suite. Install via `npm install -g fabrica-cli` or
-GitHub Releases. See [ROADMAP.md](ROADMAP.md) for status and what's next.
+**Current stable: v0.4.3** (2026-08-23). Phase 0, Phase 1, Lore (v0.3: S3 store,
+`ami build`, TLS config hooks), and DDC (V1 + multi-region edge nodes) are
+complete: Perforce, Horde, Lore, Distributed DDC (home + edge regions),
+Workstation, CI, Deploy, Cost, drift detection with auto-remediation (`--fix`),
+MCP server, IaC export, full-stack `destroy --all`, offline cost visibility,
+and a CLI E2E suite. Install via `npm install -g fabrica-cli` or the matching
+[GitHub Release](https://github.com/jpvelasco/fabrica/releases) — tagged
+Releases are the source of truth for the current stable version. See
+[ROADMAP.md](ROADMAP.md) for status and what's next.
 
 Operational diagnostics are available on **stderr** via `--verbose` or
 `FABRICA_LOG_LEVEL=debug` — normal stdout output (including `--json`) is not
