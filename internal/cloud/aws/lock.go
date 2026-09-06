@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"strings"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -39,11 +41,17 @@ func (p *awsProvider) AcquireStateLockRow(ctx context.Context, table string, ite
 		exprValues[k] = &dynamodbtypes.AttributeValueMemberS{Value: v}
 	}
 
+	var exprNames map[string]string
+	if strings.Contains(condition, "#tok") {
+		exprNames = map[string]string{"#tok": "Token"}
+	}
+
 	client := p.lockDynamo(cfg)
 	_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
 		TableName:                 aws.String(table),
 		Item:                      attrs,
 		ConditionExpression:       aws.String(condition),
+		ExpressionAttributeNames:  exprNames,
 		ExpressionAttributeValues: exprValues,
 	})
 	if err != nil {

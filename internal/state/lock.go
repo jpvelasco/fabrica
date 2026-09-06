@@ -14,7 +14,13 @@ import (
 // DefaultLockTTL is how long a state lock remains valid without renewal.
 // A crashed holder must not deadlock everyone forever: once the TTL lapses,
 // another run takes the lock over automatically (with an oplog warning).
+// Live holders must call Renew before this window elapses (see
+// provision.AcquireStateLock heartbeat) so a long promote cannot be taken over.
 const DefaultLockTTL = 15 * time.Minute
+
+// RenewCondition is the DynamoDB expression LockStore.Renew passes to put.
+// "#tok" maps to the Token attribute (reserved word) in the AWS adapter.
+const RenewCondition = "#tok = :token"
 
 // PutItemFunc performs the conditional put that backs Acquire. condition uses
 // DynamoDB expression syntax; condValues carries its ":name" values.
@@ -82,6 +88,46 @@ func (s *LockStore) Acquire(ctx context.Context, resourceID, holder string) (str
 
 	oplog.WithResource("DynamoDB:Lock", resourceID).Debug("lock acquired", "holder", holder)
 	return token, nil
+}
+
+// Renew bumps AcquiredAt so a live holder is not treated as stale. Only the
+// current token can renew; a failed conditional means another run took over.
+func (s *LockStore) Renew(ctx context.Context, resourceID, token, holder string) error {
+	now := s.now().UTC()
+	item := map[string]string{
+		"LockID":     resourceID,
+		"Holder":     holder,
+		"Token":      token,
+		"AcquiredAt": strconv.FormatInt(now.Unix(), 10),
+	}
+	err := s.put(ctx, item, RenewCondition, map[string]string{":token": token})
+	if err != nil {
+		oplog.WithResource("DynamoDB:Lock", resourceID).Warn("lock not renewed", "holder", holder, "error", err)
+		return fmt.Errorf("renewing lock %s: %w", resourceID, err)
+	}
+	oplog.WithResource("DynamoDB:Lock", resourceID).Debug("lock renewed", "holder", holder)
+	return nil
+}
+
+// Heartbeat renews the lock on an interval of ttl/3 until ctx is cancelled.
+// A failed renew (takeover or storage error) stops the loop.
+func (s *LockStore) Heartbeat(ctx context.Context, resourceID, token, holder string) {
+	interval := s.ttl / 3
+	if interval <= 0 {
+		interval = time.Millisecond
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.Renew(ctx, resourceID, token, holder); err != nil {
+				return
+			}
+		}
+	}
 }
 
 // Release releases a previously acquired lock. Only the holder with the

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 // recordingLockStore builds a LockStore over captured storage functions.
 type recordingLockStore struct {
+	mu          sync.Mutex
 	putCalls    int
 	delCalls    int
 	putErr      error
@@ -25,6 +27,8 @@ type recordingLockStore struct {
 }
 
 func (r *recordingLockStore) put(_ context.Context, item map[string]string, condition string, condValues map[string]string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.putCalls++
 	if r.putErr != nil {
 		return r.putErr
@@ -36,8 +40,16 @@ func (r *recordingLockStore) put(_ context.Context, item map[string]string, cond
 }
 
 func (r *recordingLockStore) del(_ context.Context, key map[string]string, condition string, condValues map[string]string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.delCalls++
 	return r.delErr
+}
+
+func (r *recordingLockStore) puts() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.putCalls
 }
 
 func newRecordingLockStore() (*LockStore, *recordingLockStore) {
@@ -121,6 +133,96 @@ func TestLockAcquireConflict(t *testing.T) {
 
 	if _, err := ls.Acquire(context.Background(), "my-resource", "test-holder"); err == nil {
 		t.Fatal("expected error on conflict, got nil")
+	}
+}
+
+func TestLockRenewUpdatesAcquiredAt(t *testing.T) {
+	ls, rec := newRecordingLockStore()
+	now := time.Unix(1_800_000_000, 0).UTC()
+	ls.SetClock(func() time.Time { return now })
+
+	token, err := ls.Acquire(context.Background(), "res", "holder")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	firstAt := rec.lastItem["AcquiredAt"]
+
+	now = now.Add(5 * time.Minute)
+	if err := ls.Renew(context.Background(), "res", token, "holder"); err != nil {
+		t.Fatalf("Renew: %v", err)
+	}
+	if rec.lastCond != RenewCondition {
+		t.Errorf("renew condition = %q, want %q", rec.lastCond, RenewCondition)
+	}
+	if rec.lastCondVal[":token"] != token {
+		t.Errorf(":token = %q, want %q", rec.lastCondVal[":token"], token)
+	}
+	if rec.lastItem["AcquiredAt"] == firstAt {
+		t.Error("AcquiredAt was not bumped on renew")
+	}
+	if rec.lastItem["Token"] != token {
+		t.Errorf("renewed token = %q, want original %q", rec.lastItem["Token"], token)
+	}
+}
+
+func TestLockRenewFailedIsError(t *testing.T) {
+	ls, rec := newRecordingLockStore()
+	rec.putErr = fmt.Errorf("conditional put failed")
+	if err := ls.Renew(context.Background(), "res", "tok", "holder"); err == nil {
+		t.Fatal("expected renew error")
+	}
+}
+
+func TestLockHeartbeatRenewsUntilCancelled(t *testing.T) {
+	rec := &recordingLockStore{}
+	ls := NewFuncLockStore("t", 30*time.Millisecond, rec.put, rec.del)
+	token, err := ls.Acquire(context.Background(), "res", "holder")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		ls.Heartbeat(ctx, "res", token, "holder")
+		close(done)
+	}()
+
+	deadline := time.Now().Add(400 * time.Millisecond)
+	for time.Now().Before(deadline) && rec.puts() < 3 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat did not stop after cancel")
+	}
+	if got := rec.puts(); got < 3 {
+		t.Fatalf("putCalls = %d, want at least 3 (acquire + renewals)", got)
+	}
+}
+
+func TestLockHeartbeatStopsOnRenewError(t *testing.T) {
+	rec := &recordingLockStore{}
+	ls := NewFuncLockStore("t", 20*time.Millisecond, rec.put, rec.del)
+	token, err := ls.Acquire(context.Background(), "res", "holder")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	rec.mu.Lock()
+	rec.putErr = fmt.Errorf("taken over")
+	rec.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		ls.Heartbeat(context.Background(), "res", token, "holder")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat did not stop after renew error")
 	}
 }
 

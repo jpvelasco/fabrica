@@ -46,6 +46,21 @@ func newLockAdapterTest(t *testing.T, fake *fakeLockDynamo) *awsProvider {
 
 var _ = dynamodbtypes.AttributeValueMemberS{Value: ""} // keep types import stable
 
+func TestAcquireStateLockRowRenewMapsTokenName(t *testing.T) {
+	fake := &fakeLockDynamo{}
+	p := newLockAdapterTest(t, fake)
+
+	item := map[string]string{"LockID": "fabrica-state/123", "Holder": "op", "Token": "tok", "AcquiredAt": "1800000300"}
+	err := p.AcquireStateLockRow(context.Background(), "fabrica-state-lock", item,
+		"#tok = :token", map[string]string{":token": "tok"})
+	if err != nil {
+		t.Fatalf("renew put: %v", err)
+	}
+	if fake.lastPut.ExpressionAttributeNames["#tok"] != "Token" {
+		t.Fatalf("ExpressionAttributeNames = %+v, want #tok=Token", fake.lastPut.ExpressionAttributeNames)
+	}
+}
+
 func TestAcquireStateLockRowSuccess(t *testing.T) {
 	fake := &fakeLockDynamo{}
 	p := newLockAdapterTest(t, fake)
