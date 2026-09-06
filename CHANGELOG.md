@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **README Current stable lagged the latest GitHub Release** — the status blurb still said v0.3.2 / Lore v0.2 after v0.4.3 shipped. It now matches the latest tagged Release (v0.4.3) and states that Releases are the source of truth. npm `fabrica-cli` already publishes at the same version. (#372)
 - **MCP `config_show` missed credential-like keys** — redaction matched `access_key` but not `access_key_id` / `accessKeyId`, and skipped Lore TLS `certPath`/`keyPath`. Matching now splits camelCase and covers those suffixes plus `private_key` / `secret_key`. Non-secret paths (`launchPath`, `path`, `key_name`) stay visible. (#369)
 - **Cost report dropped Lore S3/DynamoDB and never priced Horde agents** — when state recorded `instanceType`+`volumeSize`, `ec2CostResources` replaced the whole module list with just EC2+EBS, so Lore S3/DynamoDB vanished from report/forecast/alerts/MCP. It now overlays those two fields and keeps every other line. Horde `Aggregate` also appends `AgentsCostResources` when state has an ASG. (#368)
 - **`--dry-run` no longer takes the DynamoDB state lock** — setup, destroy --all, teardown, horde agents create/destroy, deploy promote, and perforce backup create/delete now skip `AcquireStateLock` on dry-run so previews stay read-only and cannot block live mutators. (#367)
