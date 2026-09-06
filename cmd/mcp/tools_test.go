@@ -398,10 +398,19 @@ func TestShouldRedact_Password(t *testing.T) {
 		{"secret", true},
 		{"api_key", true},
 		{"access_key", true},
-		{"access_key_id", false},
+		{"access_key_id", true},
+		{"accessKeyId", true},
+		{"secret_access_key", true},
+		{"private_key", true},
+		{"keyPath", true},
+		{"key_path", true},
+		{"certPath", true},
+		{"cert_path", true},
 		{"name", false},
 		{"region", false},
 		{"key_name", false},
+		{"launchPath", false},
+		{"path", false},
 		{"keyboard", false},
 		{"monkey", false},
 		{"token_bucket", false},
@@ -569,7 +578,18 @@ func TestConfigShowResult_Path(t *testing.T) {
 // — Redaction key list —
 
 func TestRedactKeys_List(t *testing.T) {
-	expected := []string{"password", "token", "secret", "api_key", "access_key"}
+	expected := []string{
+		"password",
+		"token",
+		"secret",
+		"api_key",
+		"access_key",
+		"access_key_id",
+		"private_key",
+		"secret_key",
+		"key_path",
+		"cert_path",
+	}
 	if len(redactKeys) != len(expected) {
 		t.Fatalf("redactKeys length = %d, want %d", len(redactKeys), len(expected))
 	}
@@ -577,6 +597,55 @@ func TestRedactKeys_List(t *testing.T) {
 		if redactKeys[i] != want {
 			t.Errorf("redactKeys[%d] = %q, want %q", i, redactKeys[i], want)
 		}
+	}
+}
+
+func TestRedactMap_CredentialVariants(t *testing.T) {
+	m := map[string]any{
+		"cloud": map[string]any{
+			"aws": map[string]any{
+				"region":        "us-west-2",
+				"access_key_id": "AKIAIOSFODNN7EXAMPLE", // #nosec G101 — AWS docs example
+				"accessKeyId":   "AKIAIOSFODNN7EXAMPLE", // #nosec G101 — AWS docs example
+			},
+		},
+		"lore": map[string]any{
+			"tls": map[string]any{
+				"enabled":  true,
+				"certPath": "/etc/loreserver/certs/server.crt",
+				"keyPath":  "/etc/loreserver/certs/server.key",
+			},
+		},
+		"deploy": map[string]any{
+			"launchPath": "/local/GameServer.sh",
+		},
+	}
+	redactMap(m)
+
+	awsMap := m["cloud"].(map[string]any)["aws"].(map[string]any)
+	if awsMap["access_key_id"] != "[redacted]" {
+		t.Errorf("access_key_id = %v, want [redacted]", awsMap["access_key_id"])
+	}
+	if awsMap["accessKeyId"] != "[redacted]" {
+		t.Errorf("accessKeyId = %v, want [redacted]", awsMap["accessKeyId"])
+	}
+	if awsMap["region"] != "us-west-2" {
+		t.Errorf("region = %v, want us-west-2", awsMap["region"])
+	}
+
+	tls := m["lore"].(map[string]any)["tls"].(map[string]any)
+	if tls["certPath"] != "[redacted]" {
+		t.Errorf("certPath = %v, want [redacted]", tls["certPath"])
+	}
+	if tls["keyPath"] != "[redacted]" {
+		t.Errorf("keyPath = %v, want [redacted]", tls["keyPath"])
+	}
+	if tls["enabled"] != true {
+		t.Errorf("enabled = %v, want true", tls["enabled"])
+	}
+
+	if m["deploy"].(map[string]any)["launchPath"] != "/local/GameServer.sh" {
+		t.Errorf("launchPath was incorrectly redacted: %v", m["deploy"].(map[string]any)["launchPath"])
 	}
 }
 

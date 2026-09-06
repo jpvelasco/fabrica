@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP `config_show` missed credential-like keys** — redaction matched `access_key` but not `access_key_id` / `accessKeyId`, and skipped Lore TLS `certPath`/`keyPath`. Matching now splits camelCase and covers those suffixes plus `private_key` / `secret_key`. Non-secret paths (`launchPath`, `path`, `key_name`) stay visible. (#369)
 - **Cost report dropped Lore S3/DynamoDB and never priced Horde agents** — when state recorded `instanceType`+`volumeSize`, `ec2CostResources` replaced the whole module list with just EC2+EBS, so Lore S3/DynamoDB vanished from report/forecast/alerts/MCP. It now overlays those two fields and keeps every other line. Horde `Aggregate` also appends `AgentsCostResources` when state has an ASG. (#368)
 - **`--dry-run` no longer takes the DynamoDB state lock** — setup, destroy --all, teardown, horde agents create/destroy, deploy promote, and perforce backup create/delete now skip `AcquireStateLock` on dry-run so previews stay read-only and cannot block live mutators. (#367)
 - **State lock TTL let another run take over mid-promote** — `DefaultLockTTL` is 15 minutes with stale takeover, but `deploy promote` holds the lock through fleet activation (default 45 minutes). A second Fabrica run could steal the lock and the original release became a no-op. `AcquireStateLock` now heartbeats `Renew` at TTL/3 so a live holder stays fresh; a crashed process still expires after 15 minutes. (#366)
