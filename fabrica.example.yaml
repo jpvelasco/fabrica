@@ -6,7 +6,7 @@ cloud:
   provider: aws               # Currently only "aws" is supported
   aws:
     region: us-east-1         # AWS region for all resources
-    profile: ""               # Named AWS profile (optional; defaults to SDK credential chain)
+    profile: ""               # Named AWS profile, including IAM Identity Center / SSO profiles
     accountId: ""             # Auto-detected on first `fabrica setup`; leave empty initially
     tags: {}                  # Extra tags merged with standard Fabrica tags on every resource
 

@@ -3,6 +3,7 @@ package provision
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
@@ -39,6 +40,9 @@ func TestResolveIdentity_Error(t *testing.T) {
 	account, region, err := ResolveIdentity(context.Background(), p)
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "aws sso login") {
+		t.Errorf("identity error should mention SSO login: %v", err)
 	}
 	if account != "" {
 		t.Errorf("account = %q, want empty on error", account)

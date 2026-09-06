@@ -2,7 +2,6 @@ package aws
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -23,13 +22,13 @@ var (
 func callerIdentity(ctx context.Context, ac awsConfig) (string, string, string, error) {
 	cfg, err := identityLoadCfg(ctx, ac.region, ac.profile)
 	if err != nil {
-		return "", "", "", fmt.Errorf("loading AWS config: %w", err)
+		return "", "", "", wrapAWSAuthError("loading AWS config", ac.profile, err)
 	}
 
 	client := identityNewClient(cfg)
 	out, err := client.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 	if err != nil {
-		return "", "", "", fmt.Errorf("calling sts:GetCallerIdentity: %w", err)
+		return "", "", "", wrapAWSAuthError("calling sts:GetCallerIdentity", ac.profile, err)
 	}
 
 	account := aws.ToString(out.Account)

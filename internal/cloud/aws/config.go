@@ -2,7 +2,6 @@ package aws
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
@@ -20,7 +19,7 @@ func loadAWSConfig(ctx context.Context, region, profile string) (aws.Config, err
 
 	cfg, err := awscfg.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
-		return aws.Config{}, fmt.Errorf("loading AWS config: %w", err)
+		return aws.Config{}, wrapAWSAuthError("loading AWS config", profile, err)
 	}
 	return cfg, nil
 }

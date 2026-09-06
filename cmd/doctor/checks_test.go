@@ -40,6 +40,12 @@ func TestCheckCreds(t *testing.T) {
 			wantStatus: "fail",
 			wantMsg:    "could not authenticate",
 		},
+		{
+			name:       "expired SSO",
+			provider:   &testutil.TestProvider{IdentityErr: fmt.Errorf("the SSO session associated with this profile has expired")},
+			wantStatus: "fail",
+			wantMsg:    "aws sso login",
+		},
 	}
 
 	for _, tt := range tests {

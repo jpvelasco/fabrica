@@ -14,7 +14,7 @@ func ResolveIdentity(ctx context.Context, p cloud.Provider) (string, string, err
 	}
 	account, _, region, err := p.Identity(ctx)
 	if err != nil {
-		return "", "", fmt.Errorf("could not resolve AWS identity (run 'fabrica doctor'): %w", err)
+		return "", "", fmt.Errorf("could not resolve AWS identity (run 'fabrica doctor'; SSO users: aws sso login): %w", err)
 	}
 	return account, region, nil
 }
