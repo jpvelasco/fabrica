@@ -6,6 +6,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/schedule"
 )
 
 // AgentsCostResources returns the cost inputs for the Horde agents module.
@@ -22,8 +23,13 @@ func AgentsCostResources(cfg config.HordeAgentsConfig) []cost.Resource {
 		desired = 1
 	}
 
+	factor, ferr := schedule.CostFactor(cfg.Spot, cfg.Schedule)
+	name := schedule.EncodeFactor(fmt.Sprintf("%s x%d", instanceType, desired), factor)
+	if ferr != nil {
+		name += " (schedule invalid — estimate not discounted)"
+	}
 	resources := []cost.Resource{
-		{TypeName: cloud.TypeAWSAutoScalingAutoScalingGroup, Name: fmt.Sprintf("%s x%d", instanceType, desired)},
+		{TypeName: cloud.TypeAWSAutoScalingAutoScalingGroup, Name: name},
 	}
 
 	// When queue scaling is enabled, add the two CloudWatch alarms to the cost model.
@@ -42,9 +48,10 @@ type asgEstimator struct{}
 
 func (asgEstimator) Estimate(r cost.Resource) (cost.Monthly, error) {
 	// Parse "c7i.xlarge x2" from the Name field.
+	base, factor := schedule.DecodeFactor(r.Name)
 	var instanceType string
 	var count int
-	_, err := fmt.Sscanf(r.Name, "%s x%d", &instanceType, &count)
+	_, err := fmt.Sscanf(base, "%s x%d", &instanceType, &count)
 	if err != nil || count <= 0 {
 		return cost.Monthly{}, fmt.Errorf("cannot parse ASG instance spec from %q (expected 'type xN')", r.Name)
 	}
@@ -56,10 +63,16 @@ func (asgEstimator) Estimate(r cost.Resource) (cost.Monthly, error) {
 		return cost.Monthly{}, fmt.Errorf("estimating %s: %w", instanceType, err)
 	}
 
+	note := fmt.Sprintf("%d x %s instances (ASG desired capacity)", count, instanceType)
+	confidence := cost.High
+	if factor < 1 {
+		note += fmt.Sprintf("; Spot/schedule factor %.2f", factor)
+		confidence = cost.Medium
+	}
 	return cost.Monthly{
-		Amount:     unitMonthly.Amount * float64(count),
-		Confidence: cost.High,
-		Note:       fmt.Sprintf("%d x %s instances (ASG desired capacity)", count, instanceType),
+		Amount:     unitMonthly.Amount * float64(count) * factor,
+		Confidence: confidence,
+		Note:       note,
 	}, nil
 }
 

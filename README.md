@@ -44,10 +44,10 @@ affected.
 |--------|----------|--------|
 | `setup` / `doctor` / `status` / `drift` / `config show` | Foundation | Complete |
 | `perforce` | `create`, `status`, `destroy`, `backup`, `restore` | Complete |
-| `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | Complete |
+| `horde` | `create`, `status`, `submit`, `destroy`, `ami build`, `agents schedule` | Complete |
 | `lore` | `create`, `status`, `destroy` | Complete |
 | `ddc` | `setup`, `status`, `destroy`, `region add` | Complete (V1, home + edge regions) |
-| `workstation` | `create`, `list`, `stop`, `start`, `terminate` | Complete |
+| `workstation` | `create`, `list`, `stop`, `start`, `schedule`, `terminate` | Complete |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | Complete |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | Complete |
 | `cost` | `report`, `forecast`, `alerts` | Complete |
@@ -298,6 +298,10 @@ Creates five resources: agent security group (no inbound from internet), IAM rol
 
 Shows agent pool status: ASG capacity (min/desired/max), launch template, instance type, agent AMI, and coordinator endpoint. `--json` for machine-readable output.
 
+#### `fabrica horde agents schedule`
+
+Prints `horde.agents.spot` and the weekly on/off window (`horde.agents.schedule`). Cost report applies a conservative Spot discount and duty-cycle factor. Fabrica does not install EventBridge.
+
 #### `fabrica horde agents destroy`
 
 Permanently deletes the agent pool and its AWS resources (ASG, launch template, IAM role/profile, security group) in reverse-creation order. The Horde coordinator is not affected. Typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview.
@@ -388,6 +392,10 @@ Stops the EC2 instance to pause compute billing. Data and configuration are pres
 #### `fabrica workstation start`
 
 Starts a previously stopped workstation. Supports `--dry-run`, `--yes`, `--json`.
+
+#### `fabrica workstation schedule`
+
+Prints `workstation.spot` and the weekly on/off window. Cost report discounts compute (not EBS). Terminate still deletes the instance.
 
 #### `fabrica workstation terminate`
 

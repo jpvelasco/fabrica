@@ -23,12 +23,14 @@ Available operations:
   list       Show provisioned workstations
   stop       Stop the workstation instance (pauses billing)
   start      Start a stopped workstation instance
+  schedule   Show Spot / weekly on-off window
   terminate  Permanently terminate the workstation and all its AWS resources`,
 	}
 	cmd.AddCommand(create.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(list.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(action.NewStop(runtimeSource, optionsSource, out))
 	cmd.AddCommand(action.NewStart(runtimeSource, optionsSource, out))
+	cmd.AddCommand(newSchedule(runtimeSource, optionsSource, out))
 	cmd.AddCommand(terminate.New(runtimeSource, optionsSource, out))
 	return cmd
 }

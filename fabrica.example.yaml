@@ -39,6 +39,14 @@ perforce: {}
 #   instanceType: m7i.2xlarge
 #   volumeSize: 100
 #   allowedCidr: 172.31.0.0/16    # set to your VPC CIDR
+#   agents:
+#     spot: false                 # estimate-only discount; Fabrica does not request Spot capacity
+#     schedule:
+#       enabled: false
+#       timezone: UTC
+#       days: Mon-Fri             # Mon-Fri | Mon-Sun | Sat-Sun
+#       start: "08:00"
+#       stop: "20:00"
 horde: {}
 
 # Lore: Epic loreserver (parallel VCS option alongside Perforce).
@@ -73,6 +81,15 @@ horde: {}
 #   namespace: deriveddatacache
 #   vpcId: ""
 #   subnetId: ""
+
+# workstation:
+#   spot: false                 # estimate-only discount; Fabrica does not request Spot capacity
+#   schedule:
+#     enabled: false
+#     timezone: UTC
+#     days: Mon-Fri             # Mon-Fri | Mon-Sun | Sat-Sun
+#     start: "08:00"
+#     stop: "20:00"
 
 # CI: a CodeBuild project that orchestrates Horde BuildGraph jobs.
 # All fields are optional — defaults shown.

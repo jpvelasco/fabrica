@@ -25,12 +25,14 @@ enroll against the existing Horde coordinator, and are fully managed
 by Fabrica state.
 
 Available operations:
-  create   Provision an agent pool (ASG + Launch Template)
-  status   Show agent pool capacity and coordinator endpoint
-  destroy  Permanently delete the agent pool and its AWS resources`,
+  create    Provision an agent pool (ASG + Launch Template)
+  status    Show agent pool capacity and coordinator endpoint
+  schedule  Show Spot / weekly on-off window
+  destroy   Permanently delete the agent pool and its AWS resources`,
 	}
 	cmd.AddCommand(create.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(status.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(newSchedule(runtimeSource, optionsSource, out))
 	cmd.AddCommand(destroy.New(runtimeSource, optionsSource, out))
 	return cmd
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/ec2cost"
+	"github.com/jpvelasco/fabrica/internal/schedule"
 )
 
 // gp3 EBS pricing: $0.08/GiB-month (us-east-1).
@@ -65,13 +66,18 @@ const hoursPerMonth = 730.0
 type ec2InstanceEstimator struct{}
 
 func (ec2InstanceEstimator) Estimate(r cost.Resource) (cost.Monthly, error) {
-	hourly, ok := ec2InstancePrices[r.Name]
+	name, factor := schedule.DecodeFactor(r.Name)
+	hourly, ok := ec2InstancePrices[name]
 	if !ok {
 		return cost.Monthly{}, fmt.Errorf("no price data for EC2 instance type %q", r.Name)
 	}
+	conf := cost.High
+	if factor < 1 {
+		conf = cost.Medium
+	}
 	return cost.Monthly{
-		Amount:     hourly * hoursPerMonth,
-		Confidence: cost.High,
+		Amount:     hourly * hoursPerMonth * factor,
+		Confidence: conf,
 	}, nil
 }
 

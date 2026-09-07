@@ -21,6 +21,16 @@ func TestCostResourcesDefaults(t *testing.T) {
 	}
 }
 
+func TestCostResourcesSpotEncodesFactor(t *testing.T) {
+	got := CostResources(config.WorkstationConfig{Spot: true})
+	if got[0].Name == DefaultInstanceType {
+		t.Fatalf("spot instance name should encode factor: %s", got[0].Name)
+	}
+	if got[1].Name != "gp3-"+fmt.Sprint(DefaultVolumeSize)+"GiB" {
+		t.Fatalf("volume should stay undiscounted: %s", got[1].Name)
+	}
+}
+
 func TestCostResourcesOverrides(t *testing.T) {
 	got := CostResources(config.WorkstationConfig{InstanceType: "g5.xlarge", VolumeSize: 250})
 	if got[0].Name != "g5.xlarge" || got[1].Name != "gp3-250GiB" {

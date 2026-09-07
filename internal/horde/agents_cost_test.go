@@ -41,6 +41,19 @@ func TestAgentsCostResources_CustomDesiredCapacity(t *testing.T) {
 	}
 }
 
+func TestAgentsCostResources_SpotCheaper(t *testing.T) {
+	on := AgentsCostResources(config.HordeAgentsConfig{DesiredCapacity: 2})
+	spot := AgentsCostResources(config.HordeAgentsConfig{DesiredCapacity: 2, Spot: true})
+	onTot := cost.Global.EstimateAll(on).Total
+	spotTot := cost.Global.EstimateAll(spot).Total
+	if spotTot >= onTot {
+		t.Fatalf("spot should be cheaper: on=%v spot=%v", onTot, spotTot)
+	}
+	if cost.Global.EstimateAll(spot).Confidence == cost.High {
+		t.Fatal("spot estimate should not report High confidence")
+	}
+}
+
 func TestAgentsCostResources_BothCustom(t *testing.T) {
 	resources := AgentsCostResources(config.HordeAgentsConfig{
 		InstanceType:    "c7i.xlarge",
