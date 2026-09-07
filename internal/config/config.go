@@ -176,6 +176,7 @@ type CIConfig struct {
 	BuildTimeout int    `mapstructure:"buildTimeout" yaml:"buildTimeout"`
 	VPCId        string `mapstructure:"vpcId"        yaml:"vpcId"`
 	SubnetId     string `mapstructure:"subnetId"     yaml:"subnetId"`
+	Pipeline     bool   `mapstructure:"pipeline"     yaml:"pipeline"`
 }
 
 // DeployConfig holds the deploy: section of fabrica.yaml. Defaults are applied

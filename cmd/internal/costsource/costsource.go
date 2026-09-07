@@ -100,7 +100,9 @@ func costInputs(cfg *config.Config, m *state.ModuleState) ([]cost.Resource, stri
 	case "workstation":
 		return applyStopped(ec2CostResources(m, workstation.CostResources(cfg.Workstation)), m.Status)
 	case "ci":
-		return ci.CostResources(cfg.CI), ""
+		res := ci.CostResources(cfg.CI)
+		res = append(res, ci.PipelineCostResources(cfg.CI)...)
+		return res, ""
 	case "deploy":
 		if !hasResource(m, deploy.TypeGameLiftFleet) {
 			return nil, "setup only (no active fleet) — standing cost ~$0"
