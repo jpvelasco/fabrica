@@ -19,12 +19,15 @@ type UserDataConfig struct {
 	// ScyllaContact is set only when Backend=scylla (private IP filled later or placeholder).
 	// V1 cloud-init uses localhost discovery if empty and backend is scylla on co-located path;
 	// when Scylla is a separate instance, setup injects a note for operator restart after status.
-	ScyllaContact string
-	OIDCEnabled   bool
-	OIDCIssuer    string
-	OIDCClientID  string
-	OIDCAudience  string
-	OIDCRedirect  string
+	ScyllaContact    string
+	OIDCEnabled      bool
+	OIDCIssuer       string
+	OIDCClientID     string
+	OIDCAudience     string
+	OIDCRedirect     string
+	ReplicationPeers string
+	ScyllaNodes      int
+	ScyllaRF         int
 }
 
 var userDataRenderer = userdata.New(template.Must(template.New("ddc-userdata").Option("missingkey=error").Parse(`#!/bin/bash
@@ -43,6 +46,9 @@ OIDC_ISSUER="{{ .OIDCIssuer }}"
 OIDC_CLIENT_ID="{{ .OIDCClientID }}"
 OIDC_AUDIENCE="{{ .OIDCAudience }}"
 OIDC_REDIRECT="{{ .OIDCRedirect }}"
+REPLICATION_PEERS="{{ .ReplicationPeers }}"
+SCYLLA_NODES="{{ .ScyllaNodes }}"
+SCYLLA_RF="{{ .ScyllaRF }}"
 
 resolve_data_dev() {
   if [ -b /dev/sdf ]; then echo /dev/sdf; return 0; fi
@@ -91,6 +97,9 @@ FABRICA_DDC_INTERNAL_PORT=$INTERNAL_PORT
 FABRICA_DDC_BACKEND=$BACKEND
 FABRICA_DDC_STORE=$STORE
 FABRICA_DDC_SCYLLA_CONTACT=$SCYLLA_CONTACT
+FABRICA_DDC_SCYLLA_NODES=$SCYLLA_NODES
+FABRICA_DDC_SCYLLA_RF=$SCYLLA_RF
+FABRICA_DDC_REPLICATION_PEERS=$REPLICATION_PEERS
 {{ if .OIDCEnabled }}FABRICA_DDC_OIDC_ENABLED=true
 FABRICA_DDC_OIDC_ISSUER=$OIDC_ISSUER
 FABRICA_DDC_OIDC_CLIENT_ID=$OIDC_CLIENT_ID

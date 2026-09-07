@@ -198,22 +198,39 @@ type DeployConfig struct {
 // DDCConfig holds the ddc: section of fabrica.yaml.
 // AMI-first Unreal Cloud DDC (Jupiter / Zen). Single home-region in V1.
 type DDCConfig struct {
-	Backend            string        `mapstructure:"backend"            yaml:"backend"` // zen|scylla; default zen
-	AmiID              string        `mapstructure:"amiId"              yaml:"amiId"`
-	ScyllaAmiID        string        `mapstructure:"scyllaAmiId"        yaml:"scyllaAmiId"`
-	InstanceType       string        `mapstructure:"instanceType"       yaml:"instanceType"`
-	VolumeSize         int           `mapstructure:"volumeSize"         yaml:"volumeSize"`
-	ScyllaInstanceType string        `mapstructure:"scyllaInstanceType" yaml:"scyllaInstanceType"`
-	ScyllaVolumeSize   int           `mapstructure:"scyllaVolumeSize"   yaml:"scyllaVolumeSize"`
-	VPCId              string        `mapstructure:"vpcId"              yaml:"vpcId"`
-	SubnetId           string        `mapstructure:"subnetId"           yaml:"subnetId"`
-	AllowedCIDR        string        `mapstructure:"allowedCidr"        yaml:"allowedCidr"`
-	InternalCIDR       string        `mapstructure:"internalCidr"       yaml:"internalCidr"`
-	PublicPort         int           `mapstructure:"publicPort"         yaml:"publicPort"`
-	InternalPort       int           `mapstructure:"internalPort"       yaml:"internalPort"`
-	Bucket             string        `mapstructure:"bucket"             yaml:"bucket"`
-	Namespace          string        `mapstructure:"namespace"          yaml:"namespace"`
-	OIDC               DDCOIDCConfig `mapstructure:"oidc"             yaml:"oidc"`
+	Backend            string               `mapstructure:"backend"            yaml:"backend"` // zen|scylla; default zen
+	AmiID              string               `mapstructure:"amiId"              yaml:"amiId"`
+	ScyllaAmiID        string               `mapstructure:"scyllaAmiId"        yaml:"scyllaAmiId"`
+	InstanceType       string               `mapstructure:"instanceType"       yaml:"instanceType"`
+	VolumeSize         int                  `mapstructure:"volumeSize"         yaml:"volumeSize"`
+	ScyllaInstanceType string               `mapstructure:"scyllaInstanceType" yaml:"scyllaInstanceType"`
+	ScyllaVolumeSize   int                  `mapstructure:"scyllaVolumeSize"   yaml:"scyllaVolumeSize"`
+	VPCId              string               `mapstructure:"vpcId"              yaml:"vpcId"`
+	SubnetId           string               `mapstructure:"subnetId"           yaml:"subnetId"`
+	AllowedCIDR        string               `mapstructure:"allowedCidr"        yaml:"allowedCidr"`
+	InternalCIDR       string               `mapstructure:"internalCidr"       yaml:"internalCidr"`
+	PublicPort         int                  `mapstructure:"publicPort"         yaml:"publicPort"`
+	InternalPort       int                  `mapstructure:"internalPort"       yaml:"internalPort"`
+	Bucket             string               `mapstructure:"bucket"             yaml:"bucket"`
+	Namespace          string               `mapstructure:"namespace"          yaml:"namespace"`
+	OIDC               DDCOIDCConfig        `mapstructure:"oidc"             yaml:"oidc"`
+	Scylla             DDCScyllaConfig      `mapstructure:"scylla"           yaml:"scylla"`
+	Replication        DDCReplicationConfig `mapstructure:"replication"    yaml:"replication"`
+}
+
+// DDCScyllaConfig is the production Scylla topology overlay. Nodes=1 remains
+// the V1 bootstrap. Nodes>=3 is the documented RF=3 production shape.
+type DDCScyllaConfig struct {
+	Nodes       int    `mapstructure:"nodes"       yaml:"nodes"`
+	Replication int    `mapstructure:"replication" yaml:"replication"` // RF
+	Datacenter  string `mapstructure:"datacenter"  yaml:"datacenter"`
+}
+
+// DDCReplicationConfig lists operator-managed DDC edge peers to write into
+// cloud-init. Fabrica does not open replication sockets itself.
+type DDCReplicationConfig struct {
+	Enabled bool     `mapstructure:"enabled" yaml:"enabled"`
+	Peers   []string `mapstructure:"peers"   yaml:"peers"`
 }
 
 // DDCOIDCConfig is optional OIDC for Cloud DDC. Disabled by default so

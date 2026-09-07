@@ -33,7 +33,7 @@ func TestParentNewWiresSubcommands(t *testing.T) {
 	for _, c := range parent.Commands() {
 		names[c.Name()] = true
 	}
-	for _, want := range []string{"setup", "status", "destroy", "region", "ami"} {
+	for _, want := range []string{"setup", "status", "destroy", "region", "ami", "topology"} {
 		if !names[want] {
 			t.Fatalf("missing subcommand %q; have %v", want, names)
 		}

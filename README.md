@@ -46,7 +46,7 @@ affected.
 | `perforce` | `create`, `status`, `destroy`, `backup`, `restore` | Complete |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build`, `agents schedule` | Complete |
 | `lore` | `create`, `status`, `destroy` | Complete |
-| `ddc` | `setup`, `status`, `destroy`, `region add`, `ami build` | Complete (V1, home + edge regions) |
+| `ddc` | `setup`, `status`, `destroy`, `region add`, `ami build`, `topology` | Complete (V1, home + edge regions) |
 | `workstation` | `create`, `list`, `stop`, `start`, `schedule`, `terminate` | Complete |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | Complete |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | Complete |
@@ -365,6 +365,10 @@ Provisions one additional DDC edge node in REGION (e.g. `eu-west-1`): a security
 #### `fabrica ddc status`
 
 Reads live state and probes `GET /health/ready` on the public API port. Transitions `provisioning` → `ready` when healthy. Supports `--wait` / `-w` and `--json`. Edge regions are probed live via region-scoped Cloud Control queries and optional health probes; each edge reports `ready`, `unreachable`, `stopped`, `terminated`, or `missing`. With `--json`, edge regions are listed in the `edges` array with live instance state, probe status, and private IP when available.
+
+#### `fabrica ddc topology`
+
+Prints the configured Scylla node/RF overlay and replication peers. `ddc.scylla.nodes>=3` documents production RF=3 cost. V1 still provisions one Scylla host; extra nodes stay operator-built. Peers are written into `fabrica.env` when `ddc.replication.enabled` is true.
 
 #### `fabrica ddc destroy`
 

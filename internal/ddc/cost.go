@@ -44,10 +44,17 @@ func CostResources(cfg config.DDCConfig) []cost.Resource {
 		if scyllaVol <= 0 {
 			scyllaVol = DefaultScyllaVolumeSize
 		}
-		out = append(out,
-			cost.Resource{TypeName: cloud.TypeAWSEC2Instance, Name: scyllaType},
-			cost.Resource{TypeName: cloud.TypeAWSEC2Volume, Name: fmt.Sprintf("gp3-%dGiB", scyllaVol)},
-		)
+		nodes := ResolveScyllaNodes(cfg.Scylla)
+		for i := 0; i < nodes; i++ {
+			name := scyllaType
+			if nodes > 1 {
+				name = fmt.Sprintf("%s #%d", scyllaType, i+1)
+			}
+			out = append(out,
+				cost.Resource{TypeName: cloud.TypeAWSEC2Instance, Name: name},
+				cost.Resource{TypeName: cloud.TypeAWSEC2Volume, Name: fmt.Sprintf("gp3-%dGiB", scyllaVol)},
+			)
+		}
 	}
 	return out
 }
