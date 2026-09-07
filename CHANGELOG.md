@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **DDC AMI build command** — `fabrica ddc ami build` writes a local Image Builder / bake guide for Jupiter (zen or scylla). No AWS calls; record the AMI as `ddc.amiId`. (#375)
 - **MCP V2 options + cost forecast** — `optionsSource` is forwarded into the MCP server; `fabrica_options` reports json/dry-run/yes/verbose/profile, and `fabrica_cost_forecast` projects the offline monthly total. Config redaction is unchanged. (#380)
 - **Lore local-store SSM profile** — `lore create` now attaches a slim SSM instance profile (SSM core + output sink, no store-bucket access) when `storeBackend` is local. The S3-store role still adds store S3/DynamoDB permissions. Destroy removes the role/profile either way. (#398)
 - **DDC OIDC config on create** — `ddc.oidc.enabled` plus `issuer`/`clientId` (optional `audience`/`redirectPath`) are validated and written into cloud-init as `FABRICA_DDC_OIDC_*`. Disabled remains the default so CIDR/static auth is unchanged. The AMI must honor the env; Fabrica does not provision an IdP. (#373)

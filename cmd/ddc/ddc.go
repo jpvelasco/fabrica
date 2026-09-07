@@ -3,6 +3,7 @@ package ddc
 import (
 	"io"
 
+	"github.com/jpvelasco/fabrica/cmd/ddc/ami"
 	"github.com/jpvelasco/fabrica/cmd/ddc/destroy"
 	"github.com/jpvelasco/fabrica/cmd/ddc/region"
 	"github.com/jpvelasco/fabrica/cmd/ddc/setup"
@@ -26,11 +27,13 @@ Available operations:
   setup        Provision DDC infrastructure (home region)
   status       Show health and endpoints (home + edge regions)
   region add   Provision an additional DDC edge region
-  destroy      Tear down DDC resources (all regions)`,
+  destroy      Tear down DDC resources (all regions)
+  ami build    Generate local Image Builder artifacts for a DDC AMI`,
 	}
 	cmd.AddCommand(setup.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(status.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(region.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(destroy.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(ami.New(out))
 	return cmd
 }
