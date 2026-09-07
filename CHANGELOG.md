@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CodePipeline overlay for CI** — `ci.pipeline` adds a standing pipeline cost line and `fabrica ci pipeline` prints the Source → Build → Promote plan. V1 does not provision CodePipeline; trigger still starts CodeBuild. (#381)
 - **DDC production Scylla + replication peers** — `ddc.scylla.nodes`/`replication` document RF=3 cost (nodes>=3) and `ddc.replication.peers` are written into `fabrica.env`. `fabrica ddc topology` prints the plan. V1 still provisions one Scylla host; extra nodes stay operator-built. Destroy order still tears Scylla before the bucket. (#374)
 - **Horde agent queue metrics** — `fabrica horde agents metrics` prints the CloudWatch metric name/namespace agents must publish for queue scaling. Fabrica still does not scrape Horde. (#383)
 - **Multi-account / multi-region state layout** — documented lock boundary: one state file + lock table per AWS account; `--profile` / `cloud.aws.profile` selects another account. DDC edges reuse the home-account lock. (#382)

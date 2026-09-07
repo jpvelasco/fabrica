@@ -437,6 +437,10 @@ Shows the CI infrastructure (CodeBuild project + IAM role) from local state, wit
 
 Fetches the CloudWatch log output for a specific build.
 
+#### `fabrica ci pipeline`
+
+Prints the documented CodePipeline overlay. V1 does not provision a pipeline; `ci trigger` still starts CodeBuild. Enable `ci.pipeline` to include the standing cost line.
+
 #### `fabrica ci destroy`
 
 Tears down the CI infrastructure: deletes the CodeBuild project (via the AWS SDK), then the IAM service role (via Cloud Control). A missing project is not an error. Typed-phrase confirmation before any deletion; `--yes` to skip, `--dry-run` to preview.
