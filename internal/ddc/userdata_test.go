@@ -35,13 +35,13 @@ func TestGenerateRawOIDC(t *testing.T) {
 	raw, err := GenerateRaw(UserDataConfig{
 		Bucket: "b", Region: "us-east-1", Namespace: "ns",
 		PublicPort: 80, InternalPort: 8080, Backend: BackendZen,
-		OIDCEnabled: true, OIDCIssuer: "https://idp.example", OIDCClientID: "ddc",
+		OIDCEnabled: true, OIDCIssuer: "https://idp.example", OIDCClientID: "ddc-client", // #nosec G101 — fixture id, not a secret
 		OIDCAudience: "ddc-api", OIDCRedirect: "/oauth/callback",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"FABRICA_DDC_OIDC_ENABLED=true", "https://idp.example", "OIDC_CLIENT_ID=ddc"} {
+	for _, want := range []string{"FABRICA_DDC_OIDC_ENABLED=true", "https://idp.example", "OIDC_CLIENT_ID=ddc-client"} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("missing %q in %s", want, raw)
 		}
