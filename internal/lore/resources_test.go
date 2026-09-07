@@ -121,12 +121,13 @@ func TestInstanceDesiredStateWithS3Store(t *testing.T) {
 
 func TestInstanceDesiredStateWithoutS3Store(t *testing.T) {
 	plan := &CreatePlan{
-		AmiID:        "ami-lore1",
-		InstanceType: "m5.xlarge",
-		SubnetID:     "subnet-1",
-		VolumeSize:   500,
-		InstanceName: "fabrica-lore",
-		StoreBackend: StoreBackendLocal,
+		AmiID:               "ami-lore1",
+		InstanceType:        "m5.xlarge",
+		SubnetID:            "subnet-1",
+		VolumeSize:          500,
+		InstanceName:        "fabrica-lore",
+		InstanceProfileName: "fabrica-lore-profile",
+		StoreBackend:        StoreBackendLocal,
 	}
 	raw, err := InstanceDesiredState(plan, "sg-abc", "dXNlcmRhdGE=")
 	if err != nil {
@@ -134,9 +135,8 @@ func TestInstanceDesiredStateWithoutS3Store(t *testing.T) {
 	}
 	doc := ec2state.UnmarshalDesiredState(t, raw)
 
-	// Verify IAM instance profile is NOT set for local store.
-	if _, hasProfile := doc["IamInstanceProfile"]; hasProfile {
-		t.Error("IamInstanceProfile should not be set for local store backend")
+	if doc["IamInstanceProfile"] != plan.InstanceProfileName {
+		t.Errorf("IamInstanceProfile = %v, want %v (local store still attaches SSM profile)", doc["IamInstanceProfile"], plan.InstanceProfileName)
 	}
 }
 
@@ -188,10 +188,33 @@ func TestBucketDesiredStateShape(t *testing.T) {
 	ec2state.AssertManagedByTag(t, raw)
 }
 
+func TestRoleDesiredStateLocalSSMOnly(t *testing.T) {
+	plan := &CreatePlan{
+		RoleName:     "fabrica-lore-role",
+		StoreBackend: StoreBackendLocal,
+	}
+	raw, err := RoleDesiredState(plan)
+	if err != nil {
+		t.Fatalf("RoleDesiredState: %v", err)
+	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+	policies, ok := doc["Policies"].([]any)
+	if !ok {
+		t.Fatal("Policies not found")
+	}
+	if len(policies) != 1 {
+		t.Fatalf("local Policies len = %d, want 1 (SSM output only)", len(policies))
+	}
+	if policies[0].(map[string]any)["PolicyName"] != "fabrica-ssm-output" {
+		t.Fatalf("local policy = %v", policies[0])
+	}
+}
+
 func TestRoleDesiredStateShape(t *testing.T) {
 	plan := &CreatePlan{
-		RoleName:    "fabrica-lore-role",
-		StoreBucket: "fabrica-lore-store-123-us-east-1",
+		RoleName:     "fabrica-lore-role",
+		StoreBucket:  "fabrica-lore-store-123-us-east-1",
+		StoreBackend: StoreBackendS3,
 	}
 	raw, err := RoleDesiredState(plan)
 	if err != nil {
@@ -256,8 +279,9 @@ func TestRoleDesiredStateShape(t *testing.T) {
 
 func TestRoleDesiredStateOmitsDynamoDBWithoutTables(t *testing.T) {
 	plan := &CreatePlan{
-		RoleName:    "fabrica-lore-role",
-		StoreBucket: "fabrica-lore-store-123456789012-us-east-1",
+		RoleName:     "fabrica-lore-role",
+		StoreBucket:  "fabrica-lore-store-123456789012-us-east-1",
+		StoreBackend: StoreBackendS3,
 	}
 	raw, err := RoleDesiredState(plan)
 	if err != nil {
@@ -487,8 +511,9 @@ func TestStoreTableDesiredStateManagedByTag(t *testing.T) {
 
 func TestRoleDesiredStateStoreTables(t *testing.T) {
 	plan := &CreatePlan{
-		RoleName:    "fabrica-lore-role",
-		StoreBucket: "fabrica-lore-store-123456789012-us-east-1",
+		RoleName:     "fabrica-lore-role",
+		StoreBackend: StoreBackendS3,
+		StoreBucket:  "fabrica-lore-store-123456789012-us-east-1",
 		StoreTables: []string{
 			"fabrica-lore-store-123456789012-us-east-1-fragments",
 			"fabrica-lore-store-123456789012-us-east-1-metadata",

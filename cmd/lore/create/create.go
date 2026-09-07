@@ -55,13 +55,13 @@ Creates resources in order:
   2. S3 Store Bucket (optional) — enabled when lore.storeBackend is "s3"
   3. DynamoDB store tables (optional) — fragments, metadata, mutable, locks
      (required by the Lore 0.8.6 aws store plugin, s3 backend only)
-  4. IAM Role + Instance Profile (optional) — S3 + DynamoDB access for the Lore instance
+  4. IAM Role + Instance Profile — SSM (always); S3 + DynamoDB when storeBackend is s3
   5. EC2 Instance — runs loreserver using a user-provided AMI
 
 Store backend:
-  - "local" (default): EBS-backed store on the instance volume
+  - "local" (default): EBS-backed store; slim SSM instance profile (no store-bucket access)
   - "s3": S3 + DynamoDB-backed store (versioned bucket, four DynamoDB tables,
-    and an IAM role with matching S3 + DynamoDB permissions)
+    and an IAM role with matching S3 + DynamoDB permissions plus SSM)
 
 State is written after each resource so a partial failure is recoverable:
 re-running create will detect the already-provisioned module and exit cleanly.
@@ -161,13 +161,18 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	}
 	sgID := resources[len(resources)-1].Identifier
 
-	// S3 store resources (bucket + IAM role + instance profile) — created before
-	// the instance so the instance profile is available at launch.
+	// IAM (always) plus optional S3 store — created before the instance so
+	// the instance profile is available at launch. Local store gets a slim
+	// SSM profile; S3 store adds the bucket/tables and store permissions.
 	if plan.StoreBackend == lore.StoreBackendS3 {
 		resources, err = c.createS3StoreResources(ctx, plan, resources, st)
 		if err != nil {
 			return err
 		}
+	}
+	resources, err = c.createIAMResources(ctx, plan, resources, st)
+	if err != nil {
+		return err
 	}
 
 	fmt.Fprintf(c.out, "Creating instance %s...\n", plan.InstanceName)
@@ -244,10 +249,14 @@ func (c command) createS3StoreResources(ctx context.Context, plan *lore.CreatePl
 			return resources, fmt.Errorf("creating DynamoDB table %s: %w", plan.StoreBucket+"-"+suffix, err)
 		}
 	}
+	return resources, nil
+}
 
+func (c command) createIAMResources(ctx context.Context, plan *lore.CreatePlan, resources []fabricastate.ModuleResource, st *fabricastate.State) ([]fabricastate.ModuleResource, error) {
 	// IAM Role
 	fmt.Fprintf(c.out, "Creating IAM role %s...\n", plan.RoleName)
 	oplog.WithModule("lore").Debug("creating IAM role", "role", plan.RoleName)
+	var err error
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:    "IAM role",
 		TypeName: cloud.TypeAWSIAMRole,
@@ -285,10 +294,12 @@ func (c command) printDryRun(plan *lore.CreatePlan) {
 		resources = append(resources,
 			"S3 Bucket:        "+plan.StoreBucket,
 			"DynamoDB Tables:  "+strings.Join(plan.StoreTables, ", "),
-			"IAM Role:         "+plan.RoleName,
-			"Instance Profile: "+plan.InstanceProfileName,
 		)
 	}
+	resources = append(resources,
+		"IAM Role:         "+plan.RoleName,
+		"Instance Profile: "+plan.InstanceProfileName,
+	)
 	provision.DryRun(c.out, provision.DryRunSpec{
 		Title: "Lore loreserver",
 		Info: provision.PlanInfo{
@@ -328,10 +339,12 @@ func (c command) printApplyPlan(plan *lore.CreatePlan) {
 		resources = append(resources,
 			"S3 Bucket:        "+plan.StoreBucket,
 			"DynamoDB Tables:  "+strings.Join(plan.StoreTables, ", "),
-			"IAM Role:         "+plan.RoleName,
-			"Instance Profile: "+plan.InstanceProfileName,
 		)
 	}
+	resources = append(resources,
+		"IAM Role:         "+plan.RoleName,
+		"Instance Profile: "+plan.InstanceProfileName,
+	)
 	provision.ApplyPlan(c.out, "Lore loreserver", provision.PlanInfo{
 		Account:      plan.Account,
 		Region:       plan.Region,

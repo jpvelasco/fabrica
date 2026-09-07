@@ -42,9 +42,7 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMess
 	dsOpts := []ec2state.DesiredStateOption{
 		ec2state.WithExtraTags("FabricaModule", "lore"),
 	}
-	if plan.StoreBackend == StoreBackendS3 {
-		dsOpts = append(dsOpts, ec2state.WithIAMProfile(plan.InstanceProfileName))
-	}
+	dsOpts = append(dsOpts, ec2state.WithIAMProfile(plan.InstanceProfileName))
 	return ec2state.Build(spec, dsOpts...)
 }
 
@@ -129,14 +127,9 @@ func BucketDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 	return json.Marshal(doc)
 }
 
-// RoleDesiredState returns the EC2 instance role for S3 access on the Lore
-// store bucket + SSM core. Only used when StoreBackend is "s3". Inline
-// policies: the store bucket (S3), SSM command output publication (MDS
-// parameter + /fabrica/ssm/* CloudWatch Logs), and — when StoreTables is
-// non-empty — the DynamoDB permissions the 0.8.6 aws store plugin needs on
-// the four store tables (and the locks table's GSIs), scoped to
-// arn:aws:dynamodb:<region>:<account>:table/<name>. Region/Account fall back
-// to partition-agnostic placeholders when unset (tests).
+// RoleDesiredState returns the EC2 instance role. Local store gets SSM core
+// plus the SSM output sink (no store-bucket permissions). S3 store adds the
+// store bucket policy and, when StoreTables is set, DynamoDB permissions.
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 	region, account := plan.Region, plan.Account
 	if region == "" {
@@ -146,19 +139,23 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 		account = "*"
 	}
 	policies := []map[string]any{
-		iamrole.S3BucketPolicy("fabrica-lore-store-s3", plan.StoreBucket,
-			[]string{"s3:ListBucket", "s3:GetBucketLocation", "s3:ListBucketVersions"},
-			[]string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"},
-			"*",
-		),
 		// This account's AmazonSSMManagedInstanceCore is a narrowed variant
 		// without ssm:PutParameter or logs:*, so the instance role needs an
 		// explicit least-privilege policy to publish SSM command output to
 		// the MDS parameter and the /fabrica/ssm/* CloudWatch Logs sink.
 		iamrole.SSMOutputPolicy(region, account),
 	}
-	if len(plan.StoreTables) > 0 {
-		policies = append(policies, StoreDynamoDBPolicy(region, account, plan.StoreBucket, plan.StoreTables))
+	if plan.StoreBackend == StoreBackendS3 {
+		policies = append([]map[string]any{
+			iamrole.S3BucketPolicy("fabrica-lore-store-s3", plan.StoreBucket,
+				[]string{"s3:ListBucket", "s3:GetBucketLocation", "s3:ListBucketVersions"},
+				[]string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"},
+				"*",
+			),
+		}, policies...)
+		if len(plan.StoreTables) > 0 {
+			policies = append(policies, StoreDynamoDBPolicy(region, account, plan.StoreBucket, plan.StoreTables))
+		}
 	}
 	return iamrole.RoleDocument(
 		plan.RoleName,
@@ -170,7 +167,6 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 }
 
 // InstanceProfileDesiredState wraps the Lore role for EC2 attachment.
-// Only used when StoreBackend is "s3".
 func InstanceProfileDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 	return ec2state.InstanceProfileDesiredState(plan.InstanceProfileName, plan.RoleName)
 }

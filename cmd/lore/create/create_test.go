@@ -127,14 +127,14 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if provider.CreateCalls != 2 {
-		t.Fatalf("expected 2 create calls, got %d", provider.CreateCalls)
+	if provider.CreateCalls != 4 {
+		t.Fatalf("expected 4 create calls (SG+role+profile+instance), got %d: %v", provider.CreateCalls, provider.CreatedTypes)
 	}
-	if provider.CreatedTypes[0] != "AWS::EC2::SecurityGroup" {
-		t.Errorf("first created = %q", provider.CreatedTypes[0])
-	}
-	if provider.CreatedTypes[1] != "AWS::EC2::Instance" {
-		t.Errorf("second created = %q", provider.CreatedTypes[1])
+	want := []string{"AWS::EC2::SecurityGroup", "AWS::IAM::Role", "AWS::IAM::InstanceProfile", "AWS::EC2::Instance"}
+	for i, w := range want {
+		if provider.CreatedTypes[i] != w {
+			t.Errorf("created[%d] = %q, want %q", i, provider.CreatedTypes[i], w)
+		}
 	}
 	if len(capture.States) < 2 {
 		t.Fatalf("expected >=2 state writes, got %d", len(capture.States))
@@ -145,8 +145,8 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 		t.Fatal("lore module not in final state")
 		return
 	}
-	if len(m.Resources) != 2 {
-		t.Fatalf("final state has %d resources, want 2", len(m.Resources))
+	if len(m.Resources) != 4 {
+		t.Fatalf("final state has %d resources, want 4", len(m.Resources))
 	}
 	if m.Version != "ami-test123" {
 		t.Errorf("state version = %q, want ami-test123", m.Version)
