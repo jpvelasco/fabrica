@@ -39,6 +39,10 @@ PUBLIC_PORT="{{ .PublicPort }}"
 INTERNAL_PORT="{{ .InternalPort }}"
 BACKEND="{{ .Backend }}"
 SCYLLA_CONTACT="{{ .ScyllaContact }}"
+OIDC_ISSUER="{{ .OIDCIssuer }}"
+OIDC_CLIENT_ID="{{ .OIDCClientID }}"
+OIDC_AUDIENCE="{{ .OIDCAudience }}"
+OIDC_REDIRECT="{{ .OIDCRedirect }}"
 
 resolve_data_dev() {
   if [ -b /dev/sdf ]; then echo /dev/sdf; return 0; fi
@@ -88,10 +92,10 @@ FABRICA_DDC_BACKEND=$BACKEND
 FABRICA_DDC_STORE=$STORE
 FABRICA_DDC_SCYLLA_CONTACT=$SCYLLA_CONTACT
 {{ if .OIDCEnabled }}FABRICA_DDC_OIDC_ENABLED=true
-FABRICA_DDC_OIDC_ISSUER={{ .OIDCIssuer }}
-FABRICA_DDC_OIDC_CLIENT_ID={{ .OIDCClientID }}
-FABRICA_DDC_OIDC_AUDIENCE={{ .OIDCAudience }}
-FABRICA_DDC_OIDC_REDIRECT={{ .OIDCRedirect }}
+FABRICA_DDC_OIDC_ISSUER=$OIDC_ISSUER
+FABRICA_DDC_OIDC_CLIENT_ID=$OIDC_CLIENT_ID
+FABRICA_DDC_OIDC_AUDIENCE=$OIDC_AUDIENCE
+FABRICA_DDC_OIDC_REDIRECT=$OIDC_REDIRECT
 {{ end }}EOF
 
 # Single-region V1: no remote replication peer list.

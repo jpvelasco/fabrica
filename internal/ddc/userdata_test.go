@@ -41,7 +41,7 @@ func TestGenerateRawOIDC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"FABRICA_DDC_OIDC_ENABLED=true", "https://idp.example", "OIDC_CLIENT_ID=ddc-client"} {
+	for _, want := range []string{"FABRICA_DDC_OIDC_ENABLED=true", `OIDC_ISSUER="https://idp.example"`, `OIDC_CLIENT_ID="ddc-client"`, "FABRICA_DDC_OIDC_ISSUER=$OIDC_ISSUER"} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("missing %q in %s", want, raw)
 		}
