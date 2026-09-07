@@ -60,12 +60,14 @@ func (asgEstimator) Estimate(r cost.Resource) (cost.Monthly, error) {
 	}
 
 	note := fmt.Sprintf("%d x %s instances (ASG desired capacity)", count, instanceType)
+	confidence := cost.High
 	if factor < 1 {
 		note += fmt.Sprintf("; Spot/schedule factor %.2f", factor)
+		confidence = cost.Medium
 	}
 	return cost.Monthly{
 		Amount:     unitMonthly.Amount * float64(count) * factor,
-		Confidence: cost.High,
+		Confidence: confidence,
 		Note:       note,
 	}, nil
 }

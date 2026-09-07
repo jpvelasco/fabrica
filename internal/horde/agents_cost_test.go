@@ -49,6 +49,9 @@ func TestAgentsCostResources_SpotCheaper(t *testing.T) {
 	if spotTot >= onTot {
 		t.Fatalf("spot should be cheaper: on=%v spot=%v", onTot, spotTot)
 	}
+	if cost.Global.EstimateAll(spot).Confidence == cost.High {
+		t.Fatal("spot estimate should not report High confidence")
+	}
 }
 
 func TestAgentsCostResources_BothCustom(t *testing.T) {

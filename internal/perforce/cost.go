@@ -71,9 +71,13 @@ func (ec2InstanceEstimator) Estimate(r cost.Resource) (cost.Monthly, error) {
 	if !ok {
 		return cost.Monthly{}, fmt.Errorf("no price data for EC2 instance type %q", r.Name)
 	}
+	conf := cost.High
+	if factor < 1 {
+		conf = cost.Medium
+	}
 	return cost.Monthly{
 		Amount:     hourly * hoursPerMonth * factor,
-		Confidence: cost.High,
+		Confidence: conf,
 	}, nil
 }
 

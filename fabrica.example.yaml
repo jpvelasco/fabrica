@@ -82,6 +82,15 @@ horde: {}
 #   vpcId: ""
 #   subnetId: ""
 
+# workstation:
+#   spot: false                 # cheaper capacity; terminate still deletes the instance
+#   schedule:
+#     enabled: false
+#     timezone: UTC
+#     days: Mon-Fri             # Mon-Fri | Mon-Sun | Sat-Sun
+#     start: "08:00"
+#     stop: "20:00"
+
 # CI: a CodeBuild project that orchestrates Horde BuildGraph jobs.
 # All fields are optional — defaults shown.
 ci:
