@@ -23,8 +23,11 @@ func AgentsCostResources(cfg config.HordeAgentsConfig) []cost.Resource {
 		desired = 1
 	}
 
-	factor, _ := schedule.CostFactor(cfg.Spot, cfg.Schedule)
+	factor, ferr := schedule.CostFactor(cfg.Spot, cfg.Schedule)
 	name := schedule.EncodeFactor(fmt.Sprintf("%s x%d", instanceType, desired), factor)
+	if ferr != nil {
+		name += " (schedule invalid — estimate not discounted)"
+	}
 	resources := []cost.Resource{
 		{TypeName: cloud.TypeAWSAutoScalingAutoScalingGroup, Name: name},
 	}

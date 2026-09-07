@@ -12,8 +12,16 @@ import (
 // The cost path uses config + defaults; template overrides only apply at create time.
 func CostResources(cfg config.WorkstationConfig) []cost.Resource {
 	instanceType, volumeSize := resolveSizing(cfg, "")
-	factor, _ := schedule.CostFactor(cfg.Spot, cfg.Schedule)
-	return applyCapacity(CostResourcesFor(instanceType, volumeSize), factor)
+	factor, ferr := schedule.CostFactor(cfg.Spot, cfg.Schedule)
+	res := applyCapacity(CostResourcesFor(instanceType, volumeSize), factor)
+	if ferr != nil {
+		for i, r := range res {
+			if r.TypeName == cloud.TypeAWSEC2Instance {
+				res[i].Name += " (schedule invalid — estimate not discounted)"
+			}
+		}
+	}
+	return res
 }
 
 func applyCapacity(res []cost.Resource, factor float64) []cost.Resource {

@@ -47,7 +47,7 @@ func TestBuildPlanDefaultsAndDayAliases(t *testing.T) {
 			t.Fatalf("days %q: %v", days, err)
 		}
 	}
-	if _, err := BuildPlan(false, config.CapacitySchedule{Enabled: true, Start: "nope", Stop: "20:00"}, "", ""); err == nil {
+	if _, err := BuildPlan(false, config.CapacitySchedule{Enabled: true, Start: "08:00pm", Stop: "20:00"}, "", ""); err == nil {
 		t.Fatal("expected start parse error")
 	}
 	if _, err := BuildPlan(false, config.CapacitySchedule{Enabled: true, Start: "08:00", Stop: "nope"}, "", ""); err == nil {

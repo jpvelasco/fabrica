@@ -93,7 +93,6 @@ func BuildPlan(spot bool, cfg config.CapacitySchedule, startHint, stopHint strin
 	return p, nil
 }
 
-// CostFactor is the combined Spot × duty-cycle multiplier (1 when unused).
 // factorSep separates a resource name from its encoded cost multiplier.
 const factorSep = " *"
 
@@ -150,11 +149,11 @@ func weeklyOnHours(days, start, stop string) (float64, error) {
 }
 
 func parseClock(s string) (int, int, error) {
-	var h, m int
-	if _, err := fmt.Sscanf(s, "%d:%d", &h, &m); err != nil || h < 0 || h > 23 || m < 0 || m > 59 {
+	t, err := time.Parse("15:04", strings.TrimSpace(s))
+	if err != nil {
 		return 0, 0, fmt.Errorf("%q is not HH:MM", s)
 	}
-	return h, m, nil
+	return t.Hour(), t.Minute(), nil
 }
 
 func parseDays(s string) (int, error) {
