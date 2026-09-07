@@ -51,6 +51,7 @@ affected.
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | Complete |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | Complete |
 | `cost` | `report`, `forecast`, `alerts` | Complete |
+| `ops` | `export` | Complete (V1, local hooks) |
 | `export` | `--format cloudformation\|terraform` | Complete (V2) |
 | `destroy --all` | full-stack teardown | Complete |
 
@@ -497,6 +498,21 @@ Manages local budget thresholds (written to `fabrica.yaml` — no AWS Budgets re
 - `fabrica cost alerts list` — show configured thresholds.
 - `fabrica cost alerts set <scope> <monthly> [--warn-pct N]` — upsert a threshold (`scope` is `total` or a module name; `--warn-pct` defaults to 80). Honors `--dry-run`.
 - `fabrica cost alerts check` — evaluate the current estimate against thresholds and report OK/WARN/OVER. Informational (exit code stays 0). `--json` for machine-readable output.
+
+### Ops
+
+> **Optional observability:** `fabrica ops` writes local dashboard, log-group, and alarm hooks for Perforce, Horde, DDC, CI, and Deploy. Enable with `ops.enabled: true` in `fabrica.yaml`. Fabrica does not provision CloudWatch resources in V1 — import the export into CloudWatch or Grafana. When enabled, `cost report` includes the standing lines.
+
+#### `fabrica ops export`
+
+Writes `ops-export.json` (override with `--output`) listing log groups (`/fabrica/<module>`), unhealthy alarms, and metric namespaces. `--dry-run` / `--json` print the document without writing. Fails if `ops.enabled` is false.
+
+```yaml
+ops:
+  enabled: true
+  modules: [perforce, horde, ddc, ci, deploy]   # default: all five
+  logRetentionDays: 30
+```
 
 ### Other
 

@@ -297,6 +297,21 @@ func TestAggregatePerforceIncludesScheduledBackup(t *testing.T) {
 	}
 }
 
+func TestAggregateOpsWhenEnabled(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Ops.Enabled = true
+	cfg.Ops.Modules = []string{"horde"}
+	st := state.NewState("acct", "us-east-1")
+	off := Aggregate(config.Defaults(), st, cost.Global)
+	on := Aggregate(cfg, st, cost.Global)
+	if len(on.Modules) != 1 || on.Modules[0].Name != "ops" {
+		t.Fatalf("ops module missing: %+v", on.Modules)
+	}
+	if on.Total <= off.Total {
+		t.Fatalf("enabled ops should add cost: on=%v off=%v", on.Total, off.Total)
+	}
+}
+
 func TestAggregateUnknownModule(t *testing.T) {
 	cfg := config.Defaults()
 	st := state.NewState("acct", "us-east-1")

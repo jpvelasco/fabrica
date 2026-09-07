@@ -170,6 +170,31 @@ func TestLoadPerforceBackupSchedule(t *testing.T) {
 	}
 }
 
+func TestLoadOpsConfig(t *testing.T) {
+	path := writeConfig(t, `ops:
+  enabled: true
+  modules:
+    - horde
+    - ddc
+  logRetentionDays: 14
+`)
+	cfg := loadConfig(t, path)
+	if !cfg.Ops.Enabled {
+		t.Fatal("ops.enabled = false, want true")
+	}
+	if cfg.Ops.LogRetentionDays != 14 {
+		t.Fatalf("logRetentionDays = %d, want 14", cfg.Ops.LogRetentionDays)
+	}
+	if len(cfg.Ops.Modules) != 2 || cfg.Ops.Modules[0] != "horde" {
+		t.Fatalf("modules = %v", cfg.Ops.Modules)
+	}
+	cl := cfg.Clone()
+	cl.Ops.Modules[0] = "ci"
+	if cfg.Ops.Modules[0] != "horde" {
+		t.Fatal("clone leaked ops.modules mutation")
+	}
+}
+
 func TestLoadPerforceBackupConfig(t *testing.T) {
 	path := writeConfig(t, `perforce:
   version: "2024.2"

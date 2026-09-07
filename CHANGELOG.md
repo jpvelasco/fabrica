@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Optional observability export hooks** — `ops.enabled` plus `ops.modules` / `ops.logRetentionDays` write local dashboard, log-group, and alarm hooks via `fabrica ops export` (no AWS resources). Cost report/forecast/alerts include the standing CloudWatch lines when enabled; budget scope `ops` is accepted. (#379)
 - **Scheduled Perforce backups + DR runbook** — `perforce.backup.schedule` (5-field cron) and `retain` print via `fabrica perforce backup schedule`; `backup verify <id>` documents the restore path. Cost report includes retained-backup storage when a schedule is set. Fabrica does not install cron. (#378)
 - **Studio SSO / IAM Identity Center path** — named AWS profiles (`cloud.aws.profile` or `AWS_PROFILE`) already drive the SDK credential chain, including SSO. Expired or unrefreshable SSO sessions now fail with an `aws sso login` hint on identity resolution, `fabrica doctor`, and AWS config load. Documented in README Getting Started. (#376)
 - **Lore TLS settings now apply on create** — `lore.tls.enabled` plus absolute `certPath`/`keyPath` are validated in the plan, passed into cloud-init, written as `[server] tls_cert`/`tls_key`, and checked on the AMI at boot. Disabled TLS remains the default and emits no TLS block. Certificate provisioning, ACM, mTLS, JWT, and HTTPS health stay out of scope. (#371)
