@@ -54,7 +54,9 @@ Your AMI’s unit should source this file and configure Jupiter accordingly. **N
 | Internal API | Reserved | `internalCidr` |
 | 9042 | Scylla CQL (scylla backend only) | `internalCidr` |
 
-Warn if `allowedCidr` is `0.0.0.0/0` — there is no OIDC.
+When `ddc.oidc.enabled` is true, cloud-init also writes `FABRICA_DDC_OIDC_ENABLED`, `FABRICA_DDC_OIDC_ISSUER`, `FABRICA_DDC_OIDC_CLIENT_ID`, `FABRICA_DDC_OIDC_AUDIENCE`, and `FABRICA_DDC_OIDC_REDIRECT`. The AMI must consume those; Fabrica does not provision the identity provider. Disabled OIDC (default) emits none of those variables, so CIDR/static auth stays unchanged.
+
+Warn if `allowedCidr` is `0.0.0.0/0` without OIDC.
 
 ## References
 

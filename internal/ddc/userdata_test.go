@@ -26,6 +26,26 @@ func TestGenerateRawNoRemotePeers(t *testing.T) {
 	if !strings.Contains(raw, "Single-region V1") {
 		t.Fatalf("missing single-region note")
 	}
+	if strings.Contains(raw, "FABRICA_DDC_OIDC_ENABLED") {
+		t.Fatal("disabled OIDC must not emit OIDC env")
+	}
+}
+
+func TestGenerateRawOIDC(t *testing.T) {
+	raw, err := GenerateRaw(UserDataConfig{
+		Bucket: "b", Region: "us-east-1", Namespace: "ns",
+		PublicPort: 80, InternalPort: 8080, Backend: BackendZen,
+		OIDCEnabled: true, OIDCIssuer: "https://idp.example", OIDCClientID: "ddc",
+		OIDCAudience: "ddc-api", OIDCRedirect: "/oauth/callback",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"FABRICA_DDC_OIDC_ENABLED=true", "https://idp.example", "OIDC_CLIENT_ID=ddc"} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("missing %q in %s", want, raw)
+		}
+	}
 }
 
 func TestGenerateBase64(t *testing.T) {

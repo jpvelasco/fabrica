@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **DDC OIDC config on create** — `ddc.oidc.enabled` plus `issuer`/`clientId` (optional `audience`/`redirectPath`) are validated and written into cloud-init as `FABRICA_DDC_OIDC_*`. Disabled remains the default so CIDR/static auth is unchanged. The AMI must honor the env; Fabrica does not provision an IdP. (#373)
 - **Spot and weekly schedules for agents and workstations** — `horde.agents.spot` / `workstation.spot` plus a `schedule` window (`days`, `start`, `stop`, `timezone`) discount cost report and print via `horde agents schedule` / `workstation schedule`. EventBridge is not installed; destroy/terminate still delete the resources. (#377)
 - **Optional observability export hooks** — `ops.enabled` plus `ops.modules` / `ops.logRetentionDays` write local dashboard, log-group, and alarm hooks via `fabrica ops export` (no AWS resources). Cost report/forecast/alerts include the standing CloudWatch lines when enabled; budget scope `ops` is accepted. (#379)
 - **Scheduled Perforce backups + DR runbook** — `perforce.backup.schedule` (5-field cron) and `retain` print via `fabrica perforce backup schedule`; `backup verify <id>` documents the restore path. Cost report includes retained-backup storage when a schedule is set. Fabrica does not install cron. (#378)
