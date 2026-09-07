@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/ddc"
@@ -40,22 +41,11 @@ Peers are written into fabrica.env when ddc.replication.enabled is true.`,
 				fmt.Fprintf(out, "Datacenter:  %s\n", plan.Datacenter)
 			}
 			if len(plan.Peers) > 0 {
-				fmt.Fprintf(out, "Peers:       %s\n", stringsJoin(plan.Peers))
+				fmt.Fprintf(out, "Peers:       %s\n", strings.Join(plan.Peers, ", "))
 			}
 			fmt.Fprintf(out, "Production:  %v\n", plan.Production)
 			fmt.Fprintln(out, plan.Note)
 			return nil
 		},
 	}
-}
-
-func stringsJoin(in []string) string {
-	out := ""
-	for i, s := range in {
-		if i > 0 {
-			out += ", "
-		}
-		out += s
-	}
-	return out
 }
