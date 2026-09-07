@@ -19,9 +19,8 @@ type command struct {
 	runServer     func(ctx context.Context, server *mcp.Server) error
 }
 
-// New returns the "fabrica mcp" command.
-// optionsSource is accepted for signature consistency with other commands but
-// is not currently wired to any flag.
+// New returns the "fabrica mcp" command. optionsSource is stored on the
+// command and forwarded into NewServer so tools can honor --json/--dry-run.
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource) *cobra.Command {
 	cmd := &command{
 		runtimeSource: runtimeSource,
@@ -40,7 +39,7 @@ func (c *command) cobraCommand() *cobra.Command {
 		Long: `Run the Fabrica MCP (Model Context Protocol) server over stdio transport.
 
 This exposes read-only tools for querying Fabrica state: version, doctor,
-status, drift, cost-report, and config-show.
+status, drift, cost-report, config-show, plus V2 options and cost-forecast.
 
 To connect an MCP client, run this command as a subprocess. The server
 communicates over stdin/stdout using newline-delimited JSON.
@@ -52,18 +51,23 @@ Example:
 			if err != nil {
 				return err
 			}
-			server := NewServer(rt)
+			server := NewServer(rt, c.optionsSource)
 			return c.runServer(cmd.Context(), server)
 		},
 	}
 }
 
 // NewServer creates an MCP server with all Fabrica tools registered.
-func NewServer(rt globals.Runtime) *mcp.Server {
+// optionsSource may be nil (treated as empty Options).
+func NewServer(rt globals.Runtime, optionsSource ...globals.OptionsSource) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "fabrica",
 		Version: fabricav.String(),
 	}, nil)
-	registerTools(s, rt)
+	var src globals.OptionsSource
+	if len(optionsSource) > 0 {
+		src = optionsSource[0]
+	}
+	registerTools(s, rt, src)
 	return s
 }

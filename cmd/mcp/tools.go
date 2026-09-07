@@ -84,7 +84,23 @@ type ConfigShowResult struct {
 	ConfigPath string         `json:"configPath"`
 }
 
-func registerTools(s *mcp.Server, rt globals.Runtime) {
+type OptionsResult struct {
+	JSONOutput bool   `json:"json"`
+	DryRun     bool   `json:"dryRun"`
+	AssumeYes  bool   `json:"assumeYes"`
+	Verbose    bool   `json:"verbose"`
+	Profile    string `json:"profile,omitempty"`
+}
+
+type CostForecastResult struct {
+	Days       int     `json:"days"`
+	Daily      float64 `json:"daily"`
+	Horizon    float64 `json:"horizon"`
+	Annualized float64 `json:"annualized"`
+	Confidence string  `json:"confidence"`
+}
+
+func registerTools(s *mcp.Server, rt globals.Runtime, optionsSource globals.OptionsSource) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "fabrica_version",
 		Description: "Show Fabrica version, commit, Go runtime, and platform",
@@ -114,6 +130,51 @@ func registerTools(s *mcp.Server, rt globals.Runtime) {
 		Name:        "fabrica_config_show",
 		Description: "Show current configuration with sensitive fields redacted",
 	}, handleConfigShow(rt))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "fabrica_options",
+		Description: "Show current CLI options (json, dry-run, yes, verbose, profile)",
+	}, handleOptions(optionsSource))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "fabrica_cost_forecast",
+		Description: "Project current estimated monthly cost over a day horizon (offline)",
+	}, handleCostForecast(rt))
+}
+
+func handleOptions(src globals.OptionsSource) func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, OptionsResult, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, OptionsResult, error) {
+		var opts globals.Options
+		if src != nil {
+			opts = src()
+		}
+		return nil, OptionsResult{
+			JSONOutput: opts.JSONOutput,
+			DryRun:     opts.DryRun,
+			AssumeYes:  opts.AssumeYes,
+			Verbose:    opts.Verbose,
+			Profile:    opts.Profile,
+		}, nil
+	}
+}
+
+func handleCostForecast(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, CostForecastResult, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, CostForecastResult, error) {
+		st, err := fabricastate.ReadStateOrNew(rt.Config.Cloud.AWS.AccountID, rt.Config.Cloud.AWS.Region)
+		if err != nil {
+			return nil, CostForecastResult{}, fmt.Errorf("reading state: %w", err)
+		}
+		b := costsource.Aggregate(rt.Config, st, cost.Global)
+		days := 30
+		daily := b.Total / 30
+		return nil, CostForecastResult{
+			Days:       days,
+			Daily:      daily,
+			Horizon:    daily * float64(days),
+			Annualized: b.Total * 12,
+			Confidence: b.Confidence.String(),
+		}, nil
+	}
 }
 
 func handleVersion(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, VersionResult, error) {
