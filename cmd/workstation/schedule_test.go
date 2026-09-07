@@ -2,6 +2,7 @@ package workstation
 
 import (
 	"bytes"
+	"os"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -21,4 +22,14 @@ func TestWorkstationScheduleCobra(t *testing.T) {
 		t.Fatalf("schedule: %v", err)
 	}
 	testutil.AssertContains(t, got, "Schedule:")
+}
+
+func TestWorkstationScheduleCobraRuntimeError(t *testing.T) {
+	src := func() (globals.Runtime, error) { return globals.Runtime{}, os.ErrNotExist }
+	var out bytes.Buffer
+	root, optionsSource := testutil.BuildTestSubcommand(&out)
+	root.AddCommand(New(src, optionsSource, &out))
+	if _, err := testutil.RunCommandWithOut(t, root, &out, "workstation", "schedule"); err == nil {
+		t.Fatal("expected runtime error")
+	}
 }

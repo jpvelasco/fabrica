@@ -34,6 +34,37 @@ func TestBuildPlanSpotAndWindow(t *testing.T) {
 	}
 }
 
+func TestBuildPlanDefaultsAndDayAliases(t *testing.T) {
+	p, err := BuildPlan(false, config.CapacitySchedule{Enabled: true}, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Timezone != DefaultTimezone || p.Days != DefaultDays || p.Start != DefaultStart || p.Stop != DefaultStop {
+		t.Fatalf("defaults = %+v", p)
+	}
+	for _, days := range []string{"weekdays", "Mon-Sun", "daily", "weekend", "Sat-Sun"} {
+		if _, err := BuildPlan(false, config.CapacitySchedule{Enabled: true, Days: days, Start: "08:00", Stop: "09:00"}, "", ""); err != nil {
+			t.Fatalf("days %q: %v", days, err)
+		}
+	}
+	if _, err := BuildPlan(false, config.CapacitySchedule{Enabled: true, Start: "nope", Stop: "20:00"}, "", ""); err == nil {
+		t.Fatal("expected start parse error")
+	}
+	if _, err := BuildPlan(false, config.CapacitySchedule{Enabled: true, Start: "08:00", Stop: "nope"}, "", ""); err == nil {
+		t.Fatal("expected stop parse error")
+	}
+}
+
+func TestEncodeFactorZero(t *testing.T) {
+	if EncodeFactor("x", 0) != "x" {
+		t.Fatal("zero factor should not encode")
+	}
+	base, f := DecodeFactor("broken *nope")
+	if base != "broken *nope" || f != 1 {
+		t.Fatalf("bad suffix decode = %s %v", base, f)
+	}
+}
+
 func TestBuildPlanErrors(t *testing.T) {
 	if _, err := BuildPlan(false, config.CapacitySchedule{Enabled: true, Timezone: "Not/AZone"}, "", ""); err == nil {
 		t.Fatal("expected timezone error")
