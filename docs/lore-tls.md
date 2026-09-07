@@ -26,6 +26,7 @@ When `tls.enabled` is `false` (default), no TLS block is written and loreserver 
 - Bake the certificate and key into the AMI at the configured paths. Fabrica does not generate, push, or rotate them.
 - Clients must trust the AMI cert (or use the client's skip-verify option for lab use).
 - Restrict `lore.allowedCidr`. TLS is defense in depth, not a substitute for the security group.
+- Local-store create attaches a slim SSM instance profile so operators can reach the instance in-band. S3-store still uses the fuller store+SSM role. Create does not require SSM endpoints to succeed.
 
 ## Still deferred
 

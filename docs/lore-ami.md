@@ -29,8 +29,8 @@ contract is intentionally independent of Image Builder and Packer.
 | Health | `GET http://127.0.0.1:41339/health_check` must succeed after boot. `fabrica lore status` probes the same path over the private address. |
 | Stores | Existing cloud-init supplies either the local/EBS or S3 store configuration. Both must be verified for a known-good AMI. |
 | TLS | Optional. When `lore.tls.enabled` is true, bake `certPath` and `keyPath` onto the AMI; cloud-init verifies those files exist and writes them into `local.toml`. |
-| Management | The base AMI must include and enable the Amazon SSM Agent. Fabrica attaches the SSM instance role for the S3-store deployment only. |
-| SSM output | The S3-store instance role carries a least-privilege `fabrica-ssm-output` policy so SSM command output can be published to the `MDS-*` parameter and the `/fabrica/ssm/*` CloudWatch Logs log group (retrieval sink for this account's narrowed `AmazonSSMManagedInstanceCore`). Send commands with `CloudWatchOutputConfig` to read output back. |
+| Management | The base AMI must include and enable the Amazon SSM Agent. Fabrica attaches an SSM instance profile on every create: slim (SSM core + output sink, no store-bucket access) for `storeBackend: local`, plus store S3/DynamoDB permissions when `storeBackend: s3`. |
+| SSM output | The instance role always carries a least-privilege `fabrica-ssm-output` policy so SSM command output can be published to the `MDS-*` parameter and the `/fabrica/ssm/*` CloudWatch Logs log group (retrieval sink for this account's narrowed `AmazonSSMManagedInstanceCore`). Send commands with `CloudWatchOutputConfig` to read output back. |
 | Secrets | Do not bake credentials, API tokens, generated Lore config, store data, or studio content into the image. |
 
 The current contract does not pin a Lore or Unreal Engine release because the
