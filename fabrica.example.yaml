@@ -81,6 +81,13 @@ horde: {}
 #   namespace: deriveddatacache
 #   vpcId: ""
 #   subnetId: ""
+#   scylla:
+#     nodes: 1                     # 1 = bootstrap; >=3 documents production RF=3 cost
+#     replication: 0               # default 1 (bootstrap) or 3 when nodes>=3
+#     datacenter: ""
+#   replication:
+#     enabled: false
+#     peers: []                    # written into fabrica.env; not provisioned
 #   oidc:
 #     enabled: false
 #     issuer: ""

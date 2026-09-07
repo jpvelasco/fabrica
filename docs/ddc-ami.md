@@ -27,7 +27,8 @@ When `ddc.backend: scylla` (or `--backend scylla`):
 
 - **Separate AMI** via `ddc.scyllaAmiId` for a **single-node** Scylla bootstrap host
 - Unit name `scylla-server`
-- **Not production HA** — no RF=3, no multi-DC. Prefer `zen` unless you explicitly need Scylla and accept the limitations.
+- **Production overlay:** `ddc.scylla.nodes>=3` documents RF=3 cost and `fabrica ddc topology` prints the plan. V1 still provisions one Scylla host; extra nodes stay operator-built.
+- Set `ddc.replication.enabled` and `peers` to write `FABRICA_DDC_REPLICATION_PEERS` into `fabrica.env`. Fabrica does not open inter-region sockets.
 
 ## Cloud-init contract
 

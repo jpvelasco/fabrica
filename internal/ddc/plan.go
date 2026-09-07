@@ -153,6 +153,9 @@ func validateConfig(cfg config.DDCConfig) error {
 			"Scylla backend in V1 is a single-node bootstrap path only — not production HA.\n" +
 			"Prefer backend: zen unless you explicitly need Scylla and accept the limitations.\nSee: docs/ddc-ami.md")
 	}
+	if err := ValidateProductionTopology(cfg); err != nil {
+		return err
+	}
 	return validateOIDC(cfg.OIDC)
 }
 
