@@ -1,6 +1,6 @@
 # Unreal Cloud DDC AMI requirements
 
-`fabrica ddc setup` is **AMI-first**. The AMI must already contain Unreal Cloud DDC (Jupiter) and (for `backend: scylla`) a Scylla Open Source install. Fabrica only mounts the hot EBS volume, writes config env under `/etc/unreal-cloud-ddc/fabrica.env`, and starts the service unit.
+`fabrica ddc setup` is **AMI-first**. Generate a bake guide with `fabrica ddc ami build` (local files only). The AMI must already contain Unreal Cloud DDC (Jupiter) and (for `backend: scylla`) a Scylla Open Source install. Fabrica only mounts the hot EBS volume, writes config env under `/etc/unreal-cloud-ddc/fabrica.env`, and starts the service unit.
 
 **Multi-region edges:** `fabrica ddc region add REGION` provisions an edge node from the **same** AMI shape, but AMIs are region-specific — the image used in the home region does not exist in the edge region. Copy it first:
 

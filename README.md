@@ -46,7 +46,7 @@ affected.
 | `perforce` | `create`, `status`, `destroy`, `backup`, `restore` | Complete |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build`, `agents schedule` | Complete |
 | `lore` | `create`, `status`, `destroy` | Complete |
-| `ddc` | `setup`, `status`, `destroy`, `region add` | Complete (V1, home + edge regions) |
+| `ddc` | `setup`, `status`, `destroy`, `region add`, `ami build` | Complete (V1, home + edge regions) |
 | `workstation` | `create`, `list`, `stop`, `start`, `schedule`, `terminate` | Complete |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | Complete |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | Complete |
@@ -321,6 +321,10 @@ Reads live state and probes `GET /health_check` on port 41339. Transitions `prov
 #### `fabrica lore destroy`
 
 Terminates the EC2 instance and deletes the security group in reverse order. With `storeBackend: s3` the S3 store resources are torn down too: instance profile, IAM role, the four DynamoDB store tables, then the purged bucket. Idempotent. Typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview.
+
+#### `fabrica ddc ami build`
+
+Generates a local `build-guide.md` for baking an Unreal Cloud DDC AMI (Jupiter unit, health endpoints, `fabrica.env`). No AWS calls. Record the AMI as `ddc.amiId` and copy it for edge regions. Flags: `--base-image`, `--region`, `--output-dir`, `--backend zen|scylla`.
 
 #### `fabrica lore ami build`
 

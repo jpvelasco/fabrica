@@ -268,7 +268,7 @@ git config core.hooksPath .githooks
 - **Hybrid storage** — EBS for local/hot storage plus S3 bucket for cold tier.
 - **Endpoints file** — `setup` writes `.fabrica/ddc-endpoints.yaml` instead of a credentials file.
 - **Probe** — `GET /health/ready` on the public port; `status` live-probes edge regions (region-scoped Cloud Control + health requests) with the command context threaded through, so Ctrl+C stops in-flight probes.
-- **Deferred (Phase 2+)** — replication peers, HTTPS health, `ddc ami build`, production (HA) Scylla. OIDC config + cloud-init env shipped in V1.
+- **Deferred (Phase 2+)** — replication peers, HTTPS health, production (HA) Scylla. OIDC config + cloud-init env shipped in V1. `ddc ami build` writes local Image Builder artifacts.
 
 ### CI
 - **Orchestration layer over Horde** — `ci` does not replace Horde; CodeBuild is the conductor, Horde stays the BuildGraph executor.
