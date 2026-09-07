@@ -34,6 +34,35 @@ func newTestRuntime() globals.Runtime {
 
 // — Tool registration —
 
+func TestHandleOptionsHonorsSource(t *testing.T) {
+	h := handleOptions(func() globals.Options {
+		return globals.Options{JSONOutput: true, DryRun: true, Profile: "lab"}
+	})
+	_, got, err := h(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.JSONOutput || !got.DryRun || got.Profile != "lab" {
+		t.Fatalf("options = %+v", got)
+	}
+	_, empty, err := handleOptions(nil)(context.Background(), nil, nil)
+	if err != nil || empty.JSONOutput {
+		t.Fatalf("nil source = %+v %v", empty, err)
+	}
+}
+
+func TestHandleCostForecast(t *testing.T) {
+	t.Chdir(t.TempDir())
+	h := handleCostForecast(newTestRuntime())
+	_, got, err := h(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Days != 30 || got.Confidence == "" {
+		t.Fatalf("forecast = %+v", got)
+	}
+}
+
 func TestNew_Command(t *testing.T) {
 	cmd := New(func() (globals.Runtime, error) {
 		return newTestRuntime(), nil
@@ -350,7 +379,7 @@ func TestHandleConfigShow_BadYAML(t *testing.T) {
 func TestRegisterTools_CreatesAllTools(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
 	rt := newTestRuntime()
-	registerTools(s, rt)
+	registerTools(s, rt, nil)
 
 	expectedTools := []string{
 		"fabrica_version",
@@ -359,6 +388,8 @@ func TestRegisterTools_CreatesAllTools(t *testing.T) {
 		"fabrica_drift",
 		"fabrica_cost_report",
 		"fabrica_config_show",
+		"fabrica_options",
+		"fabrica_cost_forecast",
 	}
 
 	// Verify tools were registered by checking they can be removed (unregistered tools would panic).
@@ -372,11 +403,11 @@ func TestRegisterTools_CreatesAllTools(t *testing.T) {
 func TestRegisterTools_Descriptions(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
 	rt := newTestRuntime()
-	registerTools(s, rt)
+	registerTools(s, rt, nil)
 
 	// If registration fails, the server will reject tool calls. We verify
 	// by attempting to remove each tool — this confirms they were registered.
-	tools := []string{"fabrica_version", "fabrica_doctor", "fabrica_status", "fabrica_drift", "fabrica_cost_report", "fabrica_config_show"}
+	tools := []string{"fabrica_version", "fabrica_doctor", "fabrica_status", "fabrica_drift", "fabrica_cost_report", "fabrica_config_show", "fabrica_options", "fabrica_cost_forecast"}
 	for _, name := range tools {
 		s.RemoveTools(name)
 	}

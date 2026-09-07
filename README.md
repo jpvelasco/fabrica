@@ -199,7 +199,7 @@ Displays the current configuration as clean YAML, including resolved resource na
 
 #### `fabrica mcp`
 
-Runs the Fabrica MCP (Model Context Protocol) server over stdio transport. Exposes 6 read-only tools for querying Fabrica state: `fabrica_version`, `fabrica_doctor`, `fabrica_status`, `fabrica_drift`, `fabrica_cost_report`, and `fabrica_config_show`. Reuses the same business logic as the CLI — no duplicated AWS paths. Connect an MCP client (Claude, editors, agents) by running this command as a subprocess.
+Runs the Fabrica MCP (Model Context Protocol) server over stdio transport. Exposes read-only tools: `fabrica_version`, `fabrica_doctor`, `fabrica_status`, `fabrica_drift`, `fabrica_cost_report`, `fabrica_config_show`, plus V2 `fabrica_options` (wired `optionsSource`) and `fabrica_cost_forecast`. Reuses the same business logic as the CLI — no duplicated AWS paths. Redaction on `config_show` is unchanged. Connect an MCP client by running this command as a subprocess.
 
 ### Perforce
 
