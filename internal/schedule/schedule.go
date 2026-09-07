@@ -48,7 +48,7 @@ func BuildPlan(spot bool, cfg config.CapacitySchedule, startHint, stopHint strin
 		StartHint:   startHint,
 		StopHint:    stopHint,
 		DestroyNote: "Destroy still tears the resources down regardless of schedule or Spot.",
-		Note:        "Fabrica does not install EventBridge. Wire the start/stop hints to your scheduler.",
+		Note:        "Fabrica does not install EventBridge and does not request Spot capacity — spot: true only adjusts the estimate. Wire the start/stop hints and Spot request to your own tooling.",
 	}
 	if spot {
 		p.SpotFactor = SpotDiscount
@@ -94,6 +94,7 @@ func BuildPlan(spot bool, cfg config.CapacitySchedule, startHint, stopHint strin
 }
 
 // CostFactor is the combined Spot × duty-cycle multiplier (1 when unused).
+// factorSep separates a resource name from its encoded cost multiplier.
 const factorSep = " *"
 
 // EncodeFactor appends a cost multiplier to a resource name when factor < 1.
@@ -117,12 +118,14 @@ func DecodeFactor(name string) (string, float64) {
 	return name[:i], f
 }
 
-func CostFactor(spot bool, cfg config.CapacitySchedule) float64 {
+// CostFactor is the combined Spot × duty-cycle multiplier (1 when unused).
+// An invalid schedule returns 1 and an error so cost callers can surface it.
+func CostFactor(spot bool, cfg config.CapacitySchedule) (float64, error) {
 	p, err := BuildPlan(spot, cfg, "", "")
 	if err != nil {
-		return 1
+		return 1, fmt.Errorf("invalid capacity schedule (cost estimate not discounted): %w", err)
 	}
-	return p.CostFactor
+	return p.CostFactor, nil
 }
 
 func weeklyOnHours(days, start, stop string) (float64, error) {

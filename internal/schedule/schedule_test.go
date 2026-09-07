@@ -92,13 +92,16 @@ func TestEncodeDecodeFactor(t *testing.T) {
 }
 
 func TestCostFactor(t *testing.T) {
-	if CostFactor(false, config.CapacitySchedule{}) != 1 {
-		t.Fatal("unused factor")
+	got, err := CostFactor(false, config.CapacitySchedule{})
+	if err != nil || got != 1 {
+		t.Fatalf("unused factor = %v %v", got, err)
 	}
-	if CostFactor(true, config.CapacitySchedule{}) != SpotDiscount {
-		t.Fatal("spot-only factor")
+	got, err = CostFactor(true, config.CapacitySchedule{})
+	if err != nil || got != SpotDiscount {
+		t.Fatalf("spot-only factor = %v %v", got, err)
 	}
-	if CostFactor(true, config.CapacitySchedule{Enabled: true, Timezone: "Not/AZone"}) != 1 {
-		t.Fatal("invalid schedule should not discount")
+	got, err = CostFactor(true, config.CapacitySchedule{Enabled: true, Timezone: "Not/AZone"})
+	if err == nil || got != 1 {
+		t.Fatalf("invalid schedule = %v %v", got, err)
 	}
 }

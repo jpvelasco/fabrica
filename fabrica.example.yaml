@@ -40,7 +40,7 @@ perforce: {}
 #   volumeSize: 100
 #   allowedCidr: 172.31.0.0/16    # set to your VPC CIDR
 #   agents:
-#     spot: false                 # cheaper capacity; destroy still deletes the pool
+#     spot: false                 # estimate-only discount; Fabrica does not request Spot capacity
 #     schedule:
 #       enabled: false
 #       timezone: UTC
@@ -83,7 +83,7 @@ horde: {}
 #   subnetId: ""
 
 # workstation:
-#   spot: false                 # cheaper capacity; terminate still deletes the instance
+#   spot: false                 # estimate-only discount; Fabrica does not request Spot capacity
 #   schedule:
 #     enabled: false
 #     timezone: UTC

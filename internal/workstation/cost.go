@@ -12,7 +12,8 @@ import (
 // The cost path uses config + defaults; template overrides only apply at create time.
 func CostResources(cfg config.WorkstationConfig) []cost.Resource {
 	instanceType, volumeSize := resolveSizing(cfg, "")
-	return applyCapacity(CostResourcesFor(instanceType, volumeSize), schedule.CostFactor(cfg.Spot, cfg.Schedule))
+	factor, _ := schedule.CostFactor(cfg.Spot, cfg.Schedule)
+	return applyCapacity(CostResourcesFor(instanceType, volumeSize), factor)
 }
 
 func applyCapacity(res []cost.Resource, factor float64) []cost.Resource {
