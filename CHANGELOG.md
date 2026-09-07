@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Horde agent queue metrics** — `fabrica horde agents metrics` prints the CloudWatch metric name/namespace agents must publish for queue scaling. Fabrica still does not scrape Horde. (#383)
 - **Multi-account / multi-region state layout** — documented lock boundary: one state file + lock table per AWS account; `--profile` / `cloud.aws.profile` selects another account. DDC edges reuse the home-account lock. (#382)
 - **DDC AMI build command** — `fabrica ddc ami build` writes a local Image Builder / bake guide for Jupiter (zen or scylla). No AWS calls; record the AMI as `ddc.amiId`. (#375)
 - **MCP V2 options + cost forecast** — `optionsSource` is forwarded into the MCP server; `fabrica_options` reports json/dry-run/yes/verbose/profile, and `fabrica_cost_forecast` projects the offline monthly total. Config redaction is unchanged. (#380)

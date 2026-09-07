@@ -28,11 +28,13 @@ Available operations:
   create    Provision an agent pool (ASG + Launch Template)
   status    Show agent pool capacity and coordinator endpoint
   schedule  Show Spot / weekly on-off window
-  destroy   Permanently delete the agent pool and its AWS resources`,
+  destroy   Permanently delete the agent pool and its AWS resources
+  metrics   Show queue-depth metric names for alerts and scaling`,
 	}
 	cmd.AddCommand(create.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(status.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(newSchedule(runtimeSource, optionsSource, out))
+	cmd.AddCommand(newMetrics(runtimeSource, optionsSource, out))
 	cmd.AddCommand(destroy.New(runtimeSource, optionsSource, out))
 	return cmd
 }
