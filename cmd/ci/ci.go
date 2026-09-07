@@ -26,8 +26,8 @@ Available operations:
   setup    Provision the CI infrastructure (CodeBuild project + IAM role)
   trigger  Trigger a build run (submits a BuildGraph job to Horde)
   status   Show CI infrastructure and recent build status
-  logs      Fetch logs for a specific build
-  pipeline  Show the optional CodePipeline overlay`,
+  logs     Fetch logs for a specific build
+  pipeline Show the optional CodePipeline overlay`,
 	}
 	cmd.AddCommand(setup.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(trigger.New(runtimeSource, optionsSource, out))

@@ -28,7 +28,7 @@ func TestCISubcommandsRegistered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ci --help: %v", err)
 	}
-	for _, sub := range []string{"setup", "trigger", "status", "logs"} {
+	for _, sub := range []string{"setup", "trigger", "status", "logs", "destroy", "pipeline"} {
 		if !strings.Contains(got, sub) {
 			t.Errorf("ci --help missing subcommand %q:\n%s", sub, got)
 		}
