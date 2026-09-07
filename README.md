@@ -302,6 +302,10 @@ Shows agent pool status: ASG capacity (min/desired/max), launch template, instan
 
 Prints `horde.agents.spot` and the weekly on/off window (`horde.agents.schedule`). Cost report applies a conservative Spot discount and duty-cycle factor. Fabrica does not install EventBridge.
 
+#### `fabrica horde agents metrics`
+
+Prints the CloudWatch metric name/namespace agents must publish for queue-based autoscaling (default `ASGQueueDepth` in `Fabrica/HordeAgents`). Fabrica does not scrape Horde.
+
 #### `fabrica horde agents destroy`
 
 Permanently deletes the agent pool and its AWS resources (ASG, launch template, IAM role/profile, security group) in reverse-creation order. The Horde coordinator is not affected. Typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview.
