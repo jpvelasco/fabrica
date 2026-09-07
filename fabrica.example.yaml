@@ -81,6 +81,12 @@ horde: {}
 #   namespace: deriveddatacache
 #   vpcId: ""
 #   subnetId: ""
+#   oidc:
+#     enabled: false
+#     issuer: ""
+#     clientId: ""
+#     audience: ""
+#     redirectPath: ""
 
 # workstation:
 #   spot: false                 # estimate-only discount; Fabrica does not request Spot capacity

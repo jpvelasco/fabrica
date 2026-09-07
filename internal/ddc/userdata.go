@@ -20,6 +20,11 @@ type UserDataConfig struct {
 	// V1 cloud-init uses localhost discovery if empty and backend is scylla on co-located path;
 	// when Scylla is a separate instance, setup injects a note for operator restart after status.
 	ScyllaContact string
+	OIDCEnabled   bool
+	OIDCIssuer    string
+	OIDCClientID  string
+	OIDCAudience  string
+	OIDCRedirect  string
 }
 
 var userDataRenderer = userdata.New(template.Must(template.New("ddc-userdata").Option("missingkey=error").Parse(`#!/bin/bash
@@ -34,6 +39,10 @@ PUBLIC_PORT="{{ .PublicPort }}"
 INTERNAL_PORT="{{ .InternalPort }}"
 BACKEND="{{ .Backend }}"
 SCYLLA_CONTACT="{{ .ScyllaContact }}"
+OIDC_ISSUER="{{ .OIDCIssuer }}"
+OIDC_CLIENT_ID="{{ .OIDCClientID }}"
+OIDC_AUDIENCE="{{ .OIDCAudience }}"
+OIDC_REDIRECT="{{ .OIDCRedirect }}"
 
 resolve_data_dev() {
   if [ -b /dev/sdf ]; then echo /dev/sdf; return 0; fi
@@ -82,7 +91,12 @@ FABRICA_DDC_INTERNAL_PORT=$INTERNAL_PORT
 FABRICA_DDC_BACKEND=$BACKEND
 FABRICA_DDC_STORE=$STORE
 FABRICA_DDC_SCYLLA_CONTACT=$SCYLLA_CONTACT
-EOF
+{{ if .OIDCEnabled }}FABRICA_DDC_OIDC_ENABLED=true
+FABRICA_DDC_OIDC_ISSUER=$OIDC_ISSUER
+FABRICA_DDC_OIDC_CLIENT_ID=$OIDC_CLIENT_ID
+FABRICA_DDC_OIDC_AUDIENCE=$OIDC_AUDIENCE
+FABRICA_DDC_OIDC_REDIRECT=$OIDC_REDIRECT
+{{ end }}EOF
 
 # Single-region V1: no remote replication peer list.
 systemctl enable unreal-cloud-ddc 2>/dev/null || true

@@ -153,6 +153,19 @@ func validateConfig(cfg config.DDCConfig) error {
 			"Scylla backend in V1 is a single-node bootstrap path only — not production HA.\n" +
 			"Prefer backend: zen unless you explicitly need Scylla and accept the limitations.\nSee: docs/ddc-ami.md")
 	}
+	return validateOIDC(cfg.OIDC)
+}
+
+func validateOIDC(oidc config.DDCOIDCConfig) error {
+	if !oidc.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(oidc.Issuer) == "" {
+		return fmt.Errorf("ddc.oidc.issuer is required when ddc.oidc.enabled is true")
+	}
+	if strings.TrimSpace(oidc.ClientID) == "" {
+		return fmt.Errorf("ddc.oidc.clientId is required when ddc.oidc.enabled is true")
+	}
 	return nil
 }
 

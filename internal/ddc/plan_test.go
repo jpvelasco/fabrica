@@ -72,6 +72,36 @@ func TestNewSetupPlanScyllaOK(t *testing.T) {
 	}
 }
 
+func TestNewSetupPlanOIDCRequiresIssuer(t *testing.T) {
+	_, err := NewSetupPlan(context.Background(), config.DDCConfig{
+		AmiID: "ami-ddc", VPCId: "vpc-1", SubnetId: "subnet-1",
+		OIDC: config.DDCOIDCConfig{Enabled: true, ClientID: "ddc"},
+	}, "1", "us-east-1", nil)
+	if err == nil || !strings.Contains(err.Error(), "issuer") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestNewSetupPlanOIDCRequiresClientID(t *testing.T) {
+	_, err := NewSetupPlan(context.Background(), config.DDCConfig{
+		AmiID: "ami-ddc", VPCId: "vpc-1", SubnetId: "subnet-1",
+		OIDC: config.DDCOIDCConfig{Enabled: true, Issuer: "https://idp.example"},
+	}, "1", "us-east-1", nil)
+	if err == nil || !strings.Contains(err.Error(), "clientId") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestNewSetupPlanOIDCOK(t *testing.T) {
+	_, err := NewSetupPlan(context.Background(), config.DDCConfig{
+		AmiID: "ami-ddc", VPCId: "vpc-1", SubnetId: "subnet-1",
+		OIDC: config.DDCOIDCConfig{Enabled: true, Issuer: "https://idp.example", ClientID: "ddc"},
+	}, "1", "us-east-1", nil)
+	if err != nil {
+		t.Fatalf("oidc ok: %v", err)
+	}
+}
+
 func TestNewSetupPlanBadBackend(t *testing.T) {
 	_, err := NewSetupPlan(context.Background(), config.DDCConfig{
 		AmiID: "ami-x", Backend: "mongo", VPCId: "v", SubnetId: "s",

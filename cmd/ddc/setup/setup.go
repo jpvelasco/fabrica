@@ -186,7 +186,12 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, plan *ddc.Se
 	ud, err := ddc.Generate(ddc.UserDataConfig{
 		StorePath: ddc.DefaultStorePath, Bucket: plan.Bucket, Region: plan.Region,
 		Namespace: plan.Namespace, PublicPort: plan.PublicPort, InternalPort: plan.InternalPort,
-		Backend: plan.Backend,
+		Backend:      plan.Backend,
+		OIDCEnabled:  c.runtime.Config.DDC.OIDC.Enabled,
+		OIDCIssuer:   c.runtime.Config.DDC.OIDC.Issuer,
+		OIDCClientID: c.runtime.Config.DDC.OIDC.ClientID,
+		OIDCAudience: c.runtime.Config.DDC.OIDC.Audience,
+		OIDCRedirect: c.runtime.Config.DDC.OIDC.RedirectPath,
 	})
 	if err != nil {
 		return fmt.Errorf("generating ddc user data: %w", err)
