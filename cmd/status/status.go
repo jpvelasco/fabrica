@@ -39,6 +39,10 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Long: `Show an aggregate, read-only overview of every provisioned Fabrica module
 (Perforce, Horde, Workstation) plus the state backend.
 
+State is one account + region per file. Target another account with
+--profile / cloud.aws.profile (fabrica-<profile>.yaml). DDC edges reuse
+the home-account lock; they do not get a second state file.
+
 Reads the local state cache (.fabrica/state.json) and queries EC2 instance
 state via Cloud Control. This command never modifies state.
 
