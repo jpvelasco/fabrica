@@ -582,6 +582,9 @@ func TestPrintDryRun_WithScaling(t *testing.T) {
 	if !strings.Contains(got, "Scale-in Alarm") {
 		t.Error("dry run output should list 'Scale-in Alarm'")
 	}
+	if !strings.Contains(got, horde.ScalingPublisherNote) {
+		t.Error("dry run output should include the scaling publisher standing line")
+	}
 }
 
 func TestPrintDryRun_WithoutScaling(t *testing.T) {
@@ -613,6 +616,9 @@ func TestPrintDryRun_WithoutScaling(t *testing.T) {
 	}
 	if strings.Contains(got, "Scale-out Policy") {
 		t.Error("dry run output should not list scaling policy when disabled")
+	}
+	if strings.Contains(got, horde.ScalingPublisherNote) {
+		t.Error("dry run output should not include the scaling publisher note when disabled")
 	}
 }
 
@@ -685,8 +691,8 @@ func TestPrintPostCreate_WithScaling(t *testing.T) {
 	c.printPostCreate(plan, "asg-created")
 
 	got := out.String()
-	if !strings.Contains(got, "Queue scaling") {
-		t.Error("post create should mention queue scaling when enabled")
+	if !strings.Contains(got, horde.ScalingPublisherNote) {
+		t.Error("post create should include the scaling publisher standing line")
 	}
 	if !strings.Contains(got, "ASGQueueDepth") {
 		t.Error("post create should mention metric name")

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -235,6 +236,7 @@ func TestRunInstanceFailureLeavesStateIntact(t *testing.T) {
 		t.Fatal("expected error on instance delete failure")
 	}
 	assert.Contains(t, err.Error(), "deleting AWS::EC2::Instance")
+	assert.Contains(t, out.String(), HintPartial)
 	if m := st.GetModule("perforce"); m == nil {
 		t.Error("module must remain in state after failed delete")
 	}
@@ -259,6 +261,7 @@ func TestRunSGFailureAfterInstanceSuccess(t *testing.T) {
 		t.Fatal("expected error on SG delete failure")
 	}
 	assert.Contains(t, err.Error(), "deleting AWS::EC2::SecurityGroup")
+	assert.Contains(t, out.String(), HintPartial)
 
 	if lastState == nil {
 		t.Fatal("state was never written")
@@ -427,6 +430,71 @@ func TestRunJSONDryRun(t *testing.T) {
 	}
 	if len(result.Destroyed) != 2 {
 		t.Errorf("expected 2 resources in dry-run output, got %d: %v", len(result.Destroyed), result.Destroyed)
+	}
+}
+
+func TestRunEmptyBucketFailurePrintsEmptyBucketHint(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("perforce", "2024.2", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::S3::Bucket", Identifier: "lore-store"},
+	})
+	c := newTestCommand(&out, st, map[string]error{
+		"AWS::S3::Bucket": cloud.ErrStateBucketNotEmpty,
+	})
+	c.AssumeYes = true
+	c.Spec.ResourceOrder = func(m *fabricastate.ModuleState) []cloud.Resource {
+		return []cloud.Resource{{TypeName: m.Resources[0].TypeName, Identifier: m.Resources[0].Identifier}}
+	}
+
+	err := c.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error on non-empty bucket delete")
+	}
+	assert.Contains(t, out.String(), HintEmptyBucket)
+	if strings.Contains(out.String(), HintPartial) {
+		t.Fatalf("empty-bucket failure must not also print generic leftover hint:\n%s", out.String())
+	}
+}
+
+func TestRunJSONFailureOmitsLeftoverHint(t *testing.T) {
+	var out bytes.Buffer
+	st := moduleState("provisioning", true)
+	c := newTestCommand(&out, st, map[string]error{
+		"AWS::EC2::Instance": errors.New("instance termination failed"),
+	})
+	c.AssumeYes = true
+	c.JSONOut = true
+
+	err := c.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error on instance delete failure")
+	}
+	got := out.String()
+	if strings.Contains(got, HintPartial) || strings.Contains(got, "fabrica drift") {
+		t.Fatalf("JSON path must not print leftover hint:\n%s", got)
+	}
+}
+
+func TestLeftoverHint(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "nil is generic", err: nil, want: HintPartial},
+		{name: "generic delete", err: errors.New("instance termination failed"), want: HintPartial},
+		{name: "sentinel empty bucket", err: cloud.ErrStateBucketNotEmpty, want: HintEmptyBucket},
+		{name: "wrapped sentinel", err: fmt.Errorf("deleting state bucket: %w", cloud.ErrStateBucketNotEmpty), want: HintEmptyBucket},
+		{name: "message not empty", err: errors.New("bucket not empty"), want: HintEmptyBucket},
+		{name: "s3 type in message", err: errors.New("deleting AWS::S3::Bucket lore-store: AccessDenied"), want: HintEmptyBucket},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := LeftoverHint(tc.err); got != tc.want {
+				t.Fatalf("LeftoverHint(%v) = %q, want %q", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 

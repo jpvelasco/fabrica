@@ -11,6 +11,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/horde"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
 	"github.com/spf13/cobra"
@@ -258,8 +259,7 @@ func (c *command) printText(o StatusOutput) {
 			fmt.Fprintf(c.out, "    Scale-in alarm:   %s\n", o.ScaleInAlarmID)
 		}
 		fmt.Fprintln(c.out)
-		fmt.Fprintln(c.out, "    Note: Queue scaling requires an external metric publisher.")
-		fmt.Fprintf(c.out, "          Ensure agents publish the %s metric to CloudWatch.\n", o.MetricName)
+		fmt.Fprintln(c.out, "    Note: "+horde.ScalingPublisherNote)
 	}
 }
 

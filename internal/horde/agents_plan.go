@@ -12,6 +12,11 @@ import (
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
 
+// ScalingPublisherNote is the standing operator warning for queue autoscaling.
+// Alarms and policies are provisioned against an external CloudWatch metric;
+// Fabrica does not scrape Horde. Printed by agents create, status, and metrics.
+const ScalingPublisherNote = "Alarms are ready only after agents (or operator tooling) publish the configured metric. Fabrica does not scrape Horde."
+
 // AgentsCreatePlan describes the resources needed to provision a Horde agent
 // Auto Scaling Group. It is built from config + the existing coordinator state
 // (coordinator private IP for agent enrollment).

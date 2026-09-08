@@ -90,8 +90,8 @@ Creates five resources in order:
 
 With --scaling-enabled, provisions two CloudWatch alarms and two
 SimpleScaling policies (one for scale-out, one for scale-in) for
-queue-based autoscaling. The metric (default: ASGQueueDepth
-in namespace Fabrica/HordeAgents) must be published by the agent or a sidecar.
+queue-based autoscaling (default metric: ASGQueueDepth in
+Fabrica/HordeAgents). ` + horde.ScalingPublisherNote + `
 Min/Max capacity act as hard bounds on scaling. See docs/horde-scaling.md.
 
 Prerequisites:
@@ -556,14 +556,21 @@ func (c command) printDryRun(plan *horde.AgentsCreatePlan) {
 		)
 	}
 
-	provision.DryRun(c.out, provision.DryRunSpec{
+	spec := provision.DryRunSpec{
 		Title:         "Horde build agent pool",
 		Info:          provision.PlanInfo{},
 		ExtraFields:   extraFields,
 		Resources:     resources,
 		CostResources: plan.CostResources,
 		Costs:         c.costs,
-	})
+	}
+	if plan.ScalingEnabled {
+		spec.RawBetween = func(w io.Writer) {
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "  "+horde.ScalingPublisherNote)
+		}
+	}
+	provision.DryRun(c.out, spec)
 }
 
 func (c command) printApplyPlan(plan *horde.AgentsCreatePlan) {
@@ -616,8 +623,7 @@ func (c command) printPostCreate(plan *horde.AgentsCreatePlan, asgID string) {
 			fmt.Fprintln(w, "    /var/log/fabrica-horde-agent-init.log  on each agent instance")
 			if plan.ScalingEnabled {
 				fmt.Fprintln(w)
-				fmt.Fprintln(w, "  Queue scaling is active. Ensure your agents publish the")
-				fmt.Fprintf(w, "  %s/%s metric to CloudWatch for scaling to work.\n", plan.MetricNamespace, plan.MetricName)
+				fmt.Fprintln(w, "  "+horde.ScalingPublisherNote)
 			}
 		},
 	})

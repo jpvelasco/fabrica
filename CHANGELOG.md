@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Cost report/forecast marketed High-confidence totals as billing-accurate** — estimates use a static us-east-1 Linux on-demand table (2024-Q4/2025), not live Pricing/Cost Explorer. Human and JSON output now include that caveat; Spot/schedule factors are planning discounts only. Configured regions other than us-east-1 drop High confidence to Medium. (#408)
+- **Horde agents create/status/metrics implied queue scaling works out of the box** — dry-run, post-create, status, and `agents metrics` now share `horde.ScalingPublisherNote`: alarms are ready only after agents (or operator tooling) publish the configured metric. Fabrica does not scrape Horde. (#410)
 - **Perforce/Horde `destroy --help` omitted IAM (and agents) teardown order** — Long help still said Instance → SG only. It now matches `ResourceOrder`: Perforce is instance → profile → role → SG (data volume retained); Horde lists agent ingress/scaling/ASG/LT then coordinator instance → IAM → SGs. (#370)
 - **README Current stable lagged the latest GitHub Release** — the status blurb still said v0.3.2 / Lore v0.2 after v0.4.3 shipped. It now matches the latest tagged Release (v0.4.3) and states that Releases are the source of truth. npm `fabrica-cli` already publishes at the same version. (#372)
 - **MCP `config_show` missed credential-like keys** — redaction matched `access_key` but not `access_key_id` / `accessKeyId`, and skipped Lore TLS `certPath`/`keyPath`. Matching now splits camelCase and covers those suffixes plus `private_key` / `secret_key`. Non-secret paths (`launchPath`, `path`, `key_name`) stay visible. (#369)
@@ -24,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Destroy leftover next-step** — failed or partial module destroy and `destroy --all` print one actionable line (empty the bucket, or `fabrica drift` for Extra leftovers). The state backend stays preserved on module failure; Fabrica does not claim a clean account. (#409)
+- **CI Release-docs gate** — the `Release docs` job fails when README or ROADMAP omit the latest non-draft GitHub Release tag, so Current stable cannot silently lag a cut. (#407)
 - **CodePipeline overlay for CI** — `ci.pipeline` adds a standing pipeline cost line and `fabrica ci pipeline` prints the Source → Build → Promote plan. V1 does not provision CodePipeline; trigger still starts CodeBuild. (#381)
 - **DDC production Scylla + replication peers** — `ddc.scylla.nodes`/`replication` document RF=3 cost (nodes>=3) and `ddc.replication.peers` are written into `fabrica.env`. `fabrica ddc topology` prints the plan. V1 still provisions one Scylla host; extra nodes stay operator-built. Destroy order still tears Scylla before the bucket. (#374)
 - **Horde agent queue metrics** — `fabrica horde agents metrics` prints the CloudWatch metric name/namespace agents must publish for queue scaling. Fabrica still does not scrape Horde. (#383)

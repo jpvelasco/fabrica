@@ -35,6 +35,34 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           govulncheck ./...
 
+  release-docs:
+    name: Release docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Check Current stable matches latest Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(gh api "repos/${{ github.repository }}/releases/latest" --jq '.tag_name' || true)
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "No GitHub Release found; skipping Current stable check."
+            exit 0
+          fi
+          echo "Latest Release: $TAG"
+          missing=0
+          for f in README.md ROADMAP.md; do
+            if ! grep -qF -- "$TAG" "$f"; then
+              echo "$f is missing latest Release tag $TAG"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Releases are the source of truth — update the Current stable blurbs."
+            exit 1
+          fi
+          echo "README.md and ROADMAP.md contain $TAG"
+
   build:
     name: Build
     strategy:

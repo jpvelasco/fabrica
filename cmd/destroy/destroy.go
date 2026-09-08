@@ -46,7 +46,12 @@ confirmation.
 Use --all to target all provisioned resources. The command will walk
 through a confirmation dialog before proceeding.
 
-Run with --all --yes to skip the interactive prompt (use with care).`,
+Run with --all --yes to skip the interactive prompt (use with care).
+
+Non-empty S3 buckets are not force-deleted; empty the bucket and retry.
+Extra leftovers appear in 'fabrica drift'. On any module failure,
+'destroy --all' preserves the state backend so remaining managed
+resources stay tracked.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
 			if err != nil {

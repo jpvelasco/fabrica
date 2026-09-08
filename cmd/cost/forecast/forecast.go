@@ -19,8 +19,6 @@ import (
 
 const defaultDays = 30
 
-const caveat = "Note: estimates use deployed state where recorded, else current fabrica.yaml; run `<module> status` to reconcile."
-
 type command struct {
 	cfg       *config.Config
 	costs     *fabricacost.Registry
@@ -83,7 +81,7 @@ func (c command) run() error {
 		return c.renderJSON(f)
 	}
 	f.Render(c.out)
-	fmt.Fprintln(c.out, caveat)
+	fmt.Fprintln(c.out, costsource.PriceCaveat())
 	return nil
 }
 
@@ -103,7 +101,7 @@ func (c command) renderJSON(f fabricacost.Forecast) error {
 		HorizonCost:     f.HorizonCost,
 		Annualized:      f.Annualized,
 		Confidence:      f.Confidence.String(),
-		Note:            caveat,
+		Note:            costsource.PriceCaveat(),
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {

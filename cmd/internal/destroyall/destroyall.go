@@ -8,11 +8,13 @@ package destroyall
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
+	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/oplog"
 )
@@ -206,6 +208,7 @@ func (e Engine) finishWithFailure(res Result) error {
 		}
 		fmt.Fprintln(e.Out, "The state backend was PRESERVED so orphaned resources stay tracked.")
 		fmt.Fprintf(e.Out, "Retry the failed module(s) — e.g. 'fabrica %s destroy' — then re-run 'fabrica destroy --all'.\n", failed[0])
+		fmt.Fprintln(e.Out, leftoverHintFromModules(res.Modules))
 	}
 	return fmt.Errorf("destroy --all incomplete: %d module(s) failed: %s", len(failed), strings.Join(failed, ", "))
 }
@@ -260,4 +263,19 @@ func (e Engine) printBackendFailure(label, id string, err error) {
 	}
 	fmt.Fprintf(e.Out, "  failed to delete %s: %s\n", label, id)
 	fmt.Fprintf(e.Out, "  Error: %v\n", err)
+	if hint := teardown.LeftoverHint(err); hint == teardown.HintEmptyBucket {
+		fmt.Fprintln(e.Out, hint)
+	}
+}
+
+func leftoverHintFromModules(mods []ModuleResult) string {
+	for _, m := range mods {
+		if m.Error == "" {
+			continue
+		}
+		if teardown.LeftoverHint(errors.New(m.Error)) == teardown.HintEmptyBucket {
+			return teardown.HintEmptyBucket
+		}
+	}
+	return teardown.HintPartial
 }

@@ -292,7 +292,7 @@ Provisions a pool of Horde build agents on AWS. Creates an Auto Scaling Group wi
 
 Creates five resources: agent security group (no inbound from internet), IAM role (SSM only), instance profile, launch template, and auto scaling group. CLI flags `--instance-type`, `--min-size`, `--desired-capacity`, and `--max-size` override config defaults. `--dry-run` shows the plan and cost estimate.
 
-**Queue-based autoscaling** — add `--scaling-enabled` to provision two CloudWatch alarms and two SimpleScaling policies (one for scale-out, one for scale-in) that adjust the ASG based on a custom queue-depth metric. Configure thresholds with `--scale-out-threshold`, `--scale-in-threshold`, and `--scale-in-cooldown`. Min/max capacity act as hard bounds. See [docs/horde-scaling.md](docs/horde-scaling.md) for details.
+**Queue-based autoscaling** — add `--scaling-enabled` to provision two CloudWatch alarms and two SimpleScaling policies (one for scale-out, one for scale-in) that adjust the ASG based on a custom queue-depth metric. Configure thresholds with `--scale-out-threshold`, `--scale-in-threshold`, and `--scale-in-cooldown`. Min/max capacity act as hard bounds. Alarms are ready only after agents (or operator tooling) publish the configured metric. Fabrica does not scrape Horde. See [docs/horde-scaling.md](docs/horde-scaling.md) for details.
 
 #### `fabrica horde agents status`
 
@@ -505,7 +505,7 @@ fabrica deploy destroy
 
 ### Cost
 
-> **Offline cost visibility:** `fabrica cost` estimates monthly cost for the modules present in local state, preferring the deployed shape recorded in state (instance type, volume/fleet size) and falling back to your current `fabrica.yaml` for anything not recorded. Fully offline — no AWS Cost Explorer calls, no billing API. Run `<module> status` to reconcile if state and reality have drifted.
+> **Offline cost visibility:** `fabrica cost` estimates monthly cost for the modules present in local state, preferring the deployed shape recorded in state (instance type, volume/fleet size) and falling back to your current `fabrica.yaml` for anything not recorded. Fully offline — a static **us-east-1** Linux on-demand price table (2024-Q4/2025), not live Pricing or Cost Explorer. Totals can differ by region and over time. Spot/schedule factors are planning discounts only. Run `<module> status` to reconcile if state and reality have drifted.
 
 #### `fabrica cost report`
 
@@ -543,6 +543,8 @@ ops:
 #### `fabrica destroy --all`
 
 Full-stack teardown: destroys every provisioned module in reverse dependency order (deploy → ci → workstation → ddc → horde → lore → perforce), then the state backend — but only if every module succeeded (a module failure preserves the backend so orphaned resources stay tracked for retry). One aggregate typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview the full plan. Plain `fabrica destroy` (no `--all`) just prints usage.
+
+**Leftovers.** Fabrica does not claim a clean account after a partial or failed destroy. Non-empty S3 buckets (DDC blobs, Lore store, state backend) are not force-deleted — empty the bucket and re-run. `destroy --all` keeps the state backend whenever any module fails so remaining managed resources stay tracked. Resources Fabrica never recorded (or dropped after a failed delete) show up as Extra on `fabrica drift`.
 
 #### `fabrica version`
 
