@@ -1,6 +1,7 @@
 package costsource
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
@@ -309,6 +310,57 @@ func TestAggregateOpsWhenEnabled(t *testing.T) {
 	}
 	if on.Total <= off.Total {
 		t.Fatalf("enabled ops should add cost: on=%v off=%v", on.Total, off.Total)
+	}
+}
+
+func TestPriceCaveatDisclosesStaticTable(t *testing.T) {
+	got := PriceCaveat()
+	for _, want := range []string{
+		perforce.PriceTableRegion,
+		perforce.PriceTableVintage,
+		"on-demand",
+		"Pricing",
+		"planning discounts",
+		"<module> status",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("PriceCaveat() missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestAggregateOffTableRegionLowersHighConfidence(t *testing.T) {
+	st := state.NewState("acct", "us-west-2")
+	st.Modules = []state.ModuleState{
+		mod("perforce", "ready",
+			state.ModuleResource{TypeName: "AWS::EC2::Instance", Identifier: "i-1"},
+			state.ModuleResource{TypeName: "AWS::EC2::Volume", Identifier: "vol-1"}),
+	}
+
+	onTable := config.Defaults()
+	if onTable.Cloud.AWS.Region != perforce.PriceTableRegion {
+		t.Fatalf("Defaults region = %q, want %s", onTable.Cloud.AWS.Region, perforce.PriceTableRegion)
+	}
+	on := Aggregate(onTable, st, cost.Global)
+	if on.Confidence != cost.High {
+		t.Fatalf("us-east-1 confidence = %v, want High", on.Confidence)
+	}
+
+	offTable := config.Defaults()
+	offTable.Cloud.AWS.Region = "us-west-2"
+	off := Aggregate(offTable, st, cost.Global)
+	if off.Confidence != cost.Medium {
+		t.Fatalf("us-west-2 confidence = %v, want Medium", off.Confidence)
+	}
+
+	// Do not raise an already-Low estimate just because the region mismatches.
+	lowCfg := config.Defaults()
+	lowCfg.Cloud.AWS.Region = "us-west-2"
+	lowSt := state.NewState("acct", "us-west-2")
+	lowSt.Modules = []state.ModuleState{mod("ci", "ready")}
+	low := Aggregate(lowCfg, lowSt, cost.Global)
+	if low.Confidence != cost.Low {
+		t.Fatalf("ci off-table should stay Low, got %v", low.Confidence)
 	}
 }
 

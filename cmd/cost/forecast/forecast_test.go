@@ -40,8 +40,14 @@ func TestForecastDefaultDays(t *testing.T) {
 	if err := c.run(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "30") {
-		t.Fatalf("expected 30-day horizon:\n%s", out.String())
+	s := out.String()
+	if !strings.Contains(s, "30") {
+		t.Fatalf("expected 30-day horizon:\n%s", s)
+	}
+	for _, want := range []string{"us-east-1", "on-demand", "planning discounts"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("missing %q in:\n%s", want, s)
+		}
 	}
 }
 
@@ -55,11 +61,17 @@ func TestForecastJSON(t *testing.T) {
 		Days        int     `json:"days"`
 		DailyBurn   float64 `json:"dailyBurn"`
 		HorizonCost float64 `json:"horizonCost"`
+		Note        string  `json:"note"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatalf("bad JSON: %v\n%s", err, out.String())
 	}
 	if payload.Days != 90 || payload.DailyBurn <= 0 {
 		t.Fatalf("unexpected payload: %+v", payload)
+	}
+	for _, want := range []string{"us-east-1", "on-demand", "planning discounts"} {
+		if !strings.Contains(payload.Note, want) {
+			t.Fatalf("JSON note missing %q: %s", want, payload.Note)
+		}
 	}
 }

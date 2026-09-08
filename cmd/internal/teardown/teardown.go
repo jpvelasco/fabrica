@@ -169,6 +169,7 @@ func (c Command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 
 	destroyed, err := c.deleteAll(ctx, st, m, resources)
 	if err != nil {
+		c.printLeftoverHint(err)
 		return err
 	}
 

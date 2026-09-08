@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/oplog"
 )
@@ -59,6 +61,22 @@ func baseEngine(out *bytes.Buffer, be cloud.StateBackendDestroyer, mods []Module
 	}
 }
 
+func TestLeftoverHintFromModules(t *testing.T) {
+	if got := leftoverHintFromModules(nil); got != teardown.HintPartial {
+		t.Fatalf("empty modules = %q, want generic hint", got)
+	}
+	if got := leftoverHintFromModules([]ModuleResult{{Module: "deploy", Error: "fleet stuck"}}); got != teardown.HintPartial {
+		t.Fatalf("generic module error = %q, want generic hint", got)
+	}
+	got := leftoverHintFromModules([]ModuleResult{
+		{Module: "deploy", Error: "fleet stuck"},
+		{Module: "lore", Error: "deleting AWS::S3::Bucket lore-store: bucket not empty"},
+	})
+	if got != teardown.HintEmptyBucket {
+		t.Fatalf("mixed errors = %q, want empty-bucket hint", got)
+	}
+}
+
 func TestRunAllSucceedDeletesBackend(t *testing.T) {
 	var out bytes.Buffer
 	be := &fakeBackend{}
@@ -71,6 +89,12 @@ func TestRunAllSucceedDeletesBackend(t *testing.T) {
 	}
 	if !be.bucketDeleted || !be.tableDeleted {
 		t.Fatal("backend should be deleted when all modules succeed")
+	}
+	if strings.Contains(out.String(), teardown.HintPartial) || strings.Contains(out.String(), teardown.HintEmptyBucket) {
+		t.Fatalf("success path must not print leftover next-step:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "Destroy --all complete. All modules and the state backend were removed.") {
+		t.Fatalf("success path must keep the full-success line:\n%s", out.String())
 	}
 }
 
@@ -90,6 +114,34 @@ func TestRunBackendDeleteError(t *testing.T) {
 	if be.tableDeleted {
 		t.Fatal("lock table must not be deleted after bucket deletion fails")
 	}
+	if !strings.Contains(out.String(), teardown.HintEmptyBucket) {
+		t.Fatalf("backend not-empty failure must print empty-bucket next-step:\n%s", out.String())
+	}
+}
+
+func TestRunBackendNotEmptySentinel(t *testing.T) {
+	var out bytes.Buffer
+	be := &sentinelEmptyBackend{}
+	e := baseEngine(&out, be, []Module{{Name: "perforce", Teardown: okTeardown("i-1")}})
+	err := e.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected an error when backend deletion fails")
+	}
+	if !errors.Is(err, cloud.ErrStateBucketNotEmpty) {
+		t.Fatalf("error should wrap ErrStateBucketNotEmpty, got: %v", err)
+	}
+	if !strings.Contains(out.String(), teardown.HintEmptyBucket) {
+		t.Fatalf("sentinel empty-bucket failure must print empty-bucket next-step:\n%s", out.String())
+	}
+}
+
+type sentinelEmptyBackend struct{}
+
+func (sentinelEmptyBackend) DeleteStateBucket(_ context.Context, b string) (cloud.StateBackendDeleteResult, error) {
+	return cloud.StateBackendDeleteResult{Identifier: b}, fmt.Errorf("deleting S3 bucket %s: %w", b, cloud.ErrStateBucketNotEmpty)
+}
+func (sentinelEmptyBackend) DeleteStateLockTable(_ context.Context, t string) (cloud.StateBackendDeleteResult, error) {
+	return cloud.StateBackendDeleteResult{Identifier: t, Deleted: true}, nil
 }
 
 func TestRunModuleFailureSkipsBackend(t *testing.T) {
@@ -117,6 +169,9 @@ func TestRunModuleFailureSkipsBackend(t *testing.T) {
 	// the returned error also lists the failed module
 	if !strings.Contains(err.Error(), "deploy") {
 		t.Fatalf("returned error must name the failed module, got: %v", err)
+	}
+	if !strings.Contains(out.String(), teardown.HintPartial) {
+		t.Fatalf("failure summary must include leftover/drift next-step:\n%s", out.String())
 	}
 }
 
@@ -276,6 +331,9 @@ func TestRunModuleFailureJSONOutput(t *testing.T) {
 			t.Error("deploy module result should contain error")
 		}
 	}
+	if strings.Contains(out.String(), teardown.HintPartial) || strings.Contains(out.String(), "fabrica drift") {
+		t.Fatalf("JSON path must not print leftover hint:\n%s", out.String())
+	}
 }
 
 // TestBackendDeleteMissingBucket verifies printBackendResult with Missing=true.
@@ -353,6 +411,9 @@ func TestRunTableDeleteError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "table") {
 		t.Fatalf("error should mention table failure, got: %v", err)
+	}
+	if strings.Contains(out.String(), teardown.HintEmptyBucket) {
+		t.Fatalf("generic table failure must not print empty-bucket next-step:\n%s", out.String())
 	}
 }
 

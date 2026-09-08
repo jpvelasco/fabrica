@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/horde"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -447,7 +448,7 @@ func TestPrintText_ScalingWarningNote(t *testing.T) {
 	c := &command{out: &out}
 	c.printText(scalingFixture())
 	got := out.String()
-	for _, want := range []string{"external metric publisher", "Ensure agents publish", "ASGQueueDepth"} {
+	for _, want := range []string{horde.ScalingPublisherNote, "ASGQueueDepth"} {
 		if !bytes.Contains(out.Bytes(), []byte(want)) {
 			t.Errorf("expected %q in output: %s", want, got)
 		}

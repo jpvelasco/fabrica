@@ -19,8 +19,8 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Use:   "cost",
 		Short: "Estimate and monitor infrastructure cost",
 		Long: `Offline cost visibility and local budget guardrails across all provisioned
-modules. Estimates are derived from the current fabrica.yaml, scoped to the
-modules present in local state — no AWS calls.
+modules. Estimates use a static us-east-1 Linux on-demand price table (not
+live Pricing or Cost Explorer), scoped to modules present in local state.
 
 Available operations:
   report    Estimated monthly cost broken down by module

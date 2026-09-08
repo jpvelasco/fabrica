@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/spf13/cobra"
 )
 
@@ -23,7 +24,7 @@ func newMetrics(runtimeSource globals.RuntimeSource, optionsSource globals.Optio
 		Short: "Show Horde agent queue-depth metric names",
 		Long: `Print the CloudWatch metric name/namespace agents must publish for
 queue-based autoscaling (default ASGQueueDepth in Fabrica/HordeAgents).
-Fabrica does not scrape Horde; agents publish the metric themselves.`,
+` + horde.ScalingPublisherNote,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
 			if err != nil {
@@ -43,7 +44,7 @@ Fabrica does not scrape Horde; agents publish the metric themselves.`,
 				MetricNamespace: ns,
 				ScaleOut:        cfg.ScaleOutThreshold,
 				ScaleIn:         cfg.ScaleInThreshold,
-				Note:            "Agents must PutMetricData this metric. Fabrica only provisions alarms/policies.",
+				Note:            horde.ScalingPublisherNote,
 			}
 			if optionsSource().JSONOutput {
 				b, err := json.MarshalIndent(doc, "", "  ")

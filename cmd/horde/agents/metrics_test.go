@@ -8,6 +8,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/horde"
 )
 
 func TestAgentsMetricsCobra(t *testing.T) {
@@ -20,6 +21,7 @@ func TestAgentsMetricsCobra(t *testing.T) {
 		t.Fatal(err)
 	}
 	testutil.AssertContains(t, got, "ASGQueueDepth")
+	testutil.AssertContains(t, got, horde.ScalingPublisherNote)
 }
 
 func TestAgentsMetricsJSONAndCustom(t *testing.T) {
@@ -36,6 +38,7 @@ func TestAgentsMetricsJSONAndCustom(t *testing.T) {
 		t.Fatal(err)
 	}
 	testutil.AssertContains(t, got, `"metricName": "QueueDepth"`)
+	testutil.AssertContains(t, got, horde.ScalingPublisherNote)
 }
 
 func TestAgentsMetricsRuntimeError(t *testing.T) {

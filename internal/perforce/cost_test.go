@@ -9,6 +9,15 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cost"
 )
 
+func TestPriceTableMetadata(t *testing.T) {
+	if PriceTableRegion != "us-east-1" {
+		t.Errorf("PriceTableRegion = %q, want us-east-1", PriceTableRegion)
+	}
+	if PriceTableVintage != "2024-Q4/2025" {
+		t.Errorf("PriceTableVintage = %q, want 2024-Q4/2025", PriceTableVintage)
+	}
+}
+
 func TestEC2InstanceEstimator_KnownType(t *testing.T) {
 	e := ec2InstanceEstimator{}
 	got, err := e.Estimate(cost.Resource{TypeName: cloud.TypeAWSEC2Instance, Name: "m5.xlarge"})

@@ -9,6 +9,7 @@
 package costsource
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/jpvelasco/fabrica/internal/ci"
@@ -24,6 +25,14 @@ import (
 	"github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/workstation"
 )
+
+// PriceCaveat is the shared one-line disclosure for cost report and forecast:
+// offline estimates use a static us-east-1 Linux on-demand table, not live
+// Pricing/Cost Explorer, and Spot/schedule factors are planning discounts only.
+func PriceCaveat() string {
+	return fmt.Sprintf("Note: estimates use a static %s Linux on-demand table (%s), not live Pricing/Cost Explorer. Spot/schedule factors are planning discounts only. Run `<module> status` to reconcile.",
+		perforce.PriceTableRegion, perforce.PriceTableVintage)
+}
 
 // ModuleCost is the estimated cost for one provisioned module.
 type ModuleCost struct {
@@ -61,6 +70,11 @@ func Aggregate(cfg *config.Config, st *state.State, reg *cost.Registry) Breakdow
 		}
 	}
 	b.PerScope["total"] = b.Total
+	// Offline prices are us-east-1 snapshots. A different configured region
+	// cannot be High-confidence; do not raise Low/Medium already set by estimators.
+	if region := cfg.Cloud.AWS.Region; region != "" && region != perforce.PriceTableRegion && b.Confidence == cost.High {
+		b.Confidence = cost.Medium
+	}
 	return b
 }
 

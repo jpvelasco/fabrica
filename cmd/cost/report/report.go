@@ -21,8 +21,6 @@ import (
 
 const lineWidth = 64
 
-const caveat = "Note: estimates use deployed state where recorded, else current fabrica.yaml; run `<module> status` to reconcile."
-
 type command struct {
 	cfg       *config.Config
 	costs     *fabricacost.Registry
@@ -100,7 +98,7 @@ func (c command) renderText(b costsource.Breakdown) {
 	fmt.Fprintln(c.out, divider)
 	fmt.Fprintf(c.out, "  %-22s $%9.2f\n", "Total:", b.Total)
 	fmt.Fprintf(c.out, "Confidence: %s\n", b.Confidence)
-	fmt.Fprintln(c.out, caveat)
+	fmt.Fprintln(c.out, costsource.PriceCaveat())
 }
 
 // jsonModule is the JSON shape for one module in the report.
@@ -120,7 +118,7 @@ func (c command) renderJSON(b costsource.Breakdown) error {
 	}{
 		Total:      b.Total,
 		Confidence: b.Confidence.String(),
-		Note:       caveat,
+		Note:       costsource.PriceCaveat(),
 	}
 	for _, m := range b.Modules {
 		payload.Modules = append(payload.Modules, jsonModule{

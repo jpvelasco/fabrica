@@ -10,11 +10,19 @@ import (
 	"github.com/jpvelasco/fabrica/internal/schedule"
 )
 
-// gp3 EBS pricing: $0.08/GiB-month (us-east-1).
+// PriceTableRegion is the AWS region the offline EC2/EBS price table is
+// snapshotted from. Estimates are not live Pricing/Cost Explorer quotes.
+const PriceTableRegion = "us-east-1"
+
+// PriceTableVintage is the snapshot window of the offline Linux on-demand
+// table. Core families are 2024-Q4; GPU/storage families added in 2025.
+const PriceTableVintage = "2024-Q4/2025"
+
+// gp3 EBS pricing: $0.08/GiB-month (us-east-1, PriceTableRegion).
 const gp3PricePerGiB = 0.08
 
-// ec2InstancePrices is an on-demand price table for common instance types
-// (us-east-1, Linux, on-demand). Source: AWS pricing as of 2024-Q4.
+// ec2InstancePrices is a static Linux on-demand table for common instance
+// types (PriceTableRegion us-east-1, PriceTableVintage 2024-Q4/2025).
 var ec2InstancePrices = map[string]float64{
 	"t3.large":     0.0832,
 	"t3.xlarge":    0.1664,
@@ -39,20 +47,20 @@ var ec2InstancePrices = map[string]float64{
 	"m7i.8xlarge":  1.6128,
 	"m7i.12xlarge": 2.4192,
 	"m7i.16xlarge": 3.2256,
-	// c7i family — compute-optimized, Intel Sapphire Rapids (us-east-1, Linux, on-demand, 2024-Q4).
+	// c7i family — compute-optimized, Intel Sapphire Rapids (PriceTableRegion, Linux, on-demand, 2024-Q4).
 	"c7i.xlarge":  0.170,
 	"c7i.2xlarge": 0.340,
 	"c7i.4xlarge": 0.680,
-	// GPU instances for cloud workstations (us-east-1, Linux, on-demand, 2024-Q4).
+	// GPU instances for cloud workstations (PriceTableRegion, Linux, on-demand, 2024-Q4).
 	"g4dn.xlarge":  0.526,
 	"g4dn.2xlarge": 0.752,
 	"g4dn.4xlarge": 1.204,
 	"g4dn.8xlarge": 2.264,
-	// g6 family — NVIDIA L4 GPU (us-east-1, Linux, on-demand, 2025).
+	// g6 family — NVIDIA L4 GPU (PriceTableRegion, Linux, on-demand, 2025).
 	"g6.xlarge":  0.8048,
 	"g6.2xlarge": 0.9776,
 	"g6.4xlarge": 1.3232,
-	// i4i family — storage-optimized, Scylla DDC backend default (us-east-1,
+	// i4i family — storage-optimized, Scylla DDC backend default (PriceTableRegion,
 	// Linux, on-demand, 2025).
 	"i4i.large":  0.172,
 	"g5.xlarge":  1.006,

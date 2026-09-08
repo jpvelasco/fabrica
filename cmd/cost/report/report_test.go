@@ -44,7 +44,7 @@ func TestReportText(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := out.String()
-	for _, want := range []string{"perforce", "Total", "Confidence", "fabrica.yaml"} {
+	for _, want := range []string{"perforce", "Total", "Confidence", "us-east-1", "on-demand", "planning discounts"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("missing %q in:\n%s", want, s)
 		}
@@ -59,6 +59,7 @@ func TestReportJSON(t *testing.T) {
 	}
 	var payload struct {
 		Total   float64 `json:"total"`
+		Note    string  `json:"note"`
 		Modules []struct {
 			Name string `json:"name"`
 		} `json:"modules"`
@@ -68,6 +69,11 @@ func TestReportJSON(t *testing.T) {
 	}
 	if payload.Total <= 0 || len(payload.Modules) != 1 {
 		t.Fatalf("unexpected payload: %+v", payload)
+	}
+	for _, want := range []string{"us-east-1", "on-demand", "planning discounts"} {
+		if !strings.Contains(payload.Note, want) {
+			t.Fatalf("JSON note missing %q: %s", want, payload.Note)
+		}
 	}
 }
 
