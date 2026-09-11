@@ -4,7 +4,7 @@ This document tracks what Fabrica ships today and where it's headed next.
 The `README.md` describes how to use what exists; this file tracks status and
 sequencing. When they disagree, this file wins.
 
-Last updated: 2026-08-23 (v0.4.3).
+Last updated: 2026-09-10 (v0.4.4).
 
 ## What Fabrica Is
 
@@ -30,7 +30,7 @@ These govern every structural decision and carry across all phases.
 
 ## Current Status
 
-**Current stable: v0.4.3** (2026-08-23). Phase 0, Phase 1, Lore (v0.3 with S3 store backend, AMI build command, TLS config hooks), DDC
+**Current stable: v0.4.4** (2026-09-10). Follows v0.4.3 (2026-08-23). Phase 0, Phase 1, Lore (v0.3 with S3 store backend, AMI build command, TLS on create, SSM on local store), DDC
 (V1 + multi-region edge nodes with live edge probes), and Horde Agents V1 (including queue-based autoscaling) are all complete. Export V2 covers all 8
 modules (state backend, Horde, Perforce, Lore, DDC, Workstation, CI, Deploy).
 Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. Dedicated AMI build guides are available in `docs/horde-agent-ami.md` and `docs/lore-ami.md`.
@@ -42,7 +42,7 @@ Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. Dedicated
 | `perforce` | `create`, `status`, `destroy`, `backup`, `backup list`, `backup delete`, `restore` | ✅ Complete — EBS backup/restore via SSM; optional S3 export |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | ✅ Complete |
 | `horde agents` | `create`, `status`, `destroy` | ✅ Complete (V1) — managed agent pool (ASG + Launch Template); private subnets, SSM-only access, coordinator enrollment via private IP; dedicated agent AMI build guide in `docs/horde-agent-ami.md`; manual min/desired/max capacity; queue-based autoscaling (`--scaling-enabled`) with external-metric caveat |
-| `lore` | `create`, `status`, `destroy`, `ami build` | ✅ Complete (v0.3) — AMI-first loreserver; S3 store backend (opt-in); TLS config hooks; `ami build` generates Image Builder artifacts; parallel to Perforce |
+| `lore` | `create`, `status`, `destroy`, `ami build` | ✅ Complete (v0.3) — AMI-first loreserver; S3 store backend (opt-in); TLS on create; slim SSM profile on local store; `ami build` generates Image Builder artifacts; parallel to Perforce |
 | `ddc` | `setup`, `status`, `destroy`, `region add` | ✅ Complete — home-region Unreal Cloud DDC + additional edge regions; no replication-peer automation (operator-managed) |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | ✅ Complete |
 | `status` (aggregate) | `status` (`--probe`, `--json`) | ✅ Complete — read-only health overview across all modules |
@@ -53,7 +53,7 @@ Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. Dedicated
 | `ops` | `export` | ✅ Complete (V1) — optional local dashboard/log/alarm hooks; cost lines when `ops.enabled` |
 | `destroy --all` | clean teardown | ✅ Complete — tears down all modules (deploy→ci→workstation→ddc→horde→lore→perforce) then the state backend; backend deleted only on full success |
 | `export` | `--format cloudformation\|terraform` | ✅ Complete (V2) — CloudFormation YAML and Terraform HCL from local state; all modules (state backend, Horde, Perforce, Lore, DDC, Workstation, CI, Deploy); secrets redacted |
-| `mcp` | `mcp` | ✅ Complete — stdio MCP server (6 read-only tools) |
+| `mcp` | `mcp` | ✅ Complete — stdio MCP server (8 read-only tools) |
 | Ops logging | `--verbose`, `FABRICA_LOG_LEVEL` | ✅ Complete (V1) — stdlib `log/slog` via `internal/oplog`; stderr diagnostics for state I/O, Cloud Control errors, drift --fix, destroy milestones, bootstrap failures; secrets never logged |
 
 ## Possible Future Work
