@@ -26,8 +26,9 @@ status, tear down — with typed-phrase confirmations and recoverable partial st
 
 ## Current Status
 
-**Current stable: v0.4.3** (2026-08-23). Phase 0, Phase 1, Lore (v0.3: S3 store,
-`ami build`, TLS config hooks), and DDC (V1 + multi-region edge nodes) are
+**Current stable: v0.4.4** (2026-09-10). Continues the v0.4.x line from v0.4.3
+(2026-08-23). Phase 0, Phase 1, Lore (v0.3: S3 store, `ami build`, TLS on
+create, SSM on local store), and DDC (V1 + multi-region edge nodes) are
 complete: Perforce, Horde, Lore, Distributed DDC (home + edge regions),
 Workstation, CI, Deploy, Cost, drift detection with auto-remediation (`--fix`),
 MCP server, IaC export, full-stack `destroy --all`, offline cost visibility,
@@ -43,12 +44,12 @@ affected.
 | Module | Commands | Status |
 |--------|----------|--------|
 | `setup` / `doctor` / `status` / `drift` / `config show` | Foundation | Complete |
-| `perforce` | `create`, `status`, `destroy`, `backup`, `restore` | Complete |
-| `horde` | `create`, `status`, `submit`, `destroy`, `ami build`, `agents schedule` | Complete |
-| `lore` | `create`, `status`, `destroy` | Complete |
+| `perforce` | `create`, `status`, `destroy`, `backup`, `backup schedule`, `backup verify`, `restore` | Complete |
+| `horde` | `create`, `status`, `submit`, `destroy`, `ami build`, `agents schedule`, `agents metrics` | Complete |
+| `lore` | `create`, `status`, `destroy`, `ami build` | Complete |
 | `ddc` | `setup`, `status`, `destroy`, `region add`, `ami build`, `topology` | Complete (V1, home + edge regions) |
 | `workstation` | `create`, `list`, `stop`, `start`, `schedule`, `terminate` | Complete |
-| `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | Complete |
+| `ci` | `setup`, `trigger`, `status`, `logs`, `pipeline`, `destroy` | Complete |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | Complete |
 | `cost` | `report`, `forecast`, `alerts` | Complete |
 | `ops` | `export` | Complete (V1, local hooks) |
@@ -316,7 +317,7 @@ Permanently deletes the agent pool and its AWS resources (ASG, launch template, 
 
 #### `fabrica lore create`
 
-Provisions an Epic Lore (`loreserver`) server: security group opens TCP 41337 (gRPC), UDP 41337 (QUIC), and TCP 41339 (HTTP health); EC2 instance uses your pre-baked AMI with a gp3 data volume for local store. Connection notes go to `.fabrica/lore-credentials.yaml` (mode 0600). Default store is local/EBS. Set `lore.tls.enabled` with absolute AMI `certPath`/`keyPath` to enable TLS (certs must already be on the AMI). JWT is operator-configured. With `lore.storeBackend: s3` the create also provisions the versioned store bucket, the four DynamoDB store tables the 0.8.6 `aws` store plugin requires, and the instance role with S3 + DynamoDB permissions.
+Provisions an Epic Lore (`loreserver`) server: security group opens TCP 41337 (gRPC), UDP 41337 (QUIC), and TCP 41339 (HTTP health); EC2 instance uses your pre-baked AMI with a gp3 data volume for local store. Connection notes go to `.fabrica/lore-credentials.yaml` (mode 0600). Default store is local/EBS and always attaches a slim SSM instance profile (no store-bucket access). Set `lore.tls.enabled` with absolute AMI `certPath`/`keyPath` to enable TLS (certs must already be on the AMI). JWT is operator-configured. With `lore.storeBackend: s3` the create also provisions the versioned store bucket, the four DynamoDB store tables the 0.8.6 `aws` store plugin requires, and the instance role with S3 + DynamoDB permissions on top of SSM.
 
 #### `fabrica lore status`
 
@@ -324,7 +325,7 @@ Reads live state and probes `GET /health_check` on port 41339. Transitions `prov
 
 #### `fabrica lore destroy`
 
-Terminates the EC2 instance and deletes the security group in reverse order. With `storeBackend: s3` the S3 store resources are torn down too: instance profile, IAM role, the four DynamoDB store tables, then the purged bucket. Idempotent. Typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview.
+Terminates the EC2 instance, then the SSM instance profile and IAM role, then the security group. With `storeBackend: s3` the four DynamoDB store tables and the purged bucket are deleted after IAM. Idempotent. Typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview.
 
 #### `fabrica ddc ami build`
 

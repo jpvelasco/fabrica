@@ -218,8 +218,8 @@ Record the AMI ID printed by Packer and run the same runtime verification below.
 
 Run this checklist for **both** `storeBackend: local` and `storeBackend: s3`.
 Use an operator host connected to the VPC/VPN because `fabrica lore status`
-probes the instance private IP. The local-store deployment deliberately has no
-instance profile, so do not assume it is reachable through SSM.
+probes the instance private IP. Local-store create now attaches a slim SSM
+instance profile, so SSM is available; status still probes the private IP.
 
 1. Put the candidate AMI ID in `fabrica.yaml` and select the first backend:
 

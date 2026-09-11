@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-09-10
+
 ### Fixed
 
 - **Cost report/forecast marketed High-confidence totals as billing-accurate** — estimates use a static us-east-1 Linux on-demand table (2024-Q4/2025), not live Pricing/Cost Explorer. Human and JSON output now include that caveat; Spot/schedule factors are planning discounts only. Configured regions other than us-east-1 drop High confidence to Medium. (#408)
@@ -35,13 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **DDC AMI build command** — `fabrica ddc ami build` writes a local Image Builder / bake guide for Jupiter (zen or scylla). No AWS calls; record the AMI as `ddc.amiId`. (#375)
 - **MCP V2 options + cost forecast** — `optionsSource` is forwarded into the MCP server; `fabrica_options` reports json/dry-run/yes/verbose/profile, and `fabrica_cost_forecast` projects the offline monthly total. Config redaction is unchanged. (#380)
 - **Lore local-store SSM profile** — `lore create` now attaches a slim SSM instance profile (SSM core + output sink, no store-bucket access) when `storeBackend` is local. The S3-store role still adds store S3/DynamoDB permissions. Destroy removes the role/profile either way. (#398)
+- **Workstation SSM instance profile** — `workstation create` now provisions an IAM role (`AmazonSSMManagedInstanceCore` + `fabrica-ssm-output`) and instance profile before the instance (SG → role → profile → instance). Terminate deletes in reverse (instance → profile → role → SG). Export emits the same inline policy via the shared helper. (#360)
 - **DDC OIDC config on create** — `ddc.oidc.enabled` plus `issuer`/`clientId` (optional `audience`/`redirectPath`) are validated and written into cloud-init as `FABRICA_DDC_OIDC_*`. Disabled remains the default so CIDR/static auth is unchanged. The AMI must honor the env; Fabrica does not provision an IdP. (#373)
 - **Spot and weekly schedules for agents and workstations** — `horde.agents.spot` / `workstation.spot` plus a `schedule` window (`days`, `start`, `stop`, `timezone`) discount cost report and print via `horde agents schedule` / `workstation schedule`. EventBridge is not installed; destroy/terminate still delete the resources. (#377)
 - **Optional observability export hooks** — `ops.enabled` plus `ops.modules` / `ops.logRetentionDays` write local dashboard, log-group, and alarm hooks via `fabrica ops export` (no AWS resources). Cost report/forecast/alerts include the standing CloudWatch lines when enabled; budget scope `ops` is accepted. (#379)
 - **Scheduled Perforce backups + DR runbook** — `perforce.backup.schedule` (5-field cron) and `retain` print via `fabrica perforce backup schedule`; `backup verify <id>` documents the restore path. Cost report includes retained-backup storage when a schedule is set. Fabrica does not install cron. (#378)
 - **Studio SSO / IAM Identity Center path** — named AWS profiles (`cloud.aws.profile` or `AWS_PROFILE`) already drive the SDK credential chain, including SSO. Expired or unrefreshable SSO sessions now fail with an `aws sso login` hint on identity resolution, `fabrica doctor`, and AWS config load. Documented in README Getting Started. (#376)
 - **Lore TLS settings now apply on create** — `lore.tls.enabled` plus absolute `certPath`/`keyPath` are validated in the plan, passed into cloud-init, written as `[server] tls_cert`/`tls_key`, and checked on the AMI at boot. Disabled TLS remains the default and emits no TLS block. Certificate provisioning, ACM, mTLS, JWT, and HTTPS health stay out of scope. (#371)
-- **Lore S3 store now provisions the full 0.8.6 store surface** - with `lore.storeBackend: s3`, `fabrica lore create` now provisions the four DynamoDB tables the 0.8.6 `aws` store plugin requires (`<bucket>-fragments`, `<bucket>-metadata`, `<bucket>-mutable`, `<bucket>-locks`, with the locks table's three global secondary indexes) in addition to the versioned store bucket, and grants the instance role DynamoDB permissions (`GetItem`, `PutItem`, `DeleteItem`, `Query`, `BatchGetItem`, `DescribeTable`, `TransactWriteItems` on the four tables + the locks table's GSIs) on top of the existing S3 policy. Cloud-init renders the 0.8.6 `[plugins.aws.*]` config (`mode = "aws"`, `s3_bucket` + table names). Destroy tears the tables down after the instance and with the bucket purge; export emits the tables as distinct logical IDs with per-table name outputs and full key/GSI schemas; drift checks table existence. Cost estimation includes the four tables. `storeBackend: local` is unchanged (no bucket, no tables, no instance profile).
+- **Lore S3 store now provisions the full 0.8.6 store surface** - with `lore.storeBackend: s3`, `fabrica lore create` now provisions the four DynamoDB tables the 0.8.6 `aws` store plugin requires (`<bucket>-fragments`, `<bucket>-metadata`, `<bucket>-mutable`, `<bucket>-locks`, with the locks table's three global secondary indexes) in addition to the versioned store bucket, and grants the instance role DynamoDB permissions (`GetItem`, `PutItem`, `DeleteItem`, `Query`, `BatchGetItem`, `DescribeTable`, `TransactWriteItems` on the four tables + the locks table's GSIs) on top of the existing S3 policy. Cloud-init renders the 0.8.6 `[plugins.aws.*]` config (`mode = "aws"`, `s3_bucket` + table names). Destroy tears the tables down after the instance and with the bucket purge; export emits the tables as distinct logical IDs with per-table name outputs and full key/GSI schemas; drift checks table existence. Cost estimation includes the four tables. `storeBackend: local` still has no bucket or tables; it now attaches the slim SSM instance profile (see above).
 - **Lore SSM command output sink** - the S3-store instance role now carries a least-privilege `fabrica-ssm-output` inline policy granting `ssm:PutParameter`/`GetParameter`/`DescribeParameters` on the `MDS-*` parameter and `logs:CreateLogGroup`/`CreateLogStream`/`PutLogEvents` on the `/fabrica/ssm/*` log group. This makes SSM command output retrievable for accounts whose `AmazonSSMManagedInstanceCore` is a narrowed variant (missing `ssm:PutParameter` and `logs:*`), where the CloudWatch Logs sink is the reliable retrieval path.
 
 ### Changed
@@ -348,7 +351,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/jpvelasco/fabrica/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/jpvelasco/fabrica/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/jpvelasco/fabrica/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/jpvelasco/fabrica/compare/v0.4.0...v0.4.1

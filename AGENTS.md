@@ -4,7 +4,7 @@
 
 Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, zero external dependencies. Sister tool to [Ludus](https://github.com/jpvelasco/ludus) — Ludus orchestrates game builds, Fabrica gives them somewhere to run.
 
-**Current state:** All phases implemented — Phase 0, Phase 1 (core pipeline), Lore (v0.3: S3 store, `ami build`, TLS config hooks), and DDC (V1 + multi-region edge nodes) are complete; current stable release **v0.4.3** (2026-08-23). Modules implemented: `perforce`, `horde`, `lore`, `ddc`, `workstation`, `ci`, `deploy`, `cost`, plus `status`, `doctor`, `drift` (read-only by default; `--fix` recreates Missing resources), `config show`, `export`, `mcp`, full-stack `destroy --all`, and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) for the authoritative, current module status.
+**Current state:** All phases implemented — Phase 0, Phase 1 (core pipeline), Lore (v0.3: S3 store, `ami build`, TLS on create, SSM on local store), and DDC (V1 + multi-region edge nodes) are complete; current stable release **v0.4.4** (2026-09-10). Modules implemented: `perforce`, `horde`, `lore`, `ddc`, `workstation`, `ci`, `deploy`, `cost`, plus `status`, `doctor`, `drift` (read-only by default; `--fix` recreates Missing resources), `config show`, `export`, `mcp`, full-stack `destroy --all`, and a CLI E2E test suite. See [ROADMAP.md](ROADMAP.md) for the authoritative, current module status.
 
 **Private designs:** Draft specs and implementation plans for future work live under `.private/` (gitignored — never commit). Suggested layout: `.private/designs/`, `.private/plans/`. Public user docs stay in `docs/` (AMI guides, deploy notes) and root `README.md` / `ROADMAP.md`.
 
