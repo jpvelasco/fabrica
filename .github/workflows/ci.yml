@@ -134,7 +134,7 @@ jobs:
       - name: Upload coverage to Codecov
         # Skip fork PRs: OIDC tokens aren't issued to forked-repo runs.
         if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
+        uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4  # v7.1.0
         with:
           use_oidc: true
           use_pypi: true
@@ -147,7 +147,7 @@ jobs:
         # Test Analytics (failed-test / flaky reporting). Same Action as coverage
         # with report_type: test_results — replaces deprecated test-results-action.
         if: ${{ !cancelled() && runner.os == 'Linux' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
+        uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4  # v7.1.0
         with:
           use_oidc: true
           use_pypi: true
