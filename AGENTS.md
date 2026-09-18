@@ -14,11 +14,11 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 |--------|----------|--------------|
 | foundation | `setup`, `status`, `doctor`, `drift`, `config show`, `version` | S3 + DynamoDB state backend, aggregate health overview, env checks, drift detection against live AWS with `--fix` auto-remediation (Missing resources only), config display, version |
 | `perforce` | `create`, `status`, `destroy`, `backup create\|list\|delete\|schedule\|verify`, `restore` | Provisions a Perforce Helix Core EC2 instance with SG + SSM instance profile; tracks provisioning state; TCP probe on 1666; EBS backup/restore via SSM; optional cron runbook + backup-storage cost |
-| `horde` | `create`, `status`, `submit`, `destroy`, `ami build`, `agents create\|status\|schedule\|destroy` | Provisions an Unreal Horde build coordinator (AMI-first, m7i.2xlarge) with SG + IAM SSM instance profile; probes port 5000; parses BuildGraph XML and POSTs jobs to the Horde REST API; generates EC2 Image Builder recipe + optional Packer HCL for building the required AMI; `agents` manages the ASG-backed agent pool (manual capacity or `--scaling-enabled` queue-based autoscaling) |
+| `horde` | `create`, `status`, `submit`, `destroy`, `ami build`, `agents create\|status\|schedule\|metrics\|destroy` | Provisions an Unreal Horde build coordinator (AMI-first, m7i.2xlarge) with SG + IAM SSM instance profile; probes port 5000; parses BuildGraph XML and POSTs jobs to the Horde REST API; generates EC2 Image Builder recipe + optional Packer HCL for building the required AMI; `agents` manages the ASG-backed agent pool (manual capacity or `--scaling-enabled` queue-based autoscaling) |
 | `lore` | `create`, `status`, `destroy`, `ami build` | Provisions an Epic Lore (`loreserver`) EC2 instance (AMI-first, local/EBS or S3 store); probes `GET /health_check` on port 41339; `ami build` generates Image Builder artifacts locally (no AWS calls); parallel to Perforce |
-| `ddc` | `setup`, `status`, `destroy`, `region add` | Provisions Unreal Cloud DDC (Jupiter) on EC2 (AMI-first, home region + additional edge regions); hybrid EBS+S3; default `zen` backend; probes `GET /health/ready` |
+| `ddc` | `setup`, `status`, `destroy`, `region add`, `ami build`, `topology` | Provisions Unreal Cloud DDC (Jupiter) on EC2 (AMI-first, home region + additional edge regions); hybrid EBS+S3; default `zen` backend; probes `GET /health/ready`; `ami build` generates Image Builder artifacts locally; `topology` prints the production Scylla / replication-peer overlay (documented, not provisioned) |
 | `workstation` | `create`, `list`, `stop`, `start`, `schedule`, `terminate` | Provisions a NICE DCV cloud workstation on EC2 (AMI-first, g4dn.xlarge default); allows TCP 8443 inbound; writes DCV session credentials to `.fabrica/workstation-credentials.yaml`; supports stop/start via EC2InstanceManager and permanent termination |
-| `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | CodeBuild orchestration over Horde; IAM role via Cloud Control, CodeBuild project via SDK auxiliary interface |
+| `ci` | `setup`, `trigger`, `status`, `logs`, `destroy`, `pipeline` | CodeBuild orchestration over Horde; IAM role via Cloud Control, CodeBuild project via SDK auxiliary interface; `pipeline` is a docs/cost overlay, not a provisioned resource |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | GameLift blue/green deployment; fleet activation polling via SDK auxiliary interface |
 | `cost` | `report`, `forecast`, `alerts` | Offline config-derived reporting + local budget alerts |
 | `ops` | `export` | Optional local observability hooks (dashboards/logs/alarms) + cost lines when `ops.enabled` |
@@ -96,10 +96,12 @@ go list -deps ./internal/cloud/...
 | `cmd/root` | Wires global flags (`--config`, `--verbose`, `--json`, `--dry-run`, `--yes`, `--profile`), initializes `globals.Store`, registers subcommands |
 | `cmd/globals` | `Runtime` (Config + Provider + ConfigPath), `Options`, `Store.Init()`, dependency injection types |
 | `internal/config` | `Config` struct, Viper loading from `fabrica.yaml` (scoped here only), YAML serialization, defaults |
-| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `EC2InstanceManager`, `RemoteRunner`, `StateBackendChecker`, `StateBackendBootstrapper`, `StateBackendDestroyer`, `CodeBuildRunner`, `GameLiftManager`, `S3BucketCleaner`, `StateLockManager`, `VolumeTagger` |
+| `internal/cloud` | Provider-agnostic interfaces: `Provider`, `ResourceClient`, `Resource`, `EC2InstanceManager`, `RemoteRunner`, `StateBackendChecker`, `StateBackendBootstrapper`, `StateBackendDestroyer`, `CodeBuildRunner`, `GameLiftManager`, `S3BucketCleaner`, `StateLockManager`, `VolumeTagger`, `ASGManager`, `AMIResolver`, `RegionProvider`, `VPCResolver`, `VPCCIDRResolver`; package-level sentinels (`ErrResourceNotFound`, `ErrStateBucketNotEmpty`, `ErrNotHandled`, `ErrLockHeld`, `ErrLockTableMissing`) |
 | `internal/cloud/aws` | AWS implementation registered via `init()` in `internal/cloud/registry.go`; wraps `cloudcontrol`, `s3`, `dynamodb`, `iam`, `ec2` SDK clients |
-| `internal/state` | `State`/`ModuleState`/`ModuleResource` types, `Backend` interface, S3+DynamoDB bootstrap; `LockStore` — TTL + stale-takeover locking wired into all state-mutating flows via `provision.AcquireStateLock` |
+| `internal/state` | `State`/`ModuleState`/`ModuleResource` types, `Backend` interface, S3+DynamoDB bootstrap; `LockStore` — TTL + stale-takeover locking wired into all state-mutating flows via `provision.AcquireStateLock`; `LayoutOf` documents the lock boundary — one lock table + state bucket per AWS account, cross-region DDC edges reuse the home-account lock (no second state file), other accounts via `--profile` + their own `fabrica-<profile>.yaml` |
 | `internal/cost` | Cost estimator interface + estimators; registered by resource `TypeName`. `Project`/`Forecast` for time-horizon projection; `EvaluateBudgets` for threshold evaluation. Stays free of `internal/config` — the config↔cost mapping lives in `costsource` |
+| `internal/drift` | Provider-agnostic drift engine: compares recorded state against live AWS via `cloud` interfaces (`ResourceClient`, `StateBackendChecker`, `CodeBuildRunner`) into a `DriftReport`; `remediate.go` recreates Missing EC2 instances/SGs only (Mismatch/Extra report-only in V1). No AWS SDK imports |
+| `internal/export` | IaC generation from recorded state + config (`--format cloudformation|terraform`); `Generator` interface, FNV-hash-suffixed logical IDs, credential-like redaction; no AWS SDK imports |
 | `internal/tags` | Tag injection helpers; `ManagedBy: fabrica` applied to all resources |
 | `internal/prompt` | `Confirm` (y/N) and `ConfirmExact` (typed phrase) for interactive confirmation dialogs |
 | `internal/version` | Version constant |
@@ -112,6 +114,8 @@ go list -deps ./internal/cloud/...
 | `internal/userdata` | Shared cloud-init template helpers: `Renderer` (`Render`/`RenderBase64`); `Prepare` centralizes apply-defaults → validate chain |
 | `internal/iamrole` | Shared IAM role desired-state helpers: `AssumeRolePolicyDocument(service)` |
 | `internal/topology` | Provider-agnostic coordinator/edge graph types for distributed modules |
+| `internal/schedule` | Shared weekly on/off window + Spot cost discount for `horde agents` and `workstation`: validates IANA timezones and `Mon-Fri`/`Mon-Sun`/`Sat-Sun` day windows; `CostFactor` = Spot (0.30) × duty cycle, `EncodeFactor`/`DecodeFactor` encode the multiplier in the cost resource name. V1 documents the window and discounts estimates only — no EventBridge install, no Spot requests |
+| `internal/ops` | Offline plan layer for `ops export` hooks (dashboard/log/alarm export docs; `ResolveModules` rejects unknown module names) + standing CloudWatch cost lines when `ops.enabled`. No CloudWatch resources provisioned in V1 |
 | `internal/assert` | Shared test helper: `Contains` |
 | `cmd/internal/testutil` | Shared Cobra/cloud test fakes (importable only within `cmd/`): `TestProvider` and variants, `CreateTestSpec` |
 | `cmd/internal/teardown` | Full engine for perforce/horde/workstation teardown commands |
@@ -182,7 +186,7 @@ make vuln                              # govulncheck @v1.1.4 — same pin as the
 
 ### CI
 
-`.github/workflows/ci.yml` runs on every push/PR to `main`: Lint (linux) + Lint (windows), `gosec`, a govulncheck vulnerability scan (pinned `@v1.1.4` — `make vuln` matches), Build + Test on an ubuntu/windows/macos matrix (`-race` only on linux/macos; Codecov upload via OIDC from the linux leg), and a `goreleaser build --snapshot` + npm-shim validation job (build-only, never publishes). Coverage is also pushed to Codacy (`.github/workflows/codacy-coverage.yml`).
+`.github/workflows/ci.yml` runs on every push/PR to `main`: Lint (linux) + Lint (windows), `gosec`, a govulncheck vulnerability scan (pinned `@v1.1.4` — `make vuln` matches), a Trivy filesystem scan (pinned `trivy-action` v0.36.0), Build + Test on an ubuntu/windows/macos matrix (`-race` only on linux/macos; coverage merged from the OS matrix, Codecov upload via OIDC from the linux leg), and a `goreleaser build --snapshot` + npm-shim validation job (build-only, never publishes). A separate `release-docs` job fails if the latest GitHub Release tag is missing from `README.md` or `ROADMAP.md`. Coverage is also pushed to Codacy (`.github/workflows/codacy-coverage.yml`).
 
 **CI troubleshooting:** If a job fails instantly with blank logs and no steps, the job was never scheduled — check GitHub Actions billing/minutes for your account. Verify the code locally first (`go test ./... && golangci-lint run ./...`) before pushing.
 
@@ -194,7 +198,8 @@ GoReleaser builds cross-platform binaries + a GitHub Release; the `npm/` shim do
 1. Decide/confirm the npm package name in `npm/package.json`.
 2. Set up the npm org + trusted publisher (OIDC) — one-time, see the npm-init flow.
 3. Move `CHANGELOG.md` `[Unreleased]` → `[X.Y.Z]` with the date.
-4. `git tag vX.Y.Z && git push origin vX.Y.Z` — this triggers `release.yml`. Nothing publishes without a tag.
+4. Add the tag to the `Current stable` lines in `README.md` and `ROADMAP.md` — CI's `release-docs` job fails otherwise.
+5. `git tag vX.Y.Z && git push origin vX.Y.Z` — this triggers `release.yml`. Nothing publishes without a tag.
 
 ## Git Hooks
 
@@ -226,21 +231,23 @@ git config core.hooksPath .githooks
 ### Workstation
 - **AMI-first provisioning** — the AMI must already have NICE DCV installed. Fabrica only configures and starts the DCV session via cloud-init.
 - **No credentials in UserData** — DCV session password is written to `.fabrica/workstation-credentials.yaml` (mode 0600) only; never embedded in UserData.
-- **Port** — 8443 (NICE DCV HTTPS). Default `allowedCidr` is `0.0.0.0/0`; restrict to a VPN CIDR in production via `workstation.allowedCidr` in `fabrica.yaml`.
+- **Port** — 8443 (NICE DCV HTTPS). Default `allowedCidr` is the private range `10.0.0.0/8` (`DefaultAllowedCIDR`, asserted non-public by tests); set `workstation.allowedCidr` in `fabrica.yaml` to your VPN CIDR in production.
 - **Templates** — `--template artist` → `g6.xlarge` + 200 GiB; `--template programmer` → `c7i.xlarge` + 100 GiB. Precedence is per field: explicit `--instance-type`/`--volume-size` flags > config > template > default (`resolveSizing`).
 - **Cost matches the resolved shape** — create-time estimates price the template/flag-resolved shape via `workstation.CostResourcesFor(instanceType, volumeSize)`; `CostResources(cfg)` remains the config-derived fallback for reporting.
 - **`--mount-perforce`** — reads the Perforce module's instance private IP from local state via Cloud Control `Get`, then injects `P4PORT=<ip>:1666` into `~/.p4config` via cloud-init. Requires Perforce to be provisioned first.
 - **Stop/start state** — stop sets `"stopped"`, start sets `"ready"`. Fire-and-accept; Fabrica does not wait for terminal state.
 - **Terminate vs destroy** — uses `terminate` as the permanent deletion command.
 - **Idle timeout** — `workstation.idleTimeoutMinutes` in `fabrica.yaml` (default 60) is injected into the DCV cloud-init; the constant `DefaultIdleTimeoutMinutes` lives in `internal/workstation/config.go`.
+- **Spot + schedule are cost overlays** — `workstation.spot` (30% of on-demand) and the weekly `workstation.schedule` (shared `internal/schedule`; IANA timezone, days `Mon-Fri`/`Mon-Sun`/`Sat-Sun`, `HH:MM` start/stop) only discount estimates (factor = spot × duty cycle, encoded in the cost-line name). Fabrica installs no EventBridge and requests no Spot capacity; `workstation schedule` prints start/stop hints for the operator's own tooling.
 - **GPU instance prices** — g4dn, g5, g6, and c7i family prices live in `internal/perforce/cost.go`. Do not add a separate cost registration for workstation resources.
 
 ### Perforce
-- **Version pins rot** — Perforce's jammy archive drops old releases; `helix-p4d=2024.2` no longer exists and apt needs the full `X.Y-build~jammy` string anyway. The userdata falls back to the current repo version when a pin fails; `DefaultHelixVersion` (internal/perforce/config.go) tracks the oldest still-published release.
+- **Version pins rot** — Perforce's jammy apt archive drops old releases (`helix-p4d=2024.2` no longer exists; pins may carry a build id, e.g. `2024.2/2659294`). The userdata tries `helix-p4d=<pin>` and, when the pin is unavailable, falls back to the latest repo `helix-p4d` with a warning; `DefaultHelixVersion` (internal/perforce/config.go) is the pin used when config omits `version` (currently `2025.2`).
 - **Two packaging generations** — 2026.1 split Helix Core into p4-server packages: `configure-p4d.sh` takes a positional service name with `-P password` (legacy `--super-passwd`/`-y` gone) and instances are managed via **p4dctl**, not a helix-p4d systemd unit. The userdata detects the installed generation at RUNTIME (`--help` grep + unit-file check) — never at render time, because the pin can fall back to a newer generation than requested.
 - **Data volume auto-detection is mandatory** — EC2 NVMe enumeration order flips between launches; `/dev/nvme1n1` has pointed at the ROOT disk. Userdata detects the largest non-root unformatted volume at runtime; an explicit `dataDevice` override still wins.
 - **Backup auth = login ticket, not P4PASSWD** — modern p4-server security levels ignore/reject bare `P4PASSWD`. The generated script does `p4 login -a` into an isolated `P4TICKETS` file; keep it that way.
 - **SSM sessions lack the AWS CLI** — scripts that call `aws s3 …` self-install `awscli` on demand (instance profile supplies credentials).
+- **Backup schedule is a runbook, not a cron job** — `perforce.backup.schedule` (5-field cron) + `perforce.backup.retain` add backup-storage cost lines and make `backup schedule` print the cron/EventBridge + restore/verify runbook. Fabrica installs no schedule on the instance; `backup verify` does a live SSM check.
 - **Destroy retains the data volume by design** (DeleteOnTermination=false on /hxdepots); operators delete it when done. It IS tagged, so sweeps see it.
 
 ### Horde
@@ -251,7 +258,8 @@ git config core.hooksPath .githooks
 - **`horde_service_token`** in credentials is optional; if empty the auth header is omitted.
 - **HTTP timeout** — all Horde API requests carry a 30-second client timeout (`hordeHTTPTimeout`); command contexts cancel sooner on interrupt.
 - **Agent SG direction** — agents dial the coordinator, so the agent SG has no inbound rules; a standalone `AWS::EC2::SecurityGroupIngress` on the coordinator SG (source: agent SG) authorizes enrollment. The rule is tracked with `role=agent` and deleted first during teardown.
-- **Queue-based autoscaling** — `agents create --scaling-enabled` provisions two CloudWatch alarms + two SimpleScaling policies (scale-out/scale-in) driven by an external metric (default `ASGQueueDepth`; tune with `--scale-out-threshold` / `--scale-in-threshold` / `--scale-in-cooldown`). Fabrica provisions the alarms/policies only — the agents must publish the metric to CloudWatch themselves. `agents status` surfaces that warning while scaling is enabled. See `docs/horde-scaling.md`.
+- **Queue-based autoscaling** — `agents create --scaling-enabled` provisions two CloudWatch alarms + two SimpleScaling policies (scale-out/scale-in) driven by an external metric (default `ASGQueueDepth`; tune with `--scale-out-threshold` / `--scale-in-threshold` / `--scale-in-cooldown`). Fabrica provisions the alarms/policies only — the agents must publish the metric to CloudWatch themselves. `agents status` surfaces that warning while scaling is enabled; `agents metrics` prints the exact metric name/namespace to publish (default `Fabrica/HordeAgents`/`ASGQueueDepth`). See `docs/horde-scaling.md`.
+- **Spot + schedule are cost overlays** — `horde.agents.spot` and `horde.agents.schedule` discount agent cost estimates via the same shared `internal/schedule` (no EventBridge, no Spot requests); `agents schedule` prints the weekly window.
 
 ### Lore
 - **AMI-first provisioning** — the AMI must already contain the `loreserver` binary. `lore ami build` generates the Image Builder component + recipe, build guide, and optional Packer HCL locally (default output dir `lore-ami`; flags: `--lore-version`, `--base-image`, `--region`, `--name`, `--output-dir`, `--include-packer`). Bake/verification scripts are rendered from `lore.AMIContract` (`internal/lore/ami_contract.go`) — the typed OS surface (paths, systemd unit, health endpoint) the AMI must satisfy; keep the contract, the templates, and the runtime cloud-init in lockstep. See `docs/lore-ami.md`.
@@ -268,12 +276,13 @@ git config core.hooksPath .githooks
 - **Hybrid storage** — EBS for local/hot storage plus S3 bucket for cold tier.
 - **Endpoints file** — `setup` writes `.fabrica/ddc-endpoints.yaml` instead of a credentials file.
 - **Probe** — `GET /health/ready` on the public port; `status` live-probes edge regions (region-scoped Cloud Control + health requests) with the command context threaded through, so Ctrl+C stops in-flight probes.
-- **Deferred (Phase 2+)** — replication peers, HTTPS health, production (HA) Scylla. OIDC config + cloud-init env shipped in V1. `ddc ami build` writes local Image Builder artifacts.
+- **Production Scylla + replication are doc overlays, not provisioning** — `ddc topology` (and setup-time validation) document `ddc.scylla.nodes` (must be 1 or ≥3), `ddc.scylla.replication` (RF; defaults to 3 at nodes≥3, must be ≤ nodes), and `ddc.replication.peers` (written into `fabrica.env` when enabled; Fabrica never opens replication sockets). V1 still provisions one Scylla host — extra nodes stay operator-built. Shipped in V1: OIDC config + cloud-init env, `ddc ami build` (local Image Builder artifacts). Deferred: HTTPS health, multi-node provisioning.
 
 ### CI
 - **Orchestration layer over Horde** — `ci` does not replace Horde; CodeBuild is the conductor, Horde stays the BuildGraph executor.
 - **CodeBuild is NOT Cloud Control** — `AWS::CodeBuild::Project` returns `UnsupportedActionException` for CREATE. The project is created/deleted via `cloud.CodeBuildRunner` SDK auxiliary interface; only the IAM role goes through Cloud Control.
-- **`ci trigger` semantics** — V1 starts the CodeBuild project directly. The design intends `trigger` to start a CodePipeline execution once CodePipeline orchestration is added (deferred).
+- **Pipeline is a docs/cost overlay** — `ci pipeline` prints the documented pipeline path (Source → CodeBuild→Horde → Promote); `ci.pipeline` in `fabrica.yaml` adds a standing `AWS::CodePipeline::Pipeline` cost line. V1 does not create pipelines.
+- **`ci trigger` semantics** — V1 starts the CodeBuild project directly; `trigger` will start a CodePipeline execution once pipeline provisioning is added (deferred).
 - **Idempotency** — `EnsureProject` checks `BatchGetProjects` before creating. `DeleteProject` is idempotent on the AWS side.
 - **Tags** — `injectFabricaTags` merges into the capitalized `Tags` array, never a lowercase `tags` key.
 - **`ci destroy`** — deletes the CodeBuild project (SDK) then the IAM role (Cloud Control). Has `RunOrchestrated` entry point for `destroy --all`.
@@ -293,7 +302,7 @@ git config core.hooksPath .githooks
 - **Single aggregate confirmation phrase** — `type "destroy all <account-id>" to continue`.
 - **Deploy torn down with `all=true`** — `destroy --all` deletes everything (fleets, builds, alias, IAM role). Plain `fabrica deploy destroy` retains alias + role.
 - **CI's SDK-delete special case** — CodeBuild project deleted via SDK, IAM role via Cloud Control. CI uses `cidestroy.RunOrchestrated`.
-- **Continue-on-failure + backend preserved** — failed modules are printed with errors; the backend is never deleted on any failure.
+- **Continue-on-failure + backend preserved** — failed modules are printed with errors; the backend is never deleted on any failure. After a failed/partial destroy, the teardown engine prints a next-step hint (`teardown.LeftoverHint`: non-empty state bucket → empty it or run `fabrica drift`; otherwise → `fabrica drift` to list leftovers, then retry). Human output only — skipped under `--json`.
 
 ### Drift
 - **Read-only by default** — checks the state backend, EC2 instances (state, type, AMI), SGs, IAM roles, CodeBuild projects, and detects Extra (unmanaged) resources.
@@ -305,6 +314,7 @@ git config core.hooksPath .githooks
 - **Config-derive model** — fully offline; `costsource.Aggregate` engine reads state + config. No AWS calls.
 - **Stopped instances drop the compute line** — `workstation stop` filters the instance out of the cost model; EBS volumes remain billed.
 - **Deploy fleet cost counted only when a fleet exists** — zero cost until a fleet is promoted.
+- **Spot/schedule discounts** — `internal/schedule.CostFactor` (spot 30% × weekly duty cycle) multiplies agent/workstation compute lines and is encoded in the cost resource name (`EncodeFactor`); standing lines appear when flags are on: `ci.pipeline` (CodePipeline), `ops.enabled` (CloudWatch lines), `perforce.backup.schedule` (backup storage).
 - **Local thresholds only** — `cost alerts` work entirely on the local `fabrica.yaml` — no AWS Budgets resources. `alerts check` is informational (exit 0 always).
 
 ## Command Reference
