@@ -18,7 +18,9 @@ phases:
               gpg --import NICE-GPG-KEY
               wget -q https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-x86_64.tgz
               tar -xzf nice-dcv-ubuntu2204-x86_64.tgz
-              cd nice-dcv-*
+              dcvdir=$(find . -maxdepth 1 -type d -name 'nice-dcv-*' | head -n1)
+              test -n "$dcvdir"
+              cd "$dcvdir"
               apt-get install -y ./nice-dcv-server_*.deb ./nice-xdcv_*.deb ./nice-dcv-web-viewer_*.deb
               systemctl enable dcvserver
       - name: EnsureSSMAgent

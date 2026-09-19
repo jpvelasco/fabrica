@@ -49,6 +49,7 @@ func TestBuildWritesDCVAndSSM(t *testing.T) {
 	s := string(comp)
 	for _, want := range []string{
 		"nice-dcv-ubuntu2204-x86_64.tgz",
+		`dcvdir=$(find . -maxdepth 1 -type d -name 'nice-dcv-*' | head -n1)`,
 		"systemctl enable dcvserver",
 		"command -v dcv",
 		"snap install amazon-ssm-agent --classic",
