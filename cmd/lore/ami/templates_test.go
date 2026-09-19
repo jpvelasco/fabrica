@@ -54,9 +54,10 @@ func TestRenderTemplates(t *testing.T) {
 				"loreserver-v5.5.0-x86_64-unknown-linux-gnu.tar.gz",
 				"chmod 0755 /tmp/lore-bin/loreserver",
 				"cp -a /tmp/lore-bin/. /opt/loreserver/",
-				// The SSM agent is not guaranteed to exist on the base image as
-				// amazon-ssm-agent.service; a hard requirement aborts the bake.
-				"systemctl enable amazon-ssm-agent.service || systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service || true",
+				"amazon-ssm-agent.service",
+				"snap.amazon-ssm-agent.amazon-ssm-agent.service",
+				"snap install amazon-ssm-agent --classic",
+				`systemctl enable "$ssm_unit"`,
 				"systemctl is-enabled --quiet loreserver.service",
 				"SCRIPT",
 			},
@@ -69,6 +70,7 @@ func TestRenderTemplates(t *testing.T) {
 				"fabrica lore create",
 				"REPLACE_WITH_CUSTOM_COMPONENT_ARN",
 				"verify-lore-ami-runtime.sh",
+				"fails closed",
 			},
 		},
 		{
@@ -130,6 +132,9 @@ func TestRenderTemplates(t *testing.T) {
 				if !bytes.Contains(rendered, []byte(want)) {
 					t.Errorf("rendered %s missing %q", tt.template, want)
 				}
+			}
+			if tt.template == "component.yaml.tmpl" && bytes.Contains(rendered, []byte("|| true")) {
+				t.Errorf("rendered %s must not soft-fail SSM enable with || true", tt.template)
 			}
 		})
 	}

@@ -33,10 +33,9 @@ enabled but waits for Fabrica cloud-init to create `local.toml` before starting.
   `REPLACE_WITH_CUSTOM_COMPONENT_ARN` after creating the component.
 - `install-lore.sh` — shared AMI install contract used by both adapters. The
   pinned OSS tarball ships `loreserver` mode 0644, so the install makes it
-  executable before the bake checks run. Enabling the SSM agent is
-  best-effort (`amazon-ssm-agent.service`, then the snap unit, then `|| true`)
-  because not every base image ships it; the bake must not abort on its
-  absence.
+  executable before the bake checks run. Amazon SSM Agent is required: the
+  install enables the deb unit or the snap unit (and installs the snap if
+  neither is present). The bake fails closed if the agent cannot be enabled.
 - `verify-lore-ami-bake.sh` — shared static bake verification used by both adapters.
 - `verify-lore-ami-runtime.sh` — post-boot verification after Fabrica writes config.
 {{- if .IncludePacker }}
@@ -60,11 +59,11 @@ cleanup instructions, follow the repository runbook: `docs/lore-ami.md`.
 1. Create the component, substitute its ARN in `image-builder-recipe.json`, then
    create the recipe and pipeline as described in `docs/lore-ami.md`.
 2. Start the pipeline. It runs `verify-lore-ami-bake.sh` before it distributes an AMI.
-3. Launch through `fabrica lore create`, run `fabrica lore status`, and run
-   `verify-lore-ami-runtime.sh` through SSM before recording the AMI as known-good.
-4. Start the pipeline. It runs `verify-lore-ami-bake.sh` before it distributes an AMI.
-5. Launch through `fabrica lore create`, run `fabrica lore status`, and run
-   `verify-lore-ami-runtime.sh` through SSM before recording the AMI as known-good.
+   Bake verification fails closed if Amazon SSM Agent is missing or not enabled.
+3. Launch through `fabrica lore create`. Verify SSM registration on the private
+   path, then run `verify-lore-ami-runtime.sh` through SSM before recording the
+   AMI as known-good. Laptop `status --wait` against a private IP is not the
+   private-path check.
 
 ## Packer (Alternative)
 

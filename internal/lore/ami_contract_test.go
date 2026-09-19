@@ -116,13 +116,22 @@ func TestAMIContractInstallScript(t *testing.T) {
 		"ConditionPathExists=/etc/loreserver/local.toml",
 		"ExecStart=/opt/loreserver/loreserver --config /etc/loreserver",
 		"systemctl enable loreserver.service",
-		// The SSM agent is not guaranteed to ship as amazon-ssm-agent.service on
-		// every base image; a hard requirement aborts the bake.
-		"systemctl enable amazon-ssm-agent.service || systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service || true",
+		ssmDebUnit,
+		ssmSnapUnit,
+		"snap install amazon-ssm-agent --classic",
+		`systemctl enable "$ssm_unit"`,
+		"amazon-ssm-agent is not installed",
+		"cannot be enabled",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("install script missing %q", want)
 		}
+	}
+	if strings.Contains(script, "|| true") {
+		t.Error("install script must not soft-fail SSM enable with || true")
+	}
+	if strings.Contains(script, "enable amazon-ssm-agent.service ||") {
+		t.Error("install script must not chain SSM enable with ||")
 	}
 	for _, forbidden := range []string{"aws s3", "SECRET", "PASSWORD", "TOKEN"} {
 		if strings.Contains(strings.ToUpper(script), strings.ToUpper(forbidden)) {
@@ -143,6 +152,10 @@ func TestAMIContractVerificationScript(t *testing.T) {
 		"systemctl is-enabled --quiet loreserver.service",
 		"systemctl is-active --quiet loreserver.service",
 		"curl --fail --silent --show-error http://127.0.0.1:41339/health_check",
+		ssmDebUnit,
+		ssmSnapUnit,
+		`systemctl is-active --quiet "$ssm_unit"`,
+		"amazon-ssm-agent is not installed",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("verification script missing %q", want)
@@ -164,9 +177,16 @@ func TestAMIContractBakeVerificationScript(t *testing.T) {
 		"unit=\"$(systemctl cat loreserver.service)\"",
 		"ConditionPathExists=/etc/loreserver/local.toml",
 		"ExecStart=/opt/loreserver/loreserver --config /etc/loreserver",
+		ssmDebUnit,
+		ssmSnapUnit,
+		"amazon-ssm-agent is not installed",
+		"is not enabled",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("bake verification script missing %q", want)
 		}
+	}
+	if strings.Contains(script, `systemctl is-active --quiet "$ssm_unit"`) {
+		t.Error("bake verification must not require SSM to be active during imaging")
 	}
 }
