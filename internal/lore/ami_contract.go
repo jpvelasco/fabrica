@@ -150,7 +150,7 @@ printf '%%s\n' "$unit" | grep -Fqx 'ExecStart=%[1]s --config %[3]s'
 const (
 	ssmDebUnit        = "amazon-ssm-agent.service"
 	ssmSnapUnit       = "snap.amazon-ssm-agent.amazon-ssm-agent.service"
-	ssmEnabledStates  = "enabled|enabled-runtime|alias|static"
+	ssmEnabledStates  = "enabled|enabled-runtime|alias|indirect"
 	ssmDisabledStates = "disabled|disabled-runtime"
 )
 
@@ -174,18 +174,7 @@ if [ -z "$ssm_unit" ]; then
   echo "amazon-ssm-agent is not installed (neither ` + ssmDebUnit + ` nor ` + ssmSnapUnit + ` is present after install). Use an Ubuntu 22.04 base AMI that includes the SSM agent, or install it before this step." >&2
   exit 1
 fi
-unit_state=$(systemctl is-enabled "$ssm_unit" 2>/dev/null || :)
-case "$unit_state" in
-  ` + ssmEnabledStates + `) ;;
-  ` + ssmDisabledStates + `)
-    systemctl enable "$ssm_unit"
-    ;;
-  *)
-    echo "amazon-ssm-agent unit $ssm_unit cannot be enabled (state=$unit_state). Install and enable the agent, then retry the bake." >&2
-    exit 1
-    ;;
-esac
-`
+` + ssmUnitStateSwitchBash(true)
 }
 
 func requireSSMAgentEnabledBash(mustBeActive bool) string {
@@ -193,18 +182,36 @@ func requireSSMAgentEnabledBash(mustBeActive bool) string {
   echo "amazon-ssm-agent is not installed (neither ` + ssmDebUnit + ` nor ` + ssmSnapUnit + `)" >&2
   exit 1
 fi
-unit_state=$(systemctl is-enabled "$ssm_unit" 2>/dev/null || :)
-case "$unit_state" in
-  ` + ssmEnabledStates + `) ;;
-  *)
-    echo "amazon-ssm-agent unit $ssm_unit is not enabled (state=$unit_state)" >&2
-    exit 1
-    ;;
-esac
-`
+` + ssmUnitStateSwitchBash(false)
 	if mustBeActive {
 		script += `systemctl is-active --quiet "$ssm_unit"
 `
 	}
 	return script
+}
+
+func ssmUnitStateSwitchBash(enableIfDisabled bool) string {
+	disabledBranch := ""
+	if enableIfDisabled {
+		disabledBranch = "  " + ssmDisabledStates + ")\n    systemctl enable \"$ssm_unit\"\n    ;;\n"
+	}
+	fail := "amazon-ssm-agent unit $ssm_unit is not enabled (state=$unit_state)"
+	if enableIfDisabled {
+		fail = "amazon-ssm-agent unit $ssm_unit cannot be enabled (state=$unit_state). Install and enable the agent, then retry the bake."
+	}
+	return `unit_state=$(systemctl is-enabled "$ssm_unit" 2>/dev/null || :)
+case "$unit_state" in
+  ` + ssmEnabledStates + `) ;;
+  static)
+    if [ "$ssm_unit" != "` + ssmSnapUnit + `" ]; then
+      echo "amazon-ssm-agent unit $ssm_unit is static and will not start at boot" >&2
+      exit 1
+    fi
+    ;;
+` + disabledBranch + `  *)
+    echo "` + fail + `" >&2
+    exit 1
+    ;;
+esac
+`
 }

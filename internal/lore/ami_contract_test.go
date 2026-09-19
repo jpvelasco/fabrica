@@ -122,6 +122,9 @@ func TestAMIContractInstallScript(t *testing.T) {
 		`systemctl enable "$ssm_unit"`,
 		"amazon-ssm-agent is not installed",
 		"cannot be enabled",
+		"enabled|enabled-runtime|alias|indirect",
+		"is static and will not start at boot",
+		ssmSnapUnit,
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("install script missing %q", want)
@@ -181,6 +184,8 @@ func TestAMIContractBakeVerificationScript(t *testing.T) {
 		ssmSnapUnit,
 		"amazon-ssm-agent is not installed",
 		"is not enabled",
+		"enabled|enabled-runtime|alias|indirect",
+		"is static and will not start at boot",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("bake verification script missing %q", want)
