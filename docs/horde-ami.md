@@ -273,6 +273,7 @@ TBD — you need to bake one.
 
 | Region | AMI ID | Name / notes | Source | Jobs API verified |
 |--------|--------|-------------|--------|-------------------|
+| us-west-2 | ami-01b860bd17f6a0c57 | SSM overlay on fabrica-horde-ami-v3 — fail-closed SSM Agent; private-subnet SSM Online; loopback HTTP 200 | Image Builder overlay 2026-09-19 | HTTP 200 on `:5000` via SSM (private, no public IP) |
 | us-west-2 | ami-0764d44c38ef85362 | fabrica-horde-20260806 — UE 5.8.0 Horde, Docker compose, mongo:7.0, redis:7.2 | ghcr.io/epicgames/horde-server:5.8.0 | Yes (200) |
 
 After a successful bake, record the AMI ID here and in `fabrica.yaml`. Keep this
