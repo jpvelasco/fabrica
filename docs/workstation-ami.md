@@ -32,6 +32,6 @@ private IP. Endpoint SG inbound TCP 443 from the VPC CIDR: [ssm-private.md](ssm-
 
 | Date (UTC) | Region | AMI ID | Notes |
 | --- | --- | --- | --- |
-| — | — | TBD | Record after bake + private SSM + DCV `dcv list-sessions` via SSM + terminate |
+| 2026-09-20 | us-west-2 | `ami-0219a686f7416f70a` | Image Builder 1.0.1; private subnet, no public IP, SSM Online; `dcv` on PATH; `dcvserver` enabled; instance terminated |
 
 Do not mark an AMI known-good from Image Builder success alone.
