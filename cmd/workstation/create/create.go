@@ -41,6 +41,7 @@ type command struct {
 	writeState     func(*fabricastate.State) error
 	createResource func(ctx context.Context, r *cloud.Resource) error
 	getResource    func(ctx context.Context, r *cloud.Resource) error
+	inspectImage   func(ctx context.Context, imageID string) (cloud.ImageInfo, error)
 }
 
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
@@ -98,6 +99,9 @@ making any AWS calls.`,
 			if rt.Provider != nil {
 				c.createResource = rt.Provider.Resources().Create
 				c.getResource = rt.Provider.Resources().Get
+				if insp, ok := rt.Provider.(cloud.ImageInspector); ok {
+					c.inspectImage = insp.DescribeImage
+				}
 			}
 			return c.run(cmd.Context())
 		},
@@ -134,6 +138,10 @@ func (c command) run(ctx context.Context) error {
 		perforceAddr = addr
 	}
 
+	if err := c.rejectStockUbuntuAMI(ctx, wsCfg.AmiID); err != nil {
+		return err
+	}
+
 	plan, err := workstation.NewCreatePlan(ctx, wsCfg, account, region, provision.VPCResolver(c.runtime.Provider), c.template, perforceAddr)
 	if err != nil {
 		return fmt.Errorf("building create plan: %w", err)
@@ -155,6 +163,20 @@ func (c command) run(ctx context.Context) error {
 		Runtime:         c.runtime,
 		Operation:       "workstation create",
 	})
+}
+
+func (c command) rejectStockUbuntuAMI(ctx context.Context, amiID string) error {
+	if c.inspectImage == nil || amiID == "" {
+		return nil
+	}
+	info, err := c.inspectImage(ctx, amiID)
+	if err != nil {
+		return fmt.Errorf("inspecting workstation.amiId %s: %w. Confirm the AMI exists and is a NICE DCV image (see docs/workstation-ami.md)", amiID, err)
+	}
+	if workstation.IsStockUbuntuImage(info.Name) {
+		return fmt.Errorf("workstation.amiId %s is a stock Ubuntu image (%q), not a NICE DCV AMI. Bake one with 'fabrica workstation ami build' and set workstation.amiId to the result. See docs/workstation-ami.md", amiID, info.Name)
+	}
+	return nil
 }
 
 // resolvePerforceAddr reads the Perforce module state and resolves the instance's

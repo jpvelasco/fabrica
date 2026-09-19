@@ -16,16 +16,25 @@ func TestGenerateRawRequiresSessionPassword(t *testing.T) {
 	assert.Contains(t, err.Error(), "SessionPassword")
 }
 
-func TestGenerateRawContainsDCVInstall(t *testing.T) {
+func TestGenerateRawRequiresDCVOnAMI(t *testing.T) {
 	got, err := GenerateRaw(UserDataConfig{SessionPassword: "hunter2"})
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
 	}
 	for _, want := range []string{
-		"dcv",
+		"command -v dcv",
+		"NICE DCV is not installed on this AMI",
 		"hunter2",
+		"systemctl enable dcvserver",
+		"systemctl restart dcvserver",
 	} {
-		assert.Contains(t, strings.ToLower(got), strings.ToLower(want))
+		assert.Contains(t, got, want)
+	}
+	if strings.Contains(got, "snap install") || strings.Contains(got, "apt-get install -y dcv-server") {
+		t.Error("userdata must not install DCV at boot; the AMI is DCV-first")
+	}
+	if strings.Contains(got, "|| true") {
+		t.Error("userdata must not soft-fail DCV enable")
 	}
 }
 

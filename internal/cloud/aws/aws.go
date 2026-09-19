@@ -61,6 +61,7 @@ var _ fabricac.Provider = (*awsProvider)(nil)
 var _ fabricac.EC2InstanceManager = (*awsProvider)(nil)
 var _ fabricac.StateBackendBootstrapper = (*awsProvider)(nil)
 var _ fabricac.AMIResolver = (*awsProvider)(nil)
+var _ fabricac.ImageInspector = (*awsProvider)(nil)
 var _ fabricac.VPCResolver = (*awsProvider)(nil)
 var _ fabricac.VPCCIDRResolver = (*awsProvider)(nil)
 var _ fabricac.RegionProvider = (*awsProvider)(nil)
@@ -119,6 +120,13 @@ func (p *awsProvider) StartInstance(ctx context.Context, instanceID string) erro
 // cloud.AMIResolver interface so that type assertions in module commands work.
 func (p *awsProvider) ResolveUbuntuAMI(ctx context.Context, region string) (string, error) {
 	return p.ec2.ResolveUbuntuAMI(ctx, region)
+}
+
+// DescribeImage delegates to the EC2 service so *awsProvider satisfies
+// cloud.ImageInspector — workstation create asserts the capability on the
+// provider, not on the embedded service.
+func (p *awsProvider) DescribeImage(ctx context.Context, imageID string) (fabricac.ImageInfo, error) {
+	return p.ec2.DescribeImage(ctx, imageID)
 }
 
 // ResolveDefaultVPC delegates to the EC2 service, satisfying the

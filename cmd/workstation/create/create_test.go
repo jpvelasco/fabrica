@@ -95,6 +95,47 @@ func TestCreateAlreadyExists(t *testing.T) {
 	assert.Contains(t, out.String(), "already provisioned")
 }
 
+func TestCreateRejectsStockUbuntuAMI(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCommand(&out, &testutil.TestProvider{}, testutil.NewTestState())
+	c.dryRun = true
+	c.inspectImage = func(context.Context, string) (cloud.ImageInfo, error) {
+		return cloud.ImageInfo{ID: "ami-test12345", Name: "ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-20260826"}, nil
+	}
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected stock Ubuntu AMI to fail")
+	}
+	assert.Contains(t, err.Error(), "stock Ubuntu")
+	assert.Contains(t, err.Error(), "workstation ami build")
+}
+
+func TestCreateAllowsDCVNamedAMI(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCommand(&out, &testutil.TestProvider{}, testutil.NewTestState())
+	c.dryRun = true
+	c.inspectImage = func(context.Context, string) (cloud.ImageInfo, error) {
+		return cloud.ImageInfo{ID: "ami-test12345", Name: "fabrica-workstation-dcv-ubuntu-jammy"}, nil
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+}
+
+func TestCreateInspectImageError(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCommand(&out, &testutil.TestProvider{}, testutil.NewTestState())
+	c.inspectImage = func(context.Context, string) (cloud.ImageInfo, error) {
+		return cloud.ImageInfo{}, errors.New("not found")
+	}
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected inspect error")
+	}
+	assert.Contains(t, err.Error(), "inspecting workstation.amiId")
+	assert.Contains(t, err.Error(), "docs/workstation-ami.md")
+}
+
 func TestCreateHappyPathOrderAndState(t *testing.T) {
 	var out bytes.Buffer
 	provider := &testutil.TestProvider{}
