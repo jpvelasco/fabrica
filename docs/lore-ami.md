@@ -52,7 +52,9 @@ in the known-good table when verification passes.
    worker private S3 access to the licensed payload and only the egress it
    needs. For SSM management, private subnets need the appropriate SSM,
    `ssmmessages`, and `ec2messages` VPC endpoints (or approved NAT egress).
-   Do not open SSH or the Lore ports to the internet for baking.
+   The endpoint security group must allow inbound TCP 443 from the VPC CIDR —
+   see [ssm-private.md](ssm-private.md). Do not open SSH or the Lore ports to
+   the internet for baking.
 4. Before any AWS write, review the Image Builder instance/image, EBS snapshot,
    S3, and test-instance costs; set an account budget or tag policy; and obtain
    the required approval. Keep the licensed payload bucket private and apply

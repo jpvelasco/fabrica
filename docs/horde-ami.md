@@ -413,4 +413,6 @@ The SSM agent is required. `fabrica horde ami build` enables the deb unit or
 the snap unit (installing the snap if neither is present) and **fails closed**
 if the agent cannot be enabled. Image Builder also leaves the agent installed
 (`uninstallAfterBuild: false`). A known-good Horde AMI must register with SSM
-after boot in a private subnet with SSM interface endpoints.
+after boot in a private subnet with SSM interface endpoints. Endpoint
+security groups must allow inbound TCP 443 from the VPC CIDR; see
+[ssm-private.md](ssm-private.md).
