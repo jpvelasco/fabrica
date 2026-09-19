@@ -2,6 +2,8 @@ package ami
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,5 +77,58 @@ func TestIndent(t *testing.T) {
 	got := indent(2, "a\nb\n")
 	if got != "  a\n  b" {
 		t.Errorf("indent = %q", got)
+	}
+}
+
+func TestBuildValidateEmptyFields(t *testing.T) {
+	c := buildCommand{cfg: BuildConfig{BaseImage: defaultBaseImage, Region: "us-west-2", Name: "", OutputDir: "out"}}
+	if err := c.validate(); err == nil {
+		t.Fatal("expected empty name error")
+	}
+	c.cfg.Name = "ok"
+	c.cfg.OutputDir = ""
+	if err := c.validate(); err == nil {
+		t.Fatal("expected empty output-dir error")
+	}
+}
+
+func TestBuildMkdirError(t *testing.T) {
+	c := buildCommand{
+		out:      io.Discard,
+		cfg:      BuildConfig{BaseImage: defaultBaseImage, Region: "us-west-2", Name: "x", OutputDir: "out"},
+		mkdirAll: func(string, os.FileMode) error { return errors.New("mkdir boom") },
+	}
+	err := c.run()
+	if err == nil || !strings.Contains(err.Error(), "creating --output-dir") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestBuildWriteError(t *testing.T) {
+	c := buildCommand{
+		out:       io.Discard,
+		cfg:       BuildConfig{BaseImage: defaultBaseImage, Region: "us-west-2", Name: "x", OutputDir: t.TempDir()},
+		mkdirAll:  os.MkdirAll,
+		writeFile: func(string, []byte, os.FileMode) error { return errors.New("write boom") },
+	}
+	err := c.run()
+	if err == nil || !strings.Contains(err.Error(), "writing") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestRenderMissingTemplate(t *testing.T) {
+	c := buildCommand{}
+	_, err := c.render("no-such.tmpl", struct{}{})
+	if err == nil || !strings.Contains(err.Error(), "reading template") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestRenderExecuteError(t *testing.T) {
+	c := buildCommand{}
+	_, err := c.render("component.yaml.tmpl", struct{}{})
+	if err == nil || !strings.Contains(err.Error(), "rendering template") {
+		t.Fatalf("got %v", err)
 	}
 }

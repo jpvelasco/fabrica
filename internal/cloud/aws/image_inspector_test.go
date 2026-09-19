@@ -49,6 +49,18 @@ func TestDescribeImageAPIError(t *testing.T) {
 	}
 }
 
+func TestDescribeImageEnsureClientError(t *testing.T) {
+	svc := &ec2Service{
+		loadCfg: func(context.Context, string, string) (aws.Config, error) {
+			return aws.Config{}, errors.New("no creds")
+		},
+	}
+	_, err := svc.DescribeImage(context.Background(), "ami-x")
+	if err == nil {
+		t.Fatal("expected ensureClient error")
+	}
+}
+
 func TestAwsProviderDescribeImageDelegates(t *testing.T) {
 	p := &awsProvider{
 		ec2: ec2Service{

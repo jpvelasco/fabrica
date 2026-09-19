@@ -2,6 +2,7 @@ package create_test
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -33,6 +34,28 @@ func newCobraRuntime(provider cloud.Provider) globals.RuntimeSource {
 	cfg.Workstation.SubnetId = "subnet-test"
 	rt := globals.Runtime{Config: cfg, Provider: provider}
 	return func() (globals.Runtime, error) { return rt, nil }
+}
+
+type inspectorProvider struct {
+	testutil.TestProvider
+	name string
+	err  error
+}
+
+func (p *inspectorProvider) DescribeImage(_ context.Context, id string) (cloud.ImageInfo, error) {
+	if p.err != nil {
+		return cloud.ImageInfo{}, p.err
+	}
+	return cloud.ImageInfo{ID: id, Name: p.name}, nil
+}
+
+func TestCreateCobraRejectsStockUbuntuViaInspector(t *testing.T) {
+	p := &inspectorProvider{name: "ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-20260826"}
+	_, err := runCreate(t, newCobraRuntime(p), "--dry-run")
+	if err == nil {
+		t.Fatal("expected stock Ubuntu reject")
+	}
+	testutil.AssertContains(t, err.Error(), "stock Ubuntu")
 }
 
 func TestCreateCobraDryRunNoAWSCalls(t *testing.T) {
