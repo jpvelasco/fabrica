@@ -5,6 +5,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/workstation/action"
+	"github.com/jpvelasco/fabrica/cmd/workstation/ami"
 	"github.com/jpvelasco/fabrica/cmd/workstation/create"
 	"github.com/jpvelasco/fabrica/cmd/workstation/list"
 	"github.com/jpvelasco/fabrica/cmd/workstation/terminate"
@@ -24,7 +25,8 @@ Available operations:
   stop       Stop the workstation instance (pauses billing)
   start      Start a stopped workstation instance
   schedule   Show Spot / weekly on-off window
-  terminate  Permanently terminate the workstation and all its AWS resources`,
+  terminate  Permanently terminate the workstation and all its AWS resources
+  ami        Tools for building a NICE DCV workstation AMI`,
 	}
 	cmd.AddCommand(create.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(list.New(runtimeSource, optionsSource, out))
@@ -32,5 +34,6 @@ Available operations:
 	cmd.AddCommand(action.NewStart(runtimeSource, optionsSource, out))
 	cmd.AddCommand(newSchedule(runtimeSource, optionsSource, out))
 	cmd.AddCommand(terminate.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(ami.New(out))
 	return cmd
 }

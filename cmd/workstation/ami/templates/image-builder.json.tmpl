@@ -1,0 +1,34 @@
+{
+  "name": "{{ .Name }}",
+  "semanticVersion": "1.0.0",
+  "description": "NICE DCV workstation AMI for fabrica workstation create",
+  "parentImage": "{{ .BaseImage }}",
+  "blockDeviceMappings": [
+    {
+      "deviceName": "/dev/sda1",
+      "ebs": {
+        "volumeSize": 50,
+        "volumeType": "gp3",
+        "deleteOnTermination": true,
+        "encrypted": true
+      }
+    }
+  ],
+  "components": [
+    {
+      "componentArn": "arn:aws:imagebuilder:{{ .Region }}:aws:component/update-linux/1.0.2/1"
+    },
+    {
+      "componentArn": "REPLACE_WITH_CUSTOM_COMPONENT_ARN"
+    }
+  ],
+  "additionalInstanceConfiguration": {
+    "systemsManagerAgent": {
+      "uninstallAfterBuild": false
+    }
+  },
+  "tags": {
+    "ManagedBy": "fabrica",
+    "Name": "{{ .Name }}"
+  }
+}

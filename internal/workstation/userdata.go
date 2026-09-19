@@ -18,8 +18,11 @@ type UserDataConfig struct {
 var userDataRenderer = userdata.New(template.Must(template.New("userdata").Option("missingkey=error").Parse(`#!/bin/bash
 set -euo pipefail
 
-# Install NICE DCV server
-snap install --classic dcv-server 2>/dev/null || apt-get install -y dcv-server
+# AMI-first: NICE DCV must already be on the image. Stock Ubuntu is not enough.
+if ! command -v dcv >/dev/null 2>&1; then
+  echo "ERROR: NICE DCV is not installed on this AMI. Bake a DCV AMI with 'fabrica workstation ami build' (see docs/workstation-ami.md)."
+  exit 1
+fi
 
 # Configure NICE DCV
 dcv configure-session --type=virtual --storage-root /home/ubuntu/dcv
@@ -31,8 +34,8 @@ dcv create-session --type=virtual --storage-root /home/ubuntu/dcv workstation
 # Set DCV session password (non-interactive auth)
 echo "dcv:{{ .SessionPassword }}" | chpasswd
 
-systemctl enable dcvsessionmgr dcv-session-manager-agent 2>/dev/null || true
-systemctl restart dcvsessionmgr 2>/dev/null || true
+systemctl enable dcvserver
+systemctl restart dcvserver
 {{ if .MountPerforce }}
 # Install Perforce CLI
 wget -qO - https://package.perforce.com/perforce.pubkey | apt-key add -

@@ -48,7 +48,7 @@ affected.
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build`, `agents schedule`, `agents metrics` | Complete |
 | `lore` | `create`, `status`, `destroy`, `ami build` | Complete |
 | `ddc` | `setup`, `status`, `destroy`, `region add`, `ami build`, `topology` | Complete (V1, home + edge regions) |
-| `workstation` | `create`, `list`, `stop`, `start`, `schedule`, `terminate` | Complete |
+| `workstation` | `create`, `list`, `stop`, `start`, `schedule`, `terminate`, `ami build` | Complete |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `pipeline`, `destroy` | Complete |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | Complete |
 | `cost` | `report`, `forecast`, `alerts` | Complete |
@@ -377,7 +377,11 @@ Deletes edge nodes first (each in its region), then home resources (instances â†
 
 ### Workstation
 
-> **AMI requirement:** `fabrica workstation create` is AMI-first. Your AMI must already have NICE DCV installed. Fabrica only configures and starts the DCV session via cloud-init. Port 8443 (NICE DCV HTTPS) is opened inbound; restrict `workstation.allowedCidr` in `fabrica.yaml` for production.
+> **AMI requirement:** `fabrica workstation create` is AMI-first. Your AMI must already have NICE DCV installed. Stock Ubuntu is rejected at create time. Generate bake artifacts with `fabrica workstation ami build` (see [docs/workstation-ami.md](docs/workstation-ami.md)). Fabrica only configures and starts the DCV session via cloud-init. Port 8443 (NICE DCV HTTPS) is opened inbound; restrict `workstation.allowedCidr` in `fabrica.yaml` for production. Verify private instances via SSM ([docs/ssm-private.md](docs/ssm-private.md)).
+
+#### `fabrica workstation ami build`
+
+Writes Image Builder component + recipe + build guide locally (no AWS calls). The component installs NICE DCV (Ubuntu 22.04 tarball) and fail-closed Amazon SSM Agent.
 
 #### `fabrica workstation create`
 
