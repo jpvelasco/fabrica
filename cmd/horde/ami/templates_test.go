@@ -89,6 +89,15 @@ func TestRenderComponentTemplate_Docker(t *testing.T) {
 	if strings.Contains(s, "InstallDotNet") {
 		t.Error("docker component should not have InstallDotNet step")
 	}
+	if !strings.Contains(s, "EnsureSSMAgent") {
+		t.Error("component should fail-closed enable SSM agent")
+	}
+	if !strings.Contains(s, "snap install amazon-ssm-agent --classic") {
+		t.Error("component should install snap SSM agent when neither unit exists")
+	}
+	if strings.Contains(s, "|| true") {
+		t.Error("component must not soft-fail SSM enable with || true")
+	}
 }
 
 func TestRenderComponentTemplate_Native(t *testing.T) {
@@ -151,10 +160,27 @@ func TestRenderPackerTemplate_Docker(t *testing.T) {
 	if strings.Contains(s, "GITHUB_PAT") {
 		t.Error("packer template should not reference GITHUB_PAT")
 	}
-	// Ensure no # comments inside inline = [...] list literals (invalid HCL)
+	if !strings.Contains(s, "snap install amazon-ssm-agent --classic") {
+		t.Error("packer template should fail-closed enable SSM agent")
+	}
+	// Bare # comments inside inline = [...] list literals are invalid HCL.
+	// Heredoc bodies (<<-EOF ... EOF) are strings, so # there is fine.
 	inInlineList := false
+	inHeredoc := false
 	for _, line := range strings.Split(s, "\n") {
 		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "<<-EOF") || strings.Contains(trimmed, "<<EOF") {
+			inHeredoc = true
+			inInlineList = true
+			continue
+		}
+		if inHeredoc && trimmed == "EOF" {
+			inHeredoc = false
+			continue
+		}
+		if inHeredoc {
+			continue
+		}
 		if strings.Contains(trimmed, "inline = [") {
 			inInlineList = true
 		}

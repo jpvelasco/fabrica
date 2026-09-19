@@ -115,6 +115,15 @@ build {
   provisioner "shell" {
     execute_command = "sudo -E bash -c '{{`{{ .Vars }}`}} {{`{{ .Path }}`}}'"
     inline_shebang  = "/bin/bash -euo pipefail"
+    inline = [<<-EOF
+{{ ensureSSM }}
+EOF
+    ]
+  }
+
+  provisioner "shell" {
+    execute_command = "sudo -E bash -c '{{`{{ .Vars }}`}} {{`{{ .Path }}`}}'"
+    inline_shebang  = "/bin/bash -euo pipefail"
     inline = [
       "systemctl is-enabled horde",
 {{- if eq .Install "docker" }}
@@ -124,6 +133,15 @@ build {
       "systemctl is-enabled redis-server",
 {{- end }}
       "test -d /etc/horde",
+    ]
+  }
+
+  provisioner "shell" {
+    execute_command = "sudo -E bash -c '{{`{{ .Vars }}`}} {{`{{ .Path }}`}}'"
+    inline_shebang  = "/bin/bash -euo pipefail"
+    inline = [<<-EOF
+{{ requireSSM }}
+EOF
     ]
   }
 }

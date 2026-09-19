@@ -408,5 +408,8 @@ To connect:
 aws ssm start-session --target <instance-id>
 ```
 
-The SSM agent is included in standard Ubuntu 22.04 AMIs. If using a custom AMI,
-ensure the `amazon-ssm-agent` package is installed and enabled.
+The SSM agent is required. `fabrica horde ami build` enables the deb unit or
+the snap unit (installing the snap if neither is present) and **fails closed**
+if the agent cannot be enabled. Image Builder also leaves the agent installed
+(`uninstallAfterBuild: false`). A known-good Horde AMI must register with SSM
+after boot in a private subnet with SSM interface endpoints.

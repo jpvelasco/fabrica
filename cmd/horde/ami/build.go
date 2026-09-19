@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"text/template"
 
+	"github.com/jpvelasco/fabrica/internal/amissm"
 	"github.com/spf13/cobra"
 )
 
@@ -237,7 +239,12 @@ func (b *buildCommand) renderTemplate(name string, data any) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading template %s: %w", name, err)
 	}
-	tmpl, err := template.New(name).Option("missingkey=error").Parse(string(raw))
+	raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
+	tmpl, err := template.New(name).Funcs(template.FuncMap{
+		"indent":     indent,
+		"ensureSSM":  amissm.EnsureScript,
+		"requireSSM": func() string { return amissm.RequireEnabledScript(false) },
+	}).Option("missingkey=error").Parse(string(raw))
 	if err != nil {
 		return nil, fmt.Errorf("parsing template %s: %w", name, err)
 	}
@@ -246,6 +253,11 @@ func (b *buildCommand) renderTemplate(name string, data any) ([]byte, error) {
 		return nil, fmt.Errorf("rendering template %s: %w", name, err)
 	}
 	return buf.Bytes(), nil
+}
+
+func indent(spaces int, value string) string {
+	prefix := strings.Repeat(" ", spaces)
+	return prefix + strings.ReplaceAll(strings.TrimSuffix(value, "\n"), "\n", "\n"+prefix)
 }
 
 func (b *buildCommand) printSuccess(files []string) {
