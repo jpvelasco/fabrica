@@ -105,6 +105,13 @@ phases:
             - systemctl daemon-reload
             - systemctl enable horde
 {{- end }}
+      - name: EnsureSSMAgent
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              set -euo pipefail
+{{ indent 14 (ensureSSM) }}
 
   - name: validate
     steps:
@@ -120,6 +127,8 @@ phases:
             - systemctl is-enabled mongod
             - systemctl is-enabled redis-server
 {{- end }}
+            - |
+{{ indent 14 (requireSSM) }}
 
   - name: test
     steps:

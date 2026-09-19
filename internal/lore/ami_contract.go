@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path"
 	"strings"
+
+	"github.com/jpvelasco/fabrica/internal/amissm"
 )
 
 // AMIContract defines the operating-system surface that a Lore AMI provides to
@@ -101,7 +103,7 @@ UNIT
 systemctl daemon-reload
 systemctl enable %[7]s.service
 `, sourceDir, binaryDir, c.ConfigDir, c.BinaryPath, c.CommandPath, serviceUnit, c.ServiceName)
-	return script + ensureSSMAgentBash(), nil
+	return script + amissm.EnsureScript(), nil
 }
 
 // VerificationScript returns the post-provisioning verification script. Run it
@@ -121,7 +123,7 @@ systemctl is-enabled --quiet %[3]s.service
 systemctl is-active --quiet %[3]s.service
 curl --fail --silent --show-error http://127.0.0.1:%[4]d%[5]s
 `, c.BinaryPath, c.ConfigDir, c.ServiceName, c.HTTPPort, c.HealthPath)
-	return script + requireSSMAgentEnabledBash(true), nil
+	return script + amissm.RequireEnabledScript(true), nil
 }
 
 // BakeVerificationScript returns the verification script that builders run
@@ -141,77 +143,5 @@ unit="$(systemctl cat %[2]s.service)"
 printf '%%s\n' "$unit" | grep -Fqx 'ConditionPathExists=%[3]s/local.toml'
 printf '%%s\n' "$unit" | grep -Fqx 'ExecStart=%[1]s --config %[3]s'
 `, c.BinaryPath, c.ServiceName, c.ConfigDir)
-	return script + requireSSMAgentEnabledBash(false), nil
-}
-
-// Ubuntu 22.04 ships Amazon SSM Agent as either the deb unit or the snap unit
-// depending on the base AMI publisher. Both are acceptable; neither may be
-// skipped. A bake that cannot enable one of these units must fail closed.
-const (
-	ssmDebUnit        = "amazon-ssm-agent.service"
-	ssmSnapUnit       = "snap.amazon-ssm-agent.amazon-ssm-agent.service"
-	ssmEnabledStates  = "enabled|enabled-runtime|alias|indirect"
-	ssmDisabledStates = "disabled|disabled-runtime"
-)
-
-func detectSSMAgentUnitBash() string {
-	return fmt.Sprintf(`ssm_unit=""
-if systemctl cat %[1]s >/dev/null 2>&1; then
-  ssm_unit=%[1]s
-elif systemctl cat %[2]s >/dev/null 2>&1; then
-  ssm_unit=%[2]s
-fi
-`, ssmDebUnit, ssmSnapUnit)
-}
-
-func ensureSSMAgentBash() string {
-	return `# Amazon SSM Agent is required for private-subnet management.
-# Fail closed: a missing or non-enableable unit aborts the bake.
-` + detectSSMAgentUnitBash() + `if [ -z "$ssm_unit" ]; then
-  snap install amazon-ssm-agent --classic
-` + detectSSMAgentUnitBash() + `fi
-if [ -z "$ssm_unit" ]; then
-  echo "amazon-ssm-agent is not installed (neither ` + ssmDebUnit + ` nor ` + ssmSnapUnit + ` is present after install). Use an Ubuntu 22.04 base AMI that includes the SSM agent, or install it before this step." >&2
-  exit 1
-fi
-` + ssmUnitStateSwitchBash(true)
-}
-
-func requireSSMAgentEnabledBash(mustBeActive bool) string {
-	script := detectSSMAgentUnitBash() + `if [ -z "$ssm_unit" ]; then
-  echo "amazon-ssm-agent is not installed (neither ` + ssmDebUnit + ` nor ` + ssmSnapUnit + `)" >&2
-  exit 1
-fi
-` + ssmUnitStateSwitchBash(false)
-	if mustBeActive {
-		script += `systemctl is-active --quiet "$ssm_unit"
-`
-	}
-	return script
-}
-
-func ssmUnitStateSwitchBash(enableIfDisabled bool) string {
-	disabledBranch := ""
-	if enableIfDisabled {
-		disabledBranch = "  " + ssmDisabledStates + ")\n    systemctl enable \"$ssm_unit\"\n    ;;\n"
-	}
-	fail := "amazon-ssm-agent unit $ssm_unit is not enabled (state=$unit_state)"
-	if enableIfDisabled {
-		fail = "amazon-ssm-agent unit $ssm_unit cannot be enabled (state=$unit_state). Install and enable the agent, then retry the bake."
-	}
-	return `unit_state=$(systemctl is-enabled "$ssm_unit" 2>/dev/null || :)
-case "$unit_state" in
-  ` + ssmEnabledStates + `) ;;
-  static)
-    if [ "$ssm_unit" != "` + ssmSnapUnit + `" ]; then
-      echo "amazon-ssm-agent unit $ssm_unit is static and will not start at boot" >&2
-      exit 1
-    fi
-    ;;
-` + disabledBranch + `  *)
-    echo "` + fail + `" >&2
-    exit 1
-    ;;
-esac
-`
+	return script + amissm.RequireEnabledScript(false), nil
 }

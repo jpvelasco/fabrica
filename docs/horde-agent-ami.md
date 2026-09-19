@@ -26,7 +26,7 @@ The AMI must meet all of the following:
 |-------------|--------|
 | **OS** | Ubuntu 22.04 LTS (jammy) — cloud-init script targets Ubuntu |
 | **Horde agent** | The Unreal Horde agent binary installed and available on PATH, or a Docker image pre-loaded |
-| **SSM Agent** | `amazon-ssm-agent` installed, enabled (`systemctl enable`), and running — required for Session Manager access |
+| **SSM Agent** | `amazon-ssm-agent` installed and enabled (deb `amazon-ssm-agent.service` or snap `snap.amazon-ssm-agent.amazon-ssm-agent.service`). Bake must **fail closed** if the unit cannot be enabled. Required for Session Manager access on private subnets. |
 | **Architecture** | `x86_64` (matches default `c7i.xlarge` instance type) |
 | **No full server** | The AMI should NOT include MongoDB, Redis, or the Horde coordinator server binary — only the agent |
 
