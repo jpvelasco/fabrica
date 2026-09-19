@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Horde AMI bake did not require Amazon SSM Agent** — coordinator Image Builder/Packer artifacts now enable the deb or snap SSM unit (installing the snap if neither is present) and fail closed if it cannot be enabled. Shared `internal/amissm` helpers are the same contract Lore uses. Agent AMI runbook matches. (#414)
+- **Horde AMI bake did not require Amazon SSM Agent** — coordinator Image Builder/Packer artifacts now enable the deb or snap SSM unit (installing the snap if neither is present) and fail closed if it cannot be enabled. Shared `internal/amissm` helpers are the same contract Lore uses. Agent AMI runbook matches. Known-good overlay AMIs recorded after private-subnet SSM verification. (#414)
 - **Lore AMI bake treated a missing SSM agent as success** — `install-lore.sh` enabled `amazon-ssm-agent` with `|| true`, so a bake without a working unit still produced an AMI that never registered with SSM on a private subnet. Install now enables the deb or snap unit (installing the snap if neither is present) and fails closed if the agent cannot be enabled. Bake and runtime verifiers require the same unit. (#413)
 
 ## [0.4.4] - 2026-09-10
