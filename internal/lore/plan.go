@@ -60,10 +60,16 @@ type CreatePlan struct {
 	CostResources []cost.Resource
 }
 
+// DefaultAllowedCIDR is the security-group fallback when no explicit CIDR is
+// configured and the VPC CIDR cannot be resolved.
+const DefaultAllowedCIDR = "10.0.0.0/8"
+
 // NewCreatePlan validates inputs and builds a CreatePlan. VPCResolver is called
 // only when VPCId/SubnetId are absent from cfg; pass nil to skip resolution
-// (dry-run with explicit VPC values, or tests).
-func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region string, resolver cloud.VPCResolver) (*CreatePlan, error) {
+// (dry-run with explicit VPC values, or tests). cidrResolver may be nil: the
+// AllowedCIDR then falls back to DefaultAllowedCIDR when cfg.AllowedCIDR is
+// empty.
+func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region string, resolver cloud.VPCResolver, cidrResolver cloud.VPCCIDRResolver) (*CreatePlan, error) {
 	if cfg.AmiID == "" {
 		return nil, fmt.Errorf("lore.amiId is required. Provide an AMI ID that contains the loreserver binary.\nSee: docs/lore-ami.md")
 	}
@@ -79,10 +85,6 @@ func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region s
 	if volumeSize <= 0 {
 		volumeSize = 500
 	}
-	allowedCIDR := cfg.AllowedCIDR
-	if allowedCIDR == "" {
-		allowedCIDR = "10.0.0.0/8"
-	}
 
 	storeBackend := normalizeStoreBackend(cfg.StoreBackend)
 	storeBucket := ResolveStoreBucket(cfg.StoreBucket, account, region, storeBackend)
@@ -91,6 +93,7 @@ func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region s
 	if err != nil {
 		return nil, err
 	}
+	allowedCIDR := topology.ResolveAllowedCIDR(ctx, cfg.AllowedCIDR, vpcID, cidrResolver, DefaultAllowedCIDR)
 
 	return &CreatePlan{
 		Account:             account,

@@ -220,3 +220,51 @@ func TestResolveVPC_BothSetSkipsResolver(t *testing.T) {
 		t.Errorf("resolver calls = %d, want 0 when both IDs set", resolver.calls)
 	}
 }
+
+func TestResolveAllowedCIDRExplicitWins(t *testing.T) {
+	cidrResolver := &cloud.TestVPCCIDRResolver{CIDR: "172.31.0.0/16"}
+	got := ResolveAllowedCIDR(context.Background(), "192.168.0.0/16", "vpc-fake", cidrResolver, "10.0.0.0/8")
+	if got != "192.168.0.0/16" {
+		t.Errorf("got %q, want explicit config value", got)
+	}
+	if cidrResolver.Calls != 0 {
+		t.Errorf("resolver calls = %d, want 0 (explicit CIDR skips resolver)", cidrResolver.Calls)
+	}
+}
+
+func TestResolveAllowedCIDRResolvesVPCCIDR(t *testing.T) {
+	cidrResolver := &cloud.TestVPCCIDRResolver{CIDR: "172.31.0.0/16"}
+	got := ResolveAllowedCIDR(context.Background(), "", "vpc-fake", cidrResolver, "10.0.0.0/8")
+	if got != "172.31.0.0/16" {
+		t.Errorf("got %q, want resolved VPC CIDR", got)
+	}
+	if cidrResolver.Calls != 1 {
+		t.Errorf("resolver calls = %d, want 1", cidrResolver.Calls)
+	}
+}
+
+func TestResolveAllowedCIDRFallbackOnResolverError(t *testing.T) {
+	cidrResolver := &cloud.TestVPCCIDRResolver{Err: cloud.ErrResourceNotFound}
+	got := ResolveAllowedCIDR(context.Background(), "", "vpc-fake", cidrResolver, "10.0.0.0/8")
+	if got != "10.0.0.0/8" {
+		t.Errorf("got %q, want default fallback", got)
+	}
+}
+
+func TestResolveAllowedCIDRFallbackWhenNoVPC(t *testing.T) {
+	cidrResolver := &cloud.TestVPCCIDRResolver{CIDR: "172.31.0.0/16"}
+	got := ResolveAllowedCIDR(context.Background(), "", "", cidrResolver, "10.0.0.0/8")
+	if got != "10.0.0.0/8" {
+		t.Errorf("got %q, want default fallback (no VPC to resolve)", got)
+	}
+	if cidrResolver.Calls != 0 {
+		t.Errorf("resolver calls = %d, want 0", cidrResolver.Calls)
+	}
+}
+
+func TestResolveAllowedCIDRExplicitWinsNoResolver(t *testing.T) {
+	got := ResolveAllowedCIDR(context.Background(), "192.168.0.0/16", "vpc-fake", nil, "10.0.0.0/8")
+	if got != "192.168.0.0/16" {
+		t.Errorf("got %q, want explicit config value", got)
+	}
+}

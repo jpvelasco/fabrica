@@ -105,3 +105,53 @@ func TestCreateCobraExplicitVPCCfgSkipsResolver(t *testing.T) {
 		t.Errorf("ResolveDefaultVPC calls = %d, want 0 with explicit config", provider.Calls)
 	}
 }
+
+// TestCreateCobraCIDRResolverWiring verifies that lore create wires the VPC
+// CIDR resolver from the provider, defaulting allowedCidr to the resolved VPC
+// CIDR instead of the hard-coded 10.0.0.0/8.
+func TestCreateCobraCIDRResolverWiring(t *testing.T) {
+	provider := &testutil.VPCResolverProvider{
+		VPCID:    "vpc-default",
+		SubnetID: "subnet-default",
+		VPCCIDR:  "172.31.0.0/16",
+	}
+	cfg := config.Defaults()
+	cfg.State.Bucket = "fabrica-state-test"
+	cfg.State.Table = "fabrica-locks-test"
+	cfg.Lore.AmiID = "ami-test123"
+	rt := globals.Runtime{Config: cfg, Provider: provider}
+	runtimeSource := func() (globals.Runtime, error) { return rt, nil }
+	got, err := runCreate(t, runtimeSource, "--dry-run")
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	testutil.AssertContains(t, got, "172.31.0.0/16")
+	if provider.CIDRCalls != 1 {
+		t.Errorf("ResolveVPCCIDR calls = %d, want 1", provider.CIDRCalls)
+	}
+}
+
+// TestCreateCobraExplicitCIDROverridesResolver verifies that an explicit
+// lore.allowedCidr in config is not overridden by the VPC CIDR resolver.
+func TestCreateCobraExplicitCIDROverridesResolver(t *testing.T) {
+	provider := &testutil.VPCResolverProvider{
+		VPCID:    "vpc-default",
+		SubnetID: "subnet-default",
+		VPCCIDR:  "172.31.0.0/16",
+	}
+	cfg := config.Defaults()
+	cfg.State.Bucket = "fabrica-state-test"
+	cfg.State.Table = "fabrica-locks-test"
+	cfg.Lore.AmiID = "ami-test123"
+	cfg.Lore.AllowedCIDR = "192.168.0.0/16"
+	rt := globals.Runtime{Config: cfg, Provider: provider}
+	runtimeSource := func() (globals.Runtime, error) { return rt, nil }
+	got, err := runCreate(t, runtimeSource, "--dry-run")
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	testutil.AssertContains(t, got, "192.168.0.0/16")
+	if provider.CIDRCalls != 0 {
+		t.Errorf("ResolveVPCCIDR calls = %d, want 0 (explicit CIDR skips resolver)", provider.CIDRCalls)
+	}
+}

@@ -13,6 +13,10 @@ import (
 // DefaultInstanceType is the EC2 shape used when config omits instanceType.
 const DefaultInstanceType = "m7i.2xlarge"
 
+// DefaultAllowedCIDR is the security-group fallback when no explicit CIDR is
+// configured and the VPC CIDR cannot be resolved.
+const DefaultAllowedCIDR = "10.0.0.0/8"
+
 type CreatePlan struct {
 	Account      string
 	Region       string
@@ -60,21 +64,7 @@ func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region 
 	if err != nil {
 		return nil, err
 	}
-
-	allowedCIDR := cfg.AllowedCIDR
-	if allowedCIDR == "" {
-		// Try to resolve the VPC CIDR from the provider. Fall back to
-		// 10.0.0.0/8 if the VPC is unknown or the resolver is not available.
-		if vpcID != "" && cidrResolver != nil {
-			resolvedCIDR, resolveErr := cidrResolver.ResolveVPCCIDR(ctx, vpcID)
-			if resolveErr == nil && resolvedCIDR != "" {
-				allowedCIDR = resolvedCIDR
-			}
-		}
-		if allowedCIDR == "" {
-			allowedCIDR = "10.0.0.0/8"
-		}
-	}
+	allowedCIDR := topology.ResolveAllowedCIDR(ctx, cfg.AllowedCIDR, vpcID, cidrResolver, DefaultAllowedCIDR)
 
 	return &CreatePlan{
 		Account:             account,
