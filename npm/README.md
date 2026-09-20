@@ -161,9 +161,12 @@ aws:
 ```
 
 State lives in S3 (`fabrica-state-<account-id>`) + DynamoDB lock table, with a
-local cache under `.fabrica/`. Module credentials (where applicable) are written
-to `.fabrica/*-credentials.yaml` with mode `0600` — never embedded in EC2
-UserData.
+local cache under `.fabrica/`. Module credentials (where applicable) are
+written to `.fabrica/*-credentials.yaml` with mode `0600` as the operator
+source of truth. The workstation DCV session password must reach its
+instance for `chpasswd`, so it briefly appears in EC2 UserData and is
+scrubbed from the instance (local copy truncated, IMDS user-data cleared)
+immediately after boot; see `docs/workstation-ami.md`.
 
 ## Links
 

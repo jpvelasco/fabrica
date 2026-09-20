@@ -231,7 +231,7 @@ git config core.hooksPath .githooks
 
 ### Workstation
 - **AMI-first provisioning** — the AMI must already have NICE DCV installed. Fabrica only configures and starts the DCV session via cloud-init. Create rejects Canonical Ubuntu 22.04 server AMI names; bake with `fabrica workstation ami build` (see `docs/workstation-ami.md`). Cloud-init fails closed if `dcv` is missing.
-- **No credentials in UserData** — DCV session password is written to `.fabrica/workstation-credentials.yaml` (mode 0600) only; never embedded in UserData.
+- **Session password rides UserData briefly, then is scrubbed** — the DCV session password (the `ubuntu` OS password) is passed through `chpasswd` in UserData, and cloud-init truncates the local copy and clears the IMDS user-data (`/latest/user-data`) immediately after; scrub failure fails closed. `.fabrica/workstation-credentials.yaml` (mode 0600) remains the operator source of truth; the residual boot window (before the scrub line runs) is the only IMDS-visible exposure.
 - **Port** — 8443 (NICE DCV HTTPS). Default `allowedCidr` is the private range `10.0.0.0/8` (`DefaultAllowedCIDR`, asserted non-public by tests); set `workstation.allowedCidr` in `fabrica.yaml` to your VPN CIDR in production.
 - **Templates** — `--template artist` → `g6.xlarge` + 200 GiB; `--template programmer` → `c7i.xlarge` + 100 GiB. Precedence is per field: explicit `--instance-type`/`--volume-size` flags > config > template > default (`resolveSizing`).
 - **Cost matches the resolved shape** — create-time estimates price the template/flag-resolved shape via `workstation.CostResourcesFor(instanceType, volumeSize)`; `CostResources(cfg)` remains the config-derived fallback for reporting.

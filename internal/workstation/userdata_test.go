@@ -77,6 +77,59 @@ func TestGenerateRawUsesCurrentDCVCLI(t *testing.T) {
 	}
 }
 
+func TestGenerateRawScrubsUserDataAfterChpasswd(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{SessionPassword: "hunter2"})
+	if err != nil {
+		t.Fatalf("GenerateRaw: %v", err)
+	}
+	// The session password still rides through chpasswd so the DCV login
+	// works (#443 keeps the single-credential model)...
+	assert.Contains(t, got, `echo "$DCV_USER:hunter2" | chpasswd`)
+	// ...but the long-lived UserData exposure is scrubbed right after:
+	// IMDS user-data cleared (token + IMDSv1 fallback), local cloud-init
+	// copies truncated.
+	for _, want := range []string{
+		"truncate -s 0 /var/lib/cloud/instance/user-data.txt",
+		"http://169.254.169.254/latest/api/token",
+		"-X PUT -H \"X-aws-ec2-metadata-token: ${IMDS_TOKEN}\" -d \"\"",
+		"ERROR: userdata scrub failed after chpasswd",
+		"Scrubbed EC2 userdata",
+	} {
+		assert.Contains(t, got, want)
+	}
+	// Order: chpasswd must succeed before the scrub runs, and the scrub
+	// must run before the DCV server starts.
+	chpassIdx := strings.Index(got, "chpasswd")
+	scrubIdx := strings.Index(got, "truncate -s 0 /var/lib/cloud/instance/user-data.txt")
+	dcvIdx := strings.Index(got, "systemctl restart dcvserver")
+	if chpassIdx < 0 || scrubIdx < 0 || dcvIdx < 0 ||
+		chpassIdx > scrubIdx || scrubIdx > dcvIdx {
+		t.Error("userdata must chpasswd first, then scrub, then start dcvserver (#443)")
+	}
+	// The scrub is fail-closed: a failed IMDS clear must abort cloud-init.
+	if strings.Count(got, "exit 1") < 5 {
+		t.Errorf("userdata must fail closed on scrub failure; got %q", got)
+	}
+}
+
+func TestGenerateRawChpasswdFailClosed(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{SessionPassword: "pw"})
+	if err != nil {
+		t.Fatalf("GenerateRaw: %v", err)
+	}
+	assert.Contains(t, got, "ERROR: chpasswd failed")
+	// chpasswd must run inside an if-condition (fail closed), not as a
+	// bare line where set -e only would mask a partial failure.
+	idx := strings.Index(got, "chpasswd")
+	if idx < 0 {
+		t.Fatal("chpasswd line missing")
+	}
+	line := got[idx-40 : idx+20]
+	if !strings.Contains(line, "if !") {
+		t.Errorf("chpasswd must be guarded by 'if !' for a fail-closed error line, got: %q", line)
+	}
+}
+
 func TestGenerateRawIdleTimeout(t *testing.T) {
 	got, err := GenerateRaw(UserDataConfig{
 		SessionPassword:    "pw",

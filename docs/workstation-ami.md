@@ -48,6 +48,25 @@ does not appear within 3 minutes. It also starts `dcvserver` **before**
 `dcv create-session`: with the daemon stopped, `create-session` exits 0 but
 the session is never persisted (verified live on DCV 2025.0.x).
 
+## Session password exposure (UserData)
+
+The DCV session password is the OS password for `ubuntu`, so it must reach
+the instance somehow; DCV still authenticates the session against the OS
+password of the session owner. Cloud-init therefore embeds it in UserData
+long enough for `chpasswd` to consume it, then **scrubs the long-lived
+exposure**: the local cloud-init copy is truncated and the IMDS user-data
+(`/latest/user-data`, IMDSv2 token + IMDSv1 fallback) is cleared
+immediately after `chpasswd` succeeds. A failed scrub aborts cloud-init
+with an `ERROR:` line, and `Scrubbed EC2 userdata (local + IMDS).` marks the
+success path in `/var/log/cloud-init-output.log`.
+
+Residual exposure is the boot window before the scrub line runs (seconds on
+the healthy path): during that window any local process can read
+`/latest/user-data` via IMDS, and any principal with
+`ec2:DescribeInstanceAttribute` can pull the attribute. After the scrub, the
+operator source of truth is `.fabrica/workstation-credentials.yaml` (mode
+`0600`) on the workstation host — never the instance.
+
 HTTPS 200 on 8443 is **not** proof the session setup ran — `dcvserver` starts
 and serves even when cloud-init aborts. Verify the session over SSM (or
 VPN/in-VPC) after `workstation create`:
