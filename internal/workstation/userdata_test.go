@@ -65,6 +65,16 @@ func TestGenerateRawUsesCurrentDCVCLI(t *testing.T) {
 `+"\n", " ")
 	assert.Contains(t, joined, "dcv create-session --type virtual --user \"$DCV_USER\" --owner \"$DCV_USER\"")
 	assert.Contains(t, joined, "--storage-root /home/\"$DCV_USER\"/dcv workstation")
+
+	// With dcvserver stopped, 'dcv create-session' exits 0 but the session is
+	// never persisted — the daemon must be started before the session is
+	// created (verified live on a DCV 2025.0.x instance; #438). The command
+	// spans a backslash-continuation line, so the full CLI line is 'joined'.
+	restartIdx := strings.Index(got, "systemctl restart dcvserver")
+	createIdx := strings.Index(joined, "dcv create-session --type virtual")
+	if restartIdx < 0 || createIdx < 0 || restartIdx > createIdx {
+		t.Error("dcvserver must be restarted before 'dcv create-session'; with the daemon stopped the session is not persisted (#438)")
+	}
 }
 
 func TestGenerateRawIdleTimeout(t *testing.T) {

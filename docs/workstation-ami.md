@@ -44,7 +44,9 @@ Fabrica's cloud-init targets the current DCV CLI (2023.0+ / 2025.0.x):
 for the persistent `workstation` session, and `chpasswd` for the login
 password written to `.fabrica/workstation-credentials.yaml` (user `ubuntu`).
 The script **fails closed** if the `ubuntu` user is missing or the session
-does not appear within 3 minutes.
+does not appear within 3 minutes. It also starts `dcvserver` **before**
+`dcv create-session`: with the daemon stopped, `create-session` exits 0 but
+the session is never persisted (verified live on DCV 2025.0.x).
 
 HTTPS 200 on 8443 is **not** proof the session setup ran — `dcvserver` starts
 and serves even when cloud-init aborts. Verify the session over SSM (or

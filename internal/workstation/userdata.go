@@ -38,15 +38,23 @@ chown "$DCV_USER":"$DCV_USER" /home/"$DCV_USER"/dcv
 # Idle timeout via the current CLI surface (DCV 2023+ set-config).
 dcv set-config --section connectivity --key idle-timeout "{{ .IdleTimeoutMinutes }}"
 
-# Create the persistent virtual DCV session owned by the session user.
-dcv create-session --type virtual --user "$DCV_USER" --owner "$DCV_USER" \
-  --storage-root /home/"$DCV_USER"/dcv workstation
-
 # Set the session user's password (non-interactive DCV login credentials).
 echo "$DCV_USER:{{ .SessionPassword }}" | chpasswd
 
+# Start the DCV server before creating the session. With the daemon stopped,
+# 'dcv create-session' exits 0 but the session is never persisted.
 systemctl enable dcvserver
 systemctl restart dcvserver
+for _ in $(seq 1 6); do
+  if [ "$(systemctl is-active dcvserver 2>/dev/null)" = "active" ]; then
+    break
+  fi
+  sleep 5
+done
+
+# Create the persistent virtual DCV session owned by the session user.
+dcv create-session --type virtual --user "$DCV_USER" --owner "$DCV_USER" \
+  --storage-root /home/"$DCV_USER"/dcv workstation
 
 # Poll for the session to appear. The restart is asynchronous, and an HTTPS
 # 200 on 8443 is not proof this script ran to completion — the DCV server
