@@ -190,12 +190,20 @@ func TestGenerateRawHealthPollAfterRestart(t *testing.T) {
 	// Bounded poll with a final restart as the authoritative state.
 	for _, want := range []string{
 		"health_ok()",
+		"UNIT_FILE=\"/etc/systemd/system/loreserver.service\"",
+		`if [ -f "$UNIT_FILE" ]; then`,
 		"for i in $(seq 1 60); do",
 		"systemctl restart loreserver || true",
 	} {
 		if !strings.Contains(raw, want) {
 			t.Errorf("userdata missing health-poll behavior %q", want)
 		}
+	}
+	// Unit detection must not depend on the systemctl catalog query: a
+	// transient failure there silently drops into the nohup fallback and
+	// leaves the enabled unit inactive at first boot.
+	if strings.Contains(raw, "list-unit-files") {
+		t.Errorf("userdata must not detect the unit via list-unit-files")
 	}
 }
 

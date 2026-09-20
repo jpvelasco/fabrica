@@ -163,7 +163,13 @@ HEALTH_URL="http://127.0.0.1:{{ .HTTPPort }}/health_check"
 health_ok() {
   curl -sf -o /dev/null --max-time 5 "$HEALTH_URL"
 }
-if systemctl list-unit-files 2>/dev/null | grep -q '^loreserver\.service'; then
+# Detect the unit by file existence rather than a systemctl catalog query:
+# under set -euo pipefail that query can transiently fail while cloud-init
+# boots, silently dropping into the nohup fallback and leaving the enabled
+# unit skipped (inactive) even though the server is up. The AMI contract
+# writes the unit to a fixed path, so a file check is deterministic.
+UNIT_FILE="/etc/systemd/system/loreserver.service"
+if [ -f "$UNIT_FILE" ]; then
   systemctl enable loreserver || true
   systemctl restart loreserver
   ok=0

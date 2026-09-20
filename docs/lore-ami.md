@@ -27,9 +27,9 @@ contract is intentionally independent of Image Builder and Packer.
 | Lore payload | Studio-supplied, Epic-licensed `loreserver` distribution; the binary is installed at `/opt/loreserver/loreserver`. |
 | Command | `/usr/local/bin/loreserver` is a symlink to the installed binary and is on `PATH`. |
 | Configuration | Fabrica cloud-init writes `/etc/loreserver/local.toml`; the AMI does not bake a generated configuration. |
-| Service | `loreserver.service` is enabled, but waits for `/etc/loreserver/local.toml` before starting. Cloud-init writes the config and restarts it. |
+| Service | `loreserver.service` is enabled, but waits for `/etc/loreserver/local.toml` before starting (systemd `ConditionPathExists`). Cloud-init writes the config, then enables and restarts the unit. At first boot the condition is already evaluated before cloud-init runs, so systemd skips the unit and cloud-init's restart is what actually starts the server — treat `systemctl restart` + health 200 as the boot contract, not the unit's auto-start. |
 | Health | `GET http://127.0.0.1:41339/health_check` must succeed after boot. `fabrica lore status` probes the same path over the private address. |
-| Stores | Existing cloud-init supplies either the local/EBS or S3 store configuration. Both must be verified for a known-good AMI. |
+| Stores | The Fabrica-generated cloud-init writes either the local/EBS or S3 store configuration at boot. Both backends must be verified for a known-good AMI. |
 | TLS | Optional. When `lore.tls.enabled` is true, bake `certPath` and `keyPath` onto the AMI; cloud-init verifies those files exist and writes them into `local.toml`. |
 | Management | The AMI must include and enable the Amazon SSM Agent (deb `amazon-ssm-agent.service` or snap `snap.amazon-ssm-agent.amazon-ssm-agent.service`). `install-lore.sh` fails the bake if neither unit can be enabled. Fabrica attaches an SSM instance profile on every create: slim (SSM core + output sink, no store-bucket access) for `storeBackend: local`, plus store S3/DynamoDB permissions when `storeBackend: s3`. |
 | SSM output | The instance role always carries a least-privilege `fabrica-ssm-output` policy so SSM command output can be published to the `MDS-*` parameter and the `/fabrica/ssm/*` CloudWatch Logs log group (retrieval sink for this account's narrowed `AmazonSSMManagedInstanceCore`). Send commands with `CloudWatchOutputConfig` to read output back. |
@@ -240,7 +240,18 @@ instance profile, so SSM is available; status still probes the private IP.
    and approve only after confirming the VPC, subnet, CIDR, and charges. Then
    run `fabrica lore status --wait`; it must report the health endpoint as
    responding. This confirms boot, cloud-init, the installed binary, service
-   startup, and the exact Fabrica health path.
+   startup, and the exact Fabrica health path. On a private-only deployment
+   (no public IP, no VPN) the laptop probe cannot reach the instance private
+   IP: wait for SSM `PingStatus` `Online` and verify the same health path over
+   SSM (loopback `GET /health_check`, and `/etc/loreserver/local.toml`
+   present) per [ssm-private.md](ssm-private.md). Note that
+   `systemctl is-active loreserver` can read `inactive` on the very first
+   boot because the unit's `ConditionPathExists` is evaluated before
+   cloud-init writes the config; cloud-init detects the unit file on disk and
+   restarts it. If the unit still reads `inactive` after cloud-init, run
+   `systemctl restart loreserver` over SSM and confirm exactly one
+   `loreserver` process owns the health port before treating the instance as
+   good.
 3. For the S3-store deployment, use SSM after it is online to copy the local
    generated `verify-lore-ami-runtime.sh` to the instance and execute it as
    root. It must pass. This is an additional contract check; it does not
