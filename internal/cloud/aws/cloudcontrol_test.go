@@ -828,8 +828,10 @@ type fakeCCClient struct {
 	deleteCalls int
 	listCalls   int
 
-	createOut *cloudcontrol.CreateResourceOutput
-	createErr error
+	// createInputs records every CreateResource input for tag assertions.
+	createInputs []*cloudcontrol.CreateResourceInput
+	createOut    *cloudcontrol.CreateResourceOutput
+	createErr    error
 
 	getOut *cloudcontrol.GetResourceOutput
 	getErr error
@@ -849,8 +851,9 @@ type fakeCCClient struct {
 	statusErr  error
 }
 
-func (f *fakeCCClient) CreateResource(_ context.Context, _ *cloudcontrol.CreateResourceInput, _ ...func(*cloudcontrol.Options)) (*cloudcontrol.CreateResourceOutput, error) {
+func (f *fakeCCClient) CreateResource(_ context.Context, in *cloudcontrol.CreateResourceInput, _ ...func(*cloudcontrol.Options)) (*cloudcontrol.CreateResourceOutput, error) {
 	f.createCalls++
+	f.createInputs = append(f.createInputs, in)
 	if f.createErr != nil {
 		return nil, f.createErr
 	}

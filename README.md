@@ -116,6 +116,8 @@ fabrica perforce status                # TCP probe on 1666 → provisioning → 
 fabrica lore create && fabrica lore status -w
 ```
 
+> **Private subnets:** these status commands probe the instance **private IP** and cannot succeed from a laptop outside the VPC — for private-only farms, verify with SSM (`aws ssm describe-instance-information` until `PingStatus` is `Online`) or from VPN/in-VPC. See [docs/ssm-private.md](docs/ssm-private.md).
+
 ### 3. Distributed DDC (keep cooks fast)
 
 ```bash
@@ -210,7 +212,7 @@ Provisions a Perforce Helix Core server: creates an EC2 security group (port 166
 
 #### `fabrica perforce status`
 
-Reads live state from AWS and TCP-probes port 1666. Transitions the module state from `provisioning` → `ready` once the server is reachable. Supports `--json` output.
+Reads live state from AWS and TCP-probes port 1666. Transitions the module state from `provisioning` → `ready` once the server is reachable. Supports `--json` output. The probe targets the instance **private IP** — from a laptop outside the VPC the probe never succeeds and status stays `provisioning`; verify private instances via SSM or VPN/in-VPC ([docs/ssm-private.md](docs/ssm-private.md)).
 
 #### `fabrica perforce destroy`
 
@@ -256,7 +258,7 @@ Provisions an Unreal Horde build coordinator on an `m7i.2xlarge` instance using 
 
 #### `fabrica horde status`
 
-Reads live state and TCP-probes port 5000. Reports the Horde web UI URL and gRPC endpoint. `--json` emits `hordeUrl` and `hordeGrpc` fields.
+Reads live state and TCP-probes port 5000. Reports the Horde web UI URL and gRPC endpoint. `--json` emits `hordeUrl` and `hordeGrpc` fields. The probe targets the instance **private IP** — private-only farms (no VPN/in-VPC) will report `provisioning` indefinitely; verify with SSM ([docs/ssm-private.md](docs/ssm-private.md)).
 
 #### `fabrica horde submit`
 
@@ -321,7 +323,7 @@ Provisions an Epic Lore (`loreserver`) server: security group opens TCP 41337 (g
 
 #### `fabrica lore status`
 
-Reads live state and probes `GET /health_check` on port 41339. Transitions `provisioning` → `ready` when healthy. `--json` emits `loreUrl` and `loreGrpc`. Supports `--wait` / `-w`.
+Reads live state and probes `GET /health_check` on port 41339. Transitions `provisioning` → `ready` when healthy. `--json` emits `loreUrl` and `loreGrpc`. Supports `--wait` / `-w`. The probe targets the instance **private IP** — `status -w` from a laptop outside the VPC is not the private path; verify private instances with SSM (or VPN/in-VPC), [docs/ssm-private.md](docs/ssm-private.md).
 
 #### `fabrica lore destroy`
 
@@ -365,7 +367,7 @@ Provisions one additional DDC edge node in REGION (e.g. `eu-west-1`): a security
 
 #### `fabrica ddc status`
 
-Reads live state and probes `GET /health/ready` on the public API port. Transitions `provisioning` → `ready` when healthy. Supports `--wait` / `-w` and `--json`. Edge regions are probed live via region-scoped Cloud Control queries and optional health probes; each edge reports `ready`, `unreachable`, `stopped`, `terminated`, or `missing`. With `--json`, edge regions are listed in the `edges` array with live instance state, probe status, and private IP when available.
+Reads live state and probes `GET /health/ready` on the public API port. Transitions `provisioning` → `ready` when healthy. Supports `--wait` / `-w` and `--json`. The probe targets the instance **private IP** — private-only farms need SSM or VPN/in-VPC verification ([docs/ssm-private.md](docs/ssm-private.md)). Edge regions are probed live via region-scoped Cloud Control queries and optional health probes; each edge reports `ready`, `unreachable`, `stopped`, `terminated`, or `missing`. With `--json`, edge regions are listed in the `edges` array with live instance state, probe status, and private IP when available.
 
 #### `fabrica ddc topology`
 

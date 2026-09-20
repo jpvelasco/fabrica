@@ -30,6 +30,7 @@ Go CLI that provisions game studio cloud infrastructure on AWS. Single binary, z
 - **State backend is created by `fabrica setup`.** Provisions the S3 state bucket (versioning + encryption + public-access-block) and the DynamoDB lock table used for distributed state locking (15-minute TTL with stale takeover), idempotently — shows a plan + cost estimate and prompts before any write (`--yes` skips, `--dry-run` previews). Run it once before other commands.
 - **Horde requires a user-provided AMI.** AMI must already contain MongoDB 7, Redis 6.2, and the Horde server binary. See [docs/horde-ami.md](docs/horde-ami.md).
 - **DDC edges reuse the home stack.** Edge AMIs are region-specific; copy the home AMI first (`aws ec2 copy-image`). Cross-region replication between edges is operator-managed. See [docs/ddc-ami.md](docs/ddc-ami.md).
+- **Private instances verify via SSM, not laptop probes.** Module status commands probe the instance private IP and cannot succeed from a laptop outside the VPC; `status -w` on a private-only farm stays `provisioning` forever. Verify with SSM (`PingStatus` → `Online`) or VPN/in-VPC; a known-good AMI must register with SSM. See [docs/ssm-private.md](docs/ssm-private.md).
 
 ## Architecture Overview
 

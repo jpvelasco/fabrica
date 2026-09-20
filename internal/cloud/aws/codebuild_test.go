@@ -155,6 +155,55 @@ func TestEnsureProjectCreatesWhenAbsent(t *testing.T) {
 	}
 }
 
+// TestEnsureProjectMergesOperatorTags verifies cloud.aws.tags (provider-level
+// operatorTags) are merged onto the CodeBuild project as additive tags, while
+// reserved identity tags stay Fabrica-owned — mirroring injectFabricaTags on
+// the Cloud Control create path. Closes #417.
+func TestEnsureProjectMergesOperatorTags(t *testing.T) {
+	cb := &fakeCodeBuildClient{}
+	p := newCodeBuildTestProvider(cb, nil)
+	p.clients.operatorTags = map[string]string{
+		"env":            "staging",
+		"ManagedBy":      "operator-override",
+		"FabricaModule":  "operator-module",
+		"FabricaVersion": "operator-override",
+	}
+
+	created, err := p.EnsureProject(context.Background(), fabricac.CodeBuildProjectSpec{
+		Name:           "fabrica-ci",
+		ServiceRoleARN: "arn:aws:iam::123:role/fabrica-ci-codebuild",
+		ComputeType:    "BUILD_GENERAL1_SMALL",
+		Image:          "aws/codebuild/x:1",
+		BuildTimeout:   60,
+		Buildspec:      "version: 0.2",
+		Tags:           map[string]string{"ManagedBy": "fabrica"},
+	})
+	if err != nil {
+		t.Fatalf("EnsureProject: %v", err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+	tagMap := map[string]string{}
+	for _, tg := range cb.createInput.Tags {
+		tagMap[awssdk.ToString(tg.Key)] = awssdk.ToString(tg.Value)
+	}
+	if tagMap["env"] != "staging" {
+		t.Errorf("env tag = %q, want staging (tags: %v)", tagMap["env"], tagMap)
+	}
+	// Reserved identity tags are Fabrica-owned: the operator's same-key
+	// entries must not shadow the provider-stamped values.
+	if tagMap["FabricaVersion"] != "v9.9.9" {
+		t.Errorf("FabricaVersion = %q, want v9.9.9 (tags: %v)", tagMap["FabricaVersion"], tagMap)
+	}
+	if tagMap["ManagedBy"] != "fabrica" {
+		t.Errorf("ManagedBy = %q, want fabrica (tags: %v)", tagMap["ManagedBy"], tagMap)
+	}
+	if _, present := tagMap["FabricaModule"]; present {
+		t.Errorf("FabricaModule = %q, want absent (operator cannot set identity tags)", tagMap["FabricaModule"])
+	}
+}
+
 func TestEnsureProjectSetsVpcConfig(t *testing.T) {
 	cb := &fakeCodeBuildClient{}
 	p := newCodeBuildTestProvider(cb, nil)

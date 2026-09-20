@@ -212,3 +212,33 @@ func TestInjectFabricaTagsRespectsPlanModule(t *testing.T) {
 		t.Errorf("FabricaVersion = %q, want 0.4.2", tags["FabricaVersion"])
 	}
 }
+
+// TestInjectFabricaTagsOperatorCannotShadowIdentityTags verifies operator tags
+// (the extra parameter) are additive: same-key entries for reserved identity
+// tags are dropped so teardown/drift/cost keep keying off the Fabrica-owned
+// values.
+func TestInjectFabricaTagsOperatorCannotShadowIdentityTags(t *testing.T) {
+	state := `{"GroupName":"fabrica-horde-sg"}`
+	extra := map[string]string{
+		"env":            "staging",
+		"ManagedBy":      "operator",
+		"FabricaModule":  "operator",
+		"FabricaVersion": "operator",
+	}
+
+	result := injectFabricaTags("AWS::EC2::SecurityGroup", json.RawMessage(state), "fabrica", "1.0.0", extra)
+
+	tags := tagsAsMap(t, result)
+	if tags["env"] != "staging" {
+		t.Errorf("env = %q, want staging (tags: %v)", tags["env"], tags)
+	}
+	if tags["ManagedBy"] != "fabrica" {
+		t.Errorf("ManagedBy = %q, want fabrica (tags: %v)", tags["ManagedBy"], tags)
+	}
+	if tags["FabricaModule"] != "fabrica" {
+		t.Errorf("FabricaModule = %q, want fabrica (tags: %v)", tags["FabricaModule"], tags)
+	}
+	if tags["FabricaVersion"] != "1.0.0" {
+		t.Errorf("FabricaVersion = %q, want 1.0.0 (tags: %v)", tags["FabricaVersion"], tags)
+	}
+}

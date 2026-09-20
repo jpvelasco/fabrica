@@ -41,11 +41,12 @@ type awsConfig struct {
 }
 
 type resourceClients struct {
-	cc          ccAPIClient
-	waiter      ccWaiter
-	awsCfg      awsConfig
-	version     string
-	waitTimeout time.Duration // 0 → defaultWaitTimeout
+	cc           ccAPIClient
+	waiter       ccWaiter
+	awsCfg       awsConfig
+	version      string
+	operatorTags map[string]string // cloud.aws.tags, merged onto every create
+	waitTimeout  time.Duration     // 0 → defaultWaitTimeout
 
 	// initMu serializes lazy initialization so concurrent MCP tool calls do
 	// not race client construction. Not held during API calls.
@@ -80,11 +81,26 @@ func newProvider(cfg *config.Config) (fabricac.Provider, error) {
 		region:  cfg.Cloud.AWS.Region,
 		profile: cfg.Cloud.AWS.Profile,
 	}
-	return &awsProvider{
+	p := &awsProvider{
 		cfg:    cfg,
 		awsCfg: awsCfg,
 		ec2:    ec2Service{awsCfg: awsCfg},
-	}, nil
+	}
+	p.clients.operatorTags = operatorTagsOf(cfg)
+	return p, nil
+}
+
+// operatorTagsOf copies cloud.aws.tags out of config (nil map when unset) so
+// the create path can merge operator tags onto every resource it creates.
+func operatorTagsOf(cfg *config.Config) map[string]string {
+	if len(cfg.Cloud.AWS.Tags) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(cfg.Cloud.AWS.Tags))
+	for k, v := range cfg.Cloud.AWS.Tags {
+		out[k] = v
+	}
+	return out
 }
 
 func (p *awsProvider) Name() string {
@@ -154,6 +170,7 @@ func (p *awsProvider) WithRegion(_ context.Context, region string) (fabricac.Reg
 		awsCfg: scopedCfg,
 		ec2:    ec2Service{awsCfg: scopedCfg},
 	}
+	scoped.clients.operatorTags = p.clients.operatorTags
 	return fabricac.RegionView{Resources: scoped.Resources(), VPCs: scoped}, nil
 }
 
