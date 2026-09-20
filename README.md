@@ -319,7 +319,7 @@ Permanently deletes the agent pool and its AWS resources (ASG, launch template, 
 
 #### `fabrica lore create`
 
-Provisions an Epic Lore (`loreserver`) server: security group opens TCP 41337 (gRPC), UDP 41337 (QUIC), and TCP 41339 (HTTP health); EC2 instance uses your pre-baked AMI with a gp3 data volume for local store. Connection notes go to `.fabrica/lore-credentials.yaml` (mode 0600). Default store is local/EBS and always attaches a slim SSM instance profile (no store-bucket access). Set `lore.tls.enabled` with absolute AMI `certPath`/`keyPath` to enable TLS (certs must already be on the AMI). JWT is operator-configured. With `lore.storeBackend: s3` the create also provisions the versioned store bucket, the four DynamoDB store tables the 0.8.6 `aws` store plugin requires, and the instance role with S3 + DynamoDB permissions on top of SSM.
+Provisions an Epic Lore (`loreserver`) server: security group opens TCP 41337 (gRPC), UDP 41337 (QUIC), and TCP 41339 (HTTP health); EC2 instance uses your pre-baked AMI with a gp3 data volume for local store. Connection notes go to `.fabrica/lore-credentials.yaml` (mode 0600). Default store is local/EBS and always attaches a slim SSM instance profile (no store-bucket access). `lore.allowedCidr` is resolved from the VPC CIDR when empty (fallback `10.0.0.0/8`) - on the AWS default VPC (`172.31.0.0/16`) leave it empty so in-VPC clients can reach the server. Set `lore.tls.enabled` with absolute AMI `certPath`/`keyPath` to enable TLS (certs must already be on the AMI). JWT is operator-configured. With `lore.storeBackend: s3` the create also provisions the versioned store bucket, the four DynamoDB store tables the 0.8.6 `aws` store plugin requires, and the instance role with S3 + DynamoDB permissions on top of SSM.
 
 #### `fabrica lore status`
 
@@ -615,7 +615,7 @@ lore:
   amiId: ami-xxxxxxxxxxxxxxxxx    # must contain loreserver (see docs/lore-ami.md)
   instanceType: m5.xlarge
   volumeSize: 500
-  allowedCidr: 10.0.0.0/8
+  allowedCidr: ""                 # empty: resolved from the VPC CIDR at create (fallback 10.0.0.0/8)
 
 ddc:
   amiId: ami-xxxxxxxxxxxxxxxxx    # Unreal Cloud DDC / Jupiter (see docs/ddc-ami.md)

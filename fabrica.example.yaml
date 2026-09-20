@@ -59,7 +59,7 @@ horde: {}
 #   amiId: ami-xxxxxxxxxxxxxxxxx   # required
 #   instanceType: m5.xlarge
 #   volumeSize: 500
-#   allowedCidr: 10.0.0.0/8
+#   allowedCidr: ""                # empty: resolved from the VPC CIDR at create; fallback 10.0.0.0/8
 #   vpcId: ""
 #   subnetId: ""
 #   storeBackend: local            # or "s3" (provisions S3 bucket + 4 DynamoDB tables + role policy)

@@ -113,6 +113,28 @@ func (t Topology) Regions() []string {
 	return out
 }
 
+// ResolveAllowedCIDR returns the CIDR a module should use for its security
+// group inbound rules. Explicit config wins; otherwise the VPC CIDR is
+// resolved from the provider (nil-tolerant so callers without the auxiliary
+// interface skip resolution); any miss falls back to fallbackCIDR. A VPC with
+// a 172.31.0.0/16 range is a common miss: the 10.0.0.0/8 default does not
+// cover the instance's own subnet, so clients inside the VPC cannot reach the
+// module. Resolver errors are not propagated — the module can always be
+// reached from somewhere with the fallback, and the operator's explicit
+// config still wins.
+func ResolveAllowedCIDR(ctx context.Context, configured, vpcID string, resolver cloud.VPCCIDRResolver, fallbackCIDR string) string {
+	if configured != "" {
+		return configured
+	}
+	if vpcID == "" || resolver == nil {
+		return fallbackCIDR
+	}
+	if resolved, err := resolver.ResolveVPCCIDR(ctx, vpcID); err == nil && resolved != "" {
+		return resolved
+	}
+	return fallbackCIDR
+}
+
 // ResolveVPC returns the effective VPC ID, subnet ID, and whether the
 // default VPC was resolved via the resolver. If both vpcID and subnetID are
 // set, they win as-is. If both are empty and resolver is non-nil, the account

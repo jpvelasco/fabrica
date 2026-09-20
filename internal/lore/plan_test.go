@@ -11,7 +11,7 @@ import (
 
 func TestNewCreatePlanMissingAmiID(t *testing.T) {
 	cfg := config.LoreConfig{}
-	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, nil)
 	if err == nil {
 		t.Fatal("expected error when AmiID is empty")
 	}
@@ -21,7 +21,7 @@ func TestNewCreatePlanMissingAmiID(t *testing.T) {
 
 func TestNewCreatePlanDefaults(t *testing.T) {
 	cfg := config.LoreConfig{AmiID: "ami-abc123"}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestNewCreatePlanS3StoreBackend(t *testing.T) {
 		AmiID:        "ami-abc123",
 		StoreBackend: "s3",
 	}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestNewCreatePlanS3StoreCustomBucket(t *testing.T) {
 		StoreBackend: "s3",
 		StoreBucket:  "my-lore-bucket",
 	}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestNewCreatePlanS3StoreTables(t *testing.T) {
 		AmiID:        "ami-abc123",
 		StoreBackend: "s3",
 	}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestNewCreatePlanS3StoreTables(t *testing.T) {
 
 func TestNewCreatePlanLocalStoreNoTables(t *testing.T) {
 	cfg := config.LoreConfig{AmiID: "ami-abc123"}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestNewCreatePlanInvalidStoreBackend(t *testing.T) {
 		AmiID:        "ami-abc123",
 		StoreBackend: "invalid",
 	}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestNewCreatePlanTLSConfig(t *testing.T) {
 			KeyPath:  "/etc/ssl/private/lore.key",
 		},
 	}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -285,19 +285,19 @@ func TestNewCreatePlanTLSEnabledRequiresAbsolutePaths(t *testing.T) {
 			KeyPath:  "/etc/ssl/private/lore.key",
 		},
 	}
-	if _, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil); err == nil {
+	if _, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, nil); err == nil {
 		t.Fatal("expected error for relative certPath")
 	}
 	cfg.TLSConfig.CertPath = "/etc/ssl/certs/lore.crt"
 	cfg.TLSConfig.KeyPath = ""
-	if _, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil); err == nil {
+	if _, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, nil); err == nil {
 		t.Fatal("expected error for empty keyPath")
 	}
 }
 
 func TestNewCreatePlanTLSDisabledAllowsEmptyPaths(t *testing.T) {
 	cfg := config.LoreConfig{AmiID: "ami-abc123"}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, nil)
 	if err != nil {
 		t.Fatalf("disabled TLS must not require paths: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestNewCreatePlanExplicitValues(t *testing.T) {
 		VPCId:        "vpc-explicit",
 		SubnetId:     "subnet-explicit",
 	}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil)
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -339,7 +339,7 @@ func TestNewCreatePlanExplicitValues(t *testing.T) {
 func TestNewCreatePlanVPCResolver(t *testing.T) {
 	cfg := config.LoreConfig{AmiID: "ami-abc123"}
 	resolver := &cloud.TestVPCResolver{VPCID: "vpc-fake", SubnetID: "subnet-fake"}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver)
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestNewCreatePlanVPCResolver(t *testing.T) {
 func TestNewCreatePlanVPCResolverError(t *testing.T) {
 	cfg := config.LoreConfig{AmiID: "ami-abc123"}
 	resolver := &cloud.TestVPCResolver{Err: errFakeVPC}
-	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver)
+	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, nil)
 	if err == nil {
 		t.Fatal("expected error from resolver")
 	}
@@ -366,3 +366,64 @@ var errFakeVPC = errString("no default VPC")
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+func TestNewCreatePlanCIDRResolverDefaultsToVPCCIDR(t *testing.T) {
+	cfg := config.LoreConfig{AmiID: "ami-abc123"}
+	resolver := &cloud.TestVPCResolver{VPCID: "vpc-fake", SubnetID: "subnet-fake"}
+	cidrResolver := &cloud.TestVPCCIDRResolver{CIDR: "172.31.0.0/16"}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, cidrResolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if plan.AllowedCIDR != "172.31.0.0/16" {
+		t.Errorf("AllowedCIDR = %q, want 172.31.0.0/16 (resolved from VPC)", plan.AllowedCIDR)
+	}
+	if cidrResolver.Calls != 1 {
+		t.Errorf("ResolveVPCCIDR calls = %d, want 1", cidrResolver.Calls)
+	}
+}
+
+func TestNewCreatePlanCIDRResolverFallbackWhenNoVPC(t *testing.T) {
+	cfg := config.LoreConfig{AmiID: "ami-abc123"}
+	cidrResolver := &cloud.TestVPCCIDRResolver{CIDR: "172.31.0.0/16"}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, cidrResolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// No VPC resolved -> CIDR resolver not called -> falls back to default.
+	if plan.AllowedCIDR != DefaultAllowedCIDR {
+		t.Errorf("AllowedCIDR = %q, want %q (fallback)", plan.AllowedCIDR, DefaultAllowedCIDR)
+	}
+	if cidrResolver.Calls != 0 {
+		t.Errorf("ResolveVPCCIDR calls = %d, want 0 (no VPC to resolve)", cidrResolver.Calls)
+	}
+}
+
+func TestNewCreatePlanCIDRResolverFallbackOnError(t *testing.T) {
+	cfg := config.LoreConfig{AmiID: "ami-abc123"}
+	resolver := &cloud.TestVPCResolver{VPCID: "vpc-fake", SubnetID: "subnet-fake"}
+	cidrResolver := &cloud.TestVPCCIDRResolver{Err: cloud.ErrResourceNotFound}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, cidrResolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if plan.AllowedCIDR != DefaultAllowedCIDR {
+		t.Errorf("AllowedCIDR = %q, want %q (fallback on resolver error)", plan.AllowedCIDR, DefaultAllowedCIDR)
+	}
+}
+
+func TestNewCreatePlanExplicitCIDROverridesResolver(t *testing.T) {
+	cfg := config.LoreConfig{AmiID: "ami-abc123", AllowedCIDR: "192.168.0.0/16"}
+	resolver := &cloud.TestVPCResolver{VPCID: "vpc-fake", SubnetID: "subnet-fake"}
+	cidrResolver := &cloud.TestVPCCIDRResolver{CIDR: "172.31.0.0/16"}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, cidrResolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if plan.AllowedCIDR != "192.168.0.0/16" {
+		t.Errorf("AllowedCIDR = %q, want 192.168.0.0/16 (explicit config)", plan.AllowedCIDR)
+	}
+	if cidrResolver.Calls != 0 {
+		t.Errorf("ResolveVPCCIDR calls = %d, want 0 (explicit CIDR skips resolver)", cidrResolver.Calls)
+	}
+}
