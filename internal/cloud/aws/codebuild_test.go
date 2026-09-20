@@ -156,12 +156,18 @@ func TestEnsureProjectCreatesWhenAbsent(t *testing.T) {
 }
 
 // TestEnsureProjectMergesOperatorTags verifies cloud.aws.tags (provider-level
-// operatorTags) are merged onto the CodeBuild project with operator precedence
-// — mirroring injectFabricaTags on the Cloud Control create path. Closes #417.
+// operatorTags) are merged onto the CodeBuild project as additive tags, while
+// reserved identity tags stay Fabrica-owned — mirroring injectFabricaTags on
+// the Cloud Control create path. Closes #417.
 func TestEnsureProjectMergesOperatorTags(t *testing.T) {
 	cb := &fakeCodeBuildClient{}
 	p := newCodeBuildTestProvider(cb, nil)
-	p.clients.operatorTags = map[string]string{"env": "staging", "FabricaVersion": "operator-override"}
+	p.clients.operatorTags = map[string]string{
+		"env":            "staging",
+		"ManagedBy":      "operator-override",
+		"FabricaModule":  "operator-module",
+		"FabricaVersion": "operator-override",
+	}
 
 	created, err := p.EnsureProject(context.Background(), fabricac.CodeBuildProjectSpec{
 		Name:           "fabrica-ci",
@@ -185,12 +191,16 @@ func TestEnsureProjectMergesOperatorTags(t *testing.T) {
 	if tagMap["env"] != "staging" {
 		t.Errorf("env tag = %q, want staging (tags: %v)", tagMap["env"], tagMap)
 	}
-	// Operator tags win over the stamped version by key.
-	if tagMap["FabricaVersion"] != "operator-override" {
-		t.Errorf("FabricaVersion = %q, want operator-override (tags: %v)", tagMap["FabricaVersion"], tagMap)
+	// Reserved identity tags are Fabrica-owned: the operator's same-key
+	// entries must not shadow the provider-stamped values.
+	if tagMap["FabricaVersion"] != "v9.9.9" {
+		t.Errorf("FabricaVersion = %q, want v9.9.9 (tags: %v)", tagMap["FabricaVersion"], tagMap)
 	}
 	if tagMap["ManagedBy"] != "fabrica" {
-		t.Errorf("ManagedBy = %q, want fabrica", tagMap["ManagedBy"])
+		t.Errorf("ManagedBy = %q, want fabrica (tags: %v)", tagMap["ManagedBy"], tagMap)
+	}
+	if _, present := tagMap["FabricaModule"]; present {
+		t.Errorf("FabricaModule = %q, want absent (operator cannot set identity tags)", tagMap["FabricaModule"])
 	}
 }
 

@@ -23,8 +23,9 @@ func desiredStateTags(t *testing.T, in *cloudcontrol.CreateResourceInput) map[st
 }
 
 // TestCreate_MergesOperatorTags verifies cloud.aws.tags (carried as
-// resourceClients.operatorTags) are merged onto Cloud Control creates with
-// operator precedence over standard tags. Closes #417.
+// resourceClients.operatorTags) are merged onto Cloud Control creates, while
+// reserved identity tags stay Fabrica-owned — operator tags are additive and
+// cannot shadow them. Closes #417.
 func TestCreate_MergesOperatorTags(t *testing.T) {
 	client := &fakeCCClient{
 		createOut: &cloudcontrol.CreateResourceOutput{
@@ -40,7 +41,13 @@ func TestCreate_MergesOperatorTags(t *testing.T) {
 		},
 	}
 	rc := newCCTestClients(client, waiter)
-	rc.operatorTags = map[string]string{"env": "staging", "ManagedBy": "operator-override"}
+	rc.operatorTags = map[string]string{
+		"env":            "staging",
+		"team":           "platform",
+		"ManagedBy":      "operator-override",
+		"FabricaModule":  "operator-module",
+		"FabricaVersion": "operator-version",
+	}
 
 	r := &fabricac.Resource{
 		TypeName:     "AWS::EC2::SecurityGroup",
@@ -53,11 +60,17 @@ func TestCreate_MergesOperatorTags(t *testing.T) {
 	if tags["env"] != "staging" {
 		t.Errorf("operator tag env = %q, want staging (tags: %v)", tags["env"], tags)
 	}
-	// Operator tags win over standard tags by key.
-	if tags["ManagedBy"] != "operator-override" {
-		t.Errorf("ManagedBy = %q, want operator override (tags: %v)", tags["ManagedBy"], tags)
+	if tags["team"] != "platform" {
+		t.Errorf("operator tag team = %q, want platform (tags: %v)", tags["team"], tags)
 	}
-	// Standard tags are still stamped.
+	// Reserved identity tags are Fabrica-owned: operator tags of the same key
+	// must not shadow them (teardown/drift/cost key off these).
+	if tags["ManagedBy"] != "fabrica" {
+		t.Errorf("ManagedBy = %q, want fabrica (tags: %v)", tags["ManagedBy"], tags)
+	}
+	if tags["FabricaModule"] != "fabrica" {
+		t.Errorf("FabricaModule = %q, want fabrica (tags: %v)", tags["FabricaModule"], tags)
+	}
 	if tags["FabricaVersion"] != "test" {
 		t.Errorf("FabricaVersion = %q, want test (tags: %v)", tags["FabricaVersion"], tags)
 	}

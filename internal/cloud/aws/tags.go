@@ -28,11 +28,29 @@ var tagUnsupportedTypes = map[string]struct{}{
 	"AWS::CloudWatch::Alarm": {},
 }
 
+// reservedTagKeys are Fabrica's identity tags. Teardown, drift, and cost
+// attribution key off them, so operator tags (cloud.aws.tags) may add to the
+// tag set but never shadow these — a resource that lost ManagedBy would leak
+// on `destroy --all` and skew drift/cost reporting.
+var reservedTagKeys = map[string]struct{}{
+	"ManagedBy":      {},
+	"FabricaModule":  {},
+	"FabricaVersion": {},
+}
+
+// isReservedTagKey reports whether k is a Fabrica-owned identity tag that
+// operator tags must not override.
+func isReservedTagKey(k string) bool {
+	_, ok := reservedTagKeys[k]
+	return ok
+}
+
 // injectFabricaTags merges standard Fabrica tags into the desired state of a
 // resource. Cloud Control resource schemas (IAM, CodeBuild, EC2, DynamoDB, ...)
 // represent tags as a capitalized "Tags" array of {Key, Value} objects, and
 // reject any extraneous lowercase "tags" key — so we merge into "Tags" in that
-// shape. Existing tags are preserved; standard/extra tags override by key.
+// shape. Existing tags are preserved; standard/extra tags override by key,
+// except reserved identity tags, which operator tags cannot shadow.
 // Returns the state unchanged for resource types that don't support tags.
 func injectFabricaTags(typeName string, state json.RawMessage, module, version string, extra map[string]string) json.RawMessage {
 	if _, unsupported := tagUnsupportedTypes[typeName]; unsupported {
@@ -78,6 +96,10 @@ func injectFabricaTags(typeName string, state json.RawMessage, module, version s
 		merged["FabricaModule"] = module
 	}
 	for k, v := range extra {
+		if isReservedTagKey(k) {
+			// Operator tags are additive; identity tags are Fabrica-owned.
+			continue
+		}
 		addKey(k)
 		merged[k] = v
 	}

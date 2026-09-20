@@ -61,8 +61,8 @@ func (p *awsProvider) EnsureProject(ctx context.Context, spec fabricac.CodeBuild
 	// (injectFabricaTags) which stamps it on every resource. The plan layer is
 	// SDK-agnostic and can't reach the provider's version, so inject it here at
 	// the SDK boundary. Preserve any FabricaVersion the spec already carries.
-	// Operator tags (cloud.aws.tags) are merged last, so they win over both the
-	// spec and the stamped version — same precedence as injectFabricaTags.
+	// Operator tags (cloud.aws.tags) are additive: they merge in but cannot
+	// shadow Fabrica-owned identity tags, matching injectFabricaTags.
 	specTags := spec.Tags
 	if _, ok := spec.Tags["FabricaVersion"]; !ok || len(p.clients.operatorTags) > 0 {
 		specTags = make(map[string]string, len(spec.Tags)+len(p.clients.operatorTags)+1)
@@ -74,6 +74,9 @@ func (p *awsProvider) EnsureProject(ctx context.Context, spec fabricac.CodeBuild
 		specTags["FabricaVersion"] = p.clients.version
 	}
 	for k, v := range p.clients.operatorTags {
+		if isReservedTagKey(k) {
+			continue
+		}
 		specTags[k] = v
 	}
 	tags := make([]codebuildtypes.Tag, 0, len(specTags))
