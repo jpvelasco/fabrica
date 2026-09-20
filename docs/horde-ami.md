@@ -273,8 +273,14 @@ TBD — you need to bake one.
 
 | Region | AMI ID | Name / notes | Source | Jobs API verified |
 |--------|--------|-------------|--------|-------------------|
-| us-west-2 | ami-01b860bd17f6a0c57 | SSM overlay on fabrica-horde-ami-v3 — fail-closed SSM Agent; private-subnet SSM Online; loopback HTTP 200 | Image Builder overlay 2026-09-19 | HTTP 200 on `:5000` via SSM (private, no public IP) |
+| us-west-2 | ami-01b860bd17f6a0c57 | SSM overlay on fabrica-horde-ami-v3 — fail-closed SSM Agent; private-subnet SSM Online; loopback HTTP 200 | Image Builder overlay 2026-09-19 | **No** — health endpoint `GET /` is 200; `GET /api/v1/jobs` returns 404 (Build plugin not enabled). Do not use for `horde submit` / `ci trigger` |
 | us-west-2 | ami-0764d44c38ef85362 | fabrica-horde-20260806 — UE 5.8.0 Horde, Docker compose, mongo:7.0, redis:7.2 | ghcr.io/epicgames/horde-server:5.8.0 | Yes (200) |
+
+> **Verified column = the jobs API, not the health endpoint.** The overlay AMI
+> above was verified over SSM for the health endpoint only (`GET /` → 200) and
+> its baked `globals.json` does not enable the Build plugin, so its jobs API
+> 404s. It is known-good for the SSM-private path only. Use the job-capable AMI
+> row for submitting builds (`fabrica horde submit`, `fabrica ci trigger`).
 
 After a successful bake, record the AMI ID here and in `fabrica.yaml`. Keep this
 table updated as you bake new versions. AMIs are private (`--owners self`) and
