@@ -31,7 +31,10 @@ fi
 # Affected package dirs (unique), as ./-prefixed import paths for `go test`.
 pkgs=$(while IFS= read -r f; do dirname "$f"; done <<< "$changed" | sort -u | sed 's|^|./|' | tr '\n' ' ')
 
-cov=$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/fabrica-prepush-cov.out")
+# Repo-relative temp file: `go` (POSIX or Windows) resolves it against CWD
+# (the repo root) identically. A `mktemp` POSIX /tmp path is misread by the
+# Windows go binary as <repo>\tmp\... and fails with "cannot find the path".
+cov="fabrica-prepush-cov.$$.out"
 trap 'rm -f "$cov"' EXIT
 
 # Build coverage across all packages so cross-package tests count toward the

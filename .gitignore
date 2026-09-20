@@ -21,6 +21,8 @@ fabrica.yaml
 vendor/
 coverage.out
 coverage.html
+# pre-push hook temp coverage profile (repo-relative so Windows go.exe resolves it)
+fabrica-prepush-cov.*.out
 *.test
 *.go.[0-9]*
 
