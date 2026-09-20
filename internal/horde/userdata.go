@@ -28,9 +28,17 @@ for i in $(seq 1 12); do
   sleep 5
 done
 
-# Start the Docker compose stack (MongoDB + Redis + Horde)
+# Start the Docker compose stack (MongoDB + Redis + Horde).
+# On cold boot the first compose up can exit non-zero: mongo's mongosh
+# healthcheck (timeout: 5s) fails for the first ~30s, so the service_healthy
+# dependency fails before the stack converges. Retry instead of aborting —
+# the stack converges to all-healthy within ~90s.
 cd /etc/horde
-docker compose up -d
+for i in $(seq 1 8); do
+  docker compose up -d && break
+  [ $i -eq 8 ] && echo "ERROR: docker compose up -d failed after 8 attempts (~3m)" && exit 1
+  sleep 20
+done
 
 # Wait for Horde to become healthy
 for i in $(seq 1 30); do

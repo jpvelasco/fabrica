@@ -392,7 +392,7 @@ be internet-exposed.
 | `x86_64` vs `arm64` mismatch | AMI architecture doesn't match instance type | Build the AMI on the same instance family you plan to run |
 | MongoDB auth errors | `globals.json` references auth but compose uses `--noauth` | Ensure `databaseConnectionString` does not include username/password |
 | `POST /api/v1/jobs` returns 404 | Horde server image built without the job-creation API (no jobs/graphs/agents controllers) | Use a Horde server image that includes the full API surface — verify `curl -sf http://localhost:5000/api/v1/jobs` returns 200 (not 404) before baking the AMI |
-| First `docker compose up -d` fails with `dependency failed to start: container horde-mongodb is unhealthy` on a cold boot | Mongo's `mongosh` healthcheck exceeds its 5s `timeout` for the first ~30s (server takes time to accept connections on first start), so the `service_healthy` dependency fails before the stack converges | Retry `docker compose up -d` (the stack converges to all-healthy within ~90s) or raise the mongo healthcheck `timeout` to `15s` / add `start_period: 30s`. Tracked as #446 (Fabrica cloud-init retry) |
+| First `docker compose up -d` fails with `dependency failed to start: container horde-mongodb is unhealthy` on a cold boot | Mongo's `mongosh` healthcheck exceeds its 5s `timeout` for the first ~30s (server takes time to accept connections on first start), so the `service_healthy` dependency fails before the stack converges | Fixed in cloud-init (#446): Fabrica's cloud-init retries `docker compose up -d` (8 × 20s) before the HTTP readiness probe and fails closed on exhaustion. Optional AMI-side hardening: raise the mongo healthcheck `timeout` to `15s` / add `start_period: 30s` |
 
 ---
 
