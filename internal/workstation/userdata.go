@@ -24,18 +24,54 @@ if ! command -v dcv >/dev/null 2>&1; then
   exit 1
 fi
 
-# Configure NICE DCV
-dcv configure-session --type=virtual --storage-root /home/ubuntu/dcv
-dcv configure --idle-timeout={{ .IdleTimeoutMinutes }}
+# Sessions run as the AMI's desktop user, never root.
+DCV_USER=ubuntu
+if ! id -u "$DCV_USER" >/dev/null 2>&1; then
+  echo "ERROR: expected user '$DCV_USER' is missing on this AMI. Bake a DCV AMI with the ubuntu user present (see docs/workstation-ami.md)."
+  exit 1
+fi
 
-# Create a persistent DCV session
-dcv create-session --type=virtual --storage-root /home/ubuntu/dcv workstation
+# Session storage root must exist and be owned by the session user (DCV 2023+).
+mkdir -p /home/"$DCV_USER"/dcv
+chown "$DCV_USER":"$DCV_USER" /home/"$DCV_USER"/dcv
 
-# Set DCV session password (non-interactive auth)
-echo "dcv:{{ .SessionPassword }}" | chpasswd
+# Idle timeout via the current CLI surface (DCV 2023+ set-config).
+dcv set-config --section connectivity --key idle-timeout "{{ .IdleTimeoutMinutes }}"
 
+# Set the session user's password (non-interactive DCV login credentials).
+echo "$DCV_USER:{{ .SessionPassword }}" | chpasswd
+
+# Start the DCV server before creating the session. With the daemon stopped,
+# 'dcv create-session' exits 0 but the session is never persisted.
 systemctl enable dcvserver
 systemctl restart dcvserver
+for _ in $(seq 1 6); do
+  if [ "$(systemctl is-active dcvserver 2>/dev/null)" = "active" ]; then
+    break
+  fi
+  sleep 5
+done
+
+# Create the persistent virtual DCV session owned by the session user.
+dcv create-session --type virtual --user "$DCV_USER" --owner "$DCV_USER" \
+  --storage-root /home/"$DCV_USER"/dcv workstation
+
+# Poll for the session to appear. The restart is asynchronous, and an HTTPS
+# 200 on 8443 is not proof this script ran to completion — the DCV server
+# keeps running when cloud-init aborts. Fail closed if the session never
+# shows up (#438).
+found=0
+for _ in $(seq 1 36); do
+  if dcv list-sessions 2>/dev/null | grep -q workstation; then
+    found=1
+    break
+  fi
+  sleep 5
+done
+if [ "$found" -ne 1 ]; then
+  echo "ERROR: DCV session 'workstation' did not appear within 3m. Inspect /var/log/cloud-init-output.log and run 'dcv list-sessions' over SSM."
+  exit 1
+fi
 {{ if .MountPerforce }}
 # Install Perforce CLI
 wget -qO - https://package.perforce.com/perforce.pubkey | apt-key add -

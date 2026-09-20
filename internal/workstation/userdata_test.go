@@ -38,6 +38,45 @@ func TestGenerateRawRequiresDCVOnAMI(t *testing.T) {
 	}
 }
 
+func TestGenerateRawUsesCurrentDCVCLI(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{SessionPassword: "hunter2"})
+	if err != nil {
+		t.Fatalf("GenerateRaw: %v", err)
+	}
+	// DCV 2025.0.x removed configure-session/configure; the script must not
+	// call them (under set -euo pipefail that aborts before session creation).
+	for _, gone := range []string{"configure-session", "dcv configure "} {
+		if strings.Contains(got, gone) {
+			t.Errorf("userdata must not call removed DCV CLI command %q: #438", gone)
+		}
+	}
+	for _, want := range []string{
+		"dcv set-config --section connectivity --key idle-timeout",
+		"hunter2",
+		"chpasswd",
+		"dcv list-sessions",
+		"ERROR: DCV session 'workstation' did not appear",
+	} {
+		assert.Contains(t, got, want)
+	}
+	// create-session spans two lines with a backslash continuation; join the
+	// continuation and assert the full command line.
+	joined := strings.ReplaceAll(got, `
+`+"\n", " ")
+	assert.Contains(t, joined, "dcv create-session --type virtual --user \"$DCV_USER\" --owner \"$DCV_USER\"")
+	assert.Contains(t, joined, "--storage-root /home/\"$DCV_USER\"/dcv workstation")
+
+	// With dcvserver stopped, 'dcv create-session' exits 0 but the session is
+	// never persisted — the daemon must be started before the session is
+	// created (verified live on a DCV 2025.0.x instance; #438). The command
+	// spans a backslash-continuation line, so the full CLI line is 'joined'.
+	restartIdx := strings.Index(got, "systemctl restart dcvserver")
+	createIdx := strings.Index(joined, "dcv create-session --type virtual")
+	if restartIdx < 0 || createIdx < 0 || restartIdx > createIdx {
+		t.Error("dcvserver must be restarted before 'dcv create-session'; with the daemon stopped the session is not persisted (#438)")
+	}
+}
+
 func TestGenerateRawIdleTimeout(t *testing.T) {
 	got, err := GenerateRaw(UserDataConfig{
 		SessionPassword:    "pw",

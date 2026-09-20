@@ -16,7 +16,8 @@ fabrica workstation ami build --region us-west-2 --base-image ami-REPLACE --outp
 | Requirement | Detail |
 |-------------|--------|
 | OS | Ubuntu 22.04 LTS (Jammy), x86_64 |
-| NICE DCV | `dcv` on PATH; `dcvserver.service` enabled |
+| Desktop user | `ubuntu` user present — cloud-init creates the DCV session owned by it and sets its login password. Bake with the standard Ubuntu user present; do not remove it. |
+| NICE DCV | `dcv` on PATH (2023.0+ CLI surface: `create-session`, `list-sessions`, `set-config`); `dcvserver.service` enabled |
 | SSM Agent | deb or snap unit enabled (fail closed, same as Lore/Horde) |
 | Port | 8443 (HTTPS) opened by Fabrica at create from `workstation.allowedCidr` |
 
@@ -36,15 +37,31 @@ private IP. Endpoint SG inbound TCP 443 from the VPC CIDR: [ssm-private.md](ssm-
 
 Do not mark an AMI known-good from Image Builder success alone.
 
-## Known limitation: DCV CLI mismatch in cloud-init
+## Boot verification (session, not just HTTPS 200)
 
-The AMI row above ships NICE DCV 2025.0.x, whose `dcv` CLI no longer exposes
-the `configure-session` / `configure` subcommands. Fabrica's cloud-init
-(`internal/workstation/userdata.go`) still calls them first under
-`set -euo pipefail`, so the script aborts before it creates the persistent
-session and sets the generated DCV password. The DCV server itself starts and
-stays reachable on 8443, and the AMI passes the `dcv`-presence gate — but the
-Fabrica-provisioned session and password are not applied until the cloud-init
-script is updated for the current DCV CLI. Verify session creation over SSM
-(`dcv list-sessions`) when baking a new AMI; do not treat HTTPS 200 on 8443 as
-proof the session setup ran.
+Fabrica's cloud-init targets the current DCV CLI (2023.0+ / 2025.0.x):
+`dcv set-config` for the idle timeout, `dcv create-session --type virtual`
+for the persistent `workstation` session, and `chpasswd` for the login
+password written to `.fabrica/workstation-credentials.yaml` (user `ubuntu`).
+The script **fails closed** if the `ubuntu` user is missing or the session
+does not appear within 3 minutes. It also starts `dcvserver` **before**
+`dcv create-session`: with the daemon stopped, `create-session` exits 0 but
+the session is never persisted (verified live on DCV 2025.0.x).
+
+HTTPS 200 on 8443 is **not** proof the session setup ran — `dcvserver` starts
+and serves even when cloud-init aborts. Verify the session over SSM (or
+VPN/in-VPC) after `workstation create`:
+
+```bash
+# Session exists and is owned by the session user
+aws ssm send-command --target "i-<instance-id>" --document-name AWS-RunShellScript \
+  --comment verify-dcv-session \
+  --parameters commands='dcv list-sessions -j'
+# expect a session with session-id "workstation" and owner "ubuntu"
+
+# Cloud-init completed
+aws ssm send-command ... --parameters commands='tail -n 30 /var/log/cloud-init-output.log'
+```
+
+If the session is missing, read `/var/log/cloud-init-output.log` over SSM —
+the script prints the failed step with an `ERROR:` line.
