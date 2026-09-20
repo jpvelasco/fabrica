@@ -59,6 +59,89 @@ When `ddc.oidc.enabled` is true, cloud-init also writes `FABRICA_DDC_OIDC_ENABLE
 
 Warn if `allowedCidr` is `0.0.0.0/0` without OIDC.
 
+## Private-subnet bake path (runbook)
+
+Fabrica's DDC runtime consumes only an AMI ID; it never installs Jupiter.
+This runbook mirrors the [Lore AMI runbook](lore-ami.md) so a DDC AMI can be
+baked and verified the same way: private-subnet Image Builder bake, then
+SSM-verified `ddc setup`/`status`/`destroy` before the AMI is trusted.
+
+> **Verification status:** no DDC/Jupiter AMI is known-good yet. The
+> known-good table below intentionally has no pre-filled row. A successful
+> Image Builder build by itself is not proof that an AMI works with Fabrica.
+
+### Contract recap (what the bake must produce)
+
+| Requirement | Contract |
+| --- | --- |
+| Base OS | Ubuntu 22.04 LTS (Jammy), x86_64, region-local base AMI. |
+| DDC payload | Studio-supplied Unreal Cloud DDC (Jupiter) distribution or container entrypoint; license-sensitive — Fabrica does not download it. |
+| Service | systemd unit `unreal-cloud-ddc` present and **enabled**. Cloud-init does `systemctl enable && restart` (start fallback), so the unit must exist in the AMI. |
+| Config | The unit sources `/etc/unreal-cloud-ddc/fabrica.env`; the AMI must not bake its own generated config or credentials. |
+| Health | `GET /health/ready` and `GET /health/live` on the public port (default 80). `fabrica ddc status` live-probes `/health/ready` per region. |
+| Scylla (optional) | For `backend: scylla` use a **separate** AMI (`ddc.scyllaAmiId`) containing Scylla Open Source with the `scylla-server` unit enabled; single-node bootstrap only, never HA. |
+| Management | SSM agent installed and enabled (private E2E verifies through SSM, not laptop probes). |
+| Secrets | No credentials, tokens, store data, or studio content baked into the image. |
+
+### Bake (Image Builder, preferred)
+
+`fabrica ddc ami build` is local-only (writes `build-guide.md` only). Drive
+Image Builder directly, using the same boto3-based flow proven by the Horde
+and Lore bakes in this account:
+
+1. Stage the Jupiter distribution in a **private** S3 prefix (least-privilege
+   read for the bake worker).
+2. Create an Image Builder component (JSON AWSTOE document,
+   `phases[].steps[]` with `ExecuteBash` actions; **no `{{...}}` anywhere in
+   the script or comments** — AWSTOE parses those as variable refs) that
+   syncs the payload, installs Jupiter, writes and enables the
+   `unreal-cloud-ddc` unit, and enables the SSM agent **fail-closed** (a
+   missing SSM agent must abort the bake).
+3. Create the image recipe with `semanticVersion` and components referenced
+   by **build-version ARN** only (`.../component/<name>/<ver>/1`).
+4. Start the build with `create_image(imageRecipeArn,
+   infrastructureConfigurationArn, tags)` — there is no `start_image_build`
+   API. Track it with `get_image(imageBuildVersionArn=...)` and poll
+   `state.status` to `AVAILABLE` (not `SUCCESS`); the AMI id is in
+   `outputResources.amis[0].image`. Tag the build
+   `ManagedBy=fabrica`/`FabricaModule=ddc` so it is visible to sweeps.
+5. Poll to a terminal state and clean up failed candidates — never reuse a
+   failed bake as known-good.
+
+For `backend: scylla`, repeat the same flow against a base that includes
+Scylla Open Source; the resulting AMI is recorded under `ddc.scyllaAmiId`,
+not `ddc.amiId`.
+
+### Verification checklist (private E2E gate)
+
+Run in a private subnet with an SSM instance profile (SSM endpoints per
+[ssm-private.md](ssm-private.md)); `fabrica ddc status` probes the private IP
+and cannot succeed from a laptop outside the VPC.
+
+1. Set `ddc.amiId` (and `ddc.scyllaAmiId` for the scylla path) in
+   `fabrica.yaml` with the candidate AMI.
+2. `fabrica ddc setup --yes` — plan + cost review, then approve.
+3. SSM: instance `PingStatus` → `Online`; `unreal-cloud-ddc` (and
+   `scylla-server` for the scylla path) active;
+   `GET /health/ready` and `GET /health/live` 200 on loopback via SSM.
+4. `fabrica ddc status --wait` — home region (and any edge regions added)
+   report ready.
+5. `fabrica ddc destroy` (or `region destroy` for edges) — clean teardown of
+   instance, SG, blob bucket, and instance profile.
+6. Add the row to the known-good table **only after all steps pass**; record
+   the base AMI, the exact Jupiter source revision, and the evidence link.
+   Edge regions reuse the AMI only after `aws ec2 copy-image` — the table
+   row is per-region.
+
+## Known-Good AMIs
+
+Fill this table only after the complete checklist passes. AMIs are
+region-specific.
+
+| Date (UTC) | Region | AMI ID | Base AMI | Jupiter source revision | Backend | SSM: setup/status/destroy | Evidence link |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| _none yet_ | | | | | | | |
+
 ## References
 
 - Epic: [Cloud-type Derived Data Cache](https://dev.epicgames.com/documentation/unreal-engine/how-to-set-up-a-cloud-type-derived-data-cache-for-unreal-engine)
