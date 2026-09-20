@@ -35,3 +35,16 @@ private IP. Endpoint SG inbound TCP 443 from the VPC CIDR: [ssm-private.md](ssm-
 | 2026-09-20 | us-west-2 | `ami-0219a686f7416f70a` | Image Builder 1.0.1; private subnet, no public IP, SSM Online; `dcv` on PATH; `dcvserver` enabled; instance terminated |
 
 Do not mark an AMI known-good from Image Builder success alone.
+
+## Known limitation: DCV CLI mismatch in cloud-init
+
+The AMI row above ships NICE DCV 2025.0.x, whose `dcv` CLI no longer exposes
+the `configure-session` / `configure` subcommands. Fabrica's cloud-init
+(`internal/workstation/userdata.go`) still calls them first under
+`set -euo pipefail`, so the script aborts before it creates the persistent
+session and sets the generated DCV password. The DCV server itself starts and
+stays reachable on 8443, and the AMI passes the `dcv`-presence gate — but the
+Fabrica-provisioned session and password are not applied until the cloud-init
+script is updated for the current DCV CLI. Verify session creation over SSM
+(`dcv list-sessions`) when baking a new AMI; do not treat HTTPS 200 on 8443 as
+proof the session setup ran.
