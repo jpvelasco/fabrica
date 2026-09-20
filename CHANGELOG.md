@@ -9,10 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`cloud.aws.tags` not applied on Cloud Control module creates** — the provider's create path (`Create` / `createAsync`) and the CodeBuild `EnsureProject` SDK path both dropped operator tags: only the built-in `ManagedBy` / `FabricaModule` / `FabricaVersion` stamps landed. `newProvider` now copies `cloud.aws.tags` into the resource clients (`operatorTags`), the Cloud Control create path merges them via `injectFabricaTags`, and `EnsureProject` merges them into the project tags — operator tags win over standard tags by key on both paths, and `WithRegion` carries them to multi-region (DDC edge) creates. (#417)
 - **Workstation create accepted a stock Ubuntu AMI as DCV-ready** — create now rejects Canonical Ubuntu 22.04 server image names and cloud-init fails closed if `dcv` is missing (no boot-time apt/snap install, no `|| true` on DCV units). `fabrica workstation ami build` generates Image Builder artifacts (DCV + SSM). Known-good AMI recorded after private SSM verify. See `docs/workstation-ami.md`. (#420)
 - **SSM interface endpoint SG had no inbound 443 by default** — private instances could not register with SSM even when `ssm` / `ssmmessages` / `ec2messages` endpoints existed. `scripts/ensure-ssm-endpoints.ps1` creates the endpoint SG with inbound TCP 443 from the VPC CIDR and attaches the three interface endpoints to every private subnet (all AZs). Docs in `docs/ssm-private.md`. (#415, #416)
 - **Horde AMI bake did not require Amazon SSM Agent** — coordinator Image Builder/Packer artifacts now enable the deb or snap SSM unit (installing the snap if neither is present) and fail closed if it cannot be enabled. Shared `internal/amissm` helpers are the same contract Lore uses. Agent AMI runbook matches. Known-good overlay AMIs recorded after private-subnet SSM verification. (#414)
 - **Lore AMI bake treated a missing SSM agent as success** — `install-lore.sh` enabled `amazon-ssm-agent` with `|| true`, so a bake without a working unit still produced an AMI that never registered with SSM on a private subnet. Install now enables the deb or snap unit (installing the snap if neither is present) and fails closed if the agent cannot be enabled. Bake and runtime verifiers require the same unit. (#413)
+
+### Changed
+
+- **Docs: private instances verify via SSM, not laptop `status -w`** — README quick-start and the perforce/horde/lore/ddc status sections now state that status probes target the instance **private IP** and cannot succeed from a laptop outside the VPC (`status -w` stays `provisioning` on private-only farms); verify with SSM (`PingStatus` → `Online`) or VPN/in-VPC per `docs/ssm-private.md`. AGENTS.md records the same as a known limitation; known-good AMIs already require SSM registration. (#419)
 
 ## [0.4.4] - 2026-09-10
 

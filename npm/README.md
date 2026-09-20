@@ -85,6 +85,7 @@ previews).
 # Source of truth (pick one or both)
 fabrica perforce create && fabrica perforce status
 # or: fabrica lore create && fabrica lore status -w
+#   (private subnet? verify via SSM — status -w probes the private IP: docs/ssm-private.md)
 
 # Keep cooks fast
 fabrica ddc setup && fabrica ddc status --probe
