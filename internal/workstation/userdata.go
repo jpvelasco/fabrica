@@ -48,14 +48,14 @@ fi
 # process (IMDS /latest/user-data) or any principal with
 # ec2:DescribeInstanceAttribute can read it. Scrub the long-lived exposure
 # now that chpasswd has consumed it: clear the IMDS copy (IMDSv2 token first,
-# IMDSv1 fallback) and truncate the local cloud-init copies. A failed IMDS
-# clear aborts the script (fail closed); the operator record is
-# .fabrica/workstation-credentials.yaml, not the instance.
+# IMDSv1 fallback) and truncate the local cloud-init copies. The script fails
+# closed only if BOTH clears fail; one successful clear is enough. The
+# operator record is .fabrica/workstation-credentials.yaml, not the instance.
 IMDS_TOKEN=$(curl -s -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 30" \
   http://169.254.169.254/latest/api/token)
 if ! curl -s -X PUT -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" -d "" \
     http://169.254.169.254/latest/user-data \
-  || curl -s -X PUT -d "" http://169.254.169.254/latest/user-data; then
+  && ! curl -s -X PUT -d "" http://169.254.169.254/latest/user-data; then
   echo "ERROR: userdata scrub failed after chpasswd; the session password may still be reachable via IMDS user-data. Inspect the instance over SSM."
   exit 1
 fi

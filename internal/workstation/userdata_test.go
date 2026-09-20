@@ -110,6 +110,15 @@ func TestGenerateRawScrubsUserDataAfterChpasswd(t *testing.T) {
 	if strings.Count(got, "exit 1") < 5 {
 		t.Errorf("userdata must fail closed on scrub failure; got %q", got)
 	}
+	// Fail closed ONLY when both clears fail (#443 follow-up). The previous
+	// '! v2 || v1' form parsed as '(! v2) || v1': when the IMDSv2 clear
+	// succeeded AND the IMDSv1 fallback also succeeded, the condition was true
+	// and the script exited 1 before the DCV session was ever created. The safe
+	// form is the both-fail test: '&& !' (equivalent to '! (v2 || v1)').
+	if strings.Contains(got, `|| curl -s -X PUT -d ""`) {
+		t.Error("userdata scrub must not connect the v1 fallback with '||': a successful v2 + v1 clear would abort the script before session creation (#443)")
+	}
+	assert.Contains(t, got, `&& ! curl -s -X PUT -d ""`)
 }
 
 func TestGenerateRawChpasswdFailClosed(t *testing.T) {
