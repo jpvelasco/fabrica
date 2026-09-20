@@ -155,6 +155,45 @@ func TestEnsureProjectCreatesWhenAbsent(t *testing.T) {
 	}
 }
 
+// TestEnsureProjectMergesOperatorTags verifies cloud.aws.tags (provider-level
+// operatorTags) are merged onto the CodeBuild project with operator precedence
+// — mirroring injectFabricaTags on the Cloud Control create path. Closes #417.
+func TestEnsureProjectMergesOperatorTags(t *testing.T) {
+	cb := &fakeCodeBuildClient{}
+	p := newCodeBuildTestProvider(cb, nil)
+	p.clients.operatorTags = map[string]string{"env": "staging", "FabricaVersion": "operator-override"}
+
+	created, err := p.EnsureProject(context.Background(), fabricac.CodeBuildProjectSpec{
+		Name:           "fabrica-ci",
+		ServiceRoleARN: "arn:aws:iam::123:role/fabrica-ci-codebuild",
+		ComputeType:    "BUILD_GENERAL1_SMALL",
+		Image:          "aws/codebuild/x:1",
+		BuildTimeout:   60,
+		Buildspec:      "version: 0.2",
+		Tags:           map[string]string{"ManagedBy": "fabrica"},
+	})
+	if err != nil {
+		t.Fatalf("EnsureProject: %v", err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+	tagMap := map[string]string{}
+	for _, tg := range cb.createInput.Tags {
+		tagMap[awssdk.ToString(tg.Key)] = awssdk.ToString(tg.Value)
+	}
+	if tagMap["env"] != "staging" {
+		t.Errorf("env tag = %q, want staging (tags: %v)", tagMap["env"], tagMap)
+	}
+	// Operator tags win over the stamped version by key.
+	if tagMap["FabricaVersion"] != "operator-override" {
+		t.Errorf("FabricaVersion = %q, want operator-override (tags: %v)", tagMap["FabricaVersion"], tagMap)
+	}
+	if tagMap["ManagedBy"] != "fabrica" {
+		t.Errorf("ManagedBy = %q, want fabrica", tagMap["ManagedBy"])
+	}
+}
+
 func TestEnsureProjectSetsVpcConfig(t *testing.T) {
 	cb := &fakeCodeBuildClient{}
 	p := newCodeBuildTestProvider(cb, nil)
