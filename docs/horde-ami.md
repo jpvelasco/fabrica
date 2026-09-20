@@ -274,13 +274,19 @@ TBD — you need to bake one.
 | Region | AMI ID | Name / notes | Source | Jobs API verified |
 |--------|--------|-------------|--------|-------------------|
 | us-west-2 | ami-01b860bd17f6a0c57 | SSM overlay on fabrica-horde-ami-v3 — fail-closed SSM Agent; private-subnet SSM Online; loopback HTTP 200 | Image Builder overlay 2026-09-19 | **No** — health endpoint `GET /` is 200; `GET /api/v1/jobs` returns 404 (Build plugin not enabled). Do not use for `horde submit` / `ci trigger` |
+| us-west-2 | ami-05a17a8dfbabeea54 | SSM overlay on the jobs-capable base (fabrica-horde-20260806) — fail-closed SSM Agent (deb **or** snap unit) + bake-time jobs gate (3 containers, `GET /` 200, `GET /api/v1/jobs` 200 `[]`) | Image Builder overlay 2026-09-20 | Yes (200, empty list) |
 | us-west-2 | ami-0764d44c38ef85362 | fabrica-horde-20260806 — UE 5.8.0 Horde, Docker compose, mongo:7.0, redis:7.2 | ghcr.io/epicgames/horde-server:5.8.0 | Yes (200) |
 
-> **Verified column = the jobs API, not the health endpoint.** The overlay AMI
-> above was verified over SSM for the health endpoint only (`GET /` → 200) and
-> its baked `globals.json` does not enable the Build plugin, so its jobs API
-> 404s. It is known-good for the SSM-private path only. Use the job-capable AMI
-> row for submitting builds (`fabrica horde submit`, `fabrica ci trigger`).
+> **Verified column = the jobs API, not the health endpoint.** The
+> `ami-05a17a8dfbabeea54` row is the overlay AMI that satisfies both paths:
+> SSM-verified on a private subnet **and** jobs-capable (bake gate 1.0.1 baked
+> `globals.json` with the Build plugin enabled on the jobs-capable base, so
+> `GET /api/v1/jobs` → 200 with an empty list). The earlier
+> `ami-01b860bd17f6a0c57` overlay is kept in the table marked **No** — its
+> baked `globals.json` does not enable the Build plugin, so its jobs API 404s;
+> it is known-good for the SSM-private path only. Use `ami-05a17a8dfbabeea54`
+> (or any jobs-capable row) for submitting builds (`fabrica horde submit`,
+> `fabrica ci trigger`).
 
 After a successful bake, record the AMI ID here and in `fabrica.yaml`. Keep this
 table updated as you bake new versions. AMIs are private (`--owners self`) and
@@ -386,6 +392,7 @@ be internet-exposed.
 | `x86_64` vs `arm64` mismatch | AMI architecture doesn't match instance type | Build the AMI on the same instance family you plan to run |
 | MongoDB auth errors | `globals.json` references auth but compose uses `--noauth` | Ensure `databaseConnectionString` does not include username/password |
 | `POST /api/v1/jobs` returns 404 | Horde server image built without the job-creation API (no jobs/graphs/agents controllers) | Use a Horde server image that includes the full API surface — verify `curl -sf http://localhost:5000/api/v1/jobs` returns 200 (not 404) before baking the AMI |
+| First `docker compose up -d` fails with `dependency failed to start: container horde-mongodb is unhealthy` on a cold boot | Mongo's `mongosh` healthcheck exceeds its 5s `timeout` for the first ~30s (server takes time to accept connections on first start), so the `service_healthy` dependency fails before the stack converges | Retry `docker compose up -d` (the stack converges to all-healthy within ~90s) or raise the mongo healthcheck `timeout` to `15s` / add `start_period: 30s`. Tracked as #446 (Fabrica cloud-init retry) |
 
 ---
 
