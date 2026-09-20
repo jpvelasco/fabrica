@@ -250,7 +250,7 @@ Restores Helix Core from a backup id: stops `helix-p4d`, restores checkpoint/jou
 
 ### Horde
 
-> **AMI requirement:** `fabrica horde create` is AMI-first. Your AMI must be a Docker-compose-based stack (Ubuntu 22.04 + Docker CE) with MongoDB, Redis, and a **job-capable** Horde server under `/etc/horde/` — `GET /api/v1/jobs` must not return 404. Fabrica's cloud-init only runs `docker compose up -d` and probes port 5000. See [docs/horde-ami.md](docs/horde-ami.md) for build instructions and bake-time verification.
+> **AMI requirement:** `fabrica horde create` is AMI-first. Your AMI must be a Docker-compose-based stack (Ubuntu 22.04 + Docker CE) with MongoDB, Redis, and a **job-capable** Horde server under `/etc/horde/` — `GET /api/v1/jobs` must not return 404. Fabrica's cloud-init runs `docker compose up -d` (retried 8 × 20s on cold boot) and probes port 5000. See [docs/horde-ami.md](docs/horde-ami.md) for build instructions and bake-time verification.
 
 #### `fabrica horde create`
 
