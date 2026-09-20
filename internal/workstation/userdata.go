@@ -39,7 +39,29 @@ chown "$DCV_USER":"$DCV_USER" /home/"$DCV_USER"/dcv
 dcv set-config --section connectivity --key idle-timeout "{{ .IdleTimeoutMinutes }}"
 
 # Set the session user's password (non-interactive DCV login credentials).
-echo "$DCV_USER:{{ .SessionPassword }}" | chpasswd
+if ! echo "$DCV_USER:{{ .SessionPassword }}" | chpasswd; then
+  echo "ERROR: chpasswd failed; the DCV login password was not set. Inspect /var/log/cloud-init-output.log."
+  exit 1
+fi
+
+# The password above rides in EC2 UserData until this point, where any local
+# process (IMDS /latest/user-data) or any principal with
+# ec2:DescribeInstanceAttribute can read it. Scrub the long-lived exposure
+# now that chpasswd has consumed it: clear the IMDS copy (IMDSv2 token first,
+# IMDSv1 fallback) and truncate the local cloud-init copies. A failed IMDS
+# clear aborts the script (fail closed); the operator record is
+# .fabrica/workstation-credentials.yaml, not the instance.
+IMDS_TOKEN=$(curl -s -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 30" \
+  http://169.254.169.254/latest/api/token)
+if ! curl -s -X PUT -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" -d "" \
+    http://169.254.169.254/latest/user-data \
+  || curl -s -X PUT -d "" http://169.254.169.254/latest/user-data; then
+  echo "ERROR: userdata scrub failed after chpasswd; the session password may still be reachable via IMDS user-data. Inspect the instance over SSM."
+  exit 1
+fi
+sudo truncate -s 0 /var/lib/cloud/instance/user-data.txt 2>/dev/null
+sudo truncate -s 0 /var/lib/cloud/instance/user-data 2>/dev/null
+echo "Scrubbed EC2 userdata (local + IMDS)."
 
 # Start the DCV server before creating the session. With the daemon stopped,
 # 'dcv create-session' exits 0 but the session is never persisted.
