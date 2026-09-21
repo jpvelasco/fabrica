@@ -5,7 +5,7 @@ All notable changes to Fabrica are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.5] - 2026-09-20
 
 ### Fixed
 
@@ -17,10 +17,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Horde AMI bake did not require Amazon SSM Agent** — coordinator Image Builder/Packer artifacts now enable the deb or snap SSM unit (installing the snap if neither is present) and fail closed if it cannot be enabled. Shared `internal/amissm` helpers are the same contract Lore uses. Agent AMI runbook matches. Known-good overlay AMIs recorded after private-subnet SSM verification. (#414)
 - **Lore AMI bake treated a missing SSM agent as success** — `install-lore.sh` enabled `amazon-ssm-agent` with `|| true`, so a bake without a working unit still produced an AMI that never registered with SSM on a private subnet. Install now enables the deb or snap unit (installing the snap if neither is present) and fails closed if the agent cannot be enabled. Bake and runtime verifiers require the same unit. (#413)
 - **`pre-push` git hook false-failed on Windows** — the hook wrote its coverage profile to a `mktemp` POSIX path (`/tmp/...`), which the Windows `go` binary resolved as `<repo>\tmp\...` and failed with "The system cannot find the path specified", reporting "tests failed" on green code. The profile now goes to a repo-relative file (`fabrica-prepush-cov.$$.out`, gitignored), which the `go` binary resolves against CWD on every platform. `test/hooktest` regression-tests the exact hook command (`-coverprofile=<repo-relative>` succeeds and writes the file) and the 0.0% per-func detection the hook keys on. (#440)
+- **Workstation DCV password was IMDS-readable in EC2 UserData** — the generated DCV session password (the `ubuntu` OS password, sudo-capable desktop account) rode `chpasswd` in UserData, readable via IMDS `/latest/user-data` and `ec2:DescribeInstanceAttribute` until reboot. Cloud-init now scrubs the long-lived exposure immediately after `chpasswd` succeeds: it clears IMDS user-data (IMDSv2 token first, v1 fallback) and truncates the local cloud-init copies; a failed clear aborts the script with a clear `ERROR:` line, and the success path logs `Scrubbed EC2 userdata (local + IMDS)`. `.fabrica/workstation-credentials.yaml` remains the operator source of truth. Residual exposure is the boot window before the scrub line runs (seconds on the healthy path), documented in `docs/workstation-ami.md`. (#443, #451)
+- **Workstation userdata scrub fail-closed conditional inverted** — the post-`chpasswd` scrub guard read `! v2 || v1`, so a *successful* IMDSv2 clear (first operand false) plus a v1 fallback (true) entered the error branch and `exit 1`'d **before** `dcv create-session` ran: a healthy instance never created its DCV session. The guard now fails closed only when **both** clears fail (`! v2 && ! v1`, short-circuiting so a successful IMDSv2 clear never issues the v1 PUT). Rendered-script test rejects the broken `! v2 || v1` pattern. (#452)
+- **`lore create` hard-coded `10.0.0.0/8` for the SG allow-list** — on the AWS default VPC (`172.31.0.0/16`) in-VPC clients could not reach the Lore server. New `topology.ResolveAllowedCIDR` helper (explicit config wins; VPC CIDR resolved from the provider; fallback preserved) is wired into lore create and deduplicated in horde create. README / `fabrica.example.yaml` document `allowedCidr` as VPC-CIDR-resolved when empty. Private-subnet local-store path proven live (SSM `PingStatus` → `Online`, `GET /health_check` → 200). (#453)
+- **Lore cloud-init unit detection raced on first boot** — under `set -euo pipefail`, `systemctl list-unit-files` can transiently fail at first boot and silently drop into the nohup fallback (server runs but the enabled unit stays `inactive`). Unit detection now keys off the fixed file path the AMI contract writes, so the enabled unit is what runs. Docs state the first-boot nuance honestly. (#453)
 
 ### Changed
 
 - **Docs: private instances verify via SSM, not laptop `status -w`** — README quick-start and the perforce/horde/lore/ddc status sections now state that status probes target the instance **private IP** and cannot succeed from a laptop outside the VPC (`status -w` stays `provisioning` on private-only farms); verify with SSM (`PingStatus` → `Online`) or VPN/in-VPC per `docs/ssm-private.md`. AGENTS.md records the same as a known limitation; known-good AMIs already require SSM registration. (#419)
+- **`doctor` gains a Perforce CIDR check** — `perforce` (unlike lore/horde after the #453 VPC-CIDR resolution) does not auto-resolve the VPC CIDR and falls back to `10.0.0.0/8`, which does not cover AWS default VPCs (`172.31.0.0/16`), so in-VPC clients cannot reach port 1666. New `Perforce CIDR` doctor check warns when `perforce.instanceType` is set and `perforce.allowedCidr` is empty; ok otherwise. (#454)
+
+### Documentation
+
+- **Claim-vs-code honesty pass** — README / ROADMAP / module docs now state what the code actually does: `ci pipeline` prints the documented CodePipeline path (no CodePipeline resource is created), `* schedule` commands print windows and hints (no EventBridge/cron installed), `spot: true` discounts estimates only (no Spot capacity requested), `cost` is offline against a static us-east-1 price table (no live Pricing/Cost Explorer), `ops export` writes local hooks (no CloudWatch resources), DDC `scylla` provisions one host (extra nodes operator-built), and Lore S3 store is provisioned but not re-verified on a known-good AMI. `npm/README.md`'s workstation-password claim corrected to match the #451 scrub reality. (#454)
+- **Horde: jobs-capable SSM-overlay AMI recorded + cold-boot compose pitfall** — `docs/horde-ami.md` known-good table gains the SSM overlay rebaked on the jobs-capable base (Build plugin baked into `globals.json`, bake gate fails unless `GET /` and `GET /api/v1/jobs` return 200); the defective jobs-404 row stays marked **No** with the reason. Common Pitfalls gains the cold-boot finding (first `docker compose up -d` can fail once on the mongo 5s healthcheck timeout before the stack converges in ~90s — the #446 retry is the fix). (#437, #447)
+- **DDC: private-subnet Jupiter AMI bake path + verification checklist** — `docs/ddc-ami.md` gains the same bake + verify treatment as Lore/Horde: contract recap, the Image Builder bake path proven in-account (AWSTOE component, `create_image` + poll to `AVAILABLE` — there is no `start_image_build` API), private-subnet SSM verification checklist, and an honest empty known-good AMI table (no DDC AMI verified yet; edges need `aws ec2 copy-image`). (#445)
+- **Deploy: minimal server.zip fixture + promote/rollback E2E checklist** — `docs/deploy.md` gains a secret-free `server.zip` layout (placeholder launcher matching the default `deploy.launchPath`), exact `zip` + `aws s3 cp` commands, and a 4-step live-E2E checklist (`deploy setup` → `promote` → `rollback` → `destroy --all`). (#444)
+
+### Other
+
+- **Dependencies** — AWS SDK v2 group (18 packages across two Dependabot groups), `github.com/modelcontextprotocol/go-sdk`, and `codecov/codecov-action` (7.0.0 → 7.1.1) bumped to latest. (#425, #449, #428, #450)
 
 ## [0.4.4] - 2026-09-10
 
@@ -366,7 +382,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/jpvelasco/fabrica/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/jpvelasco/fabrica/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/jpvelasco/fabrica/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/jpvelasco/fabrica/compare/v0.4.1...v0.4.2

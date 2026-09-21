@@ -26,8 +26,8 @@ status, tear down — with typed-phrase confirmations and recoverable partial st
 
 ## Current Status
 
-**Current stable: v0.4.4** (2026-09-10). Continues the v0.4.x line from v0.4.3
-(2026-08-23). Phase 0, Phase 1, Lore (v0.3: S3 store, `ami build`, TLS on
+**Current stable: v0.4.5** (2026-09-20). Continues the v0.4.x line from v0.4.4
+(2026-09-10). Phase 0, Phase 1, Lore (v0.3: S3 store, `ami build`, TLS on
 create, SSM on local store), and DDC (V1 + multi-region edge nodes) are
 complete: Perforce, Horde, Lore, Distributed DDC (home + edge regions),
 Workstation, CI, Deploy, Cost, drift detection with auto-remediation (`--fix`),
