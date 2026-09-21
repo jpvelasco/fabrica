@@ -49,7 +49,7 @@ Not every "Complete" ships AWS: `ci pipeline` prints a CodePipeline plan (no Cod
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | ✅ Complete |
 | `status` (aggregate) | `status` (`--probe`, `--json`) | ✅ Complete — read-only health overview across all modules |
 | `drift` | `drift` (`--json`, `--fix`) | ✅ Complete — drift detection + auto-remediation: state backend, EC2 instances (state, type, AMI), SGs, IAM roles, CodeBuild projects, Extra resource detection. `--fix` recreates Missing resources from recorded state; Mismatch/Extra report-only |
-| `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | ✅ Complete — CodeBuild orchestration over Horde; `pipeline` prints the documented CodePipeline path (no CodePipeline resource is created); `destroy` removes CodeBuild project + IAM role |
+| `ci` | `setup`, `trigger`, `status`, `logs`, `pipeline`, `destroy` | ✅ Complete — CodeBuild orchestration over Horde; `pipeline` prints the documented CodePipeline path (no CodePipeline resource is created); `destroy` removes CodeBuild project + IAM role |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | ✅ Complete — GameLift blue/green deploy orchestration |
 | `cost` | `report`, `forecast`, `alerts` | ✅ Complete — offline config-derived report/forecast (static us-east-1 Linux on-demand table, not live Pricing/Cost Explorer) + local budget alerts (no AWS Budgets resources) |
 | `ops` | `export` | ✅ Complete (V1) — optional local dashboard/log/alarm hooks; cost lines when `ops.enabled` |
