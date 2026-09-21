@@ -2,6 +2,7 @@ package doctorchecks
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -230,6 +231,59 @@ func TestCheckCreds_Ok(t *testing.T) {
 	c := checkCreds(context.Background(), rt)
 	if c.Status != "ok" {
 		t.Errorf("status = %q, want ok", c.Status)
+	}
+}
+
+func TestCheckPerforceCIDR(t *testing.T) {
+	tests := []struct {
+		name       string
+		rt         globals.Runtime
+		wantStatus string
+		wantMsg    string
+	}{
+		{
+			name:       "nil config",
+			rt:         globals.Runtime{},
+			wantStatus: "ok",
+			wantMsg:    "not configured",
+		},
+		{
+			name:       "perforce empty",
+			rt:         globals.Runtime{Config: &config.Config{}},
+			wantStatus: "ok",
+			wantMsg:    "not configured",
+		},
+		{
+			name: "perforce configured without allowedCidr",
+			rt: globals.Runtime{Config: &config.Config{
+				Perforce: config.PerforceConfig{InstanceType: "c5.2xlarge"},
+			}},
+			wantStatus: "warning",
+			wantMsg:    "10.0.0.0/8",
+		},
+		{
+			name: "perforce configured with allowedCidr",
+			rt: globals.Runtime{Config: &config.Config{
+				Perforce: config.PerforceConfig{InstanceType: "c5.2xlarge", AllowedCIDR: "172.31.0.0/16"},
+			}},
+			wantStatus: "ok",
+			wantMsg:    "172.31.0.0/16",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := checkPerforceCIDR(tt.rt)
+			if c.Name != "Perforce CIDR" {
+				t.Fatalf("name = %q, want %q", c.Name, "Perforce CIDR")
+			}
+			if c.Status != tt.wantStatus {
+				t.Errorf("status = %q, want %q", c.Status, tt.wantStatus)
+			}
+			if !strings.Contains(c.Message, tt.wantMsg) {
+				t.Errorf("message = %q, want substring %q", c.Message, tt.wantMsg)
+			}
+		})
 	}
 }
 
