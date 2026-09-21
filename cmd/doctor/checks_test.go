@@ -183,8 +183,8 @@ func TestCheckerRun(t *testing.T) {
 		&fakeStateBackendChecker{bucketExists: true, tableExists: true},
 	)
 
-	if len(checks) != 6 {
-		t.Fatalf("got %d checks, want 6", len(checks))
+	if len(checks) != 7 {
+		t.Fatalf("got %d checks, want 7", len(checks))
 	}
 	for _, d := range checks {
 		if d.Status != "ok" {
@@ -271,8 +271,73 @@ func TestCommandRunJSON(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 	}
-	if len(parsed) != 6 {
-		t.Fatalf("got %d diagnostics, want 6", len(parsed))
+	if len(parsed) != 7 {
+		t.Fatalf("got %d diagnostics, want 7", len(parsed))
+	}
+}
+
+func TestCheckPerforceCIDR(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        *config.Config
+		wantStatus string
+		wantMsg    string
+	}{
+		{
+			name:       "nil config",
+			cfg:        nil,
+			wantStatus: "ok",
+			wantMsg:    "not configured",
+		},
+		{
+			name:       "perforce not configured",
+			cfg:        config.Defaults(),
+			wantStatus: "ok",
+			wantMsg:    "not configured",
+		},
+		{
+			name: "perforce configured without allowedCidr",
+			cfg: func() *config.Config {
+				c := config.Defaults()
+				c.Perforce.InstanceType = "c5.2xlarge"
+				return c
+			}(),
+			wantStatus: "warning",
+			wantMsg:    "10.0.0.0/8",
+		},
+		{
+			name: "perforce configured with allowedCidr",
+			cfg: func() *config.Config {
+				c := config.Defaults()
+				c.Perforce.InstanceType = "c5.2xlarge"
+				c.Perforce.AllowedCIDR = "172.31.0.0/16"
+				return c
+			}(),
+			wantStatus: "ok",
+			wantMsg:    "172.31.0.0/16",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checks := doctorchecks.RunChecks(context.Background(), globals.Runtime{Config: tt.cfg}, nil)
+			var d doctorchecks.DoctorCheck
+			for _, c := range checks {
+				if c.Name == "Perforce CIDR" {
+					d = c
+					break
+				}
+			}
+			if d.Name == "" {
+				t.Fatal("Perforce CIDR check missing")
+			}
+			if d.Status != tt.wantStatus {
+				t.Errorf("status = %q, want %q", d.Status, tt.wantStatus)
+			}
+			if !strings.Contains(d.Message, tt.wantMsg) {
+				t.Errorf("message = %q, want substring %q", d.Message, tt.wantMsg)
+			}
+		})
 	}
 }
 
