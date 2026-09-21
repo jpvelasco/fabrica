@@ -248,7 +248,7 @@ git config core.hooksPath .githooks
 - **Data volume auto-detection is mandatory** — EC2 NVMe enumeration order flips between launches; `/dev/nvme1n1` has pointed at the ROOT disk. Userdata detects the largest non-root unformatted volume at runtime; an explicit `dataDevice` override still wins.
 - **Backup auth = login ticket, not P4PASSWD** — modern p4-server security levels ignore/reject bare `P4PASSWD`. The generated script does `p4 login -a` into an isolated `P4TICKETS` file; keep it that way.
 - **SSM sessions lack the AWS CLI** — scripts that call `aws s3 …` self-install `awscli` on demand (instance profile supplies credentials).
-- **Backup schedule is a runbook, not a cron job** — `perforce.backup.schedule` (5-field cron) + `perforce.backup.retain` add backup-storage cost lines and make `backup schedule` print the cron/EventBridge + restore/verify runbook. Fabrica installs no schedule on the instance; `backup verify` does a live SSM check.
+- **Backup schedule is a runbook, not a cron job** — `perforce.backup.schedule` (5-field cron) + `perforce.backup.retain` add backup-storage cost lines and make `backup schedule` print the cron/EventBridge + restore/verify runbook. Fabrica installs no schedule on the instance; `backup verify` prints the runbook (V1 opens no SSM session).
 - **Destroy retains the data volume by design** (DeleteOnTermination=false on /hxdepots); operators delete it when done. It IS tagged, so sweeps see it.
 
 ### Horde

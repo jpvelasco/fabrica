@@ -30,10 +30,12 @@ These govern every structural decision and carry across all phases.
 
 ## Current Status
 
-**Current stable: v0.4.4** (2026-09-10). Follows v0.4.3 (2026-08-23). Phase 0, Phase 1, Lore (v0.3 with S3 store backend, AMI build command, TLS on create, SSM on local store), DDC
+**Current stable: v0.4.4** (2026-09-10). Follows v0.4.3 (2026-08-23). Phase 0, Phase 1, Lore (v0.3: AMI-first, S3 store backend provisioned, AMI build command, TLS on create, SSM on local store), DDC
 (V1 + multi-region edge nodes with live edge probes), and Horde Agents V1 (including queue-based autoscaling) are all complete. Export V2 covers all 8
 modules (state backend, Horde, Perforce, Lore, DDC, Workstation, CI, Deploy).
 Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. Dedicated AMI build guides are available in `docs/horde-agent-ami.md` and `docs/lore-ami.md`.
+
+Not every "Complete" ships AWS: `ci pipeline` prints a CodePipeline plan (no CodePipeline resource is created), `* schedule` commands print windows and start/stop hints (no EventBridge or cron is installed), `spot: true` only discounts cost estimates (no Spot capacity is requested), and `cost` is offline against a static us-east-1 price table (no live Pricing or Cost Explorer).
 
 | Module | Commands | Status |
 |--------|----------|--------|
@@ -42,14 +44,14 @@ Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. Dedicated
 | `perforce` | `create`, `status`, `destroy`, `backup`, `backup list`, `backup delete`, `restore` | ✅ Complete — EBS backup/restore via SSM; optional S3 export |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build` | ✅ Complete |
 | `horde agents` | `create`, `status`, `destroy` | ✅ Complete (V1) — managed agent pool (ASG + Launch Template); private subnets, SSM-only access, coordinator enrollment via private IP; dedicated agent AMI build guide in `docs/horde-agent-ami.md`; manual min/desired/max capacity; queue-based autoscaling (`--scaling-enabled`) with external-metric caveat |
-| `lore` | `create`, `status`, `destroy`, `ami build` | ✅ Complete (v0.3) — AMI-first loreserver; S3 store backend (opt-in); TLS on create; slim SSM profile on local store; `ami build` generates Image Builder artifacts; parallel to Perforce |
-| `ddc` | `setup`, `status`, `destroy`, `region add` | ✅ Complete — home-region Unreal Cloud DDC + additional edge regions; no replication-peer automation (operator-managed) |
+| `lore` | `create`, `status`, `destroy`, `ami build` | ✅ Complete (v0.3) — AMI-first loreserver; S3 store backend (opt-in, provisioned — not re-verified on a known-good AMI); TLS wired on create when certs are already on the AMI (no ACM/JWT/HTTPS-health provisioning); slim SSM profile on local store; local-store private path proven; `ami build` generates Image Builder artifacts; parallel to Perforce |
+| `ddc` | `setup`, `status`, `destroy`, `region add` | ✅ Complete — home-region Unreal Cloud DDC + additional edge regions; `scylla` backend provisions one Scylla host (extra nodes operator-built); no replication-peer automation (operator-managed) |
 | `workstation` | `create`, `list`, `stop`, `start`, `terminate` | ✅ Complete |
 | `status` (aggregate) | `status` (`--probe`, `--json`) | ✅ Complete — read-only health overview across all modules |
 | `drift` | `drift` (`--json`, `--fix`) | ✅ Complete — drift detection + auto-remediation: state backend, EC2 instances (state, type, AMI), SGs, IAM roles, CodeBuild projects, Extra resource detection. `--fix` recreates Missing resources from recorded state; Mismatch/Extra report-only |
-| `ci` | `setup`, `trigger`, `status`, `logs`, `destroy` | ✅ Complete — CodeBuild orchestration over Horde; `destroy` removes CodeBuild project + IAM role |
+| `ci` | `setup`, `trigger`, `status`, `logs`, `pipeline`, `destroy` | ✅ Complete — CodeBuild orchestration over Horde; `pipeline` prints the documented CodePipeline path (no CodePipeline resource is created); `destroy` removes CodeBuild project + IAM role |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | ✅ Complete — GameLift blue/green deploy orchestration |
-| `cost` | `report`, `forecast`, `alerts` | ✅ Complete — offline config-derived report/forecast + local budget alerts |
+| `cost` | `report`, `forecast`, `alerts` | ✅ Complete — offline config-derived report/forecast (static us-east-1 Linux on-demand table, not live Pricing/Cost Explorer) + local budget alerts (no AWS Budgets resources) |
 | `ops` | `export` | ✅ Complete (V1) — optional local dashboard/log/alarm hooks; cost lines when `ops.enabled` |
 | `destroy --all` | clean teardown | ✅ Complete — tears down all modules (deploy→ci→workstation→ddc→horde→lore→perforce) then the state backend; backend deleted only on full success |
 | `export` | `--format cloudformation\|terraform` | ✅ Complete (V2) — CloudFormation YAML and Terraform HCL from local state; all modules (state backend, Horde, Perforce, Lore, DDC, Workstation, CI, Deploy); secrets redacted |

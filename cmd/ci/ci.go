@@ -18,7 +18,7 @@ import (
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ci",
-		Short: "Manage CI pipelines that orchestrate Horde builds",
+		Short: "Manage CI that orchestrates Horde builds",
 		Long: `Manage the Fabrica CI layer: a CodeBuild project that orchestrates Horde
 BuildGraph jobs.
 

@@ -2,6 +2,7 @@ package doctorchecks
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -30,8 +31,8 @@ func newTestRuntime(bucket, table, region string) globals.Runtime {
 func TestRunChecks_Count(t *testing.T) {
 	rt := newTestRuntime("fabrica-state-123456789012", "fabrica-state-lock", "us-west-2")
 	checks := RunChecks(context.Background(), rt, nil)
-	if len(checks) != 6 {
-		t.Fatalf("expected 6 checks, got %d", len(checks))
+	if len(checks) != 7 {
+		t.Fatalf("expected 7 checks, got %d", len(checks))
 	}
 }
 
@@ -46,6 +47,7 @@ func TestRunChecks_Names(t *testing.T) {
 		"Region",
 		"S3 state bucket",
 		"DynamoDB lock table",
+		"Perforce CIDR",
 	}
 
 	for i, want := range expectedNames {
@@ -77,8 +79,8 @@ func TestRunChecks_NoConfig(t *testing.T) {
 	rt := globals.Runtime{}
 	checks := RunChecks(context.Background(), rt, nil)
 
-	if len(checks) != 6 {
-		t.Fatalf("expected 6 checks, got %d", len(checks))
+	if len(checks) != 7 {
+		t.Fatalf("expected 7 checks, got %d", len(checks))
 	}
 
 	// Region should be warning when config is nil
@@ -229,6 +231,59 @@ func TestCheckCreds_Ok(t *testing.T) {
 	c := checkCreds(context.Background(), rt)
 	if c.Status != "ok" {
 		t.Errorf("status = %q, want ok", c.Status)
+	}
+}
+
+func TestCheckPerforceCIDR(t *testing.T) {
+	tests := []struct {
+		name       string
+		rt         globals.Runtime
+		wantStatus string
+		wantMsg    string
+	}{
+		{
+			name:       "nil config",
+			rt:         globals.Runtime{},
+			wantStatus: "ok",
+			wantMsg:    "not configured",
+		},
+		{
+			name:       "perforce empty",
+			rt:         globals.Runtime{Config: &config.Config{}},
+			wantStatus: "ok",
+			wantMsg:    "not configured",
+		},
+		{
+			name: "perforce configured without allowedCidr",
+			rt: globals.Runtime{Config: &config.Config{
+				Perforce: config.PerforceConfig{InstanceType: "c5.2xlarge"},
+			}},
+			wantStatus: "warning",
+			wantMsg:    "10.0.0.0/8",
+		},
+		{
+			name: "perforce configured with allowedCidr",
+			rt: globals.Runtime{Config: &config.Config{
+				Perforce: config.PerforceConfig{InstanceType: "c5.2xlarge", AllowedCIDR: "172.31.0.0/16"},
+			}},
+			wantStatus: "ok",
+			wantMsg:    "172.31.0.0/16",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := checkPerforceCIDR(tt.rt)
+			if c.Name != "Perforce CIDR" {
+				t.Fatalf("name = %q, want %q", c.Name, "Perforce CIDR")
+			}
+			if c.Status != tt.wantStatus {
+				t.Errorf("status = %q, want %q", c.Status, tt.wantStatus)
+			}
+			if !strings.Contains(c.Message, tt.wantMsg) {
+				t.Errorf("message = %q, want substring %q", c.Message, tt.wantMsg)
+			}
+		})
 	}
 }
 

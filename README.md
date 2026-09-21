@@ -46,15 +46,17 @@ affected.
 | `setup` / `doctor` / `status` / `drift` / `config show` | Foundation | Complete |
 | `perforce` | `create`, `status`, `destroy`, `backup`, `backup schedule`, `backup verify`, `restore` | Complete |
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build`, `agents schedule`, `agents metrics` | Complete |
-| `lore` | `create`, `status`, `destroy`, `ami build` | Complete |
+| `lore` | `create`, `status`, `destroy`, `ami build` | Complete (AMI-first; local-store private path proven; S3 store provisioned, not re-verified on a known-good AMI) |
 | `ddc` | `setup`, `status`, `destroy`, `region add`, `ami build`, `topology` | Complete (V1, home + edge regions) |
 | `workstation` | `create`, `list`, `stop`, `start`, `schedule`, `terminate`, `ami build` | Complete |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `pipeline`, `destroy` | Complete |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | Complete |
-| `cost` | `report`, `forecast`, `alerts` | Complete |
+| `cost` | `report`, `forecast`, `alerts` | Complete (offline, static price table) |
 | `ops` | `export` | Complete (V1, local hooks) |
 | `export` | `--format cloudformation\|terraform` | Complete (V2) |
 | `destroy --all` | full-stack teardown | Complete |
+
+Guidance, not provisioned: `ci pipeline` prints the CodePipeline path (no CodePipeline resource is created), `* schedule` commands print windows/hints (no EventBridge or cron is installed), `spot: true` only discounts estimates (no Spot capacity is requested), and `cost` is offline against a static us-east-1 price table, not live Pricing or Cost Explorer.
 
 ## Requirements
 
@@ -176,7 +178,7 @@ fabrica deploy status
 
 #### `fabrica doctor`
 
-Checks your environment: Go version, AWS credentials, region, S3 state bucket, DynamoDB lock table.
+Checks your environment: Go version, AWS credentials, region, S3 state bucket, DynamoDB lock table, and Perforce CIDR (perforce does not auto-resolve the VPC CIDR the way lore and horde do — port 1666 opens only to `10.0.0.0/8` unless `perforce.allowedCidr` is set).
 
 #### `fabrica setup`
 
@@ -242,7 +244,7 @@ Prints the configured backup cron (`perforce.backup.schedule`, 5 fields) plus th
 
 #### `fabrica perforce backup verify <backup-id>`
 
-Prints the documented verify + restore path for a backup id. V1 does not open an SSM session.
+Prints the documented verify + restore path for a backup id. V1 does not open an SSM session and does not mutate state — it confirms the id shape and prints the runbook (list, inspect metadata, restore).
 
 #### `fabrica perforce restore`
 

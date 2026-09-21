@@ -30,6 +30,7 @@ func RunChecks(ctx context.Context, rt globals.Runtime, backend cloud.StateBacke
 		checkRegion(rt),
 		checkBucket(ctx, rt, backend),
 		checkTable(ctx, rt, backend),
+		checkPerforceCIDR(rt),
 	}
 }
 
@@ -112,4 +113,18 @@ func checkTable(ctx context.Context, rt globals.Runtime, backend cloud.StateBack
 
 func stateBackendWarning(name string) DoctorCheck {
 	return DoctorCheck{name, "warning", "not yet provisioned (run fabrica setup)"}
+}
+
+// checkPerforceCIDR warns when perforce is configured but its allowedCidr is
+// unset. Unlike lore and horde (which resolve the VPC CIDR at create),
+// perforce falls back to 10.0.0.0/8, which does not cover AWS default VPCs
+// (172.31.0.0/16) — in-VPC clients would not reach port 1666.
+func checkPerforceCIDR(rt globals.Runtime) DoctorCheck {
+	if rt.Config == nil || rt.Config.Perforce.InstanceType == "" {
+		return DoctorCheck{"Perforce CIDR", "ok", "not configured"}
+	}
+	if rt.Config.Perforce.AllowedCIDR == "" {
+		return DoctorCheck{"Perforce CIDR", "warning", "unset — port 1666 opens only to 10.0.0.0/8 (perforce does not auto-resolve the VPC CIDR). Set perforce.allowedCidr to your VPC CIDR (e.g. 172.31.0.0/16 on the default VPC)"}
+	}
+	return DoctorCheck{"Perforce CIDR", "ok", rt.Config.Perforce.AllowedCIDR}
 }
