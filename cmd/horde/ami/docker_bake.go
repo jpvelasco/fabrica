@@ -119,11 +119,23 @@ test -s /etc/horde/docker-compose.yml
 # into ECR before baking. The bake pulls it with the instance role:
 # ecr:GetAuthorizationToken requires Resource "*", the read actions can stay
 # scoped to the repository ARN.
+#
+# The registry host and region are derived from the repository URL, so a
+# nested ECR path (<acct>.dkr.ecr.<region>.amazonaws.com/team/horde-server)
+# still resolves to the correct registry and a cross-region mirror still
+# authenticates. ECR v2 hosts carry the region as the 4th dot segment
+# (<acct>.dkr.ecr.<region>.amazonaws.com; FIPS: <acct>.dkr.ecr-fips.<region>);
+# anything else falls back to the build instance's configured region.
 ECR_REPO=REPLACE_WITH_ECR_REPOSITORY
-/usr/local/bin/aws ecr get-login-password | docker login "${ECR_REPO%/*}" -u AWS --password-stdin
+ECR_REGISTRY="${ECR_REPO%%/*}"
+ECR_REGION="$(printf "%s" "$ECR_REGISTRY" | cut -d. -f4)"
+if [ -z "$ECR_REGION" ]; then
+  ECR_REGION=$(/usr/local/bin/aws configure get region)
+fi
+/usr/local/bin/aws ecr get-login-password --region "$ECR_REGION" | docker login "$ECR_REGISTRY" -u AWS --password-stdin
 docker pull "${ECR_REPO}:__HORDE_VERSION__"
 docker tag "${ECR_REPO}:__HORDE_VERSION__" "fabrica-horde-server:__HORDE_VERSION__"
-docker logout "${ECR_REPO%/*}"
+docker logout "$ECR_REGISTRY"
 rm -f /root/.docker/config.json
 
 # Bake the dependency images so the first boot needs no registry access.

@@ -347,6 +347,11 @@ phases:
         commands:
           - |
             mkdir -p /etc/horde
+            cat >/etc/horde/docker-compose.yml <<'COMPOSE'
+            services:
+              horde:
+                image: fabrica-horde-server:5.5.0
+            COMPOSE
             test -s /etc/horde/docker-compose.yml
             docker pull REPLACE_WITH_ECR_REPOSITORY:5.5.0
             docker tag REPLACE_WITH_ECR_REPOSITORY:5.5.0 fabrica-horde-server:5.5.0

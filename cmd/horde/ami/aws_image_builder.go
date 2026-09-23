@@ -57,8 +57,11 @@ func validateComponentYAML(data []byte, install string) error {
 // dockerComponentMarkers are the shell markers a docker-install component must
 // contain to bake a jobs-capable AMI. Each maps to a step that, if absent,
 // leaves the generated AMI unable to serve the jobs API.
+// The markers are kept substring-disjoint: every one of them must be
+// independently droppable so the validator (and the drop-one-marker test)
+// fails on each individually.
 var dockerComponentMarkers = []string{
-	"/etc/horde/docker-compose.yml",         // compose file is written where the unit + cloud-init look
+	"cat >/etc/horde/docker-compose.yml",    // compose file is written where the unit + cloud-init look
 	"docker pull",                           // the server image is pulled into the AMI
 	"docker tag",                            // the pulled image is tagged for the compose stack
 	"test -s /etc/horde/docker-compose.yml", // bake-time gate fails closed if compose is missing
