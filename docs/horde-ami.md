@@ -140,8 +140,10 @@ Docker CE, writes `/etc/horde/docker-compose.yml` + `globals.json` (Build
 plugin enabled) + `server.json`, pulls and tags the server image from your
 account's ECR mirror (`REPLACE_WITH_ECR_REPOSITORY`), pre-pulls `mongo:7.0` /
 `redis:7.2`, and installs the `horde` unit (`WorkingDirectory=/etc/horde`).
-The `validate` phase fails the build if the compose file is missing, so a
-jobs-incomplete AMI cannot be produced by accident.
+The bake itself fails if the compose file is missing (`test -s
+/etc/horde/docker-compose.yml` in the build phase), and `fabrica horde ami
+build` refuses to write a docker `component.yaml` that lacks those steps, so
+a jobs-incomplete AMI cannot be produced by accident.
 
 Two operator steps before running the pipeline: mirror the GHCR image into ECR
 (private GHCR registry — `read:packages` scope on the operator token) and
@@ -205,10 +207,10 @@ Then pull it back with the instance role and tag it for the compose stack:
 
 ```bash
 # IAM: ecr:GetAuthorizationToken must be on Resource "*" (repo-scoped = AccessDenied)
-aws ecr get-login-password --region <region> | docker login -u AWS --password-stdin "${ECR_REPO%/*}"
+aws ecr get-login-password --region <region> | docker login -u AWS --password-stdin "${ECR_REPO%%/*}"
 docker pull "${ECR_REPO}:5.8.0"
 docker tag "${ECR_REPO}:5.8.0" fabrica-horde-server:latest
-docker logout "${ECR_REPO%/*}"
+docker logout "${ECR_REPO%%/*}"
 rm -f /root/.docker/config.json   # do not bake a transient registry session
 ```
 

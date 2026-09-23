@@ -35,6 +35,9 @@ const hordeDockerBakeScript = `set -euo pipefail
 # /etc/horde, so the baked stack and configs live there.
 mkdir -p /etc/horde
 
+# The horde unit runs a one-shot docker compose up -d and never re-converges,
+# so mongodb and redis must self-heal after a crash or OOM via their own
+# restart policies.
 cat >/etc/horde/docker-compose.yml <<'COMPOSE'
 services:
   mongodb:
@@ -43,6 +46,7 @@ services:
     volumes:
       - mongodb-data:/data/db
     command: mongod --noauth
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
@@ -54,6 +58,7 @@ services:
     image: redis:7.2
     container_name: horde-redis
     command: redis-server --save "" --appendonly no
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s

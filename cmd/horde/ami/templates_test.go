@@ -28,6 +28,12 @@ func requireDockerBake(t *testing.T, rendered string) {
 	if strings.Contains(rendered, "ECR_REGION=$(/usr/local/bin/aws configure get region)") {
 		t.Error("region fallback must guard the non-zero exit of `aws configure get region`")
 	}
+	// The horde unit runs a one-shot docker compose up -d, so every service
+	// (mongodb, redis, horde) must carry its own restart policy to survive a
+	// post-boot crash or OOM.
+	if got := strings.Count(rendered, "restart: unless-stopped"); got != 3 {
+		t.Errorf("compose stack must set restart: unless-stopped on all 3 services, found %d", got)
+	}
 }
 
 func TestRenderImageBuilderTemplate_Docker(t *testing.T) {
