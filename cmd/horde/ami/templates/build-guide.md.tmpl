@@ -87,7 +87,8 @@ so mirror the image into ECR first:
    repository URL (e.g. `<account>.dkr.ecr.{{ .Region }}.amazonaws.com/horde-server`).
 
 **IAM for the Image Builder instance profile** — the bake calls
-`ecr get-authorization-token` and pulls the image:
+`aws ecr get-login-password` (backed by `ecr:GetAuthorizationToken`) and
+pulls the image:
 
 | Action | Resource |
 |--------|----------|

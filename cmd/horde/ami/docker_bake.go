@@ -120,8 +120,7 @@ test -s /etc/horde/docker-compose.yml
 # ecr:GetAuthorizationToken requires Resource "*", the read actions can stay
 # scoped to the repository ARN.
 ECR_REPO=REPLACE_WITH_ECR_REPOSITORY
-TOKEN=$(/usr/local/bin/aws ecr get-authorization-token --query "authorizationData[0].authorizationToken" --output text)
-docker login "${ECR_REPO%/*}" -u AWS --password-stdin <<<"$TOKEN"
+/usr/local/bin/aws ecr get-login-password | docker login "${ECR_REPO%/*}" -u AWS --password-stdin
 docker pull "${ECR_REPO}:__HORDE_VERSION__"
 docker tag "${ECR_REPO}:__HORDE_VERSION__" "fabrica-horde-server:__HORDE_VERSION__"
 docker logout "${ECR_REPO%/*}"
@@ -162,15 +161,17 @@ func hordeDockerUnitCommand() string {
 // hclInline renders a multi-line shell command as a single-line HCL
 // double-quoted string (Packer inline list entries cannot span lines).
 // Escapes for the HCL string literal: backslash, double quote, and newline.
-// It also doubles the HCL interpolation opener ${ to $${ so shell
-// parameter expansions like ${ECR_REPO%/*} survive Packer's HCL parse as
-// literals (the shell provisioner re-interprets them at run time). Bare $(…)
-// command substitution is not HCL interpolation and is left untouched.
+// It also doubles the HCL interpolation opener ${ to $${ and the template
+// directive opener %{ to %%{ so shell content like ${ECR_REPO%/*} survives
+// Packer's HCL parse as a literal (the shell provisioner re-interprets it at
+// run time). Bare $(…) command substitution is not HCL interpolation and is
+// left untouched.
 func hclInline(cmd string) string {
 	escaped := strings.NewReplacer(
 		`\`, `\\`,
 		`"`, `\"`,
 		"${", `$${`,
+		"%{", `%%{`,
 		"\n", `\n`,
 	).Replace(cmd)
 	return `"` + escaped + `"`

@@ -205,8 +205,7 @@ Then pull it back with the instance role and tag it for the compose stack:
 
 ```bash
 # IAM: ecr:GetAuthorizationToken must be on Resource "*" (repo-scoped = AccessDenied)
-TOKEN=$(aws ecr get-authorization-token --query "authorizationData[0].authorizationToken" --output text)
-docker login "${ECR_REPO%/*}" -u AWS --password-stdin <<<"$TOKEN"
+aws ecr get-login-password --region <region> | docker login -u AWS --password-stdin "${ECR_REPO%/*}"
 docker pull "${ECR_REPO}:5.8.0"
 docker tag "${ECR_REPO}:5.8.0" fabrica-horde-server:latest
 docker logout "${ECR_REPO%/*}"

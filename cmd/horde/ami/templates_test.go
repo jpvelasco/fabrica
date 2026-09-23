@@ -16,8 +16,11 @@ func requireDockerBake(t *testing.T, rendered string) {
 			t.Errorf("rendered docker output is missing required bake marker %q", marker)
 		}
 	}
-	if !strings.Contains(rendered, "/usr/local/bin/aws ecr get-authorization-token") {
+	if !strings.Contains(rendered, "/usr/local/bin/aws ecr get-login-password") {
 		t.Error("docker bake should pull via full-path /usr/local/bin/aws (not on SSM PATH)")
+	}
+	if strings.Contains(rendered, "get-authorization-token") {
+		t.Error("docker bake must use get-login-password (the raw authorization token is base64 AWS:password and cannot feed docker login)")
 	}
 }
 

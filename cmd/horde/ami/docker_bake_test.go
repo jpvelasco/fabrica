@@ -31,6 +31,11 @@ func TestHclInline(t *testing.T) {
 	if got := hclInline(`echo "${ECR_REPO%/*} $(uname -m)"`); got != `"echo \"$${ECR_REPO%/*} $(uname -m)\""` {
 		t.Errorf("hclInline = %q, want interpolated-escape output", got)
 	}
+
+	// HCL template-directive openers must be escaped the same way.
+	if got := hclInline(`printf "%{d}\n" x`); got != `"printf \"%%{d}\\n\" x"` {
+		t.Errorf("hclInline = %q, want directive-escape output", got)
+	}
 }
 
 func TestDockerBakeScriptVersionSubstitution(t *testing.T) {
