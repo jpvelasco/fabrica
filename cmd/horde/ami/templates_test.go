@@ -6,6 +6,21 @@ import (
 	"testing"
 )
 
+// requireDockerBake asserts that rendered docker-install output contains the
+// shared bake markers (compose + image bake) and the full-path aws pull.
+// Both the Image Builder component and the Packer template must carry them.
+func requireDockerBake(t *testing.T, rendered string) {
+	t.Helper()
+	for _, marker := range dockerComponentMarkers {
+		if !strings.Contains(rendered, marker) {
+			t.Errorf("rendered docker output is missing required bake marker %q", marker)
+		}
+	}
+	if !strings.Contains(rendered, "/usr/local/bin/aws ecr get-authorization-token") {
+		t.Error("docker bake should pull via full-path /usr/local/bin/aws (not on SSM PATH)")
+	}
+}
+
 func TestRenderImageBuilderTemplate_Docker(t *testing.T) {
 	bc := buildCommand{cfg: BuildConfig{
 		Version:   "5.5.0",
@@ -64,6 +79,44 @@ func TestRenderImageBuilderTemplate_Region(t *testing.T) {
 	}
 }
 
+// TestRenderedDockerComponentPassesValidator is the end-to-end guarantee for
+// #459: the component the generator actually emits for a docker install must
+// satisfy the same validator that refuses to write it if the bake steps are
+// missing. This keeps the template, the validator, and the generated AMI
+// contract in lockstep.
+func TestRenderedDockerComponentPassesValidator(t *testing.T) {
+	bc := buildCommand{cfg: BuildConfig{
+		Version:   "5.5.0",
+		Install:   "docker",
+		Name:      "test-horde",
+		BaseImage: "ami-abc123",
+		Region:    "us-east-1",
+	}}
+	out, err := bc.renderTemplate("component.yaml.tmpl", bc.cfg)
+	if err != nil {
+		t.Fatalf("renderTemplate error: %v", err)
+	}
+	if err := validateComponentYAML(out, "docker"); err != nil {
+		t.Fatalf("rendered docker component should pass validateComponentYAML, got: %v", err)
+	}
+	// The native render is irrelevant to the docker bake, but must still pass
+	// the top-level field checks.
+	nb := buildCommand{cfg: BuildConfig{
+		Version:   "5.4.0",
+		Install:   "native",
+		Name:      "test-horde",
+		BaseImage: "ami-abc123",
+		Region:    "us-east-1",
+	}}
+	nout, err := nb.renderTemplate("component.yaml.tmpl", nb.cfg)
+	if err != nil {
+		t.Fatalf("renderTemplate native error: %v", err)
+	}
+	if err := validateComponentYAML(nout, "native"); err != nil {
+		t.Fatalf("rendered native component should pass validateComponentYAML, got: %v", err)
+	}
+}
+
 func TestRenderComponentTemplate_Docker(t *testing.T) {
 	bc := buildCommand{cfg: BuildConfig{
 		Version: "5.5.0",
@@ -86,6 +139,12 @@ func TestRenderComponentTemplate_Docker(t *testing.T) {
 	if !strings.Contains(s, "InstallHordeSystemdUnit") {
 		t.Error("docker component should have InstallHordeSystemdUnit step")
 	}
+	if !strings.Contains(s, "BakeHordeStack") {
+		t.Error("docker component should have a BakeHordeStack step")
+	}
+	if !strings.Contains(s, "InstallAwsCliV2") {
+		t.Error("docker component should install the AWS CLI v2 (stock jammy has none)")
+	}
 	if strings.Contains(s, "InstallDotNet") {
 		t.Error("docker component should not have InstallDotNet step")
 	}
@@ -97,6 +156,19 @@ func TestRenderComponentTemplate_Docker(t *testing.T) {
 	}
 	if strings.Contains(s, "|| true") {
 		t.Error("component must not soft-fail SSM enable with || true")
+	}
+	// The docker bake must write the compose stack + configs to the path the
+	// horde unit and cloud-init use, pull + tag the server image, and fail
+	// closed if the compose file is missing (the #459 gap). These are exactly
+	// the markers validateComponentYAML enforces, so the rendered output and
+	// the validator stay in lockstep.
+	requireDockerBake(t, s)
+	// The unit starts compose from /etc/horde, not the old /opt/horde.
+	if !strings.Contains(s, "WorkingDirectory=/etc/horde") {
+		t.Error("horde unit should use WorkingDirectory=/etc/horde")
+	}
+	if strings.Contains(s, "WorkingDirectory=/opt/horde") {
+		t.Error("horde unit must not use the old /opt/horde working directory")
 	}
 }
 
@@ -125,8 +197,20 @@ func TestRenderComponentTemplate_Native(t *testing.T) {
 	if !strings.Contains(s, "InstallHordeBinary") {
 		t.Error("native component should have InstallHordeBinary step")
 	}
+	if !strings.Contains(s, "InstallAwsCliV2") {
+		t.Error("native component should install the AWS CLI v2 (stock jammy has none; aws s3 sync needs it)")
+	}
 	if strings.Contains(s, "InstallDocker") {
 		t.Error("native component should not have InstallDocker step")
+	}
+	if strings.Contains(s, "BakeHordeStack") {
+		t.Error("native component should not have the docker BakeHordeStack step")
+	}
+	// The native binary is synced to /opt/horde, so its unit keeps
+	// WorkingDirectory=/opt/horde (the docker path is the one that moved to
+	// /etc/horde).
+	if !strings.Contains(s, "WorkingDirectory=/opt/horde") {
+		t.Error("native horde unit should use WorkingDirectory=/opt/horde")
 	}
 }
 
@@ -157,6 +241,10 @@ func TestRenderPackerTemplate_Docker(t *testing.T) {
 	if !strings.Contains(s, "us-west-2") {
 		t.Error("packer template should contain the configured region")
 	}
+	// The Packer docker bake is the same shared script as the Image Builder
+	// component, so it must carry the same bake markers (the #459 gap: the
+	// old Packer path did not write the compose file or bake the image).
+	requireDockerBake(t, s)
 	if strings.Contains(s, "GITHUB_PAT") {
 		t.Error("packer template should not reference GITHUB_PAT")
 	}

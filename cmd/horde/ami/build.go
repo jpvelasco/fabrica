@@ -141,7 +141,9 @@ func (b *buildCommand) run() error {
 	if err := b.writeRendered("image-builder.json.tmpl", "image-builder-recipe.json", validateImageBuilderJSON); err != nil {
 		return err
 	}
-	if err := b.writeRendered("component.yaml.tmpl", "component.yaml", validateComponentYAML); err != nil {
+	if err := b.writeRendered("component.yaml.tmpl", "component.yaml", func(data []byte) error {
+		return validateComponentYAML(data, b.cfg.Install)
+	}); err != nil {
 		return err
 	}
 	if b.cfg.IncludePacker {
@@ -241,9 +243,14 @@ func (b *buildCommand) renderTemplate(name string, data any) ([]byte, error) {
 	}
 	raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
 	tmpl, err := template.New(name).Funcs(template.FuncMap{
-		"indent":     indent,
-		"ensureSSM":  amissm.EnsureScript,
-		"requireSSM": func() string { return amissm.RequireEnabledScript(false) },
+		"indent":                 indent,
+		"ensureSSM":              amissm.EnsureScript,
+		"requireSSM":             func() string { return amissm.RequireEnabledScript(false) },
+		"awsCliInstall":          func() string { return awsCliInstallScript },
+		"dockerBake":             dockerBakeScript,
+		"hordeDockerUnit":        func() string { return hordeDockerUnitText },
+		"hclInline":              hclInline,
+		"hordeDockerUnitCommand": hordeDockerUnitCommand,
 	}).Option("missingkey=error").Parse(string(raw))
 	if err != nil {
 		return nil, fmt.Errorf("parsing template %s: %w", name, err)

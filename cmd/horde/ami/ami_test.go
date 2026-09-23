@@ -318,7 +318,7 @@ func TestValidateImageBuilderJSON(t *testing.T) {
 
 func TestValidateComponentYAML(t *testing.T) {
 	valid := []byte("name: test\nschemaVersion: 1.0\nphases:\n  - name: build\n")
-	if err := validateComponentYAML(valid); err != nil {
+	if err := validateComponentYAML(valid, "native"); err != nil {
 		t.Errorf("unexpected error on valid YAML: %v", err)
 	}
 
@@ -328,8 +328,41 @@ func TestValidateComponentYAML(t *testing.T) {
 		"missing name":          []byte("schemaVersion: 1.0\nphases:\n  - name: build\n"),
 	}
 	for label, data := range cases {
-		if err := validateComponentYAML(data); err == nil {
+		if err := validateComponentYAML(data, "native"); err == nil {
 			t.Errorf("%s: expected error, got nil", label)
+		}
+	}
+}
+
+// dockerComponentSample is a minimal docker-install component body containing
+// every marker the validator requires. It must stay in lockstep with the
+// markers the rendered template actually emits (asserted separately in
+// templates_test.go).
+const dockerComponentSample = `name: test
+schemaVersion: 1.0
+phases:
+  - name: build
+    steps:
+      - name: BakeHordeStack
+        commands:
+          - |
+            mkdir -p /etc/horde
+            test -s /etc/horde/docker-compose.yml
+            docker pull REPLACE_WITH_ECR_REPOSITORY:5.5.0
+            docker tag REPLACE_WITH_ECR_REPOSITORY:5.5.0 fabrica-horde-server:5.5.0
+`
+
+func TestValidateComponentYAML_DockerRequiresBakeMarkers(t *testing.T) {
+	// The full marker set validates.
+	if err := validateComponentYAML([]byte(dockerComponentSample), "docker"); err != nil {
+		t.Errorf("expected valid docker component, got: %v", err)
+	}
+
+	// Dropping any single required marker must fail the validation.
+	for _, marker := range dockerComponentMarkers {
+		trimmed := strings.Replace(dockerComponentSample, marker, "", 1)
+		if err := validateComponentYAML([]byte(trimmed), "docker"); err == nil {
+			t.Errorf("dropping %q should fail validation, got nil", marker)
 		}
 	}
 }

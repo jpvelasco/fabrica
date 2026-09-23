@@ -57,18 +57,13 @@ source "amazon-ebs" "horde" {
   }
 }
 
-# TODO (docker install): /opt/horde/docker-compose.yml is NOT baked into this AMI.
-# You must provide it before the horde service can start. Options:
-#   a) Add a "file" provisioner below that copies your compose file into place:
-#        provisioner "file" {
-#          source      = "path/to/your/docker-compose.yml"
-#          destination = "/tmp/docker-compose.yml"
-#        }
-#      Then move it in the shell provisioner: "mv /tmp/docker-compose.yml /opt/horde/docker-compose.yml"
-#   b) Write it via a heredoc in the shell provisioner using the real Horde compose file from
-#      Engine/Source/Programs/Horde/HordeServer/docker-compose.yml in your UE source checkout.
-# The horde systemd unit (installed below) runs `docker compose up -d` from /opt/horde/,
-# so the file must exist at that path before the instance boots.
+# Docker install: the bake script (shared with component.yaml via
+# docker_bake.go) writes the compose stack + configs to /etc/horde and pulls
+# the server image from the account ECR repository (REPLACE_WITH_ECR_REPOSITORY).
+# The stock jammy base has no AWS CLI, so the bake installs it first. The
+# operator mirrors ghcr.io/epicgames/horde-server into ECR before building
+# (GHCR is private and needs read:packages scope); ecr:GetAuthorizationToken
+# must be allowed on Resource "*" — see docs/horde-ami.md.
 
 build {
   sources = ["source.amazon-ebs.horde"]
@@ -83,16 +78,18 @@ build {
     inline_shebang  = "/bin/bash -euo pipefail"
 {{- if eq .Install "docker" }}
     inline = [
+      {{ hclInline (awsCliInstall) }},
       "curl -fsSL https://get.docker.com | sh",
       "systemctl enable docker",
       "usermod -aG docker ubuntu",
-      "mkdir -p /opt/horde /etc/horde",
-      "cat >/etc/systemd/system/horde.service <<'UNIT'\n[Unit]\nDescription=Horde Server (docker compose)\nAfter=network-online.target docker.service\nRequires=docker.service\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nWorkingDirectory=/opt/horde\nExecStart=/usr/bin/docker compose up -d\nExecStop=/usr/bin/docker compose down\nExecReload=/bin/sh -c '/usr/bin/docker compose pull && /usr/bin/docker compose up -d'\n\n[Install]\nWantedBy=multi-user.target\nUNIT",
+      {{ hclInline (dockerBake .Version) }},
+      {{ hclInline (hordeDockerUnitCommand) }},
       "systemctl daemon-reload",
       "systemctl enable horde",
     ]
 {{- else }}
     inline = [
+      {{ hclInline (awsCliInstall) }},
       "wget -q https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -O /tmp/ms.deb",
       "dpkg -i /tmp/ms.deb",
       "apt-get update -q",
