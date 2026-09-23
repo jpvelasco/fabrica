@@ -136,7 +136,9 @@ test -s /etc/horde/docker-compose.yml
 # explicit message instead of aborting silently.
 ECR_REPO=REPLACE_WITH_ECR_REPOSITORY
 ECR_REGISTRY="${ECR_REPO%%/*}"
-ECR_REGION="$(printf "%s" "$ECR_REGISTRY" | cut -d. -f4)"
+# -s suppresses delimiter-less lines (dotless host), so the empty-string
+# fallback chain below still runs for a dotless or unsubstituted registry.
+ECR_REGION="$(printf "%s" "$ECR_REGISTRY" | cut -s -d. -f4)"
 if [ -z "$ECR_REGION" ]; then
   ECR_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
 fi

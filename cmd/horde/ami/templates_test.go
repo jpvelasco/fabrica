@@ -34,6 +34,12 @@ func requireDockerBake(t *testing.T, rendered string) {
 	if got := strings.Count(rendered, "restart: unless-stopped"); got != 3 {
 		t.Errorf("compose stack must set restart: unless-stopped on all 3 services, found %d", got)
 	}
+	// cut -s suppresses delimiter-less lines; without it a dotless registry
+	// host (or an unsubstituted placeholder) leaks through as the "region"
+	// and the explicit fail-with-message path is skipped.
+	if !strings.Contains(rendered, "cut -s -d. -f4") {
+		t.Error("region derivation must use `cut -s` so a dotless registry host yields an empty region")
+	}
 }
 
 func TestRenderImageBuilderTemplate_Docker(t *testing.T) {
