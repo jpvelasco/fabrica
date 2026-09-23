@@ -22,9 +22,11 @@ type componentReference struct {
 }
 
 // validateComponentYAML checks that a rendered Image Builder Component document
-// has the required top-level fields. Placeholders like REPLACE_WITH_YOUR_BUCKET
-// are intentional — users substitute them before uploading to AWS.
-func validateComponentYAML(data []byte) error {
+// has the required top-level fields, and — for a docker install — that the bake
+// actually writes the compose stack and pulls the server image. Placeholders
+// like REPLACE_WITH_YOUR_BUCKET / REPLACE_WITH_ECR_REPOSITORY are intentional —
+// users substitute them before uploading to AWS.
+func validateComponentYAML(data []byte, install string) error {
 	for _, required := range []string{"schemaVersion:", "phases:", "name:"} {
 		found := false
 		for _, line := range strings.Split(string(data), "\n") {
@@ -37,7 +39,32 @@ func validateComponentYAML(data []byte) error {
 			return fmt.Errorf("component YAML is missing required top-level field %q", required)
 		}
 	}
+	// A docker install must bake a jobs-capable stack: write the compose file
+	// + configs, pull/tag the server image, and fail the build if the compose
+	// file ends up missing. Without these the generated AMI 404s on the jobs
+	// API (the #459 failure), so the generator refuses to emit a component
+	// that lacks them.
+	if install == "docker" {
+		for _, marker := range dockerComponentMarkers {
+			if !strings.Contains(string(data), marker) {
+				return fmt.Errorf("docker component is missing the %q step required to bake a jobs-capable stack", marker)
+			}
+		}
+	}
 	return nil
+}
+
+// dockerComponentMarkers are the shell markers a docker-install component must
+// contain to bake a jobs-capable AMI. Each maps to a step that, if absent,
+// leaves the generated AMI unable to serve the jobs API.
+// The markers are kept substring-disjoint: every one of them must be
+// independently droppable so the validator (and the drop-one-marker test)
+// fails on each individually.
+var dockerComponentMarkers = []string{
+	"cat >/etc/horde/docker-compose.yml",    // compose file is written where the unit + cloud-init look
+	"docker pull",                           // the server image is pulled into the AMI
+	"docker tag",                            // the pulled image is tagged for the compose stack
+	"test -s /etc/horde/docker-compose.yml", // bake-time gate fails closed if compose is missing
 }
 
 // validateImageBuilderJSON parses rendered Image Builder JSON and returns a

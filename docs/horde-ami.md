@@ -15,10 +15,12 @@ The AMI must meet all of the following:
 | Requirement | Detail |
 |-------------|--------|
 | **OS** | Ubuntu 22.04 LTS (jammy) — cloud-init script targets Ubuntu |
+| **AWS CLI v2** | Installed at `/usr/local/bin/aws` by the generated bake (the stock jammy base ships neither `aws` nor `unzip`; see [Jammy base and SSM footguns](#jammy-base-and-ssm-footguns)). Optional in a purely manual bake if you never run `aws` on the instance. |
 | **Docker CE** | Installed, enabled (`systemctl enable docker`), and running at boot |
 | **Docker Compose** | `docker compose` (v2 plugin) available on PATH |
 | **Compose stack** | `/etc/horde/docker-compose.yml` baked into the AMI |
 | **Horde config** | `/etc/horde/globals.json` and `/etc/horde/server.json` baked into the AMI |
+| **Server image** | `fabrica-horde-server:<version>` baked (pulled from the account ECR mirror of `ghcr.io/epicgames/horde-server:<version>`), plus `mongo:7.0` / `redis:7.2` pre-pulled |
 | **Architecture** | `x86_64` (required for m7i instances) |
 | **Job API** | The Horde server image must expose the job-creation API (`GET /api/v1/jobs` must not return 404). Fabrica submits BuildGraph jobs to this endpoint and fails fast with a clear message if the route is missing. |
 
@@ -130,6 +132,30 @@ Bake these into the AMI at `/etc/horde/`:
 
 ## Building the AMI
 
+### Path A — Generated Image Builder bake (recommended)
+
+`fabrica horde ami build --install docker` generates a `component.yaml` that is
+now a **complete** jobs-capable bake: it installs the AWS CLI v2 + `unzip`,
+Docker CE, writes `/etc/horde/docker-compose.yml` + `globals.json` (Build
+plugin enabled) + `server.json`, pulls and tags the server image from your
+account's ECR mirror (`REPLACE_WITH_ECR_REPOSITORY`), pre-pulls `mongo:7.0` /
+`redis:7.2`, and installs the `horde` unit (`WorkingDirectory=/etc/horde`).
+The bake itself fails if the compose file is missing (`test -s
+/etc/horde/docker-compose.yml` in the build phase), and `fabrica horde ami
+build` refuses to write a docker `component.yaml` that lacks those steps, so
+a jobs-incomplete AMI cannot be produced by accident.
+
+Two operator steps before running the pipeline: mirror the GHCR image into ECR
+(private GHCR registry — `read:packages` scope on the operator token) and
+substitute `REPLACE_WITH_ECR_REPOSITORY` in `component.yaml`. The IAM and SSM
+footguns this path depends on are in [Jammy base and SSM footguns](#jammy-base-and-ssm-footguns).
+The rendered `build-guide.md` carries the same guidance per bake.
+
+### Path B — Manual bake (what the AMI must contain)
+
+The steps below are the manual equivalent of the generated bake; use them when
+you need to customize the stack or the generated path is not available.
+
 ### Step 1: Launch a bake instance
 
 ```bash
@@ -141,25 +167,51 @@ aws ec2 run-instances \
   --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=fabrica-horde-bake}]'
 ```
 
-### Step 2: Install Docker CE
+### Step 2: Install the AWS CLI v2
+
+The stock jammy base has **no `aws` CLI and no `unzip`**. The generated bake
+installs both; a manual bake should too (the instance-role ECR pull below needs
+it, and it lands at `/usr/local/bin/aws` — see the SSM PATH note in
+[Jammy base and SSM footguns](#jammy-base-and-ssm-footguns)):
 
 ```bash
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker ubuntu
-sudo systemctl enable docker
+sudo apt-get update -q
+sudo apt-get install -y unzip
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip
+unzip -q /tmp/awscliv2.zip -d /tmp/awscli
+/tmp/awscli/aws/install --update
+rm -rf /tmp/awscli /tmp/awscliv2.zip
 ```
+
+> If you extract the installer with `python3 -m zipfile -e` instead of `unzip`,
+> the `install` script **loses its exec bit** — run
+> `chmod +x /tmp/awscli/aws/install` before invoking it.
 
 ### Step 3: Build the Horde server image
 
-If using Epic's official Docker image from GHCR:
+The generated bake pulls the server image from an **ECR mirror** of the GHCR
+image (the instance role needs only ECR read + token actions, and no GitHub
+secret is baked into the AMI). A manual bake can mirror it the same way:
 
 ```bash
-# Log in to GitHub Container Registry
+ECR_REPO=<account>.dkr.ecr.<region>.amazonaws.com/horde-server
+# Operator host or bake instance: pull from GHCR (read:packages token), push to ECR
 echo "<YOUR_GITHUB_PAT>" | docker login ghcr.io -u <YOUR_GITHUB_USERNAME> --password-stdin
-
-# Pull the official image (or build from source)
 docker pull ghcr.io/epicgames/horde-server:5.8.0
-docker tag ghcr.io/epicgames/horde-server:5.8.0 fabrica-horde-server:latest
+docker tag ghcr.io/epicgames/horde-server:5.8.0 "${ECR_REPO}:5.8.0"
+aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <account>.dkr.ecr.<region>.amazonaws.com
+docker push "${ECR_REPO}:5.8.0"
+```
+
+Then pull it back with the instance role and tag it for the compose stack:
+
+```bash
+# IAM: ecr:GetAuthorizationToken must be on Resource "*" (repo-scoped = AccessDenied)
+aws ecr get-login-password --region <region> | docker login -u AWS --password-stdin "${ECR_REPO%%/*}"
+docker pull "${ECR_REPO}:5.8.0"
+docker tag "${ECR_REPO}:5.8.0" fabrica-horde-server:latest
+docker logout "${ECR_REPO%%/*}"
+rm -f /root/.docker/config.json   # do not bake a transient registry session
 ```
 
 If building from source (UE 5.8.1+):
@@ -262,6 +314,46 @@ docker build -f Engine/Source/Programs/Horde/HordeServer/Dockerfile \
 
 Ensure the Build plugin is enabled in `globals.json` (`"enabledPlugins"` includes
 `"Build"`) so the job-creation routes are registered at startup.
+
+---
+
+## Jammy base and SSM footguns
+
+These are the footguns a hunter will otherwise rediscover on a stock jammy bake.
+The generated `component.yaml` / `packer.pkr.hcl` already work around them.
+
+### The stock jammy base has no `aws` CLI and no `unzip`
+
+Install AWS CLI v2 first (Step 2). It lands at `/usr/local/bin/aws`. If you
+extract the installer zip with `python3 -m zipfile -e` (no `unzip` yet), the
+`install` script loses its exec bit — `chmod +x /tmp/awscli/aws/install` before
+running it.
+
+### SSM sessions do not see `/usr/local/bin` on `PATH`
+
+An AWS CLI baked to `/usr/local/bin/aws` is invisible to bare `aws` inside an
+SSM session. Call it by full path, or `export PATH="/usr/local/bin:$PATH"` at
+the top of the payload.
+
+### `ecr:GetAuthorizationToken` requires `Resource: "*"`
+
+The ECR auth-token call **cannot** be scoped to a repository ARN — a policy
+listing the repo ARN under that action still returns AccessDenied, and the
+subsequent `docker pull` fails with `no basic auth credentials`. Scope only the
+read actions to the repository ARN:
+
+| Action | Resource |
+|--------|----------|
+| `ecr:GetAuthorizationToken` | `*` |
+| `ecr:BatchGetImage` | `arn:aws:ecr:<region>:<account>:repository/<repo>` |
+| `ecr:GetDownloadUrlForLayer` | `arn:aws:ecr:<region>:<account>:repository/<repo>` |
+
+### SSM `AWS-RunShellScript` runs under dash, not bash
+
+A bare `set -o pipefail` dies at line 1 under dash
+(`Illegal option -o pipefail`). Start SSM payloads with `#!/bin/bash` and use
+`set -eu` (avoid bashisms, or invoke bash explicitly). Do not put a bare
+`set -o pipefail` in a dash script.
 
 ---
 
@@ -392,7 +484,12 @@ be internet-exposed.
 | `x86_64` vs `arm64` mismatch | AMI architecture doesn't match instance type | Build the AMI on the same instance family you plan to run |
 | MongoDB auth errors | `globals.json` references auth but compose uses `--noauth` | Ensure `databaseConnectionString` does not include username/password |
 | `POST /api/v1/jobs` returns 404 | Horde server image built without the job-creation API (no jobs/graphs/agents controllers) | Use a Horde server image that includes the full API surface — verify `curl -sf http://localhost:5000/api/v1/jobs` returns 200 (not 404) before baking the AMI |
-| First `docker compose up -d` fails with `dependency failed to start: container horde-mongodb is unhealthy` on a cold boot | Mongo's `mongosh` healthcheck exceeds its 5s `timeout` for the first ~30s (server takes time to accept connections on first start), so the `service_healthy` dependency fails before the stack converges | Fixed in cloud-init (#446): Fabrica's cloud-init retries `docker compose up -d` (8 × 20s) before the HTTP readiness probe and fails closed on exhaustion. Optional AMI-side hardening: raise the mongo healthcheck `timeout` to `15s` / add `start_period: 30s` |
+| First `docker compose up -d` fails with `dependency failed to start: container horde-mongodb is unhealthy` on a cold boot | Mongo's `mongosh` healthcheck exceeds its 5s `timeout` for the first ~30s (server takes time to accept connections on first start), so the `service_healthy` dependency fails before the stack converges | Fixed in cloud-init (#446): Fabrica's cloud-init retries `docker compose up -d` (8 × 20s) before the HTTP readiness probe and fails closed on exhaustion. Optional AMI-side hardening: raise the mongo healthcheck `timeout` to `15s` / add `start_period: 30s` (the generated compose applies this) |
+| ECR pull fails at bake with `no basic auth credentials` | `ecr:GetAuthorizationToken` scoped to a repository ARN | Allow `ecr:GetAuthorizationToken` on `Resource: "*"`; keep `BatchGetImage` / `GetDownloadUrlForLayer` repo-scoped (see [Jammy base and SSM footguns](#jammy-base-and-ssm-footguns)) |
+| `docker pull ghcr.io/epicgames/horde-server` returns 401 | The GHCR image is private | Mirror it into ECR with a `read:packages` GitHub token and bake from ECR with the instance role |
+| SSM `send-command` dies at line 1 (`Illegal option -o pipefail`) | `AWS-RunShellScript` runs under dash | Start the payload with `#!/bin/bash`; use `set -eu` (never bare `set -o pipefail` under dash) |
+| `aws: command not found` in an SSM session | `/usr/local/bin` not on the SSM PATH | Call `/usr/local/bin/aws` or `export PATH="/usr/local/bin:$PATH"` |
+| Stock jammy has no `unzip` / `aws` CLI; `chmod` needed after zip extract | Stock jammy ships neither tool | Install AWS CLI v2 (Step 2); if extracting with `python3 -m zipfile -e`, `chmod +x` the `install` script |
 
 ---
 
