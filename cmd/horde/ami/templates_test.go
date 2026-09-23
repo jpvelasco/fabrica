@@ -22,6 +22,12 @@ func requireDockerBake(t *testing.T, rendered string) {
 	if strings.Contains(rendered, "get-authorization-token") {
 		t.Error("docker bake must use get-login-password (the raw authorization token is base64 AWS:password and cannot feed docker login)")
 	}
+	// The region fallback must be guarded: a bare
+	// `ECR_REGION=$(aws configure get region)` aborts the whole bake under
+	// `set -e` on a stock instance (no local AWS config) with no message.
+	if strings.Contains(rendered, "ECR_REGION=$(/usr/local/bin/aws configure get region)") {
+		t.Error("region fallback must guard the non-zero exit of `aws configure get region`")
+	}
 }
 
 func TestRenderImageBuilderTemplate_Docker(t *testing.T) {

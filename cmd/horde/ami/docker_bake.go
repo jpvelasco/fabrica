@@ -124,13 +124,23 @@ test -s /etc/horde/docker-compose.yml
 # nested ECR path (<acct>.dkr.ecr.<region>.amazonaws.com/team/horde-server)
 # still resolves to the correct registry and a cross-region mirror still
 # authenticates. ECR v2 hosts carry the region as the 4th dot segment
-# (<acct>.dkr.ecr.<region>.amazonaws.com; FIPS: <acct>.dkr.ecr-fips.<region>);
-# anything else falls back to the build instance's configured region.
+# (<acct>.dkr.ecr.<region>.amazonaws.com; FIPS: <acct>.dkr.ecr-fips.<region>).
+# When the host does not name a region, the fallback chain is AWS_REGION /
+# AWS_DEFAULT_REGION, then the AWS CLI profile's region (guarded so its
+# non-zero exit cannot trip set -e); if none is set the bake fails with an
+# explicit message instead of aborting silently.
 ECR_REPO=REPLACE_WITH_ECR_REPOSITORY
 ECR_REGISTRY="${ECR_REPO%%/*}"
 ECR_REGION="$(printf "%s" "$ECR_REGISTRY" | cut -d. -f4)"
 if [ -z "$ECR_REGION" ]; then
-  ECR_REGION=$(/usr/local/bin/aws configure get region)
+  ECR_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
+fi
+if [ -z "$ECR_REGION" ]; then
+  ECR_REGION="$(/usr/local/bin/aws configure get region 2>/dev/null || :)"
+fi
+if [ -z "$ECR_REGION" ]; then
+  echo "could not derive an AWS region from ECR_REPO=$ECR_REPO; set AWS_REGION or use a full <acct>.dkr.ecr.<region>.amazonaws.com/<repo> URL" >&2
+  exit 1
 fi
 /usr/local/bin/aws ecr get-login-password --region "$ECR_REGION" | docker login "$ECR_REGISTRY" -u AWS --password-stdin
 docker pull "${ECR_REPO}:__HORDE_VERSION__"
