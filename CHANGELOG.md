@@ -5,6 +5,12 @@ All notable changes to Fabrica are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Deploy: configurable fleet inbound CIDR** — `deploy.promote` no longer hardcodes `0.0.0.0/0` on the fleet's EC2 inbound rule. New `deploy.allowedCidr` (default `0.0.0.0/0`, since multiplayer clients typically connect over the internet) is plumbed into the fleet desired state; `promote --dry-run` and the confirm plan show the CIDR and print a WARNING while it is open to the world. Set a tighter CIDR for private/partner-only deployments. (`docs/deploy.md` notes the public-UDP tradeoff.)
+
 ## [0.4.5] - 2026-09-20
 
 ### Fixed

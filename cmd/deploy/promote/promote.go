@@ -347,6 +347,7 @@ func (c command) printDryRun(plan *deploy.PromotePlan) {
 	fmt.Fprintln(c.out, "Deploy promote (dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	c.printPlanDetails(plan)
+	c.printCidrWarning(plan)
 	c.costs.EstimateAll(plan.CostResources).Render(c.out, lineWidth)
 	fmt.Fprintln(c.out, "Run without --dry-run to register the build and create the fleet.")
 }
@@ -355,8 +356,18 @@ func (c command) printPlan(plan *deploy.PromotePlan) {
 	fmt.Fprintln(c.out, "Promoting build to a new fleet...")
 	fmt.Fprintln(c.out)
 	c.printPlanDetails(plan)
+	c.printCidrWarning(plan)
 	fmt.Fprintln(c.out, "The previously-active fleet is retained for rollback.")
 	fmt.Fprintln(c.out)
+}
+
+// printCidrWarning prints the open-CIDR warning when the fleet inbound rule
+// would grant UDP access from 0.0.0.0/0.
+func (c command) printCidrWarning(plan *deploy.PromotePlan) {
+	if w := deploy.WarnOpenCIDR(plan.AllowedCIDR); w != "" {
+		fmt.Fprintln(c.out)
+		fmt.Fprintln(c.out, w)
+	}
 }
 
 func (c command) printPlanDetails(plan *deploy.PromotePlan) {
@@ -365,6 +376,7 @@ func (c command) printPlanDetails(plan *deploy.PromotePlan) {
 	fmt.Fprintf(c.out, "  Fleet:         %s\n", plan.FleetName)
 	fmt.Fprintf(c.out, "  Instance type: %s (%s)\n", plan.InstanceType, plan.FleetType)
 	fmt.Fprintf(c.out, "  Launch path:   %s\n", plan.LaunchPath)
+	fmt.Fprintf(c.out, "  UDP inbound:   %s (from %d to %d)\n", plan.AllowedCIDR, plan.FromPort, plan.ToPort)
 	fmt.Fprintf(c.out, "  Alias:         %s\n", plan.AliasID)
 	fmt.Fprintln(c.out)
 }

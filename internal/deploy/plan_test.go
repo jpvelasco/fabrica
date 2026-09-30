@@ -45,6 +45,9 @@ func TestNewPromotePlanDefaultsAndS3(t *testing.T) {
 	if p.S3Key != "builds/v1.2.3/server.zip" {
 		t.Errorf("S3Key = %q", p.S3Key)
 	}
+	if p.AllowedCIDR != defaultAllowedCIDR {
+		t.Errorf("AllowedCIDR = %q, want default %q", p.AllowedCIDR, defaultAllowedCIDR)
+	}
 	// Fleet/build names incorporate the sanitized build version.
 	if p.FleetName == "" || p.BuildName == "" {
 		t.Errorf("names empty: %+v", p)
@@ -60,6 +63,14 @@ func TestNewPromotePlanExplicitS3(t *testing.T) {
 		"v1", "arn:role", "alias-1", "other-bucket", "custom/key.zip")
 	if p.S3Bucket != "other-bucket" || p.S3Key != "custom/key.zip" {
 		t.Errorf("explicit S3 not honored: %+v", p)
+	}
+}
+
+func TestNewPromotePlanAllowedCIDROverride(t *testing.T) {
+	p := NewPromotePlan(config.DeployConfig{AllowedCIDR: "10.0.0.0/8"}, "123456789012", "us-east-1",
+		"v1", "arn:role", "alias-1", "", "")
+	if p.AllowedCIDR != "10.0.0.0/8" {
+		t.Errorf("AllowedCIDR = %q, want 10.0.0.0/8", p.AllowedCIDR)
 	}
 }
 

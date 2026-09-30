@@ -57,7 +57,7 @@ func FleetDesiredState(plan *PromotePlan, buildID string) (json.RawMessage, erro
 		"EC2InboundPermissions": []map[string]any{{
 			"FromPort": plan.FromPort,
 			"ToPort":   plan.ToPort,
-			"IpRange":  "0.0.0.0/0",
+			"IpRange":  plan.AllowedCIDR,
 			"Protocol": "UDP",
 		}},
 		"RuntimeConfiguration": map[string]any{
@@ -76,6 +76,18 @@ func FleetDesiredState(plan *PromotePlan, buildID string) (json.RawMessage, erro
 		},
 	}
 	return json.Marshal(doc)
+}
+
+// WarnOpenCIDR returns a warning line when the fleet inbound CIDR is open to
+// the internet, and "" otherwise.
+func WarnOpenCIDR(cidr string) string {
+	if cidr != "0.0.0.0/0" {
+		return ""
+	}
+	return "WARNING: deploy.allowedCidr is 0.0.0.0/0 — the fleet UDP port range is open\n" +
+		"         to the internet. Public UDP is often required for GameLift multiplayer,\n" +
+		"         but set deploy.allowedCidr in fabrica.yaml to a tighter CIDR for\n" +
+		"         private or partner-only deployments."
 }
 
 // AliasFlipPatch returns an RFC-6902 patch document that repoints an alias's

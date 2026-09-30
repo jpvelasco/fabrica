@@ -124,6 +124,11 @@ deploy:
   toPort: 7777              # inbound UDP port range end
   desiredInstances: 1       # instances per fleet (cost estimate only in V1)
   activationTimeoutMinutes: 45   # how long 'promote' waits for a fleet to become ACTIVE
+  # Inbound CIDR granted UDP access to fromPort..toPort on the fleet.
+  # Defaults to 0.0.0.0/0 (public) — multiplayer clients connect over the
+  # internet. Set a tighter CIDR for private or partner-only deployments;
+  # promote warns when the rule is open to the world.
+  allowedCidr: 0.0.0.0/0
 
 # Cost reporting and local budget guardrails.
 # Purely informational — no AWS Budgets resources are created.

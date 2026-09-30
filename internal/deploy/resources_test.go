@@ -78,6 +78,57 @@ func TestFleetDesiredState(t *testing.T) {
 	}
 }
 
+func TestFleetDesiredStateCIDRDefault(t *testing.T) {
+	p := promotePlanFixture()
+	p.AllowedCIDR = defaultAllowedCIDR
+	raw, err := FleetDesiredState(p, "build-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertInboundCIDR(t, raw, "0.0.0.0/0")
+}
+
+func TestFleetDesiredStateCIDROverride(t *testing.T) {
+	p := promotePlanFixture()
+	p.AllowedCIDR = "192.168.1.0/24"
+	raw, err := FleetDesiredState(p, "build-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertInboundCIDR(t, raw, "192.168.1.0/24")
+}
+
+// assertInboundCIDR verifies the EC2InboundPermissions array carries the
+// expected CIDR on the plan's UDP port range.
+func assertInboundCIDR(t *testing.T, raw json.RawMessage, want string) {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	perms, ok := doc["EC2InboundPermissions"].([]any)
+	if !ok || len(perms) != 1 {
+		t.Fatalf("EC2InboundPermissions = %v, want exactly one entry", doc["EC2InboundPermissions"])
+	}
+	perm := perms[0].(map[string]any)
+	if got := perm["IpRange"]; got != want {
+		t.Errorf("IpRange = %v, want %s", got, want)
+	}
+	if got := perm["Protocol"]; got != "UDP" {
+		t.Errorf("Protocol = %v, want UDP", got)
+	}
+}
+
+func TestWarnOpenCIDR(t *testing.T) {
+	if got := WarnOpenCIDR("10.0.0.0/8"); got != "" {
+		t.Errorf("WarnOpenCIDR(private) = %q, want empty", got)
+	}
+	got := WarnOpenCIDR("0.0.0.0/0")
+	if !strings.Contains(got, "WARNING") || !strings.Contains(got, "0.0.0.0/0") {
+		t.Errorf("WarnOpenCIDR(open) = %q, want WARNING mentioning 0.0.0.0/0", got)
+	}
+}
+
 func TestAliasFlipPatch(t *testing.T) {
 	raw, err := AliasFlipPatch("fleet-999")
 	if err != nil {

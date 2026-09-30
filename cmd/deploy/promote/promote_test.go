@@ -150,6 +150,38 @@ func TestPromoteBuildFailsRecoverable(t *testing.T) {
 	}
 }
 
+func TestPromoteDryRunOpenCIDRWarning(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	c := newTestCmd(&out, st)
+	c.dryRun = true
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// Default AllowedCIDR is 0.0.0.0/0 — the warning must appear in the plan.
+	if !strings.Contains(out.String(), "WARNING: deploy.allowedCidr is 0.0.0.0/0") {
+		t.Errorf("expected open-CIDR warning in dry-run output:\n%s", out.String())
+	}
+}
+
+func TestPromoteDryRunNoOpenCIDRWarning(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	c := newTestCmd(&out, st)
+	c.dryRun = true
+	c.runtime.Config.Deploy.AllowedCIDR = "10.0.0.0/8"
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "WARNING: deploy.allowedCidr is 0.0.0.0/0") {
+		t.Errorf("open-CIDR warning must not appear with a private CIDR:\n%s", got)
+	}
+	if !strings.Contains(got, "UDP inbound:   10.0.0.0/8") {
+		t.Errorf("expected plan to show the configured CIDR:\n%s", got)
+	}
+}
+
 func TestPromoteDryRunNoWrites(t *testing.T) {
 	var out bytes.Buffer
 	st := seededState()

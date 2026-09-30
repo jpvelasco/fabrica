@@ -31,6 +31,10 @@ const (
 	defaultToPort                   = 7777
 	defaultDesiredInstances         = 1
 	defaultActivationTimeoutMinutes = 45
+	// defaultAllowedCIDR is public: multiplayer game traffic is UDP and
+	// clients connect over the internet, so the fleet inbound rule defaults
+	// to open and the plan layer warns when it is.
+	defaultAllowedCIDR = "0.0.0.0/0"
 )
 
 // SetupPlan is the resolved deploy setup plan (IAM role + alias).
@@ -63,7 +67,10 @@ type PromotePlan struct {
 	ToPort                   int
 	DesiredInstances         int
 	ActivationTimeoutMinutes int
-	CostResources            []cost.Resource
+	// AllowedCIDR is the CIDR the fleet inbound rule grants UDP access from
+	// FromPort..ToPort. Public by default (see defaultAllowedCIDR).
+	AllowedCIDR   string
+	CostResources []cost.Resource
 }
 
 // NewSetupPlan builds the setup plan, applying defaults for unset config fields.
@@ -130,6 +137,10 @@ func NewPromotePlan(cfg config.DeployConfig, account, region, buildVersion, role
 	if s3Key == "" {
 		s3Key = fmt.Sprintf("builds/%s/server.zip", buildVersion)
 	}
+	allowedCIDR := cfg.AllowedCIDR
+	if allowedCIDR == "" {
+		allowedCIDR = defaultAllowedCIDR
+	}
 	slug := sanitize(buildVersion)
 	roleName := cfg.RoleName
 	if roleName == "" {
@@ -154,6 +165,7 @@ func NewPromotePlan(cfg config.DeployConfig, account, region, buildVersion, role
 		ToPort:                   toPort,
 		DesiredInstances:         desired,
 		ActivationTimeoutMinutes: timeout,
+		AllowedCIDR:              allowedCIDR,
 		CostResources: []cost.Resource{
 			{TypeName: TypeGameLiftFleet, Name: FleetCostName(instanceType, desired)},
 			{TypeName: TypeGameLiftBuild, Name: buildVersion},
