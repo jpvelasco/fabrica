@@ -145,6 +145,11 @@ fabrica horde submit examples/BuildGraph.sample.xml
 Set `deploy.buildBucket` in `fabrica.yaml`. CI/Horde packages land at
 `s3://<deploy.buildBucket>/builds/<version>/server.zip`.
 
+The fleet's UDP inbound rule defaults to `0.0.0.0/0` (public — game clients
+connect over the internet). For private or partner-only deployments, set
+`deploy.allowedCidr` to a tighter CIDR; `promote` warns while the rule is
+open. See [docs/deploy.md](docs/deploy.md).
+
 ```bash
 fabrica deploy setup
 fabrica deploy promote v1.0.0          # new fleet → wait ACTIVE → alias flip

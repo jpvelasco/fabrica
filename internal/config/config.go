@@ -194,6 +194,9 @@ type DeployConfig struct {
 	ToPort                   int    `mapstructure:"toPort"                   yaml:"toPort"`
 	DesiredInstances         int    `mapstructure:"desiredInstances"         yaml:"desiredInstances"`
 	ActivationTimeoutMinutes int    `mapstructure:"activationTimeoutMinutes" yaml:"activationTimeoutMinutes"`
+	// AllowedCIDR is the inbound CIDR granted UDP access to the fleet's
+	// server port(s). Empty defaults to 0.0.0.0/0 (public UDP).
+	AllowedCIDR string `mapstructure:"allowedCidr" yaml:"allowedCidr"`
 }
 
 // DDCConfig holds the ddc: section of fabrica.yaml.

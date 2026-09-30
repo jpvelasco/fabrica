@@ -42,6 +42,17 @@ teardown.
 - The deploy module reuses the shared `cmd/internal/teardown` engine via its
   `ResourceOrder` hook to delete GameLift resources in dependency order.
 
+## Fleet inbound CIDR
+
+`promote` opens UDP `fromPort`..`toPort` (default 7777) on the fleet's
+security rule from `deploy.allowedCidr`, which defaults to `0.0.0.0/0`.
+Public UDP is often required for GameLift multiplayer — game clients reach
+the fleet over the internet, so a private CIDR will break matchmaking unless
+your players are on a VPN or partner network. For private or partner-only
+use, set a tighter CIDR in `fabrica.yaml` (`deploy.allowedCidr: 10.0.0.0/8`
+or your VPN range); `promote --dry-run` and the confirm plan both show the
+CIDR and print a WARNING while it is `0.0.0.0/0`.
+
 ## Private E2E: minimal build fixture
 
 `promote` registers whatever zip it is pointed at — GameLift does not inspect
