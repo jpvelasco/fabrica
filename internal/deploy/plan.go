@@ -7,6 +7,7 @@ package deploy
 
 import (
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/internal/config"
@@ -98,7 +99,8 @@ func NewSetupPlan(cfg config.DeployConfig, account, region string) *SetupPlan {
 
 // NewPromotePlan builds the promote plan. s3Bucket/s3Key override the convention
 // (cfg.BuildBucket + "builds/<version>/server.zip") when non-empty.
-func NewPromotePlan(cfg config.DeployConfig, account, region, buildVersion, roleARN, aliasID, s3Bucket, s3Key string) *PromotePlan {
+// It returns an error when the resolved AllowedCIDR is not a valid CIDR.
+func NewPromotePlan(cfg config.DeployConfig, account, region, buildVersion, roleARN, aliasID, s3Bucket, s3Key string) (*PromotePlan, error) {
 	instanceType := cfg.InstanceType
 	if instanceType == "" {
 		instanceType = defaultInstanceType
@@ -141,6 +143,9 @@ func NewPromotePlan(cfg config.DeployConfig, account, region, buildVersion, role
 	if allowedCIDR == "" {
 		allowedCIDR = defaultAllowedCIDR
 	}
+	if _, _, err := net.ParseCIDR(allowedCIDR); err != nil {
+		return nil, fmt.Errorf("deploy.allowedCidr %q is not a valid CIDR (e.g. 0.0.0.0/0, 10.0.0.0/8): %w", allowedCIDR, err)
+	}
 	slug := sanitize(buildVersion)
 	roleName := cfg.RoleName
 	if roleName == "" {
@@ -170,7 +175,7 @@ func NewPromotePlan(cfg config.DeployConfig, account, region, buildVersion, role
 			{TypeName: TypeGameLiftFleet, Name: FleetCostName(instanceType, desired)},
 			{TypeName: TypeGameLiftBuild, Name: buildVersion},
 		},
-	}
+	}, nil
 }
 
 // FleetCostName encodes the instance type and desired count for the cost

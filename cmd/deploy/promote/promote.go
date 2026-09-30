@@ -160,7 +160,10 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 	roleARN := fmt.Sprintf("arn:aws:iam::%s:role/%s", account, role.Identifier)
-	plan := deploy.NewPromotePlan(c.runtime.Config.Deploy, account, region, c.buildVersion, roleARN, alias.Identifier, c.s3Bucket, c.s3Key)
+	plan, err := deploy.NewPromotePlan(c.runtime.Config.Deploy, account, region, c.buildVersion, roleARN, alias.Identifier, c.s3Bucket, c.s3Key)
+	if err != nil {
+		return fmt.Errorf("building promote plan: %w", err)
+	}
 
 	if c.dryRun {
 		c.printDryRun(plan)

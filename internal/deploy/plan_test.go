@@ -24,8 +24,11 @@ func TestNewSetupPlanOverrides(t *testing.T) {
 }
 
 func TestNewPromotePlanDefaultsAndS3(t *testing.T) {
-	p := NewPromotePlan(config.DeployConfig{BuildBucket: "bkt"}, "123456789012", "us-east-1",
+	p, err := NewPromotePlan(config.DeployConfig{BuildBucket: "bkt"}, "123456789012", "us-east-1",
 		"v1.2.3", "arn:aws:iam::123456789012:role/fabrica-deploy", "alias-1", "", "")
+	if err != nil {
+		t.Fatalf("NewPromotePlan: %v", err)
+	}
 	if p.InstanceType != defaultInstanceType {
 		t.Errorf("InstanceType = %q, want %q", p.InstanceType, defaultInstanceType)
 	}
@@ -59,18 +62,33 @@ func TestNewPromotePlanDefaultsAndS3(t *testing.T) {
 }
 
 func TestNewPromotePlanExplicitS3(t *testing.T) {
-	p := NewPromotePlan(config.DeployConfig{}, "123456789012", "us-east-1",
+	p, err := NewPromotePlan(config.DeployConfig{}, "123456789012", "us-east-1",
 		"v1", "arn:role", "alias-1", "other-bucket", "custom/key.zip")
+	if err != nil {
+		t.Fatalf("NewPromotePlan: %v", err)
+	}
 	if p.S3Bucket != "other-bucket" || p.S3Key != "custom/key.zip" {
 		t.Errorf("explicit S3 not honored: %+v", p)
 	}
 }
 
 func TestNewPromotePlanAllowedCIDROverride(t *testing.T) {
-	p := NewPromotePlan(config.DeployConfig{AllowedCIDR: "10.0.0.0/8"}, "123456789012", "us-east-1",
+	p, err := NewPromotePlan(config.DeployConfig{AllowedCIDR: "10.0.0.0/8"}, "123456789012", "us-east-1",
 		"v1", "arn:role", "alias-1", "", "")
+	if err != nil {
+		t.Fatalf("NewPromotePlan: %v", err)
+	}
 	if p.AllowedCIDR != "10.0.0.0/8" {
 		t.Errorf("AllowedCIDR = %q, want 10.0.0.0/8", p.AllowedCIDR)
+	}
+}
+
+func TestNewPromotePlanInvalidAllowedCIDR(t *testing.T) {
+	for _, bad := range []string{"not-a-cidr", "0.0.0.0", "10.0.0.0/33"} {
+		if _, err := NewPromotePlan(config.DeployConfig{AllowedCIDR: bad}, "123456789012", "us-east-1",
+			"v1", "arn:role", "alias-1", "", ""); err == nil {
+			t.Errorf("NewPromotePlan(%q): expected error, got nil", bad)
+		}
 	}
 }
 
