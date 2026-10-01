@@ -16,7 +16,11 @@ type UserDataConfig struct {
 	DataMount  string // "/hxdepots"
 }
 
-var userDataRenderer = userdata.New(template.Must(template.New("userdata").Parse(`#!/bin/bash
+var userDataRenderer = userdata.New(template.Must(template.New("userdata").Parse(
+	perforceUserData + userdata.ScrubShell("configure", "admin password", ".fabrica/perforce-credentials.yaml"),
+)))
+
+const perforceUserData = `#!/bin/bash
 set -euo pipefail
 
 ADMIN_PASS="{{ .AdminPass }}"
@@ -91,7 +95,9 @@ if systemctl list-unit-files | grep -q '^helix-p4d'; then
 else
   systemctl enable p4dctl
   p4dctl start "$SERVER_ID"
-fi`)))
+fi
+
+`
 
 // applyDefaults fills zero-value fields with module defaults.
 // Does not validate required fields — use validate before calling.

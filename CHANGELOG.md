@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Perforce admin password stayed in the local cloud-init copies after configure** — `ADMIN_PASS` is still passed to `configure-helix-p4d` / `configure-p4d` (both packaging generations). After configure and the service start succeed, cloud-init truncates `user-data.txt`, `user-data.txt.i`, and `user-data`, and PUTs IMDS `/latest/user-data` (IMDSv2 token, then IMDSv1) using the same fragment as the workstation script. The metadata service does not implement that write, so the EC2 user-data attribute is unchanged until an operator clears it on a stopped instance. `curl` has no `--fail`; the script exits 1 only when both PUTs fail at the transport. `.fabrica/perforce-credentials.yaml` remains the operator record.
+
 ### Added
 
 - **Deploy: configurable fleet inbound CIDR** — `deploy.promote` no longer hardcodes `0.0.0.0/0` on the fleet's EC2 inbound rule. New `deploy.allowedCidr` (default `0.0.0.0/0`, since multiplayer clients typically connect over the internet) is plumbed into the fleet desired state; `promote --dry-run` and the confirm plan show the CIDR and print a WARNING while it is open to the world. Set a tighter CIDR for private/partner-only deployments. (`docs/deploy.md` notes the public-UDP tradeoff.)

@@ -15,7 +15,13 @@ type UserDataConfig struct {
 	PerforceServerAddr string // host:port of the Perforce server (e.g. 10.0.1.5:1666)
 }
 
-var userDataRenderer = userdata.New(template.Must(template.New("userdata").Option("missingkey=error").Parse(`#!/bin/bash
+var userDataRenderer = userdata.New(template.Must(template.New("userdata").Option("missingkey=error").Parse(
+	workstationUserDataBefore +
+		userdata.ScrubShell("chpasswd", "session password", ".fabrica/workstation-credentials.yaml") +
+		workstationUserDataAfter,
+)))
+
+const workstationUserDataBefore = `#!/bin/bash
 set -euo pipefail
 
 # AMI-first: NICE DCV must already be on the image. Stock Ubuntu is not enough.
@@ -44,25 +50,9 @@ if ! echo "$DCV_USER:{{ .SessionPassword }}" | chpasswd; then
   exit 1
 fi
 
-# The password above rides in EC2 UserData until this point, where any local
-# process (IMDS /latest/user-data) or any principal with
-# ec2:DescribeInstanceAttribute can read it. Scrub the long-lived exposure
-# now that chpasswd has consumed it: clear the IMDS copy (IMDSv2 token first,
-# IMDSv1 fallback) and truncate the local cloud-init copies. The script fails
-# closed only if BOTH clears fail; one successful clear is enough. The
-# operator record is .fabrica/workstation-credentials.yaml, not the instance.
-IMDS_TOKEN=$(curl -s -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 30" \
-  http://169.254.169.254/latest/api/token)
-if ! curl -s -X PUT -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" -d "" \
-    http://169.254.169.254/latest/user-data \
-  && ! curl -s -X PUT -d "" http://169.254.169.254/latest/user-data; then
-  echo "ERROR: userdata scrub failed after chpasswd; the session password may still be reachable via IMDS user-data. Inspect the instance over SSM."
-  exit 1
-fi
-sudo truncate -s 0 /var/lib/cloud/instance/user-data.txt 2>/dev/null
-sudo truncate -s 0 /var/lib/cloud/instance/user-data 2>/dev/null
-echo "Scrubbed EC2 userdata (local + IMDS)."
+`
 
+const workstationUserDataAfter = `
 # Start the DCV server before creating the session. With the daemon stopped,
 # 'dcv create-session' exits 0 but the session is never persisted.
 systemctl enable dcvserver
@@ -111,7 +101,7 @@ chmod 600 /home/ubuntu/.p4config
 
 # Set P4CONFIG env globally so p4 auto-discovers it
 echo 'export P4CONFIG=~/.p4config' >> /home/ubuntu/.profile
-{{ end }}`)))
+{{ end }}`
 
 // applyDefaults fills zero-value fields with module defaults.
 func (cfg *UserDataConfig) applyDefaults() {
