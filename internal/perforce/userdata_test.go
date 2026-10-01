@@ -78,6 +78,7 @@ func TestGenerateRaw_ScrubsUserDataAfterConfigure(t *testing.T) {
 	}
 	for _, want := range []string{
 		"truncate -s 0 /var/lib/cloud/instance/user-data.txt",
+		"truncate -s 0 /var/lib/cloud/instance/user-data.txt.i",
 		"truncate -s 0 /var/lib/cloud/instance/user-data ",
 		"http://169.254.169.254/latest/api/token",
 		`-X PUT -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" -d ""`,

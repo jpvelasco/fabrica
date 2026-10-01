@@ -53,19 +53,20 @@ the session is never persisted (verified live on DCV 2025.0.x).
 The DCV session password is the OS password for `ubuntu`, so it must reach
 the instance somehow; DCV still authenticates the session against the OS
 password of the session owner. Cloud-init therefore embeds it in UserData
-long enough for `chpasswd` to consume it, then **scrubs the long-lived
-exposure**: the local cloud-init copy is truncated and the IMDS user-data
-(`/latest/user-data`, IMDSv2 token + IMDSv1 fallback) is cleared
-immediately after `chpasswd` succeeds. A failed scrub aborts cloud-init
-with an `ERROR:` line, and `Scrubbed EC2 userdata (local + IMDS).` marks the
-success path in `/var/log/cloud-init-output.log`.
+long enough for `chpasswd` to consume it, then truncates the local copies
+(`user-data.txt`, `user-data.txt.i`, and `user-data`) and PUTs IMDS
+`/latest/user-data` (IMDSv2 token, then IMDSv1). The metadata service does
+not implement that write — AWS replaces the user-data attribute only on a
+stopped instance — and `curl` is without `--fail`, so an HTTP rejection does
+not abort boot. The script exits 1 only when both PUTs fail at the transport.
+`scripts/part-001` is left in place because cloud-init is executing it and
+later lines (DCV session setup) still have to run.
+`Scrubbed EC2 userdata (local + IMDS).` marks that point in
+`/var/log/cloud-init-output.log`.
 
-Residual exposure is the boot window before the scrub line runs (seconds on
-the healthy path): during that window any local process can read
-`/latest/user-data` via IMDS, and any principal with
-`ec2:DescribeInstanceAttribute` can pull the attribute. After the scrub, the
+`ec2:DescribeInstanceAttribute` can still return the launch script. The
 operator source of truth is `.fabrica/workstation-credentials.yaml` (mode
-`0600`) on the workstation host — never the instance.
+`0600`) on the workstation host.
 
 HTTPS 200 on 8443 is **not** proof the session setup ran — `dcvserver` starts
 and serves even when cloud-init aborts. Verify the session over SSM (or

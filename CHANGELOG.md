@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Perforce admin password stayed in EC2 UserData after configure** — `ADMIN_PASS` is still passed to `configure-helix-p4d` / `configure-p4d` (both packaging generations). Cloud-init now clears IMDS user-data (IMDSv2 token first, IMDSv1 fallback) and truncates the local cloud-init copies immediately after configure and the service start succeed. Both clears failing aborts the script; the success path logs `Scrubbed EC2 userdata (local + IMDS)`. `.fabrica/perforce-credentials.yaml` remains the operator record. Residual exposure is the boot window before that line runs.
+- **Perforce admin password stayed in the local cloud-init copies after configure** — `ADMIN_PASS` is still passed to `configure-helix-p4d` / `configure-p4d` (both packaging generations). After configure and the service start succeed, cloud-init truncates `user-data.txt`, `user-data.txt.i`, and `user-data`, and PUTs IMDS `/latest/user-data` (IMDSv2 token, then IMDSv1) using the same fragment as the workstation script. The metadata service does not implement that write, so the EC2 user-data attribute is unchanged until an operator clears it on a stopped instance. `curl` has no `--fail`; the script exits 1 only when both PUTs fail at the transport. `.fabrica/perforce-credentials.yaml` remains the operator record.
 
 ### Added
 

@@ -29,7 +29,7 @@ Module state is stored in `.fabrica/state.json` (local cache) and mirrored to S3
 
 `fabrica perforce create` generates a random admin password and writes it to `.fabrica/perforce-credentials.yaml` (mode 0600). **Rotate this password after first login.**
 
-The same password is passed to Helix configure in EC2 UserData. Cloud-init clears it after configure and the service start succeed: IMDS `/latest/user-data` (IMDSv2 token, then IMDSv1) and the local cloud-init copies. A failed clear aborts the script. Until that line runs, the boot window can still show the password. `.fabrica/perforce-credentials.yaml` stays the operator record.
+The same password is passed to Helix configure in EC2 UserData. After configure and the service start succeed, cloud-init truncates the local copies (`user-data.txt`, `user-data.txt.i`, `user-data`) and PUTs IMDS `/latest/user-data` (IMDSv2 token, then IMDSv1). That PUT does not remove the EC2 user-data attribute — AWS allows that only on a stopped instance — so the launch script can remain visible to `ec2:DescribeInstanceAttribute`. The script exits 1 only when both PUTs fail at the transport. `.fabrica/perforce-credentials.yaml` stays the operator record.
 
 ## Flags
 
