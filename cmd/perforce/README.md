@@ -29,6 +29,8 @@ Module state is stored in `.fabrica/state.json` (local cache) and mirrored to S3
 
 `fabrica perforce create` generates a random admin password and writes it to `.fabrica/perforce-credentials.yaml` (mode 0600). **Rotate this password after first login.**
 
+The same password is passed to Helix configure in EC2 UserData. Cloud-init clears it after configure and the service start succeed: IMDS `/latest/user-data` (IMDSv2 token, then IMDSv1) and the local cloud-init copies. A failed clear aborts the script. Until that line runs, the boot window can still show the password. `.fabrica/perforce-credentials.yaml` stays the operator record.
+
 ## Flags
 
 Global flags that apply to all perforce subcommands (set on the root command):

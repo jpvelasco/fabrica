@@ -63,6 +63,59 @@ func TestGenerateRaw_AdminPasswordLiteralOnce(t *testing.T) {
 	}
 }
 
+// TestGenerateRaw_ScrubsUserDataAfterConfigure verifies the admin password
+// still reaches configure exactly once, and the long-lived UserData copy is
+// cleared only after configure and the service start have run. The scrub
+// fails closed only when both IMDS clears fail.
+func TestGenerateRaw_ScrubsUserDataAfterConfigure(t *testing.T) {
+	pass := "s3cr3tP@ssw0rd"
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: pass})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if count := strings.Count(got, pass); count != 1 {
+		t.Errorf("admin password appears %d times, want exactly 1 (the ADMIN_PASS assignment)", count)
+	}
+	for _, want := range []string{
+		"truncate -s 0 /var/lib/cloud/instance/user-data.txt",
+		"truncate -s 0 /var/lib/cloud/instance/user-data ",
+		"http://169.254.169.254/latest/api/token",
+		`-X PUT -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" -d ""`,
+		"http://169.254.169.254/latest/user-data",
+		"ERROR: userdata scrub failed after configure",
+		"Scrubbed EC2 userdata (local + IMDS).",
+		`&& ! curl -s -X PUT -d ""`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("scrub block missing %q", want)
+		}
+	}
+	// A successful IMDSv2 clear must not also require the v1 fallback to fail.
+	// '||' parses as '(! v2) || v1' and aborts after a healthy clear.
+	if strings.Contains(got, `|| curl -s -X PUT -d ""`) {
+		t.Error("userdata scrub must fail closed only when both IMDS clears fail")
+	}
+
+	configureIdx := strings.Index(got, `--super-passwd "$ADMIN_PASS"`)
+	pinnedIdx := strings.Index(got, `-P "$ADMIN_PASS"`)
+	helixIdx := strings.Index(got, "systemctl restart helix-p4d")
+	p4dctlIdx := strings.Index(got, `p4dctl start "$SERVER_ID"`)
+	scrubIdx := strings.Index(got, "truncate -s 0 /var/lib/cloud/instance/user-data.txt")
+	if configureIdx < 0 || pinnedIdx < 0 || helixIdx < 0 || p4dctlIdx < 0 || scrubIdx < 0 ||
+		configureIdx > scrubIdx || pinnedIdx > scrubIdx || helixIdx > scrubIdx || p4dctlIdx > scrubIdx {
+		t.Error("userdata must configure and start the server before scrubbing user-data")
+	}
+
+	errIdx := strings.Index(got, "ERROR: userdata scrub failed after configure")
+	if errIdx < 0 {
+		t.Fatal("scrub error line missing")
+	}
+	exitRel := strings.Index(got[errIdx:], "exit 1")
+	if exitRel < 0 || errIdx+exitRel > scrubIdx {
+		t.Error("scrub failure must exit 1 before the success truncate")
+	}
+}
+
 func TestGenerateRaw_DataDeviceAutoDetection(t *testing.T) {
 	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: "pw"})
 	if err != nil {
