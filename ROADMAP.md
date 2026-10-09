@@ -73,7 +73,7 @@ Not every "Complete" ships AWS: `ci pipeline` prints a CodePipeline plan (no Cod
 
 - **IaC:** AWS Cloud Control API — no Terraform, Pulumi, or external binaries
 - **Module path:** `github.com/jpvelasco/fabrica`
-- **Go version:** 1.25.13
+- **Go version:** 1.26.9
 - **Config:** Viper + YAML, scoped inside `internal/config` only
 - **Output:** dual streams — human output via `fmt.Print*` to stdout; operational diagnostics via `internal/oplog` (stdlib `log/slog`) to stderr
 - **State:** S3 bucket (`fabrica-state-<account-id>`) + DynamoDB lock table (`fabrica-state-lock`); local `.fabrica/state.json` cache
