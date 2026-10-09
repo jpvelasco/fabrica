@@ -1,8 +1,12 @@
 // Package amissm generates the fail-closed Amazon SSM Agent bake snippets
-// shared by Fabrica AMI contracts (Lore, Horde, and later DDC/workstation).
+// and the Image Builder name sanitizer shared by Fabrica AMI contracts
+// (Lore, Horde, and later DDC/workstation).
 package amissm
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Ubuntu 22.04 ships Amazon SSM Agent as either the deb unit or the snap unit
 // depending on the base AMI publisher. Both are acceptable; neither may be
@@ -81,4 +85,40 @@ case "$unit_state" in
     ;;
 esac
 `
+}
+
+// SanitizeImageBuilderName rewrites a component or image-recipe name so it
+// always matches EC2 Image Builder's name pattern (2-128 characters, first
+// and last alphanumeric, only letters, numbers, underscores, and hyphens
+// inside). Dots are legal in EC2 resource names but illegal here, so
+// version-bearing default names like "fabrica-horde-5.8.0" must be sanitized
+// before they reach create-component or create-image-recipe. Dots become
+// dashes so a version reads the same way (5.8.0 → 5-8-0); every other
+// rejected character is dropped, and edge dashes are trimmed.
+func SanitizeImageBuilderName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r == '.':
+			b.WriteByte('-')
+		case r == '-' || r == '_':
+			b.WriteRune(r)
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		}
+	}
+	s := b.String()
+	if len(s) > 128 {
+		s = s[:128]
+	}
+	// Trim after the length cap: a truncation point can leave a leading or
+	// trailing dash/underscore that the pattern rejects.
+	s = strings.Trim(s, "-_")
+	if s == "" {
+		return "fabrica-ami"
+	}
+	if len(s) == 1 {
+		s += "f"
+	}
+	return s
 }
