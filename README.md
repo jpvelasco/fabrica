@@ -60,7 +60,7 @@ Guidance, not provisioned: `ci pipeline` prints the CodePipeline path (no CodePi
 
 ## Requirements
 
-- Go 1.25.13+
+- Go 1.26.9+
 - AWS credentials with permissions to create EC2 instances, security groups, S3 buckets, and DynamoDB tables. Studio IAM Identity Center / SSO is supported: set `cloud.aws.profile` to the named SSO profile and run `aws sso login` first. Expired sessions fail with an `aws sso login` hint on create/update/promote/destroy and `fabrica doctor`.
 - IAM permission for `sts:GetCallerIdentity`
 
