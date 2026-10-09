@@ -118,6 +118,10 @@ func (b *buildCommand) run() error {
 	if b.cfg.Name == "" {
 		b.cfg.Name = fmt.Sprintf("fabrica-horde-%s", b.cfg.Version)
 	}
+	// Image Builder rejects dots in component/recipe names, so a version like
+	// 5.8.0 must not leak into the name the operator passes to
+	// create-component or create-image-recipe.
+	b.cfg.Name = amissm.SanitizeImageBuilderName(b.cfg.Name)
 
 	plannedFiles := []string{"image-builder-recipe.json", "component.yaml"}
 	if b.cfg.IncludePacker {

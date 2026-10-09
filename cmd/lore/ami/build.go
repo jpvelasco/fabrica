@@ -14,6 +14,7 @@ import (
 	// local YAML/JSON/HCL/MD build artifacts, not HTML; no server or browser consumes this output.
 	"text/template"
 
+	"github.com/jpvelasco/fabrica/internal/amissm"
 	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/spf13/cobra"
 )
@@ -127,6 +128,10 @@ func (b *buildCommand) run() error {
 	if b.cfg.Name == "" {
 		b.cfg.Name = fmt.Sprintf("fabrica-lore-%s", b.cfg.Version)
 	}
+	// Image Builder rejects dots in component/recipe names, so a version like
+	// 5.8.0 must not leak into the name the operator passes to
+	// create-component or create-image-recipe.
+	b.cfg.Name = amissm.SanitizeImageBuilderName(b.cfg.Name)
 	data, err := b.templateData()
 	if err != nil {
 		return err
