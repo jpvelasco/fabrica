@@ -133,8 +133,55 @@ func TestBuildCommandRun_DefaultName(t *testing.T) {
 	}
 
 	recipe := string(written["image-builder-recipe.json"])
-	if !strings.Contains(recipe, "fabrica-horde-5.5.0") {
-		t.Error("default name should be fabrica-horde-<version>")
+	if !strings.Contains(recipe, `"name": "fabrica-horde-5-5-0"`) {
+		t.Error("default recipe name should be the dot-free fabrica-horde-5-5-0")
+	}
+	if strings.Contains(recipe, "fabrica-horde-5.5.0") {
+		t.Error("recipe name must not contain dots (Image Builder rejects them)")
+	}
+	// The component name and the build-guide command must carry the same
+	// sanitized name so the operator can copy-paste it.
+	component := string(written["component.yaml"])
+	if !strings.Contains(component, "name: fabrica-horde-5-5-0-docker") {
+		t.Error("component name should be <sanitized-name>-<install>")
+	}
+	guide := string(written["build-guide.md"])
+	if !strings.Contains(guide, "--name fabrica-horde-5-5-0-docker") {
+		t.Error("build guide create-component command should use the sanitized name")
+	}
+}
+
+// TestBuildCommandRun_DottedVersionNames is the #463 regression: a version
+// like 5.8.0 must produce Image Builder-legal names in every generated file.
+func TestBuildCommandRun_DottedVersionNames(t *testing.T) {
+	bc, written, out := newTestCommand(t, BuildConfig{
+		Version: "5.8.0",
+		Install: "docker",
+		Name:    "",
+	})
+
+	if err := bc.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.Contains(out.String(), "AMI name:       fabrica-horde-5-8-0") {
+		t.Errorf("header should show the sanitized AMI name, got:\n%s", out.String())
+	}
+	recipe := string(written["image-builder-recipe.json"])
+	if !strings.Contains(recipe, `"name": "fabrica-horde-5-8-0"`) {
+		t.Error("recipe name for version 5.8.0 should be fabrica-horde-5-8-0")
+	}
+	// An explicit dotted --name gets sanitized too, not just the default.
+	bc2, written2, _ := newTestCommand(t, BuildConfig{
+		Version: "5.8.0",
+		Install: "docker",
+		Name:    "my-horde.5.8.0",
+	})
+	if err := bc2.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	recipe2 := string(written2["image-builder-recipe.json"])
+	if !strings.Contains(recipe2, `"name": "my-horde-5-8-0"`) {
+		t.Errorf("explicit dotted name should be sanitized, got:\n%s", recipe2)
 	}
 }
 
