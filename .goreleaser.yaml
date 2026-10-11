@@ -19,6 +19,12 @@ builds:
       - -s -w
       - -X github.com/jpvelasco/fabrica/internal/version.Version={{ .Version }}
       - -X github.com/jpvelasco/fabrica/internal/version.Commit={{ .ShortCommit }}
+    # -trimpath strips local file paths from the binary, and mod_timestamp
+    # pins the build mtime to the commit, so a re-run against the same tag
+    # (or the goreleaser snapshot job) produces byte-identical binaries.
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
     goos:
       - linux
       - windows
@@ -40,8 +46,9 @@ archives:
           - zip
     name_template: "fabrica_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     # Pin archive entry mtimes to the commit date so archive bytes are
-    # stable across re-runs (mtime is the archive-level equivalent of
-    # builds mod_timestamp).
+    # stable across re-runs. The build itself is reproducible as well:
+    # -trimpath (builds.flags) drops local file paths and builds'
+    # mod_timestamp pins the binary mtime to the commit.
     builds_info:
       mtime: "{{ .CommitDate }}"
     files:
