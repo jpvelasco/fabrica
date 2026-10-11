@@ -101,6 +101,61 @@ func TestBuildValidate(t *testing.T) {
 	}
 }
 
+func TestBuildRun_DefaultName(t *testing.T) {
+	outputDir := t.TempDir()
+	var out bytes.Buffer
+	b := &buildCommand{
+		out: &out,
+		cfg: BuildConfig{
+			Version:   "5.5.0",
+			BaseImage: defaultBaseImage,
+			Region:    defaultRegion,
+			OutputDir: outputDir,
+		},
+		mkdirAll:  func(path string, perm os.FileMode) error { return nil },
+		writeFile: func(path string, data []byte, perm os.FileMode) error { return nil },
+	}
+
+	if err := b.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// The default name embeds the dotted version, but Image Builder rejects
+	// dots — the header and every generated name must be dot-free.
+	if !bytes.Contains(out.Bytes(), []byte("AMI name:       fabrica-lore-5-5-0")) {
+		t.Errorf("header should show the sanitized default name, got:\n%s", out.String())
+	}
+	if b.cfg.Name != "fabrica-lore-5-5-0" {
+		t.Errorf("default name = %q, want fabrica-lore-5-5-0", b.cfg.Name)
+	}
+}
+
+func TestBuildRun_DottedVersionName(t *testing.T) {
+	outputDir := t.TempDir()
+	var out bytes.Buffer
+	b := &buildCommand{
+		out: &out,
+		cfg: BuildConfig{
+			Version:   "5.8.0",
+			BaseImage: defaultBaseImage,
+			Region:    defaultRegion,
+			Name:      "my-lore.5.8.0",
+			OutputDir: outputDir,
+		},
+		mkdirAll:  func(path string, perm os.FileMode) error { return nil },
+		writeFile: func(path string, data []byte, perm os.FileMode) error { return nil },
+	}
+
+	if err := b.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if b.cfg.Name != "my-lore-5-8-0" {
+		t.Errorf("explicit dotted name = %q, want my-lore-5-8-0", b.cfg.Name)
+	}
+	if bytes.Contains(out.Bytes(), []byte("my-lore.5.8.0")) {
+		t.Error("output must not carry the unsanitized dotted name")
+	}
+}
+
 func TestBuildDryRun(t *testing.T) {
 	var out bytes.Buffer
 	b := &buildCommand{
