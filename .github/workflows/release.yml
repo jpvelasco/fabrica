@@ -81,6 +81,7 @@ jobs:
         # release is a no-op.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           is_draft="$(gh release view "$GITHUB_REF_NAME" --json isDraft -q .isDraft)"
           case "$is_draft" in true) gh release edit "$GITHUB_REF_NAME" --draft=false;; false) :;; *) exit 1;; esac
@@ -101,6 +102,9 @@ jobs:
           # Read the package name from package.json — it is the source of
           # truth for the npm package name (release step 1).
           PKG="$(node -p "require('./package.json').name")"
+          # Fail closed on a missing/unreadable package name — an empty or
+          # undefined name would break the idempotency check and publish.
+          [ -n "$PKG" ] && [ "$PKG" != undefined ] || exit 1
           if [ "$(npm view "$PKG@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
             echo "$PKG@$VERSION is already on npm; skipping publish"
             exit 0
