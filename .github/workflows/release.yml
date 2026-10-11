@@ -98,8 +98,11 @@ jobs:
           # Idempotent: npm versions are immutable, so if this version is
           # already published the previous run's publish succeeded and
           # this run can only skip it.
-          if [ "$(npm view "fabrica-cli@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
-            echo "fabrica-cli@$VERSION is already on npm; skipping publish"
+          # Read the package name from package.json — it is the source of
+          # truth for the npm package name (release step 1).
+          PKG="$(node -p "require('./package.json').name")"
+          if [ "$(npm view "$PKG@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+            echo "$PKG@$VERSION is already on npm; skipping publish"
             exit 0
           fi
           npm publish --access public
