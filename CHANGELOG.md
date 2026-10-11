@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Deploy: configurable fleet inbound CIDR** — `deploy.promote` no longer hardcodes `0.0.0.0/0` on the fleet's EC2 inbound rule. New `deploy.allowedCidr` (default `0.0.0.0/0`, since multiplayer clients typically connect over the internet) is plumbed into the fleet desired state; `promote --dry-run` and the confirm plan show the CIDR and print a WARNING while it is open to the world. Set a tighter CIDR for private/partner-only deployments. (`docs/deploy.md` notes the public-UDP tradeoff.)
+- **Release artifacts ship third-party license and notice text** — GoReleaser archives now bundle `THIRD_PARTY_NOTICES.txt` (the full LICENSE/NOTICE text of every statically linked Go module, plus the module manifest) alongside `LICENSE`, `README.md`, and `CHANGELOG.md`, and the npm tarball now carries `LICENSE` + `THIRD_PARTY_NOTICES.txt`. The file is regenerated from the live dependency graph on every release and CI run by `scripts/third-party-notices.sh` (`go-licenses report` + `save`), never hand-maintained. The three modules that carry NOTICE files — `aws-sdk-go-v2`, `smithy-go`, and `go.yaml.in/yaml/v3` — now travel with redistributions as their licenses require. (#472)
+- **CI copyleft license gate** — a new `licenses` job runs `go-licenses check --disallowed_types=forbidden,restricted,unknown` on every PR, failing the build when a copyleft, strong-copyleft, restricted, or unknown license enters the dependency graph. (#472)
 
 ## [0.4.5] - 2026-09-20
 
