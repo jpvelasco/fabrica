@@ -53,6 +53,16 @@ use, set a tighter CIDR in `fabrica.yaml` (`deploy.allowedCidr: 10.0.0.0/8`
 or your VPN range); `promote --dry-run` and the confirm plan both show the
 CIDR and print a WARNING while it is `0.0.0.0/0`.
 
+### Threat model
+
+The inbound rule exists only for game play: joining players still
+authenticate through GameLift player sessions before a session can connect,
+so an open public port does not mean an open server. Do not reuse this rule
+for admin or management access — the fleet has no management endpoint, and
+any operator tooling that needs to reach a fleet instance (debugging,
+backups) should connect over the VPC, SSM, or an explicitly scoped,
+non-default SG rule rather than by widening `deploy.allowedCidr`.
+
 ## Private E2E: minimal build fixture
 
 `promote` registers whatever zip it is pointed at — GameLift does not inspect

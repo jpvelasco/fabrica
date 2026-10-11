@@ -39,11 +39,24 @@ archives:
         formats:
           - zip
     name_template: "fabrica_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # Pin archive entry mtimes to the commit date so archive bytes are
+    # stable across re-runs (mtime is the archive-level equivalent of
+    # builds mod_timestamp).
+    builds_info:
+      mtime: "{{ .CommitDate }}"
     files:
-      - LICENSE
-      - CHANGELOG.md
-      - README.md
-      - THIRD_PARTY_NOTICES.txt
+      - src: LICENSE
+        info:
+          mtime: "{{ .CommitDate }}"
+      - src: CHANGELOG.md
+        info:
+          mtime: "{{ .CommitDate }}"
+      - src: README.md
+        info:
+          mtime: "{{ .CommitDate }}"
+      - src: THIRD_PARTY_NOTICES.txt
+        info:
+          mtime: "{{ .CommitDate }}"
 
 checksum:
   name_template: checksums.txt
@@ -61,3 +74,9 @@ release:
   # when GoReleaser runs against a real tag (via release.yml on a v* push).
   # `--snapshot` (used for verification) never publishes or creates a release.
   prerelease: auto
+  # Publish as a draft so the npm package can be verified before anything
+  # ships. Re-running the workflow against the same tag replaces the existing
+  # draft and its artifacts instead of failing or creating a second release.
+  draft: true
+  replace_existing_draft: true
+  replace_existing_artifacts: true
