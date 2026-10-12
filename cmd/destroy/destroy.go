@@ -51,7 +51,14 @@ Run with --all --yes to skip the interactive prompt (use with care).
 Non-empty S3 buckets are not force-deleted; empty the bucket and retry.
 Extra leftovers appear in 'fabrica drift'. On any module failure,
 'destroy --all' preserves the state backend so remaining managed
-resources stay tracked.`,
+resources stay tracked.
+
+AMI bakes are not Fabrica resources: Image Builder pipelines, components,
+recipes, baked AMIs and snapshots, and bake instances/volumes/SGs/IAM
+created while completing a bake are outside 'destroy --all' and must be
+cleaned up by the operator (the generated build guide lists them).
+'perforce destroy' also retains its data volume (DeleteOnTermination=false);
+a successful 'destroy --all' is not zero residue when Perforce is in use.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
 			if err != nil {
