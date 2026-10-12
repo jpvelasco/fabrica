@@ -591,6 +591,10 @@ Full-stack teardown: destroys every provisioned module in reverse dependency ord
 
 **Leftovers.** Fabrica does not claim a clean account after a partial or failed destroy. Non-empty S3 buckets (DDC blobs, Lore store, state backend) are not force-deleted — empty the bucket and re-run. `destroy --all` keeps the state backend whenever any module fails so remaining managed resources stay tracked. Resources Fabrica never recorded (or dropped after a failed delete) show up as Extra on `fabrica drift`.
 
+**AMI bakes are not Fabrica resources.** `horde ami build`, `lore ami build`, `ddc ami build`, and `workstation ami build` generate local files only (Image Builder recipes, Packer HCL, build guides) — they make no AWS calls. The Image Builder pipelines, components, recipes, infrastructure configurations, baked AMIs + snapshots, and any bake instances/volumes/SGs/IAM roles created while completing a bake are **outside `destroy --all`**: the teardown deletes only what Fabrica recorded in state and never touches unrelated Image Builder resources in the account (a silent default that did so would delete operator-owned bakes). Clean up bake leftovers yourself after a bake — the generated build guide lists what to remove: deregister the baked AMI and delete its snapshots, then delete the Image Builder pipeline / recipe / component / infrastructure configuration, then the bake instance, EBS volumes, security group, and any bake IAM roles/profiles.
+
+**Perforce retains its data volume by design.** `perforce destroy` (and `destroy --all`) keeps the `/hxdepots` EBS volume (`DeleteOnTermination=false`) so local backups survive; S3 exports are never deleted. A successful `destroy --all` is therefore not "zero residue" when the optional Perforce path is in use — delete the volume and any S3 exports explicitly for a full purge.
+
 #### `fabrica version`
 
 Prints version, commit hash, Go toolchain version, and platform.
