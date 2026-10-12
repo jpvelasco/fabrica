@@ -64,6 +64,37 @@ Guidance, not provisioned: `ci pipeline` prints the CodePipeline path (no CodePi
 - AWS credentials with permissions to create EC2 instances, security groups, S3 buckets, and DynamoDB tables. Studio IAM Identity Center / SSO is supported: set `cloud.aws.profile` to the named SSO profile and run `aws sso login` first. Expired sessions fail with an `aws sso login` hint on create/update/promote/destroy and `fabrica doctor`.
 - IAM permission for `sts:GetCallerIdentity`
 
+## Telemetry and network access
+
+**Telemetry: none.** Fabrica sends nothing to the maintainer — no telemetry, no
+update check, no crash reporting. It talks only to your AWS account, your own
+provisioned hosts, and (for npm installs) GitHub Releases.
+
+### CLI host (where you run `fabrica`)
+
+| Destination | Why | Source |
+|-------------|-----|--------|
+| AWS APIs in your account (EC2, S3, DynamoDB, IAM, Cloud Control, CodeBuild, GameLift, SSM, STS) | All provisioning, state, and status work | AWS SDK v2, `internal/cloud/aws` |
+| Your own provisioned hosts (private IPs): Horde `:5000`, DDC `/health/ready`, readiness TCP probes (`:1666`, `:5000`, `:41339`, `:8443`) | Status probes, `horde submit`, `ci trigger` | `cmd/horde/submit/client.go`, `internal/ddc/edges.go`, `cmd/internal/modstatus/modstatus.go` |
+| `github.com` + GitHub asset redirect hosts (`objects.githubusercontent.com`, `github-production-release-asset.githubusercontent.com`, `release-assets.githubusercontent.com`) | npm wrapper only: binary download on install/first run, host-allowlisted + SHA-256 verified | `npm/install.js` |
+
+### Provisioned instances (fetched by the operator's instances at boot/bake, not by the CLI)
+
+| Destination | Why | Source |
+|-------------|-----|--------|
+| `get.docker.com` | Docker Engine install (Horde/agent docker bakes) | `cmd/horde/ami/templates/component.yaml.tmpl` |
+| `packages.microsoft.com` | Docker MS repo key (same bakes) | `cmd/horde/ami/templates/component.yaml.tmpl` |
+| `www.mongodb.org` + `repo.mongodb.org` | MongoDB 7.0 key + apt repo (same bakes) | `cmd/horde/ami/templates/component.yaml.tmpl` |
+| `awscli.amazonaws.com` | AWS CLI v2 download (generated docker bakes) | `cmd/horde/ami/docker_bake.go` |
+| `github.com` (`EpicGames/lore` releases) | Lore binary download (Lore Image Builder bakes) | `cmd/lore/ami/templates/component.yaml.tmpl` |
+| `d1uj6qtbmh3dt5.cloudfront.net` | NICE DCV key + tarball (workstation bakes) | `cmd/workstation/ami/templates/component.yaml.tmpl` |
+| `package.perforce.com` | Helix Core apt key + repo (Perforce + workstation cloud-init) | `internal/perforce/userdata.go`, `internal/workstation/userdata.go` |
+| IMDS `169.254.169.254` (link-local) | EC2 user-data scrub (workstation/Perforce) | `internal/userdata/scrub.go` |
+
+**Keep this list current:** whenever a new network destination is added to the
+CLI or to any generated artifact (cloud-init, Image Builder components, Packer
+HCL), add it to the table in the same change.
+
 ## Install
 
 Fabrica ships as a single Go binary. Two ways to get it:
