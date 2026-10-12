@@ -33,6 +33,12 @@ This package is a thin launcher. On install it downloads the matching prebuilt
 [GitHub Releases](https://github.com/jpvelasco/fabrica/releases) and verifies
 its SHA-256 checksum.
 
+**Telemetry: none.** Fabrica sends nothing to the maintainer — no telemetry, no
+update check, no crash reporting. For the full egress list (CLI host and
+provisioned instances) see
+[Telemetry and network access](https://github.com/jpvelasco/fabrica#telemetry-and-network-access)
+in the repo README.
+
 **Supported platforms:** linux/macOS/windows on amd64; linux/macOS on arm64.
 
 If install scripts are blocked (`--ignore-scripts`, pnpm, locked-down CI),
