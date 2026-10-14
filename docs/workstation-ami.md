@@ -54,19 +54,20 @@ The DCV session password is the OS password for `ubuntu`, so it must reach
 the instance somehow; DCV still authenticates the session against the OS
 password of the session owner. Cloud-init therefore embeds it in UserData
 long enough for `chpasswd` to consume it, then truncates the local copies
-(`user-data.txt`, `user-data.txt.i`, and `user-data`) and PUTs IMDS
-`/latest/user-data` (IMDSv2 token, then IMDSv1). The metadata service does
-not implement that write — AWS replaces the user-data attribute only on a
-stopped instance — and `curl` is without `--fail`, so an HTTP rejection does
-not abort boot. The script exits 1 only when both PUTs fail at the transport.
+(`user-data.txt`, `user-data.txt.i`, and `user-data`) and re-verifies they
+are empty. The scrub is local-only: IMDS `/latest/user-data` is read-only to
+the instance (a PUT there is a no-op), and AWS replaces the user-data
+attribute only on a stopped instance — so the launch script stays
+IMDS-readable and `ec2:DescribeInstanceAttribute` can still return it until
+the instance is stopped or terminated. The script exits 1 if a truncate
+fails (`set -e`) or the re-verify finds a non-empty local copy.
 `scripts/part-001` is left in place because cloud-init is executing it and
 later lines (DCV session setup) still have to run.
-`Scrubbed EC2 userdata (local + IMDS).` marks that point in
+`Scrubbed EC2 userdata (local).` marks that point in
 `/var/log/cloud-init-output.log`.
 
-`ec2:DescribeInstanceAttribute` can still return the launch script. The
-operator source of truth is `.fabrica/workstation-credentials.yaml` (mode
-`0600`) on the workstation host.
+The operator source of truth is `.fabrica/workstation-credentials.yaml`
+(mode `0600`) on the workstation host.
 
 HTTPS 200 on 8443 is **not** proof the session setup ran — `dcvserver` starts
 and serves even when cloud-init aborts. Verify the session over SSM (or

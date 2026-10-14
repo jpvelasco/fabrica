@@ -5,41 +5,47 @@ import (
 	"testing"
 )
 
-func TestScrubShellFailsClosedOnlyWhenBothClearsFail(t *testing.T) {
+func TestScrubShellFailsClosedWhenLocalCopySurvives(t *testing.T) {
 	got := ScrubShell("configure", "admin password", ".fabrica/perforce-credentials.yaml")
 	for _, want := range []string{
-		"now that configure has consumed",
+		"now that configure has consumed the password",
 		".fabrica/perforce-credentials.yaml",
-		"http://169.254.169.254/latest/api/token",
-		`-X PUT -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" -d ""`,
-		"ERROR: userdata scrub failed after configure; the admin password may still be reachable via IMDS user-data.",
 		"truncate -s 0 /var/lib/cloud/instance/user-data.txt",
 		"truncate -s 0 /var/lib/cloud/instance/user-data.txt.i",
-		"truncate -s 0 /var/lib/cloud/instance/user-data ",
-		"Scrubbed EC2 userdata (local + IMDS).",
-		`&& ! curl -s -X PUT -d ""`,
+		"truncate -s 0 /var/lib/cloud/instance/user-data\n",
+		"ERROR: userdata scrub failed after configure; a local copy of the user data still holds the admin password.",
+		"Scrubbed EC2 userdata (local).",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("ScrubShell missing %q", want)
 		}
 	}
-	if strings.Contains(got, `|| curl -s -X PUT -d ""`) {
-		t.Error("v1 fallback must be joined with '&& !', not '||'")
+	// The scrub is local-only: IMDS /latest/user-data is read-only to the
+	// instance (a PUT there is a no-op), so the fragment must not contact the
+	// metadata service at all (#489).
+	for _, gone := range []string{"169.254.169.254", "curl", "IMDS_TOKEN", "/latest/api/token"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("scrub must not contact IMDS; found %q", gone)
+		}
 	}
+	// Fail closed: the empty-check exits 1 after the truncates and before the
+	// success line.
+	truncIdx := strings.Index(got, "truncate -s 0")
+	checkIdx := strings.Index(got, "test -s /var/lib/cloud/instance/user-data")
 	errIdx := strings.Index(got, "ERROR: userdata scrub failed")
 	exitIdx := strings.Index(got, "exit 1")
-	truncIdx := strings.Index(got, "truncate -s 0")
-	if errIdx < 0 || exitIdx < errIdx || truncIdx < exitIdx {
-		t.Error("failure path must echo ERROR, exit 1, and only then truncate on the success path")
+	okIdx := strings.Index(got, "Scrubbed EC2 userdata (local).")
+	if truncIdx < 0 || checkIdx < truncIdx || errIdx < checkIdx || exitIdx < errIdx || okIdx < exitIdx {
+		t.Error("failure path must truncate, re-verify empty, echo ERROR, exit 1, and only then log success")
 	}
 }
 
 func TestScrubShellKeepsWorkstationWording(t *testing.T) {
 	got := ScrubShell("chpasswd", "session password", ".fabrica/workstation-credentials.yaml")
 	for _, want := range []string{
-		"now that chpasswd has consumed",
+		"now that chpasswd has consumed the password",
 		".fabrica/workstation-credentials.yaml",
-		"ERROR: userdata scrub failed after chpasswd; the session password may still be reachable via IMDS user-data.",
+		"ERROR: userdata scrub failed after chpasswd; a local copy of the user data still holds the session password.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("workstation wording missing %q", want)

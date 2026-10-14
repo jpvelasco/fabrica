@@ -13,7 +13,7 @@ phases:
               set -euo pipefail
               export DEBIAN_FRONTEND=noninteractive
               apt-get update -q
-              apt-get install -y wget gnupg xvfb
+              apt-get install -y wget gnupg xvfb x11-xserver-utils dbus-x11 xdg-user-dirs
               wget -q https://d1uj6qtbmh3dt5.cloudfront.net/NICE-GPG-KEY
               gpg --import NICE-GPG-KEY
               wget -q https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-x86_64.tgz
@@ -39,6 +39,8 @@ phases:
           commands:
             - set -euo pipefail
             - command -v dcv
+            - command -v xsetroot
+            - command -v dbus-launch
             - systemctl is-enabled dcvserver
             - |
 {{ indent 14 .RequireSSM }}

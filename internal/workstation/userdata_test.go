@@ -85,17 +85,24 @@ func TestGenerateRawScrubsUserDataAfterChpasswd(t *testing.T) {
 	// The session password still rides through chpasswd so the DCV login
 	// works (#443 keeps the single-credential model)...
 	assert.Contains(t, got, `echo "$DCV_USER:hunter2" | chpasswd`)
-	// ...but the long-lived UserData exposure is scrubbed right after:
-	// IMDS user-data cleared (token + IMDSv1 fallback), local cloud-init
-	// copies truncated.
+	// ...but the long-lived local UserData copies are scrubbed right after:
+	// truncated, re-verified empty, and fail-closed if a survivor remains.
+	// The scrub is local-only — IMDS /latest/user-data is read-only to the
+	// instance, so the script must not contact the metadata service (#489).
 	for _, want := range []string{
 		"truncate -s 0 /var/lib/cloud/instance/user-data.txt",
-		"http://169.254.169.254/latest/api/token",
-		"-X PUT -H \"X-aws-ec2-metadata-token: ${IMDS_TOKEN}\" -d \"\"",
+		"truncate -s 0 /var/lib/cloud/instance/user-data.txt.i",
+		"truncate -s 0 /var/lib/cloud/instance/user-data\n",
+		"test -s /var/lib/cloud/instance/user-data; then",
 		"ERROR: userdata scrub failed after chpasswd",
-		"Scrubbed EC2 userdata",
+		"Scrubbed EC2 userdata (local).",
 	} {
 		assert.Contains(t, got, want)
+	}
+	for _, gone := range []string{"169.254.169.254", "curl", "IMDS_TOKEN"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("scrub must not contact IMDS; found %q", gone)
+		}
 	}
 	// Order: chpasswd must succeed before the scrub runs, and the scrub
 	// must run before the DCV server starts.
@@ -106,19 +113,11 @@ func TestGenerateRawScrubsUserDataAfterChpasswd(t *testing.T) {
 		chpassIdx > scrubIdx || scrubIdx > dcvIdx {
 		t.Error("userdata must chpasswd first, then scrub, then start dcvserver (#443)")
 	}
-	// The scrub is fail-closed: a failed IMDS clear must abort cloud-init.
+	// The scrub is fail-closed: a surviving local copy must abort cloud-init
+	// (the exit 1 lives between the re-verify and the success line).
 	if strings.Count(got, "exit 1") < 5 {
 		t.Errorf("userdata must fail closed on scrub failure; got %q", got)
 	}
-	// Fail closed ONLY when both clears fail (#443 follow-up). The previous
-	// '! v2 || v1' form parsed as '(! v2) || v1': when the IMDSv2 clear
-	// succeeded AND the IMDSv1 fallback also succeeded, the condition was true
-	// and the script exited 1 before the DCV session was ever created. The safe
-	// form is the both-fail test: '&& !' (equivalent to '! (v2 || v1)').
-	if strings.Contains(got, `|| curl -s -X PUT -d ""`) {
-		t.Error("userdata scrub must not connect the v1 fallback with '||': a successful v2 + v1 clear would abort the script before session creation (#443)")
-	}
-	assert.Contains(t, got, `&& ! curl -s -X PUT -d ""`)
 }
 
 func TestGenerateRawChpasswdFailClosed(t *testing.T) {

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Workstation DCV bake was missing the X11 session dependencies** — the generated Image Builder component installed `wget gnupg xvfb` but not `x11-xserver-utils` (provides `xsetroot`), `dbus-x11` (provides `dbus-launch` on jammy; plain `dbus` does not), or `xdg-user-dirs`, so a freshly created DCV `workstation` session was killed ~15s after boot with `xsetroot: not found` (live E2E, #458). The bake now installs all three packages, and the `VerifyDCVAndSSM` validate step checks `command -v xsetroot` and `command -v dbus-launch` so a missing binary fails the bake instead of the first DCV session. (#489)
+- **Userdata scrub no longer attempts the IMDS user-data PUT** — the shared `ScrubShell` fragment (workstation + Perforce) PUT `/latest/user-data` after the password-consuming step, but the IMDS is read-only to the instance, so that PUT was a no-op by AWS design; it also carried a misleading "(local + IMDS)" success marker. The scrub is now local-only: it truncates `user-data.txt`, `user-data.txt.i`, and `user-data`, re-verifies the copies are empty, and exits 1 if a truncate fails or a local copy survives. Truncate stderr is no longer discarded, so a failed truncate writes its error to the cloud-init output before `set -e` aborts boot. Docs and tests now state honestly that the launch script stays IMDS-readable and `ec2:DescribeInstanceAttribute` can return it until the instance is stopped or terminated — the operator record (`.fabrica/workstation-credentials.yaml` / `.fabrica/perforce-credentials.yaml`) remains the source of truth. (#489, #458)
+
 ## [0.4.6] - 2026-10-10
 
 ### Fixed

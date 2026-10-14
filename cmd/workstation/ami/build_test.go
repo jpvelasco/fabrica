@@ -51,9 +51,15 @@ func TestBuildWritesDCVAndSSM(t *testing.T) {
 	s := string(comp)
 	for _, want := range []string{
 		"nice-dcv-ubuntu2204-x86_64.tgz",
+		// x11-xserver-utils provides xsetroot and dbus-x11 provides dbus-launch
+		// on jammy (plain dbus does not); both are required for the DCV virtual
+		// session to survive boot (#489).
+		"apt-get install -y wget gnupg xvfb x11-xserver-utils dbus-x11 xdg-user-dirs",
 		`dcvdir=$(find . -maxdepth 1 -type d -name 'nice-dcv-*' | head -n1)`,
 		"systemctl enable dcvserver",
 		"command -v dcv",
+		"command -v xsetroot",
+		"command -v dbus-launch",
 		"snap install amazon-ssm-agent --classic",
 		"amazon-ssm-agent.service",
 	} {
