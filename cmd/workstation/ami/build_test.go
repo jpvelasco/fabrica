@@ -51,6 +51,9 @@ func TestBuildWritesDCVAndSSM(t *testing.T) {
 	s := string(comp)
 	for _, want := range []string{
 		"nice-dcv-ubuntu2204-x86_64.tgz",
+		// x11-xserver-utils provides xsetroot and dbus provides dbus-launch;
+		// both are required for the DCV virtual session to survive boot (#489).
+		"apt-get install -y wget gnupg xvfb x11-xserver-utils dbus",
 		`dcvdir=$(find . -maxdepth 1 -type d -name 'nice-dcv-*' | head -n1)`,
 		"systemctl enable dcvserver",
 		"command -v dcv",

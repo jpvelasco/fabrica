@@ -13,7 +13,7 @@ phases:
               set -euo pipefail
               export DEBIAN_FRONTEND=noninteractive
               apt-get update -q
-              apt-get install -y wget gnupg xvfb
+              apt-get install -y wget gnupg xvfb x11-xserver-utils dbus
               wget -q https://d1uj6qtbmh3dt5.cloudfront.net/NICE-GPG-KEY
               gpg --import NICE-GPG-KEY
               wget -q https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-x86_64.tgz

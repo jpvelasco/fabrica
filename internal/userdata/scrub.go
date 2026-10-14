@@ -15,31 +15,28 @@ import "fmt"
 // file, and bash reads it as it runs, so wiping it would drop any commands
 // that follow this fragment.
 //
-// The fragment also PUTs /latest/user-data (IMDSv2 token, then IMDSv1). The
-// metadata service does not implement that write; AWS replaces the user-data
-// attribute only on a stopped instance. curl is without --fail, so an HTTP
-// rejection does not abort boot. The script fails closed only when both
-// requests fail at the transport. A successful v2 request does not issue the
-// v1 PUT.
+// The scrub is local-only: IMDS /latest/user-data is read-only to the
+// instance (a PUT is a no-op), so the launch script stays IMDS-readable
+// until the instance is stopped or terminated. Under the parent script's
+// set -euo pipefail each truncate aborts boot on failure, and the final
+// check re-verifies the truncation fail-closed.
 func ScrubShell(after, subject, record string) string {
-	return fmt.Sprintf(`# Local cloud-init copies are truncated below, now that %s has consumed
-# the password. Also PUT /latest/user-data (IMDSv2 token, then IMDSv1). The
-# metadata service does not implement that write, and curl has no --fail, so
-# an HTTP rejection does not abort boot. Fail closed only when both requests
-# fail at the transport. A successful v2 request does not issue the v1 PUT.
+	return fmt.Sprintf(`# now that %s has consumed the password, the local cloud-init copies
+# are truncated below. The scrub is local-only: IMDS /latest/user-data
+# is read-only to the instance (a PUT there is a no-op) and AWS replaces
+# the user-data attribute only on a stopped instance, so the launch
+# script stays IMDS-readable until the instance is stopped or terminated.
+# Fail closed if a truncate fails (set -e), and re-verify the local
+# copies are empty before moving on.
 # scripts/part-001 is the file cloud-init is executing; leave it so later
 # lines still run. The operator record is %s, not the instance.
-IMDS_TOKEN=$(curl -s -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 30" \
-  http://169.254.169.254/latest/api/token)
-if ! curl -s -X PUT -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" -d "" \
-    http://169.254.169.254/latest/user-data \
-  && ! curl -s -X PUT -d "" http://169.254.169.254/latest/user-data; then
-  echo "ERROR: userdata scrub failed after %s; the %s may still be reachable via IMDS user-data. Inspect the instance over SSM."
+truncate -s 0 /var/lib/cloud/instance/user-data.txt 2>/dev/null
+truncate -s 0 /var/lib/cloud/instance/user-data.txt.i 2>/dev/null
+truncate -s 0 /var/lib/cloud/instance/user-data 2>/dev/null
+if test -s /var/lib/cloud/instance/user-data.txt || test -s /var/lib/cloud/instance/user-data.txt.i || test -s /var/lib/cloud/instance/user-data; then
+  echo "ERROR: userdata scrub failed after %s; a local copy of the user data still holds the %s. Inspect the instance over SSM."
   exit 1
 fi
-sudo truncate -s 0 /var/lib/cloud/instance/user-data.txt 2>/dev/null
-sudo truncate -s 0 /var/lib/cloud/instance/user-data.txt.i 2>/dev/null
-sudo truncate -s 0 /var/lib/cloud/instance/user-data 2>/dev/null
-echo "Scrubbed EC2 userdata (local + IMDS)."
+echo "Scrubbed EC2 userdata (local)."
 `, after, record, after, subject)
 }

@@ -64,9 +64,10 @@ func TestGenerateRaw_AdminPasswordLiteralOnce(t *testing.T) {
 }
 
 // TestGenerateRaw_ScrubsUserDataAfterConfigure verifies the admin password
-// still reaches configure exactly once, and the long-lived UserData copy is
-// cleared only after configure and the service start have run. The scrub
-// fails closed only when both IMDS clears fail.
+// still reaches configure exactly once, and the long-lived local UserData
+// copies are truncated only after configure and the service start have run.
+// The scrub is local-only: IMDS is read-only to the instance, so the script
+// must not contact the metadata service (#489).
 func TestGenerateRaw_ScrubsUserDataAfterConfigure(t *testing.T) {
 	pass := "s3cr3tP@ssw0rd"
 	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: pass})
@@ -80,21 +81,18 @@ func TestGenerateRaw_ScrubsUserDataAfterConfigure(t *testing.T) {
 		"truncate -s 0 /var/lib/cloud/instance/user-data.txt",
 		"truncate -s 0 /var/lib/cloud/instance/user-data.txt.i",
 		"truncate -s 0 /var/lib/cloud/instance/user-data ",
-		"http://169.254.169.254/latest/api/token",
-		`-X PUT -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" -d ""`,
-		"http://169.254.169.254/latest/user-data",
+		"test -s /var/lib/cloud/instance/user-data; then",
 		"ERROR: userdata scrub failed after configure",
-		"Scrubbed EC2 userdata (local + IMDS).",
-		`&& ! curl -s -X PUT -d ""`,
+		"Scrubbed EC2 userdata (local).",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("scrub block missing %q", want)
 		}
 	}
-	// A successful IMDSv2 clear must not also require the v1 fallback to fail.
-	// '||' parses as '(! v2) || v1' and aborts after a healthy clear.
-	if strings.Contains(got, `|| curl -s -X PUT -d ""`) {
-		t.Error("userdata scrub must fail closed only when both IMDS clears fail")
+	for _, gone := range []string{"169.254.169.254", "curl", "IMDS_TOKEN"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("scrub must not contact IMDS; found %q", gone)
+		}
 	}
 
 	configureIdx := strings.Index(got, `--super-passwd "$ADMIN_PASS"`)
@@ -108,12 +106,16 @@ func TestGenerateRaw_ScrubsUserDataAfterConfigure(t *testing.T) {
 	}
 
 	errIdx := strings.Index(got, "ERROR: userdata scrub failed after configure")
-	if errIdx < 0 {
-		t.Fatal("scrub error line missing")
+	okIdx := strings.Index(got, "Scrubbed EC2 userdata (local).")
+	if errIdx < 0 || okIdx < errIdx {
+		t.Fatal("scrub error and success lines missing or out of order")
 	}
-	exitRel := strings.Index(got[errIdx:], "exit 1")
-	if exitRel < 0 || errIdx+exitRel > scrubIdx {
-		t.Error("scrub failure must exit 1 before the success truncate")
+	// The scrub's own exit 1 must sit between its error line and the success
+	// line. (Earlier error paths also exit 1 — the first one after the scrub
+	// block's error would be the pin-fallback exit if it came before the
+	// re-verify, so search the error..success region explicitly.)
+	if exitRel := strings.Index(got[errIdx:okIdx], "exit 1"); exitRel < 0 {
+		t.Error("scrub failure must exit 1 between the error line and the success line")
 	}
 }
 
