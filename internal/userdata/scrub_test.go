@@ -12,7 +12,7 @@ func TestScrubShellFailsClosedWhenLocalCopySurvives(t *testing.T) {
 		".fabrica/perforce-credentials.yaml",
 		"truncate -s 0 /var/lib/cloud/instance/user-data.txt",
 		"truncate -s 0 /var/lib/cloud/instance/user-data.txt.i",
-		"truncate -s 0 /var/lib/cloud/instance/user-data ",
+		"truncate -s 0 /var/lib/cloud/instance/user-data\n",
 		"ERROR: userdata scrub failed after configure; a local copy of the user data still holds the admin password.",
 		"Scrubbed EC2 userdata (local).",
 	} {

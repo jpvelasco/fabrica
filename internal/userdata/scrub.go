@@ -18,21 +18,22 @@ import "fmt"
 // The scrub is local-only: IMDS /latest/user-data is read-only to the
 // instance (a PUT is a no-op), so the launch script stays IMDS-readable
 // until the instance is stopped or terminated. Under the parent script's
-// set -euo pipefail each truncate aborts boot on failure, and the final
-// check re-verifies the truncation fail-closed.
+// set -euo pipefail a truncate failure writes its error to the cloud-init
+// output and aborts boot, and the final check re-verifies the truncation
+// fail-closed.
 func ScrubShell(after, subject, record string) string {
 	return fmt.Sprintf(`# now that %s has consumed the password, the local cloud-init copies
 # are truncated below. The scrub is local-only: IMDS /latest/user-data
 # is read-only to the instance (a PUT there is a no-op) and AWS replaces
 # the user-data attribute only on a stopped instance, so the launch
 # script stays IMDS-readable until the instance is stopped or terminated.
-# Fail closed if a truncate fails (set -e), and re-verify the local
-# copies are empty before moving on.
+# A failed truncate logs its error to the cloud-init output and aborts
+# boot (set -e); the re-verify below fails closed if a copy survives.
 # scripts/part-001 is the file cloud-init is executing; leave it so later
 # lines still run. The operator record is %s, not the instance.
-truncate -s 0 /var/lib/cloud/instance/user-data.txt 2>/dev/null
-truncate -s 0 /var/lib/cloud/instance/user-data.txt.i 2>/dev/null
-truncate -s 0 /var/lib/cloud/instance/user-data 2>/dev/null
+truncate -s 0 /var/lib/cloud/instance/user-data.txt
+truncate -s 0 /var/lib/cloud/instance/user-data.txt.i
+truncate -s 0 /var/lib/cloud/instance/user-data
 if test -s /var/lib/cloud/instance/user-data.txt || test -s /var/lib/cloud/instance/user-data.txt.i || test -s /var/lib/cloud/instance/user-data; then
   echo "ERROR: userdata scrub failed after %s; a local copy of the user data still holds the %s. Inspect the instance over SSM."
   exit 1
