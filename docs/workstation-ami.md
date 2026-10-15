@@ -18,6 +18,7 @@ fabrica workstation ami build --region us-west-2 --base-image ami-REPLACE --outp
 | OS | Ubuntu 22.04 LTS (Jammy), x86_64 |
 | Desktop user | `ubuntu` user present — cloud-init creates the DCV session owned by it and sets its login password. Bake with the standard Ubuntu user present; do not remove it. |
 | NICE DCV | `dcv` on PATH (2023.0+ CLI surface: `create-session`, `list-sessions`, `set-config`); `dcvserver.service` enabled |
+| X session | `xsetroot` (`x11-xserver-utils`), `dbus-launch` (`dbus-x11`), `xdg-user-dirs`, and a terminal emulator (`xterm`). `/etc/X11/Xsession` aborts unless it finds a session manager, a window manager, a terminal emulator, or a user `~/.xsession` / `~/.Xsession`. The bake ships `xterm` so the boot-created session has something to start. A window manager (for example `openbox`) is optional and is not installed. |
 | SSM Agent | deb or snap unit enabled (fail closed, same as Lore/Horde) |
 | Port | 8443 (HTTPS) opened by Fabrica at create from `workstation.allowedCidr` |
 

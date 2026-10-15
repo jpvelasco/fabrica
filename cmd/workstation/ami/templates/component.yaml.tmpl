@@ -13,7 +13,11 @@ phases:
               set -euo pipefail
               export DEBIAN_FRONTEND=noninteractive
               apt-get update -q
-              apt-get install -y wget gnupg dpkg-sig xvfb x11-xserver-utils dbus-x11 xdg-user-dirs
+              # xterm satisfies /etc/X11/Xsession's requirement for a terminal
+              # emulator (or a session manager, window manager, or user
+              # ~/.xsession). Without one the boot-created DCV session aborts
+              # a few seconds after Xsession starts.
+              apt-get install -y wget gnupg dpkg-sig xvfb x11-xserver-utils dbus-x11 xdg-user-dirs xterm
 
               # NICE GPG key: pin the primary-key fingerprint and fail closed
               # if the downloaded key does not match, so a tampered key file
@@ -65,6 +69,7 @@ phases:
             - command -v dcv
             - command -v xsetroot
             - command -v dbus-launch
+            - command -v xterm
             - systemctl is-enabled dcvserver
             - |
 {{ indent 14 .RequireSSM }}

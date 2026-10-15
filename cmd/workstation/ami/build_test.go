@@ -60,13 +60,16 @@ func TestBuildWritesDCVAndSSM(t *testing.T) {
 		"dpkg-sig --verify",
 		// x11-xserver-utils provides xsetroot and dbus-x11 provides
 		// dbus-launch on jammy (plain dbus does not); both are required for
-		// the DCV virtual session to survive boot (#489).
-		"apt-get install -y wget gnupg dpkg-sig xvfb x11-xserver-utils dbus-x11 xdg-user-dirs",
+		// the DCV virtual session to survive boot (#489). xterm is the
+		// terminal emulator Xsession requires when no session manager, window
+		// manager, or user ~/.xsession is present (#492).
+		"apt-get install -y wget gnupg dpkg-sig xvfb x11-xserver-utils dbus-x11 xdg-user-dirs xterm",
 		`dcvdir=$(find . -maxdepth 1 -type d -name 'nice-dcv-*' | head -n1)`,
 		"systemctl enable dcvserver",
 		"command -v dcv",
 		"command -v xsetroot",
 		"command -v dbus-launch",
+		"command -v xterm",
 		"snap install amazon-ssm-agent --classic",
 		"amazon-ssm-agent.service",
 	} {
