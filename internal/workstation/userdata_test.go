@@ -56,6 +56,11 @@ func TestGenerateRawUsesCurrentDCVCLI(t *testing.T) {
 		"chpasswd",
 		"dcv list-sessions",
 		"ERROR: DCV session 'workstation' did not appear",
+		"sleep 45",
+		"was torn down after creation",
+		"recreating after",
+		"dcv close-session workstation",
+		"/tmp/.X11-unix/X0",
 	} {
 		assert.Contains(t, got, want)
 	}

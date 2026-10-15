@@ -68,25 +68,66 @@ for _ in $(seq 1 6); do
 done
 
 # Create the persistent virtual DCV session owned by the session user.
-dcv create-session --type virtual --user "$DCV_USER" --owner "$DCV_USER" \
-  --storage-root /home/"$DCV_USER"/dcv workstation
+# The first Xdcv launch under boot load can outlast the session starter's
+# display-number read window (virtual-session-start-timeout is 30s). The
+# session then shows up in list-sessions for a few seconds and is torn down.
+# Re-poll 45s after the first sighting — past that window — and, if it
+# vanished, close it, drop a stale X0 socket, and create it again with
+# backoff. A later launch on the same host succeeds once GLX init has
+# warmed. Fail closed if it never appears, or if it is still gone after
+# the last attempt (#438, #493).
+dcv_session_present() {
+  dcv list-sessions 2>/dev/null | grep -q workstation
+}
 
-# Poll for the session to appear. The restart is asynchronous, and an HTTPS
-# 200 on 8443 is not proof this script ran to completion — the DCV server
-# keeps running when cloud-init aborts. Fail closed if the session never
-# shows up (#438).
-found=0
-for _ in $(seq 1 36); do
-  if dcv list-sessions 2>/dev/null | grep -q workstation; then
-    found=1
+dcv_wait_for_session() {
+  local i
+  for i in $(seq 1 36); do
+    if dcv_session_present; then
+      return 0
+    fi
+    sleep 5
+  done
+  return 1
+}
+
+dcv_create_session() {
+  dcv create-session --type virtual --user "$DCV_USER" --owner "$DCV_USER" \
+    --storage-root /home/"$DCV_USER"/dcv workstation
+}
+
+dcv_attempt=1
+dcv_max_attempts=3
+while [ "$dcv_attempt" -le "$dcv_max_attempts" ]; do
+  if [ "$dcv_attempt" -gt 1 ]; then
+    dcv_backoff=$(( (dcv_attempt - 1) * 15 ))
+    echo "DCV session 'workstation' vanished during startup; recreating after ${dcv_backoff}s (attempt ${dcv_attempt}/${dcv_max_attempts})."
+    sleep "$dcv_backoff"
+    # close-session is expected to fail when the starter already removed
+    # the session. A non-zero status must not abort the recreate.
+    if ! dcv close-session workstation >/dev/null 2>&1; then
+      echo "DCV close-session: no existing workstation session to close."
+    fi
+    # The starter can kill Xdcv and leave the display socket behind. The
+    # next virtual session then fails the same way. Only the retry path
+    # removes it, after close-session.
+    rm -f /tmp/.X11-unix/X0 /tmp/.X11-unix/X0.lock
+  fi
+  dcv_create_session
+  if ! dcv_wait_for_session; then
+    echo "ERROR: DCV session 'workstation' did not appear within 3m. Inspect /var/log/cloud-init-output.log and run 'dcv list-sessions' over SSM."
+    exit 1
+  fi
+  sleep 45
+  if dcv_session_present; then
     break
   fi
-  sleep 5
+  if [ "$dcv_attempt" -eq "$dcv_max_attempts" ]; then
+    echo "ERROR: DCV session 'workstation' was torn down after creation. Inspect /var/log/cloud-init-output.log and run 'dcv list-sessions' over SSM."
+    exit 1
+  fi
+  dcv_attempt=$((dcv_attempt + 1))
 done
-if [ "$found" -ne 1 ]; then
-  echo "ERROR: DCV session 'workstation' did not appear within 3m. Inspect /var/log/cloud-init-output.log and run 'dcv list-sessions' over SSM."
-  exit 1
-fi
 {{ if .MountPerforce }}
 # Install Perforce CLI
 wget -qO - https://package.perforce.com/perforce.pubkey | apt-key add -
