@@ -8,27 +8,47 @@ import (
 	"github.com/jpvelasco/fabrica/internal/assert"
 )
 
-func TestGenerateRawRequiresSessionPassword(t *testing.T) {
+func testUserData() UserDataConfig {
+	return UserDataConfig{
+		SessionPasswordParameter: SessionPasswordParameter,
+		Region:                   "us-west-2",
+	}
+}
+
+func TestGenerateRawRequiresSessionPasswordParameter(t *testing.T) {
 	_, err := GenerateRaw(UserDataConfig{})
 	if err == nil {
-		t.Fatal("expected error when SessionPassword is empty")
+		t.Fatal("expected error when SessionPasswordParameter is empty")
 	}
-	assert.Contains(t, err.Error(), "SessionPassword")
+	assert.Contains(t, err.Error(), "SessionPasswordParameter")
+	_, err = GenerateRaw(UserDataConfig{SessionPasswordParameter: SessionPasswordParameter})
+	if err == nil {
+		t.Fatal("expected error when Region is empty")
+	}
+	assert.Contains(t, err.Error(), "Region")
 }
 
 func TestGenerateRawRequiresDCVOnAMI(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{SessionPassword: "hunter2"})
+	got, err := GenerateRaw(testUserData())
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
 	}
 	for _, want := range []string{
 		"command -v dcv",
 		"NICE DCV is not installed on this AMI",
-		"hunter2",
+		"aws ssm get-parameter --name \"" + SessionPasswordParameter + "\"",
+		"--with-decryption",
+		"--region \"us-west-2\"",
+		"command -v aws",
+		"apt-get install -y awscli",
+		`[ "$DCV_PASS" = "None" ]`,
 		"systemctl enable dcvserver",
 		"systemctl restart dcvserver",
 	} {
 		assert.Contains(t, got, want)
+	}
+	if strings.Contains(got, "hunter2") {
+		t.Error("userdata must not embed the session password")
 	}
 	if strings.Contains(got, "snap install") || strings.Contains(got, "apt-get install -y dcv-server") {
 		t.Error("userdata must not install DCV at boot; the AMI is DCV-first")
@@ -39,7 +59,7 @@ func TestGenerateRawRequiresDCVOnAMI(t *testing.T) {
 }
 
 func TestGenerateRawUsesCurrentDCVCLI(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{SessionPassword: "hunter2"})
+	got, err := GenerateRaw(testUserData())
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
 	}
@@ -52,8 +72,9 @@ func TestGenerateRawUsesCurrentDCVCLI(t *testing.T) {
 	}
 	for _, want := range []string{
 		"dcv set-config --section connectivity --key idle-timeout",
-		"hunter2",
-		"chpasswd",
+		SessionPasswordParameter,
+		"printf '%s:%s\\n' \"$DCV_USER\" \"$DCV_PASS\" | chpasswd",
+		"unset DCV_PASS",
 		"dcv list-sessions",
 		"ERROR: DCV session 'workstation' did not appear",
 		"sleep 45",
@@ -83,13 +104,16 @@ func TestGenerateRawUsesCurrentDCVCLI(t *testing.T) {
 }
 
 func TestGenerateRawScrubsUserDataLast(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{SessionPassword: "hunter2"})
+	got, err := GenerateRaw(testUserData())
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
 	}
-	// The session password still rides through chpasswd so the DCV login
-	// works (#443 keeps the single-credential model)...
-	assert.Contains(t, got, `echo "$DCV_USER:hunter2" | chpasswd`)
+	// The password is read from SSM into a shell variable and consumed by
+	// chpasswd. The script itself must not contain a password literal.
+	assert.Contains(t, got, `printf '%s:%s\n' "$DCV_USER" "$DCV_PASS" | chpasswd`)
+	if strings.Contains(got, "hunter2") {
+		t.Error("userdata must not embed the session password")
+	}
 	// ...but the long-lived local UserData copies are scrubbed last:
 	// truncated, re-verified empty, and fail-closed if a survivor remains.
 	// The scrub is local-only — IMDS /latest/user-data is read-only to the
@@ -139,7 +163,10 @@ func TestGenerateRawScrubsUserDataLast(t *testing.T) {
 // rendered script must never enable shell xtrace (set -x / set +x), or the
 // embedded session password would leak into cloud-init-output.log.
 func TestGenerateRawNeverXtrace(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{SessionPassword: "hunter2", MountPerforce: true, PerforceServerAddr: "10.0.1.5:1666"})
+	cfg := testUserData()
+	cfg.MountPerforce = true
+	cfg.PerforceServerAddr = "10.0.1.5:1666"
+	got, err := GenerateRaw(cfg)
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
 	}
@@ -147,28 +174,29 @@ func TestGenerateRawNeverXtrace(t *testing.T) {
 }
 
 func TestGenerateRawChpasswdFailClosed(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{SessionPassword: "pw"})
+	got, err := GenerateRaw(testUserData())
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
 	}
 	assert.Contains(t, got, "ERROR: chpasswd failed")
 	// chpasswd must run inside an if-condition (fail closed), not as a
 	// bare line where set -e only would mask a partial failure.
-	idx := strings.Index(got, "chpasswd")
+	const cmd = `printf '%s:%s\n' "$DCV_USER" "$DCV_PASS" | chpasswd`
+	idx := strings.Index(got, cmd)
 	if idx < 0 {
-		t.Fatal("chpasswd line missing")
+		t.Fatal("chpasswd command missing")
 	}
-	line := got[idx-40 : idx+20]
-	if !strings.Contains(line, "if !") {
+	lineStart := strings.LastIndex(got[:idx], "\n")
+	line := got[lineStart+1 : idx+len(cmd)]
+	if !strings.HasPrefix(strings.TrimSpace(line), "if !") {
 		t.Errorf("chpasswd must be guarded by 'if !' for a fail-closed error line, got: %q", line)
 	}
 }
 
 func TestGenerateRawIdleTimeout(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{
-		SessionPassword:    "pw",
-		IdleTimeoutMinutes: 30,
-	})
+	cfg := testUserData()
+	cfg.IdleTimeoutMinutes = 30
+	got, err := GenerateRaw(cfg)
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
 	}
@@ -176,7 +204,7 @@ func TestGenerateRawIdleTimeout(t *testing.T) {
 }
 
 func TestGenerateProducesValidBase64(t *testing.T) {
-	b64, err := Generate(UserDataConfig{SessionPassword: "pw"})
+	b64, err := Generate(testUserData())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -190,7 +218,7 @@ func TestGenerateProducesValidBase64(t *testing.T) {
 }
 
 func TestGenerateRawDefaultIdleTimeout(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{SessionPassword: "pw"})
+	got, err := GenerateRaw(testUserData())
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
 	}
@@ -198,11 +226,9 @@ func TestGenerateRawDefaultIdleTimeout(t *testing.T) {
 }
 
 func TestGenerateRawMountPerforceRequiresAddr(t *testing.T) {
-	_, err := GenerateRaw(UserDataConfig{
-		SessionPassword: "pw",
-		MountPerforce:   true,
-		// PerforceServerAddr intentionally empty
-	})
+	cfg := testUserData()
+	cfg.MountPerforce = true
+	_, err := GenerateRaw(cfg)
 	if err == nil {
 		t.Fatal("expected error when MountPerforce=true and PerforceServerAddr is empty")
 	}
@@ -210,11 +236,10 @@ func TestGenerateRawMountPerforceRequiresAddr(t *testing.T) {
 }
 
 func TestGenerateRawMountPerforceInjectsP4Config(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{
-		SessionPassword:    "pw",
-		MountPerforce:      true,
-		PerforceServerAddr: "10.0.1.5:1666",
-	})
+	cfg := testUserData()
+	cfg.MountPerforce = true
+	cfg.PerforceServerAddr = "10.0.1.5:1666"
+	got, err := GenerateRaw(cfg)
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
 	}
@@ -229,7 +254,7 @@ func TestGenerateRawMountPerforceInjectsP4Config(t *testing.T) {
 }
 
 func TestGenerateRawNoMountPerforceNoP4Block(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{SessionPassword: "pw"})
+	got, err := GenerateRaw(testUserData())
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
 	}
@@ -240,14 +265,15 @@ func TestGenerateRawNoMountPerforceNoP4Block(t *testing.T) {
 
 func TestApplyDefaults(t *testing.T) {
 	t.Run("fills zero idle timeout", func(t *testing.T) {
-		cfg := UserDataConfig{SessionPassword: "pw"}
+		cfg := testUserData()
 		cfg.applyDefaults()
 		if cfg.IdleTimeoutMinutes != DefaultIdleTimeoutMinutes {
 			t.Errorf("IdleTimeoutMinutes = %d, want %d", cfg.IdleTimeoutMinutes, DefaultIdleTimeoutMinutes)
 		}
 	})
 	t.Run("preserves existing idle timeout", func(t *testing.T) {
-		cfg := UserDataConfig{SessionPassword: "pw", IdleTimeoutMinutes: 45}
+		cfg := testUserData()
+		cfg.IdleTimeoutMinutes = 45
 		cfg.applyDefaults()
 		if cfg.IdleTimeoutMinutes != 45 {
 			t.Errorf("IdleTimeoutMinutes = %d, want 45", cfg.IdleTimeoutMinutes)
@@ -260,12 +286,13 @@ func TestValidate(t *testing.T) {
 		cfg := UserDataConfig{}
 		err := cfg.validate()
 		if err == nil {
-			t.Fatal("expected error for empty SessionPassword")
+			t.Fatal("expected error for empty SessionPasswordParameter")
 		}
-		assert.Contains(t, err.Error(), "SessionPassword")
+		assert.Contains(t, err.Error(), "SessionPasswordParameter")
 	})
 	t.Run("mount perforce without addr", func(t *testing.T) {
-		cfg := UserDataConfig{SessionPassword: "pw", MountPerforce: true}
+		cfg := testUserData()
+		cfg.MountPerforce = true
 		err := cfg.validate()
 		if err == nil {
 			t.Fatal("expected error for MountPerforce without PerforceServerAddr")
@@ -273,13 +300,15 @@ func TestValidate(t *testing.T) {
 		assert.Contains(t, err.Error(), "PerforceServerAddr")
 	})
 	t.Run("valid config", func(t *testing.T) {
-		cfg := UserDataConfig{SessionPassword: "pw"}
+		cfg := testUserData()
 		if err := cfg.validate(); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 	t.Run("valid config with perforce", func(t *testing.T) {
-		cfg := UserDataConfig{SessionPassword: "pw", MountPerforce: true, PerforceServerAddr: "10.0.1.5:1666"}
+		cfg := testUserData()
+		cfg.MountPerforce = true
+		cfg.PerforceServerAddr = "10.0.1.5:1666"
 		if err := cfg.validate(); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -289,6 +318,6 @@ func TestValidate(t *testing.T) {
 func TestGenerate_ValidationError(t *testing.T) {
 	_, err := Generate(UserDataConfig{})
 	if err == nil {
-		t.Fatal("expected error for empty SessionPassword")
+		t.Fatal("expected error for empty SessionPasswordParameter")
 	}
 }

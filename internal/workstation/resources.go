@@ -41,11 +41,19 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMess
 }
 
 // RoleDesiredState returns Cloud Control desired-state for the workstation EC2
-// instance role (SSM managed instance core + shared SSM output policy).
+// instance role: SSM managed instance core, the shared SSM output policy, and
+// ssm:GetParameter on the DCV session password parameter only.
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
+	parameterARN, err := SessionPasswordParameterARN(plan.Region, plan.Account)
+	if err != nil {
+		return nil, err
+	}
 	return iamrole.RoleDocument(plan.RoleName, iamrole.ServiceEC2, []string{
 		"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-	}, []map[string]any{iamrole.SSMOutputPolicy(plan.Region, plan.Account)}, map[string]string{"FabricaModule": "workstation"},
+	}, []map[string]any{
+		iamrole.SSMOutputPolicy(plan.Region, plan.Account),
+		iamrole.SSMParameterReadPolicy(SessionPasswordPolicyName, parameterARN),
+	}, map[string]string{"FabricaModule": "workstation"},
 		iamrole.Options(plan.IAM.Path, plan.IAM.PermissionsBoundary)...)
 }
 

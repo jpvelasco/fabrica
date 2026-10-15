@@ -60,29 +60,36 @@ The script exits 1 if the session never appears, or if it is still gone
 after the last attempt (`session was torn down after creation` is not a
 successful boot).
 
-## Session password exposure (UserData)
+## Session password (SSM Parameter Store)
 
-The DCV session password is the OS password for `ubuntu`, so it must reach
-the instance somehow; DCV still authenticates the session against the OS
-password of the session owner. Cloud-init therefore embeds it in UserData
-long enough for `chpasswd` to consume it. After the DCV session is created
-and verified, the script truncates the local copies (`user-data.txt`,
-`user-data.txt.i`, and `user-data`), re-verifies they are empty, and then
-wipes `scripts/part-001` — the file cloud-init is executing — as the very
-last step, since bash reads it as it runs and nothing may follow the wipe.
-The scrub is local-only: IMDS `/latest/user-data` is read-only to the
-instance (a PUT there is a no-op), and AWS replaces the user-data
-attribute only on a stopped instance — so the launch script stays
-IMDS-readable and `ec2:DescribeInstanceAttribute` can still return it until
-the instance is stopped or terminated. The script exits 1 if a truncate
-fails (`set -e`) or the re-verify finds a non-empty local copy. The script
-never enables `set -x`, so the password cannot leak into
-cloud-init-output.log.
+The DCV session password is the OS password for `ubuntu`. DCV authenticates
+the session against that OS password, so the instance must learn it at boot.
+`workstation create` writes it to `.fabrica/workstation-credentials.yaml`
+(mode `0600`) — the operator source of truth — and to one Parameter Store
+SecureString, `/fabrica/workstation/dcv-password`, tagged `ManagedBy=fabrica`.
+The value is not placed in UserData, Cloud Control desired state, or module
+state. State records the parameter name only (`sessionPasswordParameter`).
+
+Cloud-init runs `aws ssm get-parameter --with-decryption` (installing
+`awscli` when the AMI does not already have it) and pipes the value to
+`chpasswd`. The instance role may `ssm:GetParameter` on that parameter ARN
+only. A failed or empty read exits 1 before the session is created.
+
+After the DCV session is created and verified, the script still truncates
+the local copies (`user-data.txt`, `user-data.txt.i`, and `user-data`),
+re-verifies they are empty, and then wipes `scripts/part-001` — the file
+cloud-init is executing — as the very last step. The launch script that
+remains readable via IMDS `/latest/user-data` and
+`ec2:DescribeInstanceAttribute` contains the parameter name and region, not
+the password. The script never enables `set -x`.
 `Scrubbed EC2 userdata (local).` marks the point before the part-001 wipe
 in `/var/log/cloud-init-output.log`.
 
-The operator source of truth is `.fabrica/workstation-credentials.yaml`
-(mode `0600`) on the workstation host.
+`workstation terminate` deletes the parameter. A create that fails before
+the instance exists deletes it too; once the instance exists the parameter
+stays until terminate so cloud-init can read it. A missing parameter is
+success. A parameter left by an earlier attempt is overwritten on the next
+create. The local credentials file is not deleted.
 
 HTTPS 200 on 8443 is **not** proof the session setup ran — `dcvserver` starts
 and serves even when cloud-init aborts. Verify the session over SSM (or

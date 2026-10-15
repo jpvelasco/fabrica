@@ -1,13 +1,17 @@
 package terminate
 
 import (
+	"context"
+	"errors"
 	"io"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/workstation"
 )
 
 func TestNewTeardownWiring(t *testing.T) {
@@ -42,12 +46,16 @@ func TestNewTeardownWiring(t *testing.T) {
 	if tc.GetResource != nil {
 		t.Error("GetResource must be nil when provider is nil")
 	}
+	if tc.SDKDeleteFunc != nil {
+		t.Error("SDKDeleteFunc must be nil when provider is nil")
+	}
 }
 
 func TestNewTeardownWithProvider(t *testing.T) {
+	provider := &testutil.TestProvider{}
 	rt := globals.Runtime{
 		Config:   config.Defaults(),
-		Provider: &testutil.TestProvider{},
+		Provider: provider,
 	}
 	tc := NewTeardown(rt, io.Discard)
 
@@ -56,6 +64,21 @@ func TestNewTeardownWithProvider(t *testing.T) {
 	}
 	if tc.GetResource == nil {
 		t.Error("GetResource must be wired when provider is non-nil")
+	}
+	if tc.SDKDeleteFunc == nil {
+		t.Fatal("SDKDeleteFunc must delete the session-password parameter")
+	}
+	if err := tc.SDKDeleteFunc(context.Background(), cloud.TypeAWSEC2Instance, "i-1"); !errors.Is(err, cloud.ErrNotHandled) {
+		t.Fatalf("instance delete = %v, want ErrNotHandled", err)
+	}
+	if len(provider.DeletedParameters) != 0 {
+		t.Fatalf("non-parameter delete removed %v", provider.DeletedParameters)
+	}
+	if err := tc.SDKDeleteFunc(context.Background(), cloud.TypeAWSSSMParameter, workstation.SessionPasswordParameter); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.DeletedParameters) != 1 || provider.DeletedParameters[0] != workstation.SessionPasswordParameter {
+		t.Fatalf("DeletedParameters = %v", provider.DeletedParameters)
 	}
 }
 

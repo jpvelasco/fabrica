@@ -382,16 +382,17 @@ func loreStoreTableLogicalIDs(ms state.ModuleState) map[int]string {
 // resource properties; leaking them into generated templates yields invalid
 // IaC (e.g. "role": "agent" under AWS::EC2::Instance).
 var internalStateKeys = map[string]struct{}{
-	"role":              {},
-	"region":            {},
-	"buildVersion":      {},
-	"lastBackupId":      {},
-	"lastBackupAt":      {},
-	"scalingPolicy":     {},
-	"scalingAlarm":      {},
-	"scaleOutThreshold": {},
-	"scaleInThreshold":  {},
-	"loreTable":         {},
+	"role":                     {},
+	"region":                   {},
+	"buildVersion":             {},
+	"lastBackupId":             {},
+	"lastBackupAt":             {},
+	"scalingPolicy":            {},
+	"scalingAlarm":             {},
+	"scaleOutThreshold":        {},
+	"scaleInThreshold":         {},
+	"loreTable":                {},
+	"sessionPasswordParameter": {},
 }
 
 func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Config, account, region string) map[string]any {
@@ -934,7 +935,14 @@ func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, regio
 			iamrole.SSMOutputPolicy(region, account),
 		}
 	case "workstation":
-		return []map[string]any{iamrole.SSMOutputPolicy(region, account)}
+		parameterARN, err := workstation.SessionPasswordParameterARN(region, account)
+		if err != nil {
+			return []map[string]any{iamrole.SSMOutputPolicy(region, account)}
+		}
+		return []map[string]any{
+			iamrole.SSMOutputPolicy(region, account),
+			iamrole.SSMParameterReadPolicy(workstation.SessionPasswordPolicyName, parameterARN),
+		}
 	}
 	return nil
 }

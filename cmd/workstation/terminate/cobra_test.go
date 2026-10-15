@@ -11,6 +11,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/cmd/workstation/terminate"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/workstation"
 	"github.com/spf13/cobra"
 )
 
@@ -49,8 +50,12 @@ func TestTerminateCobraDryRunNoDeleteCalls(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	testutil.AssertContains(t, got, "dry run")
+	testutil.AssertContains(t, got, workstation.SessionPasswordParameter)
 	if provider.DeleteCalls != 0 {
 		t.Errorf("dry-run made %d delete calls, want 0", provider.DeleteCalls)
+	}
+	if len(provider.DeletedParameters) != 0 {
+		t.Errorf("dry-run deleted SSM parameters: %v", provider.DeletedParameters)
 	}
 }
 
@@ -67,6 +72,9 @@ func TestTerminateCobraYesFlagTerminatesResources(t *testing.T) {
 	}
 	if provider.DeleteCalls != 2 {
 		t.Errorf("expected 2 delete calls, got %d", provider.DeleteCalls)
+	}
+	if len(provider.DeletedParameters) != 1 || provider.DeletedParameters[0] != "/fabrica/workstation/dcv-password" {
+		t.Errorf("deleted parameters = %v, want the DCV password parameter once", provider.DeletedParameters)
 	}
 	testutil.AssertContains(t, got, "terminated")
 }
@@ -88,8 +96,17 @@ func TestTerminateCobraJSONYes(t *testing.T) {
 	if result.DryRun {
 		t.Error("dryRun must be false")
 	}
-	if len(result.Destroyed) != 2 {
-		t.Errorf("expected 2 destroyed, got %d: %v", len(result.Destroyed), result.Destroyed)
+	if len(result.Destroyed) != 3 {
+		t.Errorf("expected 3 destroyed (instance, security group, session parameter), got %d: %v", len(result.Destroyed), result.Destroyed)
+	}
+	found := false
+	for _, id := range result.Destroyed {
+		if id == workstation.SessionPasswordParameter {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("destroyed = %v, missing %s", result.Destroyed, workstation.SessionPasswordParameter)
 	}
 }
 
@@ -152,6 +169,9 @@ func TestNewTeardownNilProvider(t *testing.T) {
 	}
 	if tc.DeleteResource != nil || tc.GetResource != nil {
 		t.Fatal("DeleteResource/GetResource must be nil when provider is nil")
+	}
+	if tc.SDKDeleteFunc != nil {
+		t.Fatal("SDKDeleteFunc must be nil when provider is nil")
 	}
 }
 

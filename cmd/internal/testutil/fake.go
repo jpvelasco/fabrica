@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
@@ -29,7 +30,20 @@ type TestProvider struct {
 	// ASGInfo is the fake response returned by DescribeASG (ASGManager seam).
 	// When nil, DescribeASG returns an error indicating the ASG was not found.
 	ASGInfo *cloud.ASGInfo
+
+	// Created snapshots each Create call, including DesiredState, so tests can
+	// assert a secret never landed in Cloud Control input.
+	Created []cloud.Resource
+
+	// Parameter Store seam (cloud.ParameterStore). PutParameterErr and
+	// DeleteParameterErr inject failures; the slices record successful calls.
+	PutParameters      []cloud.SecureParameter
+	PutParameterErr    error
+	DeletedParameters  []string
+	DeleteParameterErr error
 }
+
+var _ cloud.ParameterStore = (*TestProvider)(nil)
 
 func (f *TestProvider) Name() string { return "fake" }
 
@@ -50,6 +64,26 @@ func (f *TestProvider) Identity(_ context.Context) (string, string, string, erro
 
 func (f *TestProvider) Resources() cloud.ResourceClient {
 	return &FakeResourceClient{provider: f}
+}
+
+// PutSecureParameter records a SecureString write. The value stays in the
+// fake so tests can prove it was not copied into desired state.
+func (f *TestProvider) PutSecureParameter(_ context.Context, p cloud.SecureParameter) error {
+	if f.PutParameterErr != nil {
+		return f.PutParameterErr
+	}
+	f.PutParameters = append(f.PutParameters, p)
+	return nil
+}
+
+// DeleteParameter records a successful delete. A missing name is still
+// success; the fake has no existence check.
+func (f *TestProvider) DeleteParameter(_ context.Context, name string) error {
+	if f.DeleteParameterErr != nil {
+		return f.DeleteParameterErr
+	}
+	f.DeletedParameters = append(f.DeletedParameters, name)
+	return nil
 }
 
 // DescribeASG satisfies cloud.ASGManager for tests that need live ASG lifecycle
@@ -79,6 +113,13 @@ type FakeResourceClient struct {
 func (r *FakeResourceClient) Create(_ context.Context, res *cloud.Resource) error {
 	r.provider.CreateCalls++
 	r.provider.CreatedTypes = append(r.provider.CreatedTypes, res.TypeName)
+	defer func() {
+		snap := cloud.Resource{TypeName: res.TypeName, Identifier: res.Identifier}
+		if len(res.DesiredState) > 0 {
+			snap.DesiredState = append(json.RawMessage(nil), res.DesiredState...)
+		}
+		r.provider.Created = append(r.provider.Created, snap)
+	}()
 	if r.provider.CreateErr != nil {
 		if err, ok := r.provider.CreateErr[res.TypeName]; ok {
 			return err

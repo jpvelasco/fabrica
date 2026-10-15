@@ -12,6 +12,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/workstation"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -3777,6 +3778,28 @@ func TestIAMRoleInlinePoliciesPerModule(t *testing.T) {
 			}(),
 			want: []map[string]any{iamrole.DeployS3ReadPolicy("fabrica-deploy-bucket")},
 		},
+		{
+			name:   "workstation: SSM output + DCV password parameter",
+			module: "workstation",
+			state: state.ModuleState{
+				Name:   "workstation",
+				Status: "ready",
+				Resources: []state.ModuleResource{
+					{TypeName: "AWS::IAM::Role", Identifier: "fabrica-workstation-role"},
+				},
+			},
+			cfg: config.Defaults(),
+			want: func() []map[string]any {
+				arn, err := workstation.SessionPasswordParameterARN(exportRegion, exportAccount)
+				if err != nil {
+					panic(err)
+				}
+				return []map[string]any{
+					iamrole.SSMOutputPolicy(exportRegion, exportAccount),
+					iamrole.SSMParameterReadPolicy(workstation.SessionPasswordPolicyName, arn),
+				}
+			}(),
+		},
 	}
 
 	for _, tc := range cases {
@@ -3860,6 +3883,23 @@ func TestCloudFormationEmitsInlinePoliciesOnRole(t *testing.T) {
 				[]string{"s3:PutObject", "s3:GetObject", "s3:DeleteObject"},
 				perforce.DefaultS3Prefix+"*"),
 		},
+		{
+			name: "workstation",
+			state: state.ModuleState{
+				Name:      "workstation",
+				Status:    "ready",
+				Resources: []state.ModuleResource{{TypeName: "AWS::IAM::Role", Identifier: "fabrica-workstation-role"}},
+			},
+			cfg:      config.Defaults(),
+			roleName: "fabrica-workstation-role",
+			policy: func() map[string]any {
+				arn, err := workstation.SessionPasswordParameterARN(exportRegion, exportAccount)
+				if err != nil {
+					panic(err)
+				}
+				return iamrole.SSMParameterReadPolicy("fabrica-workstation-dcv-password", arn)
+			}(),
+		},
 	}
 
 	for _, tc := range cases {
@@ -3897,6 +3937,16 @@ func TestCloudFormationEmitsInlinePoliciesOnRole(t *testing.T) {
 					tc.policy["PolicyName"], gotDoc, wantDoc)
 			}
 		})
+	}
+}
+
+func TestWorkstationInlinePoliciesSkipParameterWhenUnscoped(t *testing.T) {
+	got := inlinePoliciesForRole("workstation", config.Defaults(), "", exportRegion)
+	if len(got) != 1 {
+		t.Fatalf("policy count = %d, want the SSM output policy only", len(got))
+	}
+	if got[0]["PolicyName"] != "fabrica-ssm-output" {
+		t.Fatalf("policy = %v", got[0]["PolicyName"])
 	}
 }
 
@@ -3941,6 +3991,12 @@ func TestTerraformEmitsInlinePolicyPerModule(t *testing.T) {
 			Resources: []state.ModuleResource{{TypeName: "AWS::IAM::Role", Identifier: "fabrica-perforce-role"}},
 		}, cfg: testPerforceBackupConfig(),
 			polNames: []string{"fabrica-ssm-output", "fabrica-perforce-backup-s3"}},
+		{name: "workstation", state: state.ModuleState{
+			Name:      "workstation",
+			Status:    "ready",
+			Resources: []state.ModuleResource{{TypeName: "AWS::IAM::Role", Identifier: "fabrica-workstation-role"}},
+		}, cfg: config.Defaults(),
+			polNames: []string{"fabrica-ssm-output", "fabrica-workstation-dcv-password"}},
 	}
 
 	ssmName := iamrole.SSMOutputPolicy(exportRegion, exportAccount)["PolicyName"].(string)

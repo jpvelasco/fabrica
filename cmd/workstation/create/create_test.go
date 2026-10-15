@@ -3,6 +3,8 @@ package create
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -14,6 +16,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/workstation"
 )
 
 func newTestCommand(out *bytes.Buffer, provider cloud.Provider, st *fabricastate.State) command {
@@ -35,6 +38,10 @@ func newTestCommand(out *bytes.Buffer, provider cloud.Provider, st *fabricastate
 	c.writeState = testutil.StateWriteNever()
 	if provider != nil {
 		c.createResource = provider.Resources().Create
+		if store, ok := provider.(cloud.ParameterStore); ok {
+			c.putSecureParameter = store.PutSecureParameter
+			c.deleteParameter = store.DeleteParameter
+		}
 	}
 	return c
 }
@@ -51,6 +58,9 @@ func TestCreateDryRunNoAWSCalls(t *testing.T) {
 	}
 	if provider.CreateCalls != 0 {
 		t.Fatalf("dry-run made %d create calls, want 0", provider.CreateCalls)
+	}
+	if len(provider.PutParameters) != 0 || len(provider.DeletedParameters) != 0 {
+		t.Fatalf("dry-run touched SSM parameters: put %d delete %d", len(provider.PutParameters), len(provider.DeletedParameters))
 	}
 }
 
@@ -71,6 +81,7 @@ func TestCreateDryRunOutputFields(t *testing.T) {
 		"fabrica-workstation-sg",
 		"fabrica-workstation",
 		"Cost estimate:",
+		workstation.SessionPasswordParameter,
 	} {
 		assert.Contains(t, got, want)
 	}
@@ -175,6 +186,17 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	if len(m.Resources) != 4 {
 		t.Fatalf("final state has %d resources, want 4", len(m.Resources))
 	}
+	inst, ok := final.GetModuleResource(moduleName, cloud.TypeAWSEC2Instance)
+	if !ok {
+		t.Fatal("instance missing from final state")
+	}
+	if inst.Properties["sessionPasswordParameter"] != workstation.SessionPasswordParameter {
+		t.Errorf("sessionPasswordParameter = %q", inst.Properties["sessionPasswordParameter"])
+	}
+	assertSessionPasswordNotInDesiredState(t, provider)
+	if len(provider.DeletedParameters) != 0 {
+		t.Errorf("successful create deleted the parameter: %v", provider.DeletedParameters)
+	}
 }
 
 // TestCreateApplyPlanIsTerser verifies workstation apply (non-dry-run) keeps the
@@ -224,6 +246,9 @@ func TestCreateSGFailureNoStateWritten(t *testing.T) {
 	if stateWritten {
 		t.Error("state must not be written when SG creation fails")
 	}
+	if len(provider.DeletedParameters) != 1 || provider.DeletedParameters[0] != workstation.SessionPasswordParameter {
+		t.Errorf("SG failure must delete the session password parameter, got %v", provider.DeletedParameters)
+	}
 }
 
 func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
@@ -246,6 +271,9 @@ func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
 	if !hasSG {
 		t.Error("SG resource not recorded in state after instance failure")
 	}
+	if len(provider.DeletedParameters) != 1 || provider.DeletedParameters[0] != workstation.SessionPasswordParameter {
+		t.Errorf("instance failure must delete the session password parameter, got %v", provider.DeletedParameters)
+	}
 }
 
 func TestCreateConfirmationRejected(t *testing.T) {
@@ -260,6 +288,12 @@ func TestCreateConfirmationRejected(t *testing.T) {
 	}
 	if provider.CreateCalls != 0 {
 		t.Fatalf("cancelled: made %d create calls, want 0", provider.CreateCalls)
+	}
+	if len(provider.PutParameters) != 0 {
+		t.Fatalf("cancelled create stored a parameter: %d", len(provider.PutParameters))
+	}
+	if len(provider.PutParameters) != 0 || len(provider.DeletedParameters) != 0 {
+		t.Fatalf("cancelled create touched SSM parameters: put %d delete %d", len(provider.PutParameters), len(provider.DeletedParameters))
 	}
 	assert.Contains(t, out.String(), "Cancelled")
 }
@@ -346,6 +380,34 @@ func TestCreateWriteStateErrorAfterSG(t *testing.T) {
 		t.Fatalf("expected 1 create call (SG only), got %d", provider.CreateCalls)
 	}
 	assert.Contains(t, err.Error(), "writing state")
+	if len(provider.DeletedParameters) != 1 {
+		t.Fatalf("state-write failure before the instance must delete the parameter, got %v", provider.DeletedParameters)
+	}
+}
+
+func TestCreateKeepsParameterWhenInstanceExists(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	c := newTestCommand(&out, provider, testutil.NewTestState())
+	c.assumeYes = true
+	// The fourth write is the instance step, after Create has returned.
+	c.writeState = testutil.StateWriteError(4)
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected state-write error after the instance was created")
+	}
+	assert.Contains(t, err.Error(), "creating EC2 instance")
+	if len(provider.PutParameters) != 1 {
+		t.Fatalf("PutParameters = %d, want 1", len(provider.PutParameters))
+	}
+	if len(provider.DeletedParameters) != 0 {
+		t.Fatalf("parameter deleted after the instance existed: %v", provider.DeletedParameters)
+	}
+	if provider.CreateCalls != 4 {
+		t.Fatalf("create calls = %d, want 4", provider.CreateCalls)
+	}
 }
 
 // stateWithPerforce returns state with a provisioned Perforce module (SG +
@@ -603,6 +665,109 @@ func TestCreateCidrNoWarningWhenNotDefault(t *testing.T) {
 	got := out.String()
 	if strings.Contains(got, "WARNING: allowedCidr is 0.0.0.0/0") {
 		t.Error("CIDR WARNING must not appear when allowedCidr is not 0.0.0.0/0")
+	}
+}
+
+func TestCreatePutParameterErrorCreatesNothing(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{PutParameterErr: errors.New("access denied")}
+	c := newTestCommand(&out, provider, testutil.NewTestState())
+	c.assumeYes = true
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected put error")
+	}
+	assert.Contains(t, err.Error(), "storing the DCV session password")
+	if provider.CreateCalls != 0 {
+		t.Fatalf("put failure created %d resources", provider.CreateCalls)
+	}
+	if len(provider.DeletedParameters) != 0 {
+		t.Fatalf("put failure must not delete: %v", provider.DeletedParameters)
+	}
+}
+
+func TestCreateDeleteErrorOnSGFailureReportsBoth(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{
+		CreateErr:          map[string]error{cloud.TypeAWSEC2SecurityGroup: errors.New("sg quota")},
+		DeleteParameterErr: errors.New("throttled"),
+	}
+	c := newTestCommand(&out, provider, testutil.NewTestState())
+	c.assumeYes = true
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assert.Contains(t, err.Error(), "creating security group")
+	assert.Contains(t, err.Error(), "also failed to delete SSM parameter")
+	assert.Contains(t, err.Error(), workstation.SessionPasswordParameter)
+}
+
+func TestCreateRequiresParameterStore(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	c := newTestCommand(&out, provider, testutil.NewTestState())
+	c.assumeYes = true
+	c.putSecureParameter = nil
+	c.deleteParameter = nil
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected missing parameter store to fail")
+	}
+	assert.Contains(t, err.Error(), "SSM parameter support")
+	if provider.CreateCalls != 0 {
+		t.Fatalf("missing parameter store created %d resources", provider.CreateCalls)
+	}
+}
+
+func assertSessionPasswordNotInDesiredState(t *testing.T, provider *testutil.TestProvider) {
+	t.Helper()
+	if len(provider.PutParameters) != 1 {
+		t.Fatalf("put calls = %d, want 1", len(provider.PutParameters))
+	}
+	got := provider.PutParameters[0]
+	if got.Name != workstation.SessionPasswordParameter {
+		t.Errorf("parameter name = %q", got.Name)
+	}
+	if got.Value == "" {
+		t.Fatal("stored password is empty")
+	}
+	if got.Tags["ManagedBy"] != "fabrica" {
+		t.Errorf("tags = %v, want ManagedBy=fabrica", got.Tags)
+	}
+	for _, res := range provider.Created {
+		if strings.Contains(string(res.DesiredState), got.Value) {
+			t.Errorf("%s desired state contains the session password", res.TypeName)
+		}
+		if res.TypeName != cloud.TypeAWSEC2Instance {
+			continue
+		}
+		var body struct {
+			UserData string `json:"UserData"`
+		}
+		if err := json.Unmarshal(res.DesiredState, &body); err != nil {
+			t.Fatalf("instance desired state: %v", err)
+		}
+		raw, err := base64.StdEncoding.DecodeString(body.UserData)
+		if err != nil {
+			t.Fatalf("decode userdata: %v", err)
+		}
+		script := string(raw)
+		if strings.Contains(script, got.Value) {
+			t.Fatal("userdata contains the session password")
+		}
+		if !strings.Contains(script, workstation.SessionPasswordParameter) {
+			t.Fatal("userdata does not name the SSM parameter")
+		}
+		if !strings.Contains(script, "aws ssm get-parameter") {
+			t.Fatal("userdata does not fetch the parameter")
+		}
 	}
 }
 

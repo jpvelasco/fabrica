@@ -424,7 +424,7 @@ Writes Image Builder component + recipe + build guide locally (no AWS calls). Th
 
 #### `fabrica workstation create`
 
-Provisions a NICE DCV cloud workstation: creates an EC2 security group (port 8443), an IAM role (`AmazonSSMManagedInstanceCore` + `fabrica-ssm-output` inline policy) with instance profile, and launches an EC2 instance attached to the profile for SSM access. Generates a DCV session password to `.fabrica/workstation-credentials.yaml` (mode 0600).
+Provisions a NICE DCV cloud workstation: stores the DCV session password in SSM Parameter Store (`/fabrica/workstation/dcv-password`, SecureString, not EC2 UserData), creates an EC2 security group (port 8443), an IAM role (`AmazonSSMManagedInstanceCore`, `fabrica-ssm-output`, and `ssm:GetParameter` on that parameter only) with instance profile, and launches an EC2 instance attached to the profile. Cloud-init reads the password with `aws ssm get-parameter` and passes it to `chpasswd`. The operator source of truth stays `.fabrica/workstation-credentials.yaml` (mode 0600). Terminate deletes the parameter. A create that fails before the instance exists deletes it too; once the instance exists the parameter stays until terminate.
 
 Key flags:
 

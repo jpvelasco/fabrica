@@ -31,6 +31,7 @@ type awsProvider struct {
 	newCWLogsClient          cwLogsClientFactory
 	newGameLiftClient        gameLiftClientFactory
 	newSSMClient             ssmClientFactory
+	newParameterClient       parameterClientFactory
 	newAutoScalingClient     autoScalingClientFactory
 	newPurgeS3Client         purgeS3ClientFactory
 	newLockDynamoClient      lockDynamoClientFactory

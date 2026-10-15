@@ -8,11 +8,15 @@ import (
 )
 
 // UserDataConfig is the input shape for the DCV cloud-init script.
+// The session password is not a field: cloud-init reads it from SSM at boot
+// so the value never lands in UserData. Perforce ADMIN_PASS can adopt the
+// same Parameter Store seam later.
 type UserDataConfig struct {
-	SessionPassword    string // required; used for the DCV session
-	IdleTimeoutMinutes int    // defaults to DefaultIdleTimeoutMinutes
-	MountPerforce      bool   // install p4 CLI and write ~/.p4config
-	PerforceServerAddr string // host:port of the Perforce server (e.g. 10.0.1.5:1666)
+	SessionPasswordParameter string // required; SSM name cloud-init reads
+	Region                   string // required; region of that parameter
+	IdleTimeoutMinutes       int    // defaults to DefaultIdleTimeoutMinutes
+	MountPerforce            bool   // install p4 CLI and write ~/.p4config
+	PerforceServerAddr       string // host:port of the Perforce server (e.g. 10.0.1.5:1666)
 }
 
 // The scrub must be the LAST fragment rendered: it wipes
@@ -47,11 +51,26 @@ chown "$DCV_USER":"$DCV_USER" /home/"$DCV_USER"/dcv
 # Idle timeout via the current CLI surface (DCV 2023+ set-config).
 dcv set-config --section connectivity --key idle-timeout "{{ .IdleTimeoutMinutes }}"
 
-# Set the session user's password (non-interactive DCV login credentials).
-if ! echo "$DCV_USER:{{ .SessionPassword }}" | chpasswd; then
+# The session password is a SecureString, not a UserData field. Fetch it
+# and pass it to chpasswd without writing it to the script or the log.
+# .fabrica/workstation-credentials.yaml remains the operator record.
+if ! command -v aws >/dev/null 2>&1; then
+  apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y awscli
+fi
+if ! DCV_PASS=$(aws ssm get-parameter --name "{{ .SessionPasswordParameter }}" --with-decryption --query Parameter.Value --output text --region "{{ .Region }}"); then
+  echo "ERROR: failed to read the DCV session password from SSM parameter {{ .SessionPasswordParameter }}. Confirm the instance profile can ssm:GetParameter on that parameter."
+  exit 1
+fi
+if [ -z "$DCV_PASS" ] || [ "$DCV_PASS" = "None" ]; then
+  echo "ERROR: SSM parameter {{ .SessionPasswordParameter }} returned an empty DCV session password."
+  exit 1
+fi
+if ! printf '%s:%s\n' "$DCV_USER" "$DCV_PASS" | chpasswd; then
   echo "ERROR: chpasswd failed; the DCV login password was not set. Inspect /var/log/cloud-init-output.log."
   exit 1
 fi
+unset DCV_PASS
 
 `
 
@@ -156,8 +175,11 @@ func (cfg *UserDataConfig) applyDefaults() {
 
 // validate checks required fields. Returns nil if valid.
 func (cfg *UserDataConfig) validate() error {
-	if cfg.SessionPassword == "" {
-		return fmt.Errorf("SessionPassword must not be empty")
+	if cfg.SessionPasswordParameter == "" {
+		return fmt.Errorf("SessionPasswordParameter must not be empty")
+	}
+	if cfg.Region == "" {
+		return fmt.Errorf("Region must not be empty")
 	}
 	if cfg.MountPerforce && cfg.PerforceServerAddr == "" {
 		return fmt.Errorf("PerforceServerAddr must not be empty when MountPerforce is true")
