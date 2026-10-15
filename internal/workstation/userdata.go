@@ -15,10 +15,13 @@ type UserDataConfig struct {
 	PerforceServerAddr string // host:port of the Perforce server (e.g. 10.0.1.5:1666)
 }
 
+// The scrub must be the LAST fragment rendered: it wipes
+// /var/lib/cloud/instance/scripts/part-001 (the file cloud-init is executing),
+// which is only safe once nothing follows it in the script.
 var userDataRenderer = userdata.New(template.Must(template.New("userdata").Option("missingkey=error").Parse(
 	workstationUserDataBefore +
-		userdata.ScrubShell("chpasswd", "session password", ".fabrica/workstation-credentials.yaml") +
-		workstationUserDataAfter,
+		workstationUserDataAfter +
+		userdata.ScrubShell("chpasswd", "session password", ".fabrica/workstation-credentials.yaml"),
 )))
 
 const workstationUserDataBefore = `#!/bin/bash

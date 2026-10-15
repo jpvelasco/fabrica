@@ -19,3 +19,14 @@ func Contains(t T, s, substr string) {
 		t.Fatalf("%q\ndoes not contain\n%q", s, substr)
 	}
 }
+
+// NoneOf verifies that s contains none of substrs, failing the test with
+// which one was found.
+func NoneOf(t T, s string, substrs ...string) {
+	t.Helper()
+	for _, sub := range substrs {
+		if strings.Contains(s, sub) {
+			t.Fatalf("%q\nshould not contain\n%q", s, sub)
+		}
+	}
+}

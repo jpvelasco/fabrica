@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/assert"
 )
 
 func TestGenerateRaw_LatestVersion(t *testing.T) {
@@ -117,6 +119,15 @@ func TestGenerateRaw_ScrubsUserDataAfterConfigure(t *testing.T) {
 	if exitRel := strings.Index(got[errIdx:okIdx], "exit 1"); exitRel < 0 {
 		t.Error("scrub failure must exit 1 between the error line and the success line")
 	}
+	// part-001 is the file cloud-init is executing, so the wipe must be the
+	// last statement of the script — nothing may follow it (#490).
+	part := "truncate -s 0 /var/lib/cloud/instance/scripts/part-001"
+	if !strings.Contains(got, part) {
+		t.Fatal("part-001 wipe missing from rendered userdata")
+	}
+	if !strings.HasSuffix(strings.TrimRight(got, " \t\r\n"), part) {
+		t.Error("part-001 must be the last statement of the rendered script — cloud-init is executing that file")
+	}
 }
 
 func TestGenerateRaw_DataDeviceAutoDetection(t *testing.T) {
@@ -181,6 +192,17 @@ func TestGenerateRaw_MountPoint(t *testing.T) {
 	if !strings.Contains(got, "/hxdepots") {
 		t.Error("expected mount point '/hxdepots'")
 	}
+}
+
+// TestGenerateRaw_NeverXtrace pins item 2 of the #490 security review: the
+// rendered script must never enable shell xtrace (set -x / set +x), or the
+// embedded admin password would leak into cloud-init-output.log.
+func TestGenerateRaw_NeverXtrace(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: "s3cr3tP@ssw0rd"})
+	if err != nil {
+		t.Fatalf("GenerateRaw: %v", err)
+	}
+	assert.NoneOf(t, got, "set -x", "set +x", "set -e -x", "set -ex", "set -xe", "xtrace")
 }
 
 func TestGenerateRaw_PipefailPresent(t *testing.T) {

@@ -196,6 +196,14 @@ func TestLaunchTemplateDesiredState(t *testing.T) {
 	if data["InstanceType"] != plan.InstanceType {
 		t.Errorf("InstanceType = %v, want %s", data["InstanceType"], plan.InstanceType)
 	}
+	// Agents run the same hardened metadata as single-instance modules.
+	meta, ok := data["MetadataOptions"].(map[string]any)
+	if !ok {
+		t.Fatal("MetadataOptions missing from launch template data")
+	}
+	if meta["HttpTokens"] != "required" || meta["HopLimit"] != float64(1) {
+		t.Errorf("MetadataOptions = %v, want HttpTokens=required HopLimit=1", meta)
+	}
 }
 
 func TestASGDesiredState(t *testing.T) {

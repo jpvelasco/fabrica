@@ -2,6 +2,8 @@ package ec2state
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -79,12 +81,55 @@ func TestBuildCoreFields(t *testing.T) {
 	if meta["HttpTokens"].(string) != "required" {
 		t.Errorf("HttpTokens = %v", meta["HttpTokens"])
 	}
+	if meta["HopLimit"].(float64) != 1 {
+		t.Errorf("HopLimit = %v, want 1", meta["HopLimit"])
+	}
 }
 
 func checkStr(t *testing.T, d map[string]any, key, want string) {
 	t.Helper()
 	if got := d[key].(string); got != want {
 		t.Errorf("%s = %q, want %q", key, got, want)
+	}
+}
+
+// imdsErrorRecorder captures AssertIMDSv2 errors without failing the test,
+// so the in-package test can exercise the helper's error branches.
+type imdsErrorRecorder struct {
+	errs []string
+}
+
+func (r *imdsErrorRecorder) Helper() {}
+
+func (r *imdsErrorRecorder) Errorf(format string, args ...any) {
+	r.errs = append(r.errs, fmt.Sprintf(format, args...))
+}
+
+func TestAssertIMDSv2AcceptsHopLimitOne(t *testing.T) {
+	rec := &imdsErrorRecorder{}
+	AssertIMDSv2(rec, map[string]any{
+		"MetadataOptions": map[string]any{"HttpTokens": "required", "HopLimit": float64(1)},
+	})
+	if len(rec.errs) != 0 {
+		t.Errorf("AssertIMDSv2 should pass for HttpTokens=required HopLimit=1, got %v", rec.errs)
+	}
+}
+
+func TestAssertIMDSv2RejectsWrongHopLimit(t *testing.T) {
+	rec := &imdsErrorRecorder{}
+	AssertIMDSv2(rec, map[string]any{
+		"MetadataOptions": map[string]any{"HttpTokens": "required", "HopLimit": float64(2)},
+	})
+	if len(rec.errs) != 1 || !strings.Contains(rec.errs[0], "HopLimit") {
+		t.Errorf("AssertIMDSv2 should report the HopLimit mismatch, got %v", rec.errs)
+	}
+}
+
+func TestAssertIMDSv2RejectsMissingMetadataOptions(t *testing.T) {
+	rec := &imdsErrorRecorder{}
+	AssertIMDSv2(rec, map[string]any{})
+	if len(rec.errs) == 0 || !strings.Contains(rec.errs[0], "HttpTokens") {
+		t.Errorf("AssertIMDSv2 should report missing MetadataOptions, got %v", rec.errs)
 	}
 }
 

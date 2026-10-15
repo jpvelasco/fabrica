@@ -13,14 +13,38 @@ phases:
               set -euo pipefail
               export DEBIAN_FRONTEND=noninteractive
               apt-get update -q
-              apt-get install -y wget gnupg xvfb x11-xserver-utils dbus-x11 xdg-user-dirs
+              apt-get install -y wget gnupg dpkg-sig xvfb x11-xserver-utils dbus-x11 xdg-user-dirs
+
+              # NICE GPG key: pin the primary-key fingerprint and fail closed
+              # if the downloaded key does not match, so a tampered key file
+              # can never be trusted on import.
               wget -q https://d1uj6qtbmh3dt5.cloudfront.net/NICE-GPG-KEY
+              gpgfpr=$(gpg --show-keys --with-colons NICE-GPG-KEY | awk -F: '/^fpr:/ {print $10; exit}')
+              if [ "$gpgfpr" != "5B9EEBC864449701F6CE566A11B5C70A170C6114" ]; then
+                echo "ERROR: NICE GPG key fingerprint mismatch (got ${gpgfpr:-<none>}); refusing to import"
+                exit 1
+              fi
               gpg --import NICE-GPG-KEY
-              wget -q https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-x86_64.tgz
-              tar -xzf nice-dcv-ubuntu2204-x86_64.tgz
+
+              # Pinned DCV tarball (2026.0-24952) with a hard SHA256 check. The
+              # hash is pinned here rather than fetched from the same CDN, so a
+              # tampered CDN cannot swap the build.
+              wget -q https://d1uj6qtbmh3dt5.cloudfront.net/2026.0/Servers/nice-dcv-2026.0-24952-ubuntu2204-x86_64.tgz
+              echo "52651a93844ce3d5ad918ee7666b007bb2a1c7ff7cf68dc50692e6b18efaa35a  nice-dcv-2026.0-24952-ubuntu2204-x86_64.tgz" | sha256sum -c -
+
+              tar -xzf nice-dcv-2026.0-24952-ubuntu2204-x86_64.tgz
               dcvdir=$(find . -maxdepth 1 -type d -name 'nice-dcv-*' | head -n1)
               test -n "$dcvdir"
               cd "$dcvdir"
+
+              # Verify every .deb's GpgBuilder signature against the imported
+              # NICE key before installing any of them. dpkg-sig exits 2 on a
+              # bad signature and 3 on an unknown key; both abort under
+              # set -e.
+              for deb in *.deb; do
+                dpkg-sig --verify "$deb"
+              done
+
               apt-get install -y ./nice-dcv-server_*.deb ./nice-xdcv_*.deb ./nice-dcv-web-viewer_*.deb
               systemctl enable dcvserver
       - name: EnsureSSMAgent

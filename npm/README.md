@@ -171,8 +171,9 @@ local cache under `.fabrica/`. Module credentials (where applicable) are
 written to `.fabrica/*-credentials.yaml` with mode `0600` as the operator
 source of truth. The workstation DCV session password must reach its
 instance for `chpasswd`, so it briefly appears in EC2 UserData. Cloud-init
-then truncates the local copies. The EC2 user-data attribute itself is
-unchanged; see `docs/workstation-ami.md`.
+then truncates the local copies and wipes the rendered script file as the
+last step. The EC2 user-data attribute itself is unchanged; see
+`docs/workstation-ami.md`.
 
 ## Links
 

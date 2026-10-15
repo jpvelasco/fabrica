@@ -77,7 +77,7 @@ func TestGenerateRawUsesCurrentDCVCLI(t *testing.T) {
 	}
 }
 
-func TestGenerateRawScrubsUserDataAfterChpasswd(t *testing.T) {
+func TestGenerateRawScrubsUserDataLast(t *testing.T) {
 	got, err := GenerateRaw(UserDataConfig{SessionPassword: "hunter2"})
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
@@ -85,7 +85,7 @@ func TestGenerateRawScrubsUserDataAfterChpasswd(t *testing.T) {
 	// The session password still rides through chpasswd so the DCV login
 	// works (#443 keeps the single-credential model)...
 	assert.Contains(t, got, `echo "$DCV_USER:hunter2" | chpasswd`)
-	// ...but the long-lived local UserData copies are scrubbed right after:
+	// ...but the long-lived local UserData copies are scrubbed last:
 	// truncated, re-verified empty, and fail-closed if a survivor remains.
 	// The scrub is local-only — IMDS /latest/user-data is read-only to the
 	// instance, so the script must not contact the metadata service (#489).
@@ -94,6 +94,9 @@ func TestGenerateRawScrubsUserDataAfterChpasswd(t *testing.T) {
 		"truncate -s 0 /var/lib/cloud/instance/user-data.txt.i",
 		"truncate -s 0 /var/lib/cloud/instance/user-data\n",
 		"test -s /var/lib/cloud/instance/user-data; then",
+		// part-001 is the file cloud-init is executing; it is wiped last so
+		// the last live local copy of the embedded password is removed (#490).
+		"truncate -s 0 /var/lib/cloud/instance/scripts/part-001",
 		"ERROR: userdata scrub failed after chpasswd",
 		"Scrubbed EC2 userdata (local).",
 	} {
@@ -104,20 +107,38 @@ func TestGenerateRawScrubsUserDataAfterChpasswd(t *testing.T) {
 			t.Errorf("scrub must not contact IMDS; found %q", gone)
 		}
 	}
-	// Order: chpasswd must succeed before the scrub runs, and the scrub
-	// must run before the DCV server starts.
+	// Order: chpasswd first, then dcvserver starts and the session is created,
+	// and only then does the scrub run — so nothing follows the part-001 wipe.
 	chpassIdx := strings.Index(got, "chpasswd")
-	scrubIdx := strings.Index(got, "truncate -s 0 /var/lib/cloud/instance/user-data.txt")
 	dcvIdx := strings.Index(got, "systemctl restart dcvserver")
-	if chpassIdx < 0 || scrubIdx < 0 || dcvIdx < 0 ||
-		chpassIdx > scrubIdx || scrubIdx > dcvIdx {
-		t.Error("userdata must chpasswd first, then scrub, then start dcvserver (#443)")
+	scrubIdx := strings.Index(got, "truncate -s 0 /var/lib/cloud/instance/user-data.txt")
+	partIdx := strings.Index(got, "truncate -s 0 /var/lib/cloud/instance/scripts/part-001")
+	if chpassIdx < 0 || dcvIdx < 0 || scrubIdx < 0 || partIdx < 0 ||
+		chpassIdx > dcvIdx || dcvIdx > scrubIdx || scrubIdx > partIdx {
+		t.Error("userdata must chpasswd, start dcvserver, then scrub user-data with part-001 last (#443, #490)")
+	}
+	// part-001 is the file cloud-init is executing, so the wipe must be the
+	// last statement of the rendered script — nothing may follow it (#490).
+	part := "truncate -s 0 /var/lib/cloud/instance/scripts/part-001"
+	if !strings.HasSuffix(strings.TrimRight(got, " \t\r\n"), part) {
+		t.Error("part-001 must be the last statement of the rendered script — cloud-init is executing that file")
 	}
 	// The scrub is fail-closed: a surviving local copy must abort cloud-init
 	// (the exit 1 lives between the re-verify and the success line).
 	if strings.Count(got, "exit 1") < 5 {
 		t.Errorf("userdata must fail closed on scrub failure; got %q", got)
 	}
+}
+
+// TestGenerateRawNeverXtrace pins item 2 of the #490 security review: the
+// rendered script must never enable shell xtrace (set -x / set +x), or the
+// embedded session password would leak into cloud-init-output.log.
+func TestGenerateRawNeverXtrace(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{SessionPassword: "hunter2", MountPerforce: true, PerforceServerAddr: "10.0.1.5:1666"})
+	if err != nil {
+		t.Fatalf("GenerateRaw: %v", err)
+	}
+	assert.NoneOf(t, got, "set -x", "set +x", "set -e -x", "set -ex", "set -xe", "xtrace")
 }
 
 func TestGenerateRawChpasswdFailClosed(t *testing.T) {
