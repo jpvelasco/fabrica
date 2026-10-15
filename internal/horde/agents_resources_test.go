@@ -208,8 +208,11 @@ func TestLaunchTemplateDesiredState(t *testing.T) {
 }
 
 func TestLaunchTemplateVolumeRequestTags(t *testing.T) {
+	if specs := agentTagSpecifications(nil); len(specs) != 1 {
+		t.Fatalf("nil plan tags = %v", specs)
+	}
 	plan := newTestAgentsPlan()
-	plan.VolumeRequestTags = map[string]string{"Project": "fabrica-e2e"}
+	plan.VolumeRequestTags = map[string]string{"Project": "fabrica-e2e", "": "skip", "ManagedBy": "other"}
 	plan.IAM.Path = "/horde/"
 	plan.IAM.PermissionsBoundary = "arn:aws:iam::123456789012:policy/fabrica-boundary"
 	ds, err := LaunchTemplateDesiredState(plan, "sg-agent123", "dXNlci1kYXRh")
@@ -232,9 +235,23 @@ func TestLaunchTemplateVolumeRequestTags(t *testing.T) {
 			continue
 		}
 		foundVolume = true
-		tags := m["Tags"].([]any)
-		if len(tags) != 1 || tags[0].(map[string]any)["Key"] != "Project" {
-			t.Errorf("volume tags = %v", tags)
+		keys := map[string]bool{}
+		for _, tag := range m["Tags"].([]any) {
+			keys[tag.(map[string]any)["Key"].(string)] = true
+		}
+		for _, want := range []string{"ManagedBy", "Name", "FabricaModule", "FabricaRole", "Project"} {
+			if !keys[want] {
+				t.Errorf("volume missing %s in %v", want, m["Tags"])
+			}
+		}
+		for _, tag := range m["Tags"].([]any) {
+			pair := tag.(map[string]any)
+			if pair["Key"] == "ManagedBy" && pair["Value"] != "fabrica" {
+				t.Errorf("ManagedBy = %v, want the identity tag", pair["Value"])
+			}
+			if pair["Key"] == "" {
+				t.Errorf("empty tag key was copied: %v", pair)
+			}
 		}
 	}
 	if !foundVolume {

@@ -30,6 +30,29 @@ func TestResolveIAMRejectsBadPathAndBoundary(t *testing.T) {
 	if _, err := ResolveIAM(IAM{PermissionsBoundary: "boundary"}, IAM{}); err == nil || !strings.Contains(err.Error(), "IAM policy ARN") {
 		t.Fatalf("boundary error = %v", err)
 	}
+	if _, err := ResolveIAM(IAM{Path: "/fabrica//roles/"}, IAM{}); err == nil {
+		t.Fatal("empty path segment was accepted")
+	}
+	roleARN := "arn:aws:iam::123456789012:role/fabrica-workstation-role"
+	if _, err := ResolveIAM(IAM{PermissionsBoundary: roleARN}, IAM{}); err == nil {
+		t.Fatal("role ARN was accepted as a permissions boundary")
+	}
+	for _, arn := range []string{
+		"arn:aws:iam::123456789012:policy/fabrica-boundary",
+		"arn:aws-us-gov:iam::123456789012:policy/fabrica-boundary",
+		"arn:aws-cn:iam::123456789012:policy/team/fabrica-boundary",
+		"arn:aws:iam::aws:policy/ReadOnlyAccess",
+	} {
+		if _, err := ResolveIAM(IAM{PermissionsBoundary: arn}, IAM{}); err != nil {
+			t.Errorf("policy ARN %s: %v", arn, err)
+		}
+	}
+	if _, err := ResolveIAM(IAM{PermissionsBoundary: "arn:aws:iam::123456789012:policy/"}, IAM{}); err == nil {
+		t.Fatal("empty policy name was accepted")
+	}
+	if _, err := ResolveIAM(IAM{}, IAM{PermissionsBoundary: "arn:aws-us-gov:iam::123456789012:policy/mod"}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestValidateIAM(t *testing.T) {
@@ -79,8 +102,14 @@ workstation:
 
 func TestRestoreVolumeRequestTagCaseEdges(t *testing.T) {
 	cfg := Defaults()
+	if err := restoreVolumeRequestTagCase("unused", nil); err != nil {
+		t.Fatal(err)
+	}
 	if err := restoreVolumeRequestTagCase("", cfg); err != nil {
 		t.Fatal(err)
+	}
+	if err := restoreVolumeRequestTagCase(t.TempDir(), cfg); err == nil {
+		t.Fatal("expected a directory read to fail")
 	}
 	if err := restoreVolumeRequestTagCase(t.TempDir()+"/missing.yaml", cfg); err != nil {
 		t.Fatal(err)

@@ -22,6 +22,22 @@ func TestRoleDocumentPathAndBoundary(t *testing.T) {
 	if _, err := RoleDocument("role", ServiceEC2, nil, nil, nil, WithPermissionsBoundary("not-an-arn")); err == nil {
 		t.Fatal("expected invalid boundary to fail")
 	}
+	if _, err := RoleDocument("role", ServiceEC2, nil, nil, nil, WithPath("/fabrica//roles/")); err == nil {
+		t.Fatal("expected empty path segment to fail")
+	}
+	if _, err := RoleDocument("role", ServiceEC2, nil, nil, nil, WithPermissionsBoundary("arn:aws:iam::123456789012:role/SomeRole")); err == nil {
+		t.Fatal("expected a role ARN to fail")
+	}
+	gov, err := RoleDocument("role", ServiceEC2, nil, nil, nil, WithPermissionsBoundary("arn:aws-us-gov:iam::123456789012:policy/boundary"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gov), "arn:aws-us-gov:iam::123456789012:policy/boundary") {
+		t.Fatalf("gov boundary missing: %s", gov)
+	}
+	if _, err := RoleDocument("role", ServiceEC2, nil, nil, nil, WithPermissionsBoundary("arn:aws-cn:iam::123456789012:policy/boundary")); err != nil {
+		t.Fatal(err)
+	}
 	plain, err := RoleDocument("role", ServiceEC2, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)

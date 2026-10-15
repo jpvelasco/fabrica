@@ -64,4 +64,16 @@ func TestExtractPropertiesAppliesIAMPlacement(t *testing.T) {
 	if g.tfAttributeName("Path") != "path" || g.tfAttributeName("PermissionsBoundary") != "permissions_boundary" {
 		t.Fatalf("terraform names = %s %s", g.tfAttributeName("Path"), g.tfAttributeName("PermissionsBoundary"))
 	}
+
+	bad := config.Defaults()
+	bad.Workstation.IAM.Path = "not-a-path"
+	if _, ok := ec2ModuleIAM("workstation", bad); ok {
+		t.Fatal("invalid path should not be stamped")
+	}
+	if _, ok := ec2ModuleIAM("deploy", cfg); ok {
+		t.Fatal("deploy must not receive the EC2 IAM placement")
+	}
+	if _, ok := ec2ModuleIAM("workstation", nil); ok {
+		t.Fatal("nil config")
+	}
 }

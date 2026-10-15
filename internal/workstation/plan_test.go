@@ -11,6 +11,15 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
+func TestNewCreatePlanRejectsBadIAM(t *testing.T) {
+	cfg := config.WorkstationConfig{AmiID: "ami-abc123", IAM: config.IAM{Path: "fabrica"}}
+	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, "", "")
+	if err == nil {
+		t.Fatal("expected a bad iam.path to fail")
+	}
+	assert.Contains(t, err.Error(), "must start and end")
+}
+
 func TestNewCreatePlanRequiresAmiID(t *testing.T) {
 	cfg := config.WorkstationConfig{}
 	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, "", "")

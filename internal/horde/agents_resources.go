@@ -95,10 +95,10 @@ func LaunchTemplateDesiredState(plan *AgentsCreatePlan, sgID, userData string) (
 }
 
 // agentTagSpecifications tags the instance and, when volume request tags are
-// set, the volume created from the launch template. The volume carries only
-// those request tags. Identity tags stay on the instance, and a key already
-// on the instance is not overwritten. Auto Scaling launches do not retry
-// through RunInstances.
+// set, the volume created from the launch template. Both specifications carry
+// the same tags: identity tags plus volumeRequestTags. A key already on the
+// instance is not overwritten. Auto Scaling launches do not retry through
+// RunInstances.
 func agentTagSpecifications(plan *AgentsCreatePlan) []map[string]any {
 	tags := []map[string]string{
 		{"Key": "ManagedBy", "Value": "fabrica"},
@@ -111,11 +111,11 @@ func agentTagSpecifications(plan *AgentsCreatePlan) []map[string]any {
 			{"ResourceType": "instance", "Tags": tags},
 		}
 	}
-	// The volume carries only the configured request tags. Identity tags stay
-	// on the instance. A key already on the instance is not overwritten.
+	// Identity tags win when volumeRequestTags repeats a key such as ManagedBy.
+	merged := appendTagPairs(tags, plan.VolumeRequestTags)
 	return []map[string]any{
-		{"ResourceType": "instance", "Tags": appendTagPairs(tags, plan.VolumeRequestTags)},
-		{"ResourceType": "volume", "Tags": appendTagPairs(nil, plan.VolumeRequestTags)},
+		{"ResourceType": "instance", "Tags": merged},
+		{"ResourceType": "volume", "Tags": appendTagPairs(tags, plan.VolumeRequestTags)},
 	}
 }
 

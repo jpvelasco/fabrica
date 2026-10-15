@@ -284,6 +284,12 @@ func TestInstanceProfileDesiredStatePath(t *testing.T) {
 	if _, err := InstanceProfileDesiredState("my-profile", "my-role", WithProfilePath("fabrica")); err == nil {
 		t.Fatal("expected invalid path to fail")
 	}
+	if _, err := InstanceProfileDesiredState("my-profile", "my-role", WithProfilePath("/fabrica//roles/")); err == nil {
+		t.Fatal("expected empty path segment to fail")
+	}
+	if got := ProfileOptions(""); got != nil {
+		t.Fatalf("empty profile options = %#v", got)
+	}
 }
 
 func TestSGDesiredStateBasic(t *testing.T) {
