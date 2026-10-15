@@ -416,7 +416,7 @@ Deletes edge nodes first (each in its region), then home resources (instances â†
 
 ### Workstation
 
-> **AMI requirement:** `fabrica workstation create` is AMI-first. Your AMI must already have NICE DCV installed. Stock Ubuntu is rejected at create time. Generate bake artifacts with `fabrica workstation ami build` (see [docs/workstation-ami.md](docs/workstation-ami.md)). Fabrica only configures and starts the DCV session via cloud-init. Port 8443 (NICE DCV HTTPS) is opened inbound; restrict `workstation.allowedCidr` in `fabrica.yaml` for production. Verify private instances via SSM ([docs/ssm-private.md](docs/ssm-private.md)).
+> **AMI requirement:** `fabrica workstation create` is AMI-first. Your AMI must already have NICE DCV installed. Stock Ubuntu is rejected at create time. Generate bake artifacts with `fabrica workstation ami build` (see [docs/workstation-ami.md](docs/workstation-ami.md)). Fabrica only configures and starts the DCV session via cloud-init. Port 8443 (NICE DCV HTTPS) is opened inbound; restrict `workstation.allowedCidr` in `fabrica.yaml` for production. Verify private instances via SSM ([docs/ssm-private.md](docs/ssm-private.md)). Accounts that require an IAM path, a permissions boundary, or a volume request tag use `cloud.aws.iam` and `cloud.aws.volumeRequestTags` ([docs/guardrailed-accounts.md](docs/guardrailed-accounts.md)).
 
 #### `fabrica workstation ami build`
 
@@ -671,6 +671,8 @@ ci:
 deploy:
   buildBucket: my-studio-builds   # S3 bucket where packaged server builds land
 ```
+
+Accounts that require an IAM path and permissions boundary, or a project tag on both the instance and its root volume, set `cloud.aws.iam` and `cloud.aws.volumeRequestTags`. See [docs/guardrailed-accounts.md](docs/guardrailed-accounts.md).
 
 ## Architecture
 

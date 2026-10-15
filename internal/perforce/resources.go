@@ -72,11 +72,12 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 		[]string{"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"},
 		policies,
 		map[string]string{"FabricaModule": "perforce"},
+		iamrole.Options(plan.IAM.Path, plan.IAM.PermissionsBoundary)...,
 	)
 }
 
 // InstanceProfileDesiredState returns Cloud Control desired-state for the
 // instance profile that wraps the Perforce EC2 role.
 func InstanceProfileDesiredState(plan *CreatePlan) (json.RawMessage, error) {
-	return ec2state.InstanceProfileDesiredState(plan.InstanceProfileName, plan.RoleName)
+	return ec2state.InstanceProfileDesiredState(plan.InstanceProfileName, plan.RoleName, ec2state.ProfileOptions(plan.IAM.Path)...)
 }

@@ -111,6 +111,11 @@ func GenerateOutput(format Format, st *state.State, cfg *config.Config) ([]byte,
 // re-derived from the same shared helpers create uses, scoped to this
 // account/region.
 func buildModules(st *state.State, cfg *config.Config) ([]ExportModule, error) {
+	if cfg != nil {
+		if err := cfg.ValidateIAM(); err != nil {
+			return nil, err
+		}
+	}
 	var modules []ExportModule
 
 	// State backend resources (always exported if account/region known).
@@ -490,6 +495,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		if _, ok := props["Tags"]; !ok {
 			props["Tags"] = defaultTags(moduleName)
 		}
+		applyRoleIAM(props, moduleName, cfg)
 	case "AWS::IAM::InstanceProfile":
 		if _, ok := props["InstanceProfileName"]; !ok {
 			props["InstanceProfileName"] = profileNameForModule(moduleName)
@@ -497,6 +503,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		if _, ok := props["Roles"]; !ok {
 			props["Roles"] = []string{roleNameForModule(moduleName)}
 		}
+		applyProfileIAM(props, moduleName, cfg)
 	case "AWS::S3::Bucket":
 		// DDC/Lore bucket — properties come from state; enrich with config defaults.
 		if _, ok := props["BucketName"]; !ok {
@@ -753,6 +760,57 @@ func roleNameForModule(module string) string {
 // profileNameForModule returns the default instance profile name for a module.
 func profileNameForModule(module string) string {
 	return "fabrica-" + module + "-profile"
+}
+
+// ec2ModuleIAM resolves cloud.aws.iam against the module override. CI and
+// Deploy return false so a global path does not land on those roles.
+func ec2ModuleIAM(moduleName string, cfg *config.Config) (config.IAM, bool) {
+	if cfg == nil {
+		return config.IAM{}, false
+	}
+	var module config.IAM
+	switch moduleName {
+	case "workstation":
+		module = cfg.Workstation.IAM
+	case "horde":
+		module = cfg.Horde.IAM
+	case "lore":
+		module = cfg.Lore.IAM
+	case "perforce":
+		module = cfg.Perforce.IAM
+	case "ddc":
+		module = cfg.DDC.IAM
+	default:
+		return config.IAM{}, false
+	}
+	resolved, err := config.ResolveIAM(cfg.Cloud.AWS.IAM, module)
+	if err != nil {
+		return config.IAM{}, false
+	}
+	return resolved, true
+}
+
+func applyRoleIAM(props map[string]any, moduleName string, cfg *config.Config) {
+	iam, ok := ec2ModuleIAM(moduleName, cfg)
+	if !ok {
+		return
+	}
+	if _, exists := props["Path"]; !exists && iam.Path != "" {
+		props["Path"] = iam.Path
+	}
+	if _, exists := props["PermissionsBoundary"]; !exists && iam.PermissionsBoundary != "" {
+		props["PermissionsBoundary"] = iam.PermissionsBoundary
+	}
+}
+
+func applyProfileIAM(props map[string]any, moduleName string, cfg *config.Config) {
+	iam, ok := ec2ModuleIAM(moduleName, cfg)
+	if !ok {
+		return
+	}
+	if _, exists := props["Path"]; !exists && iam.Path != "" {
+		props["Path"] = iam.Path
+	}
 }
 
 // defaultAssumeRolePolicy returns the standard EC2 assume role policy document.

@@ -158,6 +158,41 @@ func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 	}
 }
 
+func TestRoleDesiredStateGuardrails(t *testing.T) {
+	plan := &CreatePlan{
+		RoleName:            "fabrica-workstation-role",
+		InstanceProfileName: "fabrica-workstation-profile",
+		Account:             "123456789012",
+		Region:              "us-east-1",
+		IAM: config.IAM{
+			Path:                "/workstation/",
+			PermissionsBoundary: "arn:aws:iam::123456789012:policy/fabrica-boundary",
+		},
+	}
+	raw, err := RoleDesiredState(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+	if doc["Path"] != "/workstation/" {
+		t.Errorf("Path = %v", doc["Path"])
+	}
+	if doc["PermissionsBoundary"] != plan.IAM.PermissionsBoundary {
+		t.Errorf("PermissionsBoundary = %v", doc["PermissionsBoundary"])
+	}
+	profile, err := InstanceProfileDesiredState(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdoc := ec2state.UnmarshalDesiredState(t, profile)
+	if pdoc["Path"] != "/workstation/" {
+		t.Errorf("profile Path = %v", pdoc["Path"])
+	}
+	if _, ok := pdoc["PermissionsBoundary"]; ok {
+		t.Fatal("instance profile must not carry a permissions boundary")
+	}
+}
+
 func TestInstanceProfileDesiredState(t *testing.T) {
 	plan := &CreatePlan{RoleName: "fabrica-workstation-role", InstanceProfileName: "fabrica-workstation-profile"}
 	raw, err := InstanceProfileDesiredState(plan)

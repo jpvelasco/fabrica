@@ -45,11 +45,12 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMess
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 	return iamrole.RoleDocument(plan.RoleName, iamrole.ServiceEC2, []string{
 		"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-	}, []map[string]any{iamrole.SSMOutputPolicy(plan.Region, plan.Account)}, map[string]string{"FabricaModule": "workstation"})
+	}, []map[string]any{iamrole.SSMOutputPolicy(plan.Region, plan.Account)}, map[string]string{"FabricaModule": "workstation"},
+		iamrole.Options(plan.IAM.Path, plan.IAM.PermissionsBoundary)...)
 }
 
 // InstanceProfileDesiredState returns Cloud Control desired-state for the
 // instance profile that wraps the workstation EC2 role.
 func InstanceProfileDesiredState(plan *CreatePlan) (json.RawMessage, error) {
-	return ec2state.InstanceProfileDesiredState(plan.InstanceProfileName, plan.RoleName)
+	return ec2state.InstanceProfileDesiredState(plan.InstanceProfileName, plan.RoleName, ec2state.ProfileOptions(plan.IAM.Path)...)
 }

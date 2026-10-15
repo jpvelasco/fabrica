@@ -9,6 +9,21 @@ cloud:
     profile: ""               # Named AWS profile, including IAM Identity Center / SSO profiles
     accountId: ""             # Auto-detected on first `fabrica setup`; leave empty initially
     tags: {}                  # Extra tags merged with standard Fabrica tags on every resource
+    # iam applies to EC2-module roles (workstation, horde including agents,
+    # lore, perforce, ddc). CI and Deploy ignore these keys. path must start
+    # and end with /. permissionsBoundary is an IAM policy ARN. Leave both
+    # unset to omit the Cloud Control properties.
+    # iam:
+    #   path: /fabrica/
+    #   permissionsBoundary: arn:aws:iam::123456789012:policy/fabrica-boundary
+    # volumeRequestTags must be on the RunInstances request for both the
+    # instance and the root volume. A non-empty map selects the EC2 SDK
+    # launch path, because Cloud Control cannot tag the auto-created volume.
+    # An empty map tries Cloud Control, then falls back once when the deny
+    # mentions ec2:RunInstances and a volume or request tag. Horde agent
+    # ASGs receive these tags only through the launch template.
+    # volumeRequestTags:
+    #   Project: studio-workstations
 
 state:
   bucket: ""                  # Auto-named `fabrica-state-<account-id>` on setup; override if desired

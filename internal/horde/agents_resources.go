@@ -3,6 +3,8 @@ package horde
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/jpvelasco/fabrica/internal/ec2state"
 	"github.com/jpvelasco/fabrica/internal/iamrole"
@@ -57,13 +59,13 @@ func AgentRoleDesiredState(plan *AgentsCreatePlan) (json.RawMessage, error) {
 	}, []map[string]any{iamrole.SSMOutputPolicy(plan.Region, plan.Account)}, map[string]string{
 		"FabricaModule": "horde",
 		"FabricaRole":   "agent",
-	})
+	}, iamrole.Options(plan.IAM.Path, plan.IAM.PermissionsBoundary)...)
 }
 
 // AgentInstanceProfileDesiredState returns Cloud Control desired-state for the
 // instance profile that wraps the agent EC2 role.
 func AgentInstanceProfileDesiredState(plan *AgentsCreatePlan) (json.RawMessage, error) {
-	return ec2state.InstanceProfileDesiredState(plan.InstanceProfileName, plan.RoleName)
+	return ec2state.InstanceProfileDesiredState(plan.InstanceProfileName, plan.RoleName, ec2state.ProfileOptions(plan.IAM.Path)...)
 }
 
 // LaunchTemplateDesiredState returns Cloud Control desired-state for the agent
@@ -85,21 +87,57 @@ func LaunchTemplateDesiredState(plan *AgentsCreatePlan, sgID, userData string) (
 			"SecurityGroupIds":   []string{sgID},
 			"UserData":           userData,
 			"MetadataOptions":    map[string]any{"HttpTokens": "required", "HttpPutResponseHopLimit": 1},
-			"TagSpecifications": []map[string]any{
-				{
-					"ResourceType": "instance",
-					"Tags": []map[string]string{
-						{"Key": "ManagedBy", "Value": "fabrica"},
-						{"Key": "Name", "Value": "fabrica-horde-agent"},
-						{"Key": "FabricaModule", "Value": "horde"},
-						{"Key": "FabricaRole", "Value": "agent"},
-					},
-				},
-			},
+			"TagSpecifications":  agentTagSpecifications(plan),
 		},
 	}
 
 	return json.Marshal(doc)
+}
+
+// agentTagSpecifications tags the instance and, when volume request tags are
+// set, the volume created from the launch template. The volume carries only
+// those request tags. Identity tags stay on the instance, and a key already
+// on the instance is not overwritten. Auto Scaling launches do not retry
+// through RunInstances.
+func agentTagSpecifications(plan *AgentsCreatePlan) []map[string]any {
+	tags := []map[string]string{
+		{"Key": "ManagedBy", "Value": "fabrica"},
+		{"Key": "Name", "Value": "fabrica-horde-agent"},
+		{"Key": "FabricaModule", "Value": "horde"},
+		{"Key": "FabricaRole", "Value": "agent"},
+	}
+	if plan == nil || len(plan.VolumeRequestTags) == 0 {
+		return []map[string]any{
+			{"ResourceType": "instance", "Tags": tags},
+		}
+	}
+	// The volume carries only the configured request tags. Identity tags stay
+	// on the instance. A key already on the instance is not overwritten.
+	return []map[string]any{
+		{"ResourceType": "instance", "Tags": appendTagPairs(tags, plan.VolumeRequestTags)},
+		{"ResourceType": "volume", "Tags": appendTagPairs(nil, plan.VolumeRequestTags)},
+	}
+}
+
+// appendTagPairs adds extra tags in key order. A key already on base is kept
+// so identity tags (ManagedBy, Name, FabricaModule, FabricaRole) win.
+func appendTagPairs(base []map[string]string, extra map[string]string) []map[string]string {
+	seen := make(map[string]struct{}, len(base)+len(extra))
+	out := make([]map[string]string, 0, len(base)+len(extra))
+	for _, t := range base {
+		seen[t["Key"]] = struct{}{}
+		out = append(out, t)
+	}
+	for _, k := range slices.Sorted(maps.Keys(extra)) {
+		if k == "" {
+			continue
+		}
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		out = append(out, map[string]string{"Key": k, "Value": extra[k]})
+	}
+	return out
 }
 
 // ASGDesiredState returns Cloud Control desired-state for the agent Auto Scaling

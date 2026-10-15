@@ -10,6 +10,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/credentials"
 	"github.com/jpvelasco/fabrica/internal/perforce"
@@ -119,6 +120,12 @@ func (c command) run(ctx context.Context) error {
 	if c.volumeSize > 0 {
 		pfCfg.VolumeSize = c.volumeSize
 	}
+
+	resolvedIAM, err := config.ResolveIAM(c.runtime.Config.Cloud.AWS.IAM, pfCfg.IAM)
+	if err != nil {
+		return err
+	}
+	pfCfg.IAM = resolvedIAM
 
 	plan, err := perforce.NewCreatePlan(ctx, pfCfg, account, region, effectiveVersion, provision.VPCResolver(c.runtime.Provider))
 	if err != nil {
@@ -289,12 +296,12 @@ func (c command) printDryRun(plan *perforce.CreatePlan) {
 			{Key: "Helix Core", Value: versionLabel},
 			{Key: "Allowed CIDR", Value: plan.AllowedCIDR},
 		},
-		Resources: []string{
+		Resources: append([]string{
 			"Security Group:   " + plan.SGName,
 			"IAM Role:         " + plan.RoleName,
 			"Instance Profile: " + plan.InstanceProfileName,
 			"EC2 Instance:     " + plan.InstanceName,
-		},
+		}, provision.IAMResourceLines(plan.IAM)...),
 		CostResources: plan.CostResources,
 		Costs:         c.costs,
 		CidrWarning:   "P4 port (1666) open to the entire internet. Set perforce.allowedCidr in fabrica.yaml.",
@@ -309,12 +316,12 @@ func (c command) printApplyPlan(plan *perforce.CreatePlan) {
 		VolumeSize:   plan.VolumeSize,
 	}, []provision.PlanField{
 		{Key: "Helix Core", Value: plan.HelixVersion},
-	}, []string{
+	}, append([]string{
 		"Security Group:   " + plan.SGName,
 		"IAM Role:         " + plan.RoleName,
 		"Instance Profile: " + plan.InstanceProfileName,
 		"EC2 Instance:     " + plan.InstanceName,
-	})
+	}, provision.IAMResourceLines(plan.IAM)...))
 }
 
 func (c command) printPostCreate(_ *perforce.CreatePlan, instanceID string) {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"strings"
 
 	"github.com/spf13/viper"
 	"go.yaml.in/yaml/v3"
@@ -74,6 +75,8 @@ type PerforceConfig struct {
 	SubnetId     string               `mapstructure:"subnetId"     yaml:"subnetId"`
 	AllowedCIDR  string               `mapstructure:"allowedCidr"  yaml:"allowedCidr"`
 	Backup       PerforceBackupConfig `mapstructure:"backup"       yaml:"backup"`
+	// IAM overrides cloud.aws.iam for this module when a field is set.
+	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
 }
 
 // PerforceBackupConfig holds the perforce.backup: section of fabrica.yaml.
@@ -102,6 +105,8 @@ type HordeConfig struct {
 	GRPCPort     int               `mapstructure:"grpcPort"     yaml:"grpcPort"`
 	AllowedCIDR  string            `mapstructure:"allowedCidr"  yaml:"allowedCidr"`
 	Agents       HordeAgentsConfig `mapstructure:"agents"       yaml:"agents"`
+	// IAM overrides cloud.aws.iam for the coordinator and the agent pool.
+	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
 }
 
 // HordeAgentsConfig holds the horde.agents: section of fabrica.yaml.
@@ -154,6 +159,8 @@ type LoreConfig struct {
 	// When Enabled, create writes the cert/key paths into cloud-init and
 	// the instance verifies those files exist on the AMI at boot.
 	TLSConfig LoreTLSConfig `mapstructure:"tls" yaml:"tls"`
+	// IAM overrides cloud.aws.iam for this module when a field is set.
+	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
 }
 
 // LoreTLSConfig holds optional TLS settings for the Lore server.
@@ -220,6 +227,8 @@ type DDCConfig struct {
 	OIDC               DDCOIDCConfig        `mapstructure:"oidc"             yaml:"oidc"`
 	Scylla             DDCScyllaConfig      `mapstructure:"scylla"           yaml:"scylla"`
 	Replication        DDCReplicationConfig `mapstructure:"replication"    yaml:"replication"`
+	// IAM overrides cloud.aws.iam for this module when a field is set.
+	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
 }
 
 // DDCScyllaConfig is the production Scylla topology overlay. Nodes=1 remains
@@ -258,6 +267,8 @@ type WorkstationConfig struct {
 	AllowedCIDR        string           `mapstructure:"allowedCidr"        yaml:"allowedCidr"`
 	Spot               bool             `mapstructure:"spot"               yaml:"spot"`
 	Schedule           CapacitySchedule `mapstructure:"schedule"           yaml:"schedule"`
+	// IAM overrides cloud.aws.iam for this module when a field is set.
+	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
 }
 
 // CapacitySchedule is a weekly on/off window used by Horde agents and
@@ -299,11 +310,27 @@ type Cloud struct {
 	AWS      AWS    `mapstructure:"aws" yaml:"aws"`
 }
 
+// IAM is the path and permissions boundary for roles Fabrica creates.
+// A per-module iam block wins field-by-field over cloud.aws.iam.
+// Empty fields are omitted from desired state, which leaves the AWS default
+// path "/" and no permissions boundary.
+type IAM struct {
+	Path                string `mapstructure:"path" yaml:"path,omitempty"`
+	PermissionsBoundary string `mapstructure:"permissionsBoundary" yaml:"permissionsBoundary,omitempty"`
+}
+
 type AWS struct {
 	Region    string            `mapstructure:"region" yaml:"region"`
 	Profile   string            `mapstructure:"profile" yaml:"profile"`
 	AccountID string            `mapstructure:"accountId" yaml:"accountId"`
 	Tags      map[string]string `mapstructure:"tags" yaml:"tags"`
+	// IAM applies to EC2-module roles (workstation, horde including agents,
+	// lore, perforce, ddc). CI and Deploy ignore it.
+	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
+	// VolumeRequestTags must be present on the RunInstances request for both
+	// the instance and the root volume. Cloud Control cannot tag the volume
+	// it creates, so a non-empty map selects the EC2 SDK launch path.
+	VolumeRequestTags map[string]string `mapstructure:"volumeRequestTags" yaml:"volumeRequestTags,omitempty"`
 }
 
 type State struct {
@@ -363,6 +390,7 @@ func (c *Config) Clone() *Config {
 	out := *c
 	out.Cloud.AWS.Tags = make(map[string]string, len(c.Cloud.AWS.Tags))
 	maps.Copy(out.Cloud.AWS.Tags, c.Cloud.AWS.Tags)
+	out.Cloud.AWS.VolumeRequestTags = maps.Clone(c.Cloud.AWS.VolumeRequestTags)
 	if c.Ops.Modules != nil {
 		out.Ops.Modules = append([]string(nil), c.Ops.Modules...)
 	}
@@ -397,9 +425,45 @@ func Load(path string) (*Config, error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
+	// Viper lowercases map keys. Request-tag conditions compare the key
+	// exactly, so re-read this map from YAML and keep the written case.
+	if err := restoreVolumeRequestTagCase(v.ConfigFileUsed(), cfg); err != nil {
+		return nil, err
+	}
 	cfg.normalize()
 
 	return cfg, nil
+}
+
+// restoreVolumeRequestTagCase copies cloud.aws.volumeRequestTags from the
+// config file with their original key case. A missing file or a missing key
+// leaves the unmarshaled value in place.
+func restoreVolumeRequestTagCase(path string, cfg *Config) error {
+	if path == "" || cfg == nil {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading volume request tags: %w", err)
+	}
+	var raw struct {
+		Cloud struct {
+			AWS struct {
+				VolumeRequestTags map[string]string `yaml:"volumeRequestTags"`
+			} `yaml:"aws"`
+		} `yaml:"cloud"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("parsing volume request tags: %w", err)
+	}
+	if raw.Cloud.AWS.VolumeRequestTags == nil {
+		return nil
+	}
+	cfg.Cloud.AWS.VolumeRequestTags = raw.Cloud.AWS.VolumeRequestTags
+	return nil
 }
 
 func (c *Config) normalize() {
@@ -415,4 +479,83 @@ func (c *Config) normalize() {
 	if c.State.Table == "" {
 		c.State.Table = DefaultStateTable
 	}
+}
+
+// Validate checks a path and permissions boundary. An empty IAM is valid.
+// Path must start and end with "/" (for example "/fabrica/") and must not
+// contain an empty segment. The boundary must be a customer or AWS managed
+// policy ARN in the commercial, GovCloud, or China partition.
+func (i IAM) Validate() error {
+	if err := validateIAMPath(i.Path); err != nil {
+		return err
+	}
+	return validatePermissionsBoundary(i.PermissionsBoundary)
+}
+
+func validateIAMPath(path string) error {
+	if path == "" {
+		return nil
+	}
+	if len(path) < 2 || !strings.HasPrefix(path, "/") || !strings.HasSuffix(path, "/") || strings.Contains(path, "//") {
+		return fmt.Errorf("iam.path %q must start and end with /", path)
+	}
+	return nil
+}
+
+func validatePermissionsBoundary(arn string) error {
+	if arn == "" {
+		return nil
+	}
+	if !iamPolicyARN(arn) {
+		return fmt.Errorf("iam.permissionsBoundary %q must be an IAM policy ARN", arn)
+	}
+	return nil
+}
+
+// iamPolicyARN accepts policy ARNs only. A role ARN shares the iam:: prefix
+// and must not be accepted as a permissions boundary.
+func iamPolicyARN(arn string) bool {
+	switch {
+	case strings.HasPrefix(arn, "arn:aws:iam::"),
+		strings.HasPrefix(arn, "arn:aws-us-gov:iam::"),
+		strings.HasPrefix(arn, "arn:aws-cn:iam::"):
+	default:
+		return false
+	}
+	const marker = ":policy/"
+	idx := strings.Index(arn, marker)
+	if idx < 0 {
+		return false
+	}
+	name := arn[idx+len(marker):]
+	return name != "" && name != "/"
+}
+
+// ResolveIAM returns the constraints to put on a role. A non-empty module
+// field replaces the global cloud.aws.iam value. CI and Deploy do not call this.
+func ResolveIAM(global, module IAM) (IAM, error) {
+	out := global
+	if module.Path != "" {
+		out.Path = module.Path
+	}
+	if module.PermissionsBoundary != "" {
+		out.PermissionsBoundary = module.PermissionsBoundary
+	}
+	if err := out.Validate(); err != nil {
+		return IAM{}, err
+	}
+	return out, nil
+}
+
+// ValidateIAM checks the global block and every EC2 module override.
+func (c *Config) ValidateIAM() error {
+	if c == nil {
+		return nil
+	}
+	for _, module := range []IAM{c.Perforce.IAM, c.Horde.IAM, c.Lore.IAM, c.Workstation.IAM, c.DDC.IAM, {}} {
+		if _, err := ResolveIAM(c.Cloud.AWS.IAM, module); err != nil {
+			return err
+		}
+	}
+	return nil
 }

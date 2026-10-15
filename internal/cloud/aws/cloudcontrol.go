@@ -20,6 +20,13 @@ var _ fabricac.ResourceClient = (*resourceClients)(nil)
 // a terminal state. Blocking keeps callers simple and consistent with existing
 // perforce/horde create commands that immediately use r.Identifier after this call.
 func (c *resourceClients) Create(ctx context.Context, r *fabricac.Resource) error {
+	// Volume request tags cannot ride a Cloud Control AWS::EC2::Instance
+	// create. Skip straight to RunInstances so the root volume is tagged
+	// on the same request.
+	if r.TypeName == fabricac.TypeAWSEC2Instance && len(c.volumeRequestTags) > 0 {
+		r.DesiredState = injectFabricaTags(r.TypeName, r.DesiredState, "fabrica", c.version, c.operatorTags)
+		return c.createInstanceWithVolumeTags(ctx, r)
+	}
 	if err := c.ensureClient(ctx); err != nil {
 		return err
 	}
@@ -32,7 +39,7 @@ func (c *resourceClients) Create(ctx context.Context, r *fabricac.Resource) erro
 	})
 	if err != nil {
 		oplog.WithResourceAndRegion(r.TypeName, "", c.awsCfg.region).Error("cloud control create failed", "error", err)
-		return fmt.Errorf("creating %s: %w", r.TypeName, err)
+		return c.fallbackVolumeTags(ctx, r, fmt.Errorf("creating %s: %w", r.TypeName, err))
 	}
 
 	token := aws.ToString(out.ProgressEvent.RequestToken)
@@ -52,33 +59,13 @@ func (c *resourceClients) Create(ctx context.Context, r *fabricac.Resource) erro
 			}
 		}
 		if ev != nil && ev.OperationStatus == types.OperationStatusFailed {
-			if ev.ErrorCode == types.HandlerErrorCodeAlreadyExists {
-				id := aws.ToString(ev.Identifier)
-				if id != "" {
-					oplog.WithResourceAndRegion(r.TypeName, id, c.awsCfg.region).Debug("resource already exists, recovering from partial failure")
-					r.Identifier = id
-					return nil
-				}
-			}
-			return progressEventError(r.TypeName, ev)
+			return c.failedInstanceCreate(ctx, r, ev)
 		}
-		return fmt.Errorf("waiting for %s creation: %w", r.TypeName, err)
+		return c.fallbackVolumeTags(ctx, r, fmt.Errorf("waiting for %s creation: %w", r.TypeName, err))
 	}
 
 	if result.ProgressEvent.OperationStatus == types.OperationStatusFailed {
-		if result.ProgressEvent.ErrorCode == types.HandlerErrorCodeAlreadyExists {
-			// Resource already exists on AWS (partial-failure recovery: a previous run
-			// created the resource but WriteState failed). Capture the existing
-			// identifier so the caller can record it in state and continue.
-			// If no identifier is present, we cannot recover — return the error.
-			id := aws.ToString(result.ProgressEvent.Identifier)
-			if id != "" {
-				oplog.WithResourceAndRegion(r.TypeName, id, c.awsCfg.region).Debug("resource already exists, recovering from partial failure")
-				r.Identifier = id
-				return nil
-			}
-		}
-		return progressEventError(r.TypeName, result.ProgressEvent)
+		return c.failedInstanceCreate(ctx, r, result.ProgressEvent)
 	}
 
 	r.Identifier = aws.ToString(result.ProgressEvent.Identifier)
@@ -367,6 +354,29 @@ func (c *resourceClients) timeout() time.Duration {
 		return c.waitTimeout
 	}
 	return defaultWaitTimeout
+}
+
+// failedInstanceCreate handles a FAILED Cloud Control progress event.
+// AlreadyExists with an identifier is recovered so a previous run that created
+// the resource but failed to write state can continue. Any other event that
+// already names an identifier is returned unchanged: RunInstances would launch
+// a second instance. AlreadyExists with an empty identifier cannot be recovered
+// and does not fall back. Remaining failures may fall back once when the error
+// is a volume-tag or permission deny.
+func (c *resourceClients) failedInstanceCreate(ctx context.Context, r *fabricac.Resource, ev *types.ProgressEvent) error {
+	if ev.ErrorCode == types.HandlerErrorCodeAlreadyExists {
+		id := aws.ToString(ev.Identifier)
+		if id != "" {
+			oplog.WithResourceAndRegion(r.TypeName, id, c.awsCfg.region).Debug("resource already exists, recovering from partial failure")
+			r.Identifier = id
+			return nil
+		}
+		return progressEventError(r.TypeName, ev)
+	}
+	if aws.ToString(ev.Identifier) != "" {
+		return progressEventError(r.TypeName, ev)
+	}
+	return c.fallbackVolumeTags(ctx, r, progressEventError(r.TypeName, ev))
 }
 
 // progressEventError builds an error from a FAILED ProgressEvent, including the

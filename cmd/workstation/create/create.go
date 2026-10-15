@@ -10,6 +10,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/credentials"
 	"github.com/jpvelasco/fabrica/internal/prompt"
@@ -141,6 +142,12 @@ func (c command) run(ctx context.Context) error {
 	if err := c.rejectStockUbuntuAMI(ctx, wsCfg.AmiID); err != nil {
 		return err
 	}
+
+	resolvedIAM, err := config.ResolveIAM(c.runtime.Config.Cloud.AWS.IAM, wsCfg.IAM)
+	if err != nil {
+		return err
+	}
+	wsCfg.IAM = resolvedIAM
 
 	plan, err := workstation.NewCreatePlan(ctx, wsCfg, account, region, provision.VPCResolver(c.runtime.Provider), c.template, perforceAddr)
 	if err != nil {
@@ -317,12 +324,12 @@ func (c command) printDryRun(plan *workstation.CreatePlan) {
 			DefaultVPC:   plan.DefaultVPC,
 		},
 		ExtraFields: extraFields,
-		Resources: []string{
+		Resources: append([]string{
 			"Security Group:   " + plan.SGName,
 			"IAM Role:         " + plan.RoleName,
 			"Instance Profile: " + plan.InstanceProfileName,
 			"EC2 Instance:     " + plan.InstanceName,
-		},
+		}, provision.IAMResourceLines(plan.IAM)...),
 		CostResources: plan.CostResources,
 		Costs:         c.costs,
 		CidrWarning:   "port 8443 is open to the internet. Set workstation.allowedCidr in fabrica.yaml before deploying to production.",
@@ -348,13 +355,13 @@ func (c command) printApplyPlan(plan *workstation.CreatePlan) {
 		ExtraFields:   extraFields,
 		OmitVolume:    true,
 		CompactLabels: true,
-		Resources: []string{
+		Resources: append([]string{
 			// Compact resource labels match pre-#162 workstation apply.
 			"Security Group:   " + plan.SGName,
 			"IAM Role:         " + plan.RoleName,
 			"Instance Profile: " + plan.InstanceProfileName,
 			"EC2 Instance:     " + plan.InstanceName,
-		},
+		}, provision.IAMResourceLines(plan.IAM)...),
 		BeforeResources: func(w io.Writer) {
 			if plan.AllowedCIDR != "0.0.0.0/0" {
 				return

@@ -81,6 +81,45 @@ func TestCreateCobraDryRunOutputFields(t *testing.T) {
 	}
 }
 
+func TestCreateCobraDryRunPrintsIAMConstraints(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.State.Bucket = "fabrica-state-test"
+	cfg.Workstation.AmiID = "ami-test12345"
+	cfg.Workstation.VPCId = "vpc-test"
+	cfg.Workstation.SubnetId = "subnet-test"
+	cfg.Cloud.AWS.IAM = config.IAM{
+		Path:                "/fabrica/",
+		PermissionsBoundary: "arn:aws:iam::123456789012:policy/boundary",
+	}
+	cfg.Workstation.IAM.Path = "/workstation/"
+	provider := &testutil.TestProvider{}
+	rt := globals.Runtime{Config: cfg, Provider: provider}
+	got, err := runCreate(t, func() (globals.Runtime, error) { return rt, nil }, "--dry-run")
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	testutil.AssertContains(t, got, "IAM Path:         /workstation/")
+	testutil.AssertContains(t, got, "IAM Boundary:     arn:aws:iam::123456789012:policy/boundary")
+	if provider.CreateCalls != 0 {
+		t.Fatalf("dry-run made %d create calls, want 0", provider.CreateCalls)
+	}
+}
+
+func TestCreateCobraRejectsBadIAMPath(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.State.Bucket = "fabrica-state-test"
+	cfg.Workstation.AmiID = "ami-test12345"
+	cfg.Workstation.VPCId = "vpc-test"
+	cfg.Workstation.SubnetId = "subnet-test"
+	cfg.Cloud.AWS.IAM.Path = "fabrica"
+	rt := globals.Runtime{Config: cfg, Provider: &testutil.TestProvider{}}
+	_, err := runCreate(t, func() (globals.Runtime, error) { return rt, nil }, "--dry-run")
+	if err == nil {
+		t.Fatal("expected a bad iam.path to fail")
+	}
+	testutil.AssertContains(t, err.Error(), "must start and end")
+}
+
 func TestCreateCobraYesFlagSkipsConfirmation(t *testing.T) {
 	t.Chdir(t.TempDir())
 	provider := &testutil.TestProvider{}

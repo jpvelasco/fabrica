@@ -3,6 +3,7 @@ package horde
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -203,6 +204,48 @@ func TestLaunchTemplateDesiredState(t *testing.T) {
 	}
 	if meta["HttpTokens"] != "required" || meta["HttpPutResponseHopLimit"] != float64(1) {
 		t.Errorf("MetadataOptions = %v, want HttpTokens=required HttpPutResponseHopLimit=1", meta)
+	}
+}
+
+func TestLaunchTemplateVolumeRequestTags(t *testing.T) {
+	plan := newTestAgentsPlan()
+	plan.VolumeRequestTags = map[string]string{"Project": "fabrica-e2e"}
+	plan.IAM.Path = "/horde/"
+	plan.IAM.PermissionsBoundary = "arn:aws:iam::123456789012:policy/fabrica-boundary"
+	ds, err := LaunchTemplateDesiredState(plan, "sg-agent123", "dXNlci1kYXRh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(ds, &doc); err != nil {
+		t.Fatal(err)
+	}
+	data := doc["LaunchTemplateData"].(map[string]any)
+	specs := data["TagSpecifications"].([]any)
+	if len(specs) != 2 {
+		t.Fatalf("TagSpecifications = %d, want instance and volume", len(specs))
+	}
+	foundVolume := false
+	for _, spec := range specs {
+		m := spec.(map[string]any)
+		if m["ResourceType"] != "volume" {
+			continue
+		}
+		foundVolume = true
+		tags := m["Tags"].([]any)
+		if len(tags) != 1 || tags[0].(map[string]any)["Key"] != "Project" {
+			t.Errorf("volume tags = %v", tags)
+		}
+	}
+	if !foundVolume {
+		t.Fatal("volume TagSpecification missing")
+	}
+	role, err := AgentRoleDesiredState(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(role), `"/horde/"`) || !strings.Contains(string(role), "fabrica-boundary") {
+		t.Fatalf("agent role missing guardrails: %s", role)
 	}
 }
 

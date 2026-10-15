@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 )
 
@@ -19,6 +20,19 @@ type PlanInfo struct {
 	AllowedCIDR  string
 	VPCID        string
 	DefaultVPC   bool
+}
+
+// IAMResourceLines prints the path and permissions boundary when they are set.
+// Empty constraints add no lines, so existing plans stay unchanged.
+func IAMResourceLines(iam config.IAM) []string {
+	var lines []string
+	if iam.Path != "" {
+		lines = append(lines, "IAM Path:         "+iam.Path)
+	}
+	if iam.PermissionsBoundary != "" {
+		lines = append(lines, "IAM Boundary:     "+iam.PermissionsBoundary)
+	}
+	return lines
 }
 
 // PlanField is one line of module-specific detail in the plan output.

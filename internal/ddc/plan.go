@@ -72,6 +72,9 @@ type SetupPlan struct {
 	RoleName            string
 	InstanceProfileName string
 
+	// IAM is the resolved path and permissions boundary for the instance role.
+	IAM config.IAM
+
 	Topology topology.Topology
 
 	CostResources []cost.Resource
@@ -80,6 +83,9 @@ type SetupPlan struct {
 // NewSetupPlan validates config and builds a single home-region SetupPlan.
 func NewSetupPlan(ctx context.Context, cfg config.DDCConfig, account, region string, resolver cloud.VPCResolver) (*SetupPlan, error) {
 	if err := validateConfig(cfg); err != nil {
+		return nil, err
+	}
+	if err := cfg.IAM.Validate(); err != nil {
 		return nil, err
 	}
 
@@ -123,6 +129,7 @@ func NewSetupPlan(ctx context.Context, cfg config.DDCConfig, account, region str
 		ScyllaInstanceName:  "fabrica-ddc-scylla",
 		RoleName:            "fabrica-ddc-role",
 		InstanceProfileName: "fabrica-ddc-profile",
+		IAM:                 cfg.IAM,
 		Topology:            top,
 		CostResources:       CostResources(cfg),
 	}, nil

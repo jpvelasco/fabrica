@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"strconv"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/oplog"
@@ -202,6 +204,12 @@ func (c command) run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("building agents create plan: %w", err)
 	}
+	resolvedIAM, err := config.ResolveIAM(c.runtime.Config.Cloud.AWS.IAM, c.runtime.Config.Horde.IAM)
+	if err != nil {
+		return err
+	}
+	plan.IAM = resolvedIAM
+	plan.VolumeRequestTags = maps.Clone(c.runtime.Config.Cloud.AWS.VolumeRequestTags)
 
 	// Check if agents are already provisioned.
 	if !c.dryRun {
@@ -547,6 +555,7 @@ func (c command) printDryRun(plan *horde.AgentsCreatePlan) {
 		"Launch Template:        " + plan.LaunchTemplateName,
 		"Auto Scaling Group:     " + plan.ASGName,
 	}
+	resources = append(resources, provision.IAMResourceLines(plan.IAM)...)
 	if plan.ScalingEnabled {
 		resources = append(resources,
 			"Scale-out Policy:     "+plan.ScaleOutPolicyName,
@@ -583,13 +592,13 @@ func (c command) printApplyPlan(plan *horde.AgentsCreatePlan) {
 		{Key: "Agent AMI ID", Value: plan.AmiID},
 		{Key: "Coordinator", Value: fmt.Sprintf("%s:%d", plan.CoordinatorPrivateIP, plan.CoordinatorPort)},
 		{Key: "Capacity", Value: fmt.Sprintf("%d/%d/%d (min/desired/max)", plan.MinSize, plan.DesiredCapacity, plan.MaxSize)},
-	}, []string{
+	}, append([]string{
 		"Agent Security Group:   " + plan.SGName,
 		"Agent IAM Role:         " + plan.RoleName,
 		"Agent Instance Profile: " + plan.InstanceProfileName,
 		"Launch Template:        " + plan.LaunchTemplateName,
 		"Auto Scaling Group:     " + plan.ASGName,
-	})
+	}, provision.IAMResourceLines(plan.IAM)...))
 }
 
 func (c command) printPostCreate(plan *horde.AgentsCreatePlan, asgID string) {

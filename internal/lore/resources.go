@@ -163,10 +163,11 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 		[]string{"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"},
 		policies,
 		map[string]string{"FabricaModule": "lore"},
+		iamrole.Options(plan.IAM.Path, plan.IAM.PermissionsBoundary)...,
 	)
 }
 
 // InstanceProfileDesiredState wraps the Lore role for EC2 attachment.
 func InstanceProfileDesiredState(plan *CreatePlan) (json.RawMessage, error) {
-	return ec2state.InstanceProfileDesiredState(plan.InstanceProfileName, plan.RoleName)
+	return ec2state.InstanceProfileDesiredState(plan.InstanceProfileName, plan.RoleName, ec2state.ProfileOptions(plan.IAM.Path)...)
 }

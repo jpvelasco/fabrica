@@ -10,6 +10,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/credentials"
 	"github.com/jpvelasco/fabrica/internal/horde"
@@ -119,6 +120,12 @@ func (c command) run(ctx context.Context) error {
 	if cr, ok := c.runtime.Provider.(cloud.VPCCIDRResolver); ok {
 		cidrResolver = cr
 	}
+
+	resolvedIAM, err := config.ResolveIAM(c.runtime.Config.Cloud.AWS.IAM, hordeCfg.IAM)
+	if err != nil {
+		return err
+	}
+	hordeCfg.IAM = resolvedIAM
 
 	plan, err := horde.NewCreatePlan(ctx, hordeCfg, account, region, provision.VPCResolver(c.runtime.Provider), cidrResolver)
 	if err != nil {
@@ -258,12 +265,12 @@ func (c command) printDryRun(plan *horde.CreatePlan) {
 			{Key: "gRPC port", Value: fmt.Sprintf("%d", plan.GRPCPort)},
 			{Key: "Allowed CIDR", Value: plan.AllowedCIDR},
 		},
-		Resources: []string{
+		Resources: append([]string{
 			"Security Group:   " + plan.SGName,
 			"IAM Role:         " + plan.RoleName,
 			"Instance Profile: " + plan.InstanceProfileName,
 			"EC2 Instance:     " + plan.InstanceName,
-		},
+		}, provision.IAMResourceLines(plan.IAM)...),
 		CostResources: plan.CostResources,
 		Costs:         c.costs,
 		RawBetween: func(w io.Writer) {
@@ -284,12 +291,12 @@ func (c command) printApplyPlan(plan *horde.CreatePlan) {
 		VolumeSize:   plan.VolumeSize,
 	}, []provision.PlanField{
 		{Key: "AMI ID", Value: plan.AmiID},
-	}, []string{
+	}, append([]string{
 		"Security Group:   " + plan.SGName,
 		"IAM Role:         " + plan.RoleName,
 		"Instance Profile: " + plan.InstanceProfileName,
 		"EC2 Instance:     " + plan.InstanceName,
-	})
+	}, provision.IAMResourceLines(plan.IAM)...))
 }
 
 func (c command) printPostCreate(plan *horde.CreatePlan, instanceID string) {

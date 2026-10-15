@@ -54,6 +54,9 @@ type CreatePlan struct {
 	RoleName            string
 	InstanceProfileName string
 
+	// IAM is the resolved path and permissions boundary for the instance role.
+	IAM config.IAM
+
 	// TLS settings (optional).
 	TLSConfig config.LoreTLSConfig
 
@@ -74,6 +77,9 @@ func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region s
 		return nil, fmt.Errorf("lore.amiId is required. Provide an AMI ID that contains the loreserver binary.\nSee: docs/lore-ami.md")
 	}
 	if err := validateTLSConfig(cfg.TLSConfig); err != nil {
+		return nil, err
+	}
+	if err := cfg.IAM.Validate(); err != nil {
 		return nil, err
 	}
 
@@ -114,6 +120,7 @@ func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region s
 		StoreTables:         s3StoreTables(storeBackend, storeBucket),
 		RoleName:            "fabrica-lore-role",
 		InstanceProfileName: "fabrica-lore-profile",
+		IAM:                 cfg.IAM,
 		TLSConfig:           cfg.TLSConfig,
 		CostResources:       CostResources(cfg),
 	}, nil

@@ -42,6 +42,9 @@ type CreatePlan struct {
 	BackupS3Bucket string
 	BackupS3Prefix string
 
+	// IAM is the resolved path and permissions boundary for the instance role.
+	IAM config.IAM
+
 	CostResources []cost.Resource
 }
 
@@ -50,6 +53,9 @@ type CreatePlan struct {
 // (dry-run with explicit VPC values, or tests).
 func NewCreatePlan(ctx context.Context, cfg config.PerforceConfig, account, region, version string, resolver cloud.VPCResolver) (*CreatePlan, error) {
 	if err := validateVersion(version); err != nil {
+		return nil, err
+	}
+	if err := cfg.IAM.Validate(); err != nil {
 		return nil, err
 	}
 
@@ -89,6 +95,7 @@ func NewCreatePlan(ctx context.Context, cfg config.PerforceConfig, account, regi
 		BackupS3Export:      cfg.Backup.S3Export,
 		BackupS3Bucket:      cfg.Backup.S3Bucket,
 		BackupS3Prefix:      s3Prefix,
+		IAM:                 cfg.IAM,
 		CostResources:       CostResources(cfg),
 	}, nil
 }

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Guardrailed accounts can set an IAM path, a permissions boundary, and volume request tags** — `cloud.aws.iam` (`path`, `permissionsBoundary`) and the same keys on workstation, horde (coordinator and agents), lore, perforce, and ddc are applied to the roles those modules create. Instance profiles receive the path only. The boundary must be a policy ARN in the commercial, GovCloud, or China partition. CI and Deploy ignore the keys. `cloud.aws.volumeRequestTags` launches with EC2 `RunInstances` when the map is non-empty, so the instance and the root volume carry the same tags, with IMDSv2 required. An empty map still tries Cloud Control, then falls back once on a permission or request-tag error unless that failure already returned an identifier. Horde agent launch templates put the same tag set on the instance and the volume when `volumeRequestTags` is set. See `docs/guardrailed-accounts.md`. (#488)
+
 ### Fixed
 
 - **IMDSv2 hop limit used the wrong Cloud Control property name** — the instance desired state, the export defaults, and the Horde agent launch template pinned `"HopLimit": 1` inside `MetadataOptions`, which CloudFormation/Cloud Control ignores — the correct property is `HttpPutResponseHopLimit`, so the pin was a no-op and the default (5) applied. The key is now `HttpPutResponseHopLimit: 1` everywhere (single-instance EC2 modules, export CloudFormation default + Terraform `http_put_response_hop_limit`, Horde agent launch template); `AssertIMDSv2` verifies the renamed key and a rendered-desired-state test pins `HttpPutResponseHopLimit: 1` in the JSON. (follow-up to #494)
