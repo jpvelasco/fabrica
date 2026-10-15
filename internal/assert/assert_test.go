@@ -63,3 +63,18 @@ func TestContainsCaseSensitive(t *testing.T) {
 		t.Fatal("should be case sensitive")
 	}
 }
+
+func TestNoneOfPass(t *testing.T) {
+	NoneOf(t, "set -euo pipefail", "set -x", "set +x", "xtrace")
+}
+
+func TestNoneOfFailureBranch(t *testing.T) {
+	ft := &failingT{T: t}
+	NoneOf(ft, "set -euo pipefail set -x", "set -x")
+	if !ft.failed {
+		t.Fatal("NoneOf should have called Fatalf for a present substring")
+	}
+	if !strings.Contains(ft.msg, "set -x") {
+		t.Fatalf("error message should include the substring: %q", ft.msg)
+	}
+}

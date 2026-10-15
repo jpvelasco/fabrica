@@ -79,6 +79,9 @@ func TestBuildCoreFields(t *testing.T) {
 	if meta["HttpTokens"].(string) != "required" {
 		t.Errorf("HttpTokens = %v", meta["HttpTokens"])
 	}
+	if meta["HopLimit"].(float64) != 1 {
+		t.Errorf("HopLimit = %v, want 1", meta["HopLimit"])
+	}
 }
 
 func checkStr(t *testing.T, d map[string]any, key, want string) {

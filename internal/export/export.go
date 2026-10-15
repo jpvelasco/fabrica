@@ -447,6 +447,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		if _, ok := props["MetadataOptions"]; !ok {
 			props["MetadataOptions"] = map[string]any{
 				"HttpTokens": "required",
+				"HopLimit":   1,
 			}
 		}
 	case "AWS::EC2::SecurityGroup":

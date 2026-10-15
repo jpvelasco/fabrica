@@ -50,12 +50,16 @@ func AssertSGID(t *testing.T, doc map[string]any, want string) {
 	}
 }
 
-// AssertIMDSv2 checks that MetadataOptions.HttpTokens is set to "required".
+// AssertIMDSv2 checks that MetadataOptions requires IMDSv2 tokens with hop
+// limit 1.
 func AssertIMDSv2(t *testing.T, doc map[string]any) {
 	t.Helper()
 	meta, ok := doc["MetadataOptions"].(map[string]any)
 	if !ok || meta["HttpTokens"] != "required" {
 		t.Errorf("MetadataOptions.HttpTokens not 'required': %v", doc["MetadataOptions"])
+	}
+	if meta["HopLimit"] != float64(1) {
+		t.Errorf("MetadataOptions.HopLimit = %v, want 1: %v", meta["HopLimit"], doc["MetadataOptions"])
 	}
 }
 

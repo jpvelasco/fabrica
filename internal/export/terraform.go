@@ -420,6 +420,9 @@ func (g *terraformGenerator) hclMetadataOptions(v any) string {
 	var sb strings.Builder
 	sb.WriteString("  metadata_options {\n")
 	fmt.Fprintf(&sb, "    http_tokens = %q\n", mo["HttpTokens"])
+	if hopLimit, ok := mo["HopLimit"]; ok {
+		fmt.Fprintf(&sb, "    http_put_response_hop_limit = %v\n", hopLimit)
+	}
 	sb.WriteString("  }\n")
 	return sb.String()
 }

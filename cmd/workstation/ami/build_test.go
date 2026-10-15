@@ -50,11 +50,18 @@ func TestBuildWritesDCVAndSSM(t *testing.T) {
 	}
 	s := string(comp)
 	for _, want := range []string{
-		"nice-dcv-ubuntu2204-x86_64.tgz",
-		// x11-xserver-utils provides xsetroot and dbus-x11 provides dbus-launch
-		// on jammy (plain dbus does not); both are required for the DCV virtual
-		// session to survive boot (#489).
-		"apt-get install -y wget gnupg xvfb x11-xserver-utils dbus-x11 xdg-user-dirs",
+		// Pinned versioned tarball (2026.0-24952) with a hard SHA256 check
+		// and a fingerprint-gated GPG key import (#490).
+		"https://d1uj6qtbmh3dt5.cloudfront.net/2026.0/Servers/nice-dcv-2026.0-24952-ubuntu2204-x86_64.tgz",
+		"52651a93844ce3d5ad918ee7666b007bb2a1c7ff7cf68dc50692e6b18efaa35a",
+		"sha256sum -c -",
+		"5B9EEBC864449701F6CE566A11B5C70A170C6114",
+		// dpkg-sig verifies each .deb's GpgBuilder signature before install.
+		"dpkg-sig --verify",
+		// x11-xserver-utils provides xsetroot and dbus-x11 provides
+		// dbus-launch on jammy (plain dbus does not); both are required for
+		// the DCV virtual session to survive boot (#489).
+		"apt-get install -y wget gnupg dpkg-sig xvfb x11-xserver-utils dbus-x11 xdg-user-dirs",
 		`dcvdir=$(find . -maxdepth 1 -type d -name 'nice-dcv-*' | head -n1)`,
 		"systemctl enable dcvserver",
 		"command -v dcv",
@@ -66,6 +73,11 @@ func TestBuildWritesDCVAndSSM(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Errorf("component missing %q", want)
 		}
+	}
+	// The unversioned "latest" tarball URL must not remain — the build is
+	// pinned to the 2026.0-24952 release path.
+	if strings.Contains(s, "https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-x86_64.tgz") {
+		t.Error("component must not use the unversioned DCV tarball URL")
 	}
 	if strings.Contains(s, "|| true") {
 		t.Error("component must not soft-fail SSM")

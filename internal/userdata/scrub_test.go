@@ -13,6 +13,9 @@ func TestScrubShellFailsClosedWhenLocalCopySurvives(t *testing.T) {
 		"truncate -s 0 /var/lib/cloud/instance/user-data.txt",
 		"truncate -s 0 /var/lib/cloud/instance/user-data.txt.i",
 		"truncate -s 0 /var/lib/cloud/instance/user-data\n",
+		// part-001 is the file cloud-init executes, so it is wiped last,
+		// after the re-verify and the success line (#490 follow-up).
+		"truncate -s 0 /var/lib/cloud/instance/scripts/part-001",
 		"ERROR: userdata scrub failed after configure; a local copy of the user data still holds the admin password.",
 		"Scrubbed EC2 userdata (local).",
 	} {
@@ -37,6 +40,13 @@ func TestScrubShellFailsClosedWhenLocalCopySurvives(t *testing.T) {
 	okIdx := strings.Index(got, "Scrubbed EC2 userdata (local).")
 	if truncIdx < 0 || checkIdx < truncIdx || errIdx < checkIdx || exitIdx < errIdx || okIdx < exitIdx {
 		t.Error("failure path must truncate, re-verify empty, echo ERROR, exit 1, and only then log success")
+	}
+	// part-001 is the file cloud-init is executing; wiping it before the
+	// re-verify/success would drop the rest of the script. It must be the
+	// final statement of the fragment (#490 follow-up).
+	partIdx := strings.Index(got, "truncate -s 0 /var/lib/cloud/instance/scripts/part-001")
+	if partIdx < 0 || partIdx < okIdx {
+		t.Error("part-001 must be wiped last, after the success line — cloud-init is executing that file")
 	}
 }
 
