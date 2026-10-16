@@ -338,6 +338,27 @@ func TestTeardownFieldNil(t *testing.T) {
 	}
 }
 
+func TestLockingProviderAcquireAndRelease(t *testing.T) {
+	ctx := context.Background()
+
+	fresh := &LockingProvider{TestProvider: &TestProvider{}}
+	if err := fresh.AcquireStateLockRow(ctx, "op", nil, "token", nil); err != nil {
+		t.Fatalf("AcquireStateLockRow = %v, want nil", err)
+	}
+	if fresh.Acquires != 1 {
+		t.Errorf("Acquires = %d, want 1", fresh.Acquires)
+	}
+	if err := fresh.ReleaseStateLockRow(ctx, "op", "token", "tok"); err != nil {
+		t.Fatalf("ReleaseStateLockRow = %v, want nil", err)
+	}
+
+	held := &LockingProvider{TestProvider: &TestProvider{}}
+	held.Held = true
+	if err := held.AcquireStateLockRow(ctx, "op", nil, "token", nil); !errors.Is(err, cloud.ErrLockHeld) {
+		t.Errorf("Held AcquireStateLockRow = %v, want ErrLockHeld", err)
+	}
+}
+
 func TestTestProviderDescribeASG(t *testing.T) {
 	p := &TestProvider{}
 	_, err := p.DescribeASG(context.Background(), "asg-missing")
