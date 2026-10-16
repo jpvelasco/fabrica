@@ -31,7 +31,7 @@ func TestCreate_VolumeRequestTagsSkipCloudControl(t *testing.T) {
 			"IamInstanceProfile":"fabrica-workstation-profile",
 			"BlockDeviceMappings":[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":100,"VolumeType":"gp3","DeleteOnTermination":true}}],
 			"Tags":[{"Key":"Name","Value":"fabrica-workstation"},{"Key":"ManagedBy","Value":"fabrica"}],
-			"MetadataOptions":{"HttpTokens":"optional","HopLimit":1}
+			"MetadataOptions":{"HttpTokens":"optional","HttpPutResponseHopLimit":1}
 		}`),
 	}
 	if err := rc.Create(context.Background(), r); err != nil {
@@ -325,6 +325,75 @@ func TestRunInstancesInputRequiresShape(t *testing.T) {
 	}
 	assertTagSpec(t, kept, types.ResourceTypeInstance, "Project", "from-state")
 	assertSameTagSet(t, kept)
+}
+
+// TestRunInstancesInputReadsHttpPutResponseHopLimit pins the post-#500
+// desired-state key: the SDK fallback must read the property under its
+// correct CloudFormation/Cloud Control name, and the legacy HopLimit key
+// (which now means "absent") must fall back to the pinned default of 1.
+func TestRunInstancesInputReadsHttpPutResponseHopLimit(t *testing.T) {
+	base := `{"ImageId":"ami-1","InstanceType":"t3.micro"}`
+	for _, tc := range []struct {
+		name    string
+		meta    string
+		wantHop int32
+	}{
+		{name: "absent metadata options", meta: ``, wantHop: 1},
+		{name: "legacy HopLimit key is ignored", meta: `"MetadataOptions":{"HttpTokens":"required","HopLimit":1}`, wantHop: 1},
+		{name: "HttpPutResponseHopLimit 1", meta: `"MetadataOptions":{"HttpPutResponseHopLimit":1}`, wantHop: 1},
+		{name: "HttpPutResponseHopLimit 2", meta: `"MetadataOptions":{"HttpPutResponseHopLimit":2}`, wantHop: 2},
+		{name: "HttpPutResponseHopLimit 64", meta: `"MetadataOptions":{"HttpPutResponseHopLimit":64}`, wantHop: 64},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := base
+			if tc.meta != "" {
+				doc = `{"ImageId":"ami-1","InstanceType":"t3.micro",` + tc.meta + `}`
+			}
+			in, err := runInstancesInput(json.RawMessage(doc), nil)
+			if err != nil {
+				t.Fatalf("runInstancesInput: %v", err)
+			}
+			if in.MetadataOptions == nil || awssdk.ToInt32(in.MetadataOptions.HttpPutResponseHopLimit) != tc.wantHop {
+				t.Fatalf("hop = %d, want %d (input %+v)", awssdk.ToInt32(in.MetadataOptions.HttpPutResponseHopLimit), tc.wantHop, in)
+			}
+		})
+	}
+	bad, err := runInstancesInput(json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro","MetadataOptions":{"HttpPutResponseHopLimit":255}}`), nil)
+	if err == nil || bad != nil {
+		t.Fatalf("hop 255: err = %v, want an invalid-hop-limit error", err)
+	}
+	if !strings.Contains(err.Error(), "invalid IMDSv2 hop limit") {
+		t.Fatalf("err = %v, want the invalid-hop-limit message", err)
+	}
+}
+
+func TestSanitizeIMDSv2HopLimit(t *testing.T) {
+	for _, tc := range []struct {
+		in      int
+		want    int
+		wantErr bool
+	}{
+		{in: 0, want: 1},
+		{in: 1, want: 1},
+		{in: 64, want: 64},
+		{in: 65, wantErr: true},
+		{in: 255, wantErr: true},
+		{in: -1, wantErr: true},
+	} {
+		got, err := sanitizeIMDSv2HopLimit(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Fatalf("sanitize(%d) err = nil, want an error", tc.in)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("sanitize(%d) err = %v", tc.in, err)
+		}
+		if got != tc.want {
+			t.Fatalf("sanitize(%d) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
 }
 
 func TestEC2ServiceRunInstances(t *testing.T) {

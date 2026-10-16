@@ -95,9 +95,15 @@ type ccInstanceDoc struct {
 		Value string `json:"Value"`
 	} `json:"Tags"`
 	MetadataOptions struct {
-		HopLimit int `json:"HopLimit"`
+		HttpPutResponseHopLimit int `json:"HttpPutResponseHopLimit"`
 	} `json:"MetadataOptions"`
 }
+
+// The IMDSv2 hop limit is legal in 1..64. Capping at the service bound keeps
+// the int32 conversion below (and the request itself) within range: an
+// out-of-range desired-state value is malformed, so the fallback fails loudly
+// instead of silently clamping.
+const maxIMDSv2HopLimit = 64
 
 func runInstancesInput(desired json.RawMessage, volumeTags map[string]string) (*ec2.RunInstancesInput, error) {
 	var doc ccInstanceDoc
@@ -108,7 +114,11 @@ func runInstancesInput(desired json.RawMessage, volumeTags map[string]string) (*
 		return nil, fmt.Errorf("EC2 instance desired state is missing ImageId or InstanceType")
 	}
 
-	instanceTags := make([]types.Tag, 0, len(doc.Tags)+len(volumeTags))
+	// Capacity is seeded with the document's tag count alone; the volume tags
+	// are appended and the slice grows on demand. Summing the two counts in a
+	// make hint could overflow int for a malformed document (CodeQL
+	// alloc-integer-overflow), so the hint stays a single len.
+	instanceTags := make([]types.Tag, 0, len(doc.Tags))
 	seen := map[string]struct{}{}
 	for _, tag := range doc.Tags {
 		if tag.Key == "" {
@@ -131,9 +141,9 @@ func runInstancesInput(desired json.RawMessage, volumeTags map[string]string) (*
 	// requires Project on the volume still sees it, and ManagedBy rides along.
 	vol := append([]types.Tag(nil), instanceTags...)
 
-	hop := doc.MetadataOptions.HopLimit
-	if hop <= 0 {
-		hop = 1
+	hop, err := sanitizeIMDSv2HopLimit(doc.MetadataOptions.HttpPutResponseHopLimit)
+	if err != nil {
+		return nil, err
 	}
 	input := &ec2.RunInstancesInput{
 		ImageId:      aws.String(doc.ImageID),
@@ -142,7 +152,7 @@ func runInstancesInput(desired json.RawMessage, volumeTags map[string]string) (*
 		MaxCount:     aws.Int32(1),
 		MetadataOptions: &types.InstanceMetadataOptionsRequest{
 			HttpTokens:              types.HttpTokensStateRequired,
-			HttpPutResponseHopLimit: aws.Int32(int32(hop)), // #nosec G115 -- IMDSv2 hop limit is 1..64
+			HttpPutResponseHopLimit: aws.Int32(int32(hop)), // #nosec G115 -- hop is clamped to 1..maxIMDSv2HopLimit by sanitizeIMDSv2HopLimit
 		},
 		TagSpecifications: []types.TagSpecification{
 			{ResourceType: types.ResourceTypeInstance, Tags: instanceTags},
@@ -178,6 +188,20 @@ func runInstancesInput(desired json.RawMessage, volumeTags map[string]string) (*
 		}
 	}
 	return input, nil
+}
+
+// sanitizeIMDSv2HopLimit normalizes the desired-state hop limit for the
+// RunInstances request. Absent (0) falls back to the pinned default of 1; a
+// value above the service bound (64) is a malformed desired state and errors,
+// because the caller's desired state cannot be honored as written.
+func sanitizeIMDSv2HopLimit(hop int) (int, error) {
+	if hop == 0 {
+		return 1, nil
+	}
+	if hop < 1 || hop > maxIMDSv2HopLimit {
+		return 0, fmt.Errorf("EC2 instance desired state has an invalid IMDSv2 hop limit %d; it must be between 1 and %d", hop, maxIMDSv2HopLimit)
+	}
+	return hop, nil
 }
 
 func instanceProfileName(raw json.RawMessage) string {
