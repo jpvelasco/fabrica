@@ -60,10 +60,11 @@ func testProviderWithParameter(m *mockParameter) *awsProvider {
 	}
 }
 
-func TestPutSecureParameterOverwritesThenTags(t *testing.T) {
+func TestPutSecureParameterPutsThenTags(t *testing.T) {
+	const name = "/fabrica/workstation/abc123def4567890/dcv-password"
 	m := &mockParameter{
 		putFn: func(_ context.Context, in *ssm.PutParameterInput) (*ssm.PutParameterOutput, error) {
-			if aws.ToString(in.Name) != "/fabrica/workstation/dcv-password" {
+			if aws.ToString(in.Name) != name {
 				t.Errorf("name = %q", aws.ToString(in.Name))
 			}
 			if aws.ToString(in.Value) != "secret-value" {
@@ -72,11 +73,11 @@ func TestPutSecureParameterOverwritesThenTags(t *testing.T) {
 			if in.Type != ssmtypes.ParameterTypeSecureString {
 				t.Errorf("type = %s", in.Type)
 			}
-			if !aws.ToBool(in.Overwrite) {
-				t.Error("Overwrite must be true so a stale parameter is replaced")
+			if in.Overwrite != nil {
+				t.Error("Overwrite must be absent: a per-create name is never overwritten, and Overwrite+Tags are rejected together")
 			}
 			if len(in.Tags) != 0 {
-				t.Errorf("Tags on PutParameter = %v; Tags and Overwrite cannot be combined", in.Tags)
+				t.Errorf("Tags on PutParameter = %v; Parameter Store rejects Tags with Overwrite", in.Tags)
 			}
 			return &ssm.PutParameterOutput{}, nil
 		},
@@ -99,7 +100,7 @@ func TestPutSecureParameterOverwritesThenTags(t *testing.T) {
 	}
 	p := testProviderWithParameter(m)
 	err := p.PutSecureParameter(context.Background(), fabricac.SecureParameter{
-		Name:  "/fabrica/workstation/dcv-password",
+		Name:  name,
 		Value: "secret-value",
 		Tags:  map[string]string{"ManagedBy": "someone-else", "Project": "fabrica"},
 	})
@@ -108,6 +109,43 @@ func TestPutSecureParameterOverwritesThenTags(t *testing.T) {
 	}
 	if m.puts != 1 || m.tags != 1 || m.dels != 0 {
 		t.Fatalf("puts=%d tags=%d dels=%d", m.puts, m.tags, m.dels)
+	}
+}
+
+// TestPutSecureParameterFailsLoudWhenNameExists covers the collision paths:
+// a typed ParameterExists error and a raw API error both fail with delete-the-
+// orphan guidance, omit the secret, and never attempt a follow-up delete.
+func TestPutSecureParameterFailsLoudWhenNameExists(t *testing.T) {
+	const name = "/fabrica/workstation/abc123def4567890/dcv-password"
+	for _, tc := range []struct {
+		name   string
+		putErr error
+	}{
+		{name: "typed ParameterAlreadyExists", putErr: &ssmtypes.ParameterAlreadyExists{Message: aws.String("exists")}},
+		{name: "raw API ParameterAlreadyExists", putErr: paramAPIError{code: "ParameterAlreadyExists"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &mockParameter{putFn: func(context.Context, *ssm.PutParameterInput) (*ssm.PutParameterOutput, error) {
+				return nil, tc.putErr
+			}}
+			p := testProviderWithParameter(m)
+			err := p.PutSecureParameter(context.Background(), fabricac.SecureParameter{
+				Name:  name,
+				Value: "secret-value",
+			})
+			if err == nil || !strings.Contains(err.Error(), "already exists") {
+				t.Fatalf("err = %v, want already-exists error", err)
+			}
+			if !strings.Contains(err.Error(), "aws ssm delete-parameter") {
+				t.Errorf("err missing cleanup guidance: %v", err)
+			}
+			if strings.Contains(err.Error(), "secret-value") {
+				t.Fatal("error includes the secret")
+			}
+			if m.puts != 1 || m.tags != 0 || m.dels != 0 {
+				t.Fatalf("puts=%d tags=%d dels=%d, want no follow-up calls", m.puts, m.tags, m.dels)
+			}
+		})
 	}
 }
 

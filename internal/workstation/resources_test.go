@@ -108,6 +108,12 @@ func TestInstanceDesiredStateAttachesInstanceProfile(t *testing.T) {
 
 func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 	plan := &CreatePlan{RoleName: "fabrica-workstation-role", Account: "123456789012", Region: "us-east-1"}
+	// The per-create name is minted by the create layer; the role reads it.
+	paramName, err := SessionPasswordParameterFor("abc123def4567890")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.SessionPasswordParameter = paramName
 	raw, err := RoleDesiredState(plan)
 	if err != nil {
 		t.Fatalf("RoleDesiredState: %v", err)
@@ -161,7 +167,7 @@ func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantARN := "arn:aws:ssm:us-east-1:123456789012:parameter/fabrica/workstation/dcv-password"
+	wantARN := "arn:aws:ssm:us-east-1:123456789012:parameter/fabrica/workstation/abc123def4567890/dcv-password"
 	if !strings.Contains(string(docJSON), wantARN) {
 		t.Errorf("password policy = %s, want ARN %s", docJSON, wantARN)
 	}
@@ -176,10 +182,11 @@ func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 
 func TestRoleDesiredStateGuardrails(t *testing.T) {
 	plan := &CreatePlan{
-		RoleName:            "fabrica-workstation-role",
-		InstanceProfileName: "fabrica-workstation-profile",
-		Account:             "123456789012",
-		Region:              "us-east-1",
+		RoleName:                 "fabrica-workstation-role",
+		InstanceProfileName:      "fabrica-workstation-profile",
+		Account:                  "123456789012",
+		Region:                   "us-east-1",
+		SessionPasswordParameter: "/fabrica/workstation/abcdef0123456789/dcv-password",
 		IAM: config.IAM{
 			Path:                "/workstation/",
 			PermissionsBoundary: "arn:aws:iam::123456789012:policy/fabrica-boundary",
@@ -210,13 +217,20 @@ func TestRoleDesiredStateGuardrails(t *testing.T) {
 }
 
 func TestRoleDesiredStateRequiresRegionAndAccount(t *testing.T) {
-	_, err := RoleDesiredState(&CreatePlan{RoleName: "fabrica-workstation-role", Account: "123456789012"})
+	const paramName = "/fabrica/workstation/abc123def4567890/dcv-password"
+	_, err := RoleDesiredState(&CreatePlan{RoleName: "fabrica-workstation-role", Account: "123456789012", SessionPasswordParameter: paramName})
 	if err == nil {
 		t.Fatal("expected error when region is empty")
 	}
-	_, err = RoleDesiredState(&CreatePlan{RoleName: "fabrica-workstation-role", Region: "us-east-1"})
+	_, err = RoleDesiredState(&CreatePlan{RoleName: "fabrica-workstation-role", Region: "us-east-1", SessionPasswordParameter: paramName})
 	if err == nil {
 		t.Fatal("expected error when account is empty")
+	}
+	// Without a recorded per-create name the ARN cannot be scoped, so the
+	// role itself cannot be built.
+	_, err = RoleDesiredState(&CreatePlan{RoleName: "fabrica-workstation-role", Region: "us-east-1", Account: "123456789012"})
+	if err == nil {
+		t.Fatal("expected error when the session-password parameter name is empty")
 	}
 }
 

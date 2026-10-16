@@ -50,6 +50,14 @@ type CreatePlan struct {
 	RoleName            string
 	InstanceProfileName string
 
+	// SessionPasswordParameter is the per-create SSM SecureString name the
+	// instance role may read (ssm:GetParameter scoped to its exact ARN) and
+	// cloud-init reads at boot. The create layer mints a per-create nonce and
+	// sets this before the IAM role is built; RoleDesiredState and UserData
+	// both derive from it. It is recorded in state on the instance resource
+	// (Properties "sessionPasswordParameter") so terminate deletes exactly it.
+	SessionPasswordParameter string
+
 	// IAM is the resolved path and permissions boundary for the instance role.
 	IAM config.IAM
 

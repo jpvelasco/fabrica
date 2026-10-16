@@ -81,10 +81,41 @@ func TestCreateDryRunOutputFields(t *testing.T) {
 		"fabrica-workstation-sg",
 		"fabrica-workstation",
 		"Cost estimate:",
-		workstation.SessionPasswordParameter,
+		workstation.SessionPasswordParameterPrefix + "/",
 	} {
 		assert.Contains(t, got, want)
 	}
+	// The dry-run prints the per-create name it will mint, e.g.
+	// /fabrica/workstation/<32-hex-nonce>/dcv-password.
+	if !strings.Contains(got, "SSM Parameter:    /fabrica/workstation/"+assertDryRunNonce(t, got)+"/dcv-password") {
+		t.Fatalf("dry-run output missing the per-create SSM parameter name:\n%s", got)
+	}
+}
+
+// assertDryRunNonce checks the printed per-create nonce is well-formed (32
+// hex chars) and returns it so callers can reconstruct the full name.
+func assertDryRunNonce(t *testing.T, out string) string {
+	t.Helper()
+	const marker = "SSM Parameter:    "
+	idx := strings.Index(out, marker+workstation.SessionPasswordParameterPrefix+"/")
+	if idx < 0 {
+		t.Fatal("dry-run output does not name the per-create SSM parameter")
+	}
+	rest := out[idx+len(marker)+len(workstation.SessionPasswordParameterPrefix)+1:]
+	end := strings.Index(rest, "/dcv-password")
+	if end < 0 {
+		t.Fatal("dry-run SSM parameter name is malformed: " + rest)
+	}
+	nonce := rest[:end]
+	if len(nonce) != 32 {
+		t.Fatalf("nonce = %q, want 32 hex chars", nonce)
+	}
+	for _, r := range nonce {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			t.Fatalf("nonce %q is not hex", nonce)
+		}
+	}
+	return nonce
 }
 
 func TestCreateAlreadyExists(t *testing.T) {
@@ -190,8 +221,8 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	if !ok {
 		t.Fatal("instance missing from final state")
 	}
-	if inst.Properties["sessionPasswordParameter"] != workstation.SessionPasswordParameter {
-		t.Errorf("sessionPasswordParameter = %q", inst.Properties["sessionPasswordParameter"])
+	if param := inst.Properties["sessionPasswordParameter"]; !strings.HasPrefix(param, workstation.SessionPasswordParameterPrefix+"/") || !strings.HasSuffix(param, "/dcv-password") {
+		t.Errorf("sessionPasswordParameter = %q, want the per-create name shape", param)
 	}
 	assertSessionPasswordNotInDesiredState(t, provider)
 	if len(provider.DeletedParameters) != 0 {
@@ -246,9 +277,7 @@ func TestCreateSGFailureNoStateWritten(t *testing.T) {
 	if stateWritten {
 		t.Error("state must not be written when SG creation fails")
 	}
-	if len(provider.DeletedParameters) != 1 || provider.DeletedParameters[0] != workstation.SessionPasswordParameter {
-		t.Errorf("SG failure must delete the session password parameter, got %v", provider.DeletedParameters)
-	}
+	assertDeletedPerCreateParameter(t, provider, "SG failure must delete the session password parameter")
 }
 
 func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
@@ -271,8 +300,21 @@ func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
 	if !hasSG {
 		t.Error("SG resource not recorded in state after instance failure")
 	}
-	if len(provider.DeletedParameters) != 1 || provider.DeletedParameters[0] != workstation.SessionPasswordParameter {
-		t.Errorf("instance failure must delete the session password parameter, got %v", provider.DeletedParameters)
+	assertDeletedPerCreateParameter(t, provider, "instance failure must delete the session password parameter")
+}
+
+// assertDeletedPerCreateParameter pins the pre-instance cleanup: exactly one
+// parameter is deleted and it is a well-formed per-create name (never a
+// shared name).
+func assertDeletedPerCreateParameter(t *testing.T, provider *testutil.TestProvider, msg string) {
+	t.Helper()
+	if len(provider.DeletedParameters) != 1 {
+		t.Errorf("%s, deleted %v", msg, provider.DeletedParameters)
+		return
+	}
+	name := provider.DeletedParameters[0]
+	if !strings.HasPrefix(name, workstation.SessionPasswordParameterPrefix+"/") || !strings.HasSuffix(name, "/dcv-password") {
+		t.Errorf("%s, deleted %q (want the per-create name shape)", msg, name)
 	}
 }
 
@@ -704,7 +746,7 @@ func TestCreateDeleteErrorOnSGFailureReportsBoth(t *testing.T) {
 	}
 	assert.Contains(t, err.Error(), "creating security group")
 	assert.Contains(t, err.Error(), "also failed to delete SSM parameter")
-	assert.Contains(t, err.Error(), workstation.SessionPasswordParameter)
+	assert.Contains(t, err.Error(), workstation.SessionPasswordParameterPrefix)
 }
 
 func TestCreateRequiresParameterStore(t *testing.T) {
@@ -732,8 +774,17 @@ func assertSessionPasswordNotInDesiredState(t *testing.T, provider *testutil.Tes
 		t.Fatalf("put calls = %d, want 1", len(provider.PutParameters))
 	}
 	got := provider.PutParameters[0]
-	if got.Name != workstation.SessionPasswordParameter {
-		t.Errorf("parameter name = %q", got.Name)
+	// The name must be the per-create shape: prefix, a single nonce segment,
+	// and the dcv-password leaf. It must not be a shared name.
+	if !strings.HasPrefix(got.Name, workstation.SessionPasswordParameterPrefix+"/") {
+		t.Errorf("parameter name = %q, want the %s prefix", got.Name, workstation.SessionPasswordParameterPrefix)
+	}
+	if !strings.HasSuffix(got.Name, "/dcv-password") {
+		t.Errorf("parameter name = %q, want the /dcv-password leaf", got.Name)
+	}
+	nonce := got.Name[len(workstation.SessionPasswordParameterPrefix)+1 : len(got.Name)-len("/dcv-password")]
+	if nonce == "" || strings.ContainsAny(nonce, "/\\") {
+		t.Errorf("parameter name = %q, nonce must be a single segment", got.Name)
 	}
 	if got.Value == "" {
 		t.Fatal("stored password is empty")
@@ -762,12 +813,32 @@ func assertSessionPasswordNotInDesiredState(t *testing.T, provider *testutil.Tes
 		if strings.Contains(script, got.Value) {
 			t.Fatal("userdata contains the session password")
 		}
-		if !strings.Contains(script, workstation.SessionPasswordParameter) {
+		if !strings.Contains(script, got.Name) {
 			t.Fatal("userdata does not name the SSM parameter")
 		}
 		if !strings.Contains(script, "aws ssm get-parameter") {
 			t.Fatal("userdata does not fetch the parameter")
 		}
+	}
+}
+
+// TestCreateMintsADistinctNoncePerRun pins the per-create parameter naming:
+// two runs mint two different nonces, so concurrent creates never write the
+// same parameter name and terminate deletes exactly what was recorded.
+func TestCreateMintsADistinctNoncePerRun(t *testing.T) {
+	nonces := make([]string, 0, 2)
+	for i := 0; i < 2; i++ {
+		var out bytes.Buffer
+		provider := &testutil.TestProvider{}
+		c := newTestCommand(&out, provider, testutil.NewTestState())
+		c.dryRun = true
+		if err := c.run(context.Background()); err != nil {
+			t.Fatalf("run %d: %v", i+1, err)
+		}
+		nonces = append(nonces, assertDryRunNonce(t, out.String()))
+	}
+	if nonces[0] == nonces[1] {
+		t.Fatalf("two runs minted the same nonce %q", nonces[0])
 	}
 }
 

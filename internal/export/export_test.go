@@ -23,6 +23,12 @@ const (
 	exportRegion  = "us-east-1"
 )
 
+// testWSParamName is the per-create DCV session-password parameter name the
+// workstation test module records on its instance (Properties
+// "sessionPasswordParameter"). Export scopes the inline ssm:GetParameter
+// policy to its exact ARN.
+const testWSParamName = "/fabrica/workstation/abc123def4567890/dcv-password"
+
 func testStateWithHorde() *state.State {
 	st := state.NewState(exportAccount, exportRegion)
 	st.UpsertModule("horde", "ami-0abc123def456", "ready", []state.ModuleResource{
@@ -524,7 +530,7 @@ func TestExtractPropertiesEC2Instance(t *testing.T) {
 		},
 	}
 	cfg := testConfigWithHorde()
-	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion, "")
 
 	if props["InstanceType"] != "m7i.2xlarge" {
 		t.Errorf("unexpected instance type: %v", props["InstanceType"])
@@ -558,7 +564,7 @@ func TestExtractPropertiesSecurityGroup(t *testing.T) {
 		Properties: map[string]string{},
 	}
 	cfg := testConfigWithHorde()
-	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion, "")
 
 	if props["GroupName"] != "fabrica-horde-sg" {
 		t.Errorf("unexpected group name: %v", props["GroupName"])
@@ -575,7 +581,7 @@ func TestExtractPropertiesIAMRole(t *testing.T) {
 		Properties: map[string]string{},
 	}
 	cfg := testConfigWithHorde()
-	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion, "")
 
 	if props["RoleName"] != "fabrica-horde-role" {
 		t.Errorf("unexpected role name: %v", props["RoleName"])
@@ -592,7 +598,7 @@ func TestExtractPropertiesInstanceProfile(t *testing.T) {
 		Properties: map[string]string{},
 	}
 	cfg := testConfigWithHorde()
-	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion, "")
 
 	if props["InstanceProfileName"] != "fabrica-horde-profile" {
 		t.Errorf("unexpected profile name: %v", props["InstanceProfileName"])
@@ -605,7 +611,7 @@ func TestExtractPropertiesNilConfig(t *testing.T) {
 		Identifier: "i-123",
 		Properties: map[string]string{},
 	}
-	props := extractProperties("horde", res, nil, exportAccount, exportRegion)
+	props := extractProperties("horde", res, nil, exportAccount, exportRegion, "")
 
 	// Should not crash with nil config
 	if props == nil {
@@ -721,7 +727,7 @@ func TestExtractPropertiesImageIdMapping(t *testing.T) {
 		},
 	}
 	cfg := config.Defaults()
-	props := extractProperties("perforce", r, cfg, exportAccount, exportRegion)
+	props := extractProperties("perforce", r, cfg, exportAccount, exportRegion, "")
 
 	if props["ImageId"] != "ami-abc" {
 		t.Errorf("ImageId = %v, want ami-abc", props["ImageId"])
@@ -1299,7 +1305,7 @@ func TestExtractPropertiesCamelCase(t *testing.T) {
 		},
 	}
 	cfg := testConfigWithHorde()
-	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion, "")
 
 	// instanceType should be normalized to InstanceType
 	if props["InstanceType"] != "m7i.2xlarge" {
@@ -1375,7 +1381,7 @@ func TestWorkstationBlockDeviceMapping(t *testing.T) {
 	cfg.Workstation.AmiID = "ami-ws123"
 	cfg.Workstation.InstanceType = "g4dn.xlarge"
 
-	props := extractProperties("workstation", res, cfg, exportAccount, exportRegion)
+	props := extractProperties("workstation", res, cfg, exportAccount, exportRegion, "")
 	bdm, ok := props["BlockDeviceMappings"].([]map[string]any)
 	if !ok || len(bdm) == 0 {
 		t.Fatal("expected BlockDeviceMappings for workstation instance")
@@ -1398,7 +1404,7 @@ func TestHordeBlockDeviceMapping(t *testing.T) {
 	}
 	cfg := testConfigWithHorde()
 
-	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion, "")
 	bdm, ok := props["BlockDeviceMappings"].([]map[string]any)
 	if !ok || len(bdm) == 0 {
 		t.Fatal("expected BlockDeviceMappings for horde instance")
@@ -1419,7 +1425,7 @@ func TestCodeBuildArtifactsNoArtifacts(t *testing.T) {
 	}
 	cfg := config.Defaults()
 
-	props := extractProperties("ci", res, cfg, exportAccount, exportRegion)
+	props := extractProperties("ci", res, cfg, exportAccount, exportRegion, "")
 	artifacts, ok := props["Artifacts"].(map[string]any)
 	if !ok {
 		t.Fatal("expected Artifacts in CI extractProperties")
@@ -1441,7 +1447,7 @@ func TestCodeBuildArtifactsStatePreserved(t *testing.T) {
 	}
 	cfg := config.Defaults()
 
-	props := extractProperties("ci", res, cfg, exportAccount, exportRegion)
+	props := extractProperties("ci", res, cfg, exportAccount, exportRegion, "")
 	// The state-provided Artifacts should be preserved (it's a string in state,
 	// not a map, so the !ok check won't trigger the default)
 	if _, ok := props["Artifacts"]; !ok {
@@ -2459,7 +2465,7 @@ func TestExtractPropertiesCodeBuild(t *testing.T) {
 		},
 	}
 	cfg := testConfigWithCI()
-	props := extractProperties("ci", res, cfg, exportAccount, exportRegion)
+	props := extractProperties("ci", res, cfg, exportAccount, exportRegion, "")
 
 	if props["Name"] != "fabrica-ci" {
 		t.Errorf("unexpected project name: %v", props["Name"])
@@ -2485,7 +2491,7 @@ func TestExtractPropertiesGameLiftAlias(t *testing.T) {
 		Properties: map[string]string{},
 	}
 	cfg := testConfigWithDeploy()
-	props := extractProperties("deploy", res, cfg, exportAccount, exportRegion)
+	props := extractProperties("deploy", res, cfg, exportAccount, exportRegion, "")
 
 	if props["Name"] != "fabrica-deploy" {
 		t.Errorf("unexpected alias name: %v", props["Name"])
@@ -2501,7 +2507,7 @@ func TestExtractPropertiesGameLiftFleet(t *testing.T) {
 			"role": "active",
 		},
 	}
-	props := extractProperties("deploy", res, config.Defaults(), exportAccount, exportRegion)
+	props := extractProperties("deploy", res, config.Defaults(), exportAccount, exportRegion, "")
 
 	if props["Name"] != "fabrica-deploy-fleet" {
 		t.Errorf("unexpected fleet name: %v", props["Name"])
@@ -2518,7 +2524,7 @@ func TestExtractPropertiesGameLiftBuild(t *testing.T) {
 		Identifier: "build-1",
 		Properties: map[string]string{},
 	}
-	props := extractProperties("deploy", res, config.Defaults(), exportAccount, exportRegion)
+	props := extractProperties("deploy", res, config.Defaults(), exportAccount, exportRegion, "")
 
 	if props["Name"] != "fabrica-deploy-build" {
 		t.Errorf("unexpected build name: %v", props["Name"])
@@ -2534,7 +2540,7 @@ func TestExtractPropertiesS3Bucket(t *testing.T) {
 			"BucketName": "fabrica-ddc-bucket-123",
 		},
 	}
-	props := extractProperties("ddc", res, config.Defaults(), exportAccount, exportRegion)
+	props := extractProperties("ddc", res, config.Defaults(), exportAccount, exportRegion, "")
 
 	if props["BucketName"] != "fabrica-ddc-bucket-123" {
 		t.Errorf("unexpected bucket name: %v", props["BucketName"])
@@ -2552,7 +2558,7 @@ func TestExtractPropertiesS3BucketDefault(t *testing.T) {
 		Identifier: "some-bucket",
 		Properties: map[string]string{},
 	}
-	props := extractProperties("ddc", res, config.Defaults(), exportAccount, exportRegion)
+	props := extractProperties("ddc", res, config.Defaults(), exportAccount, exportRegion, "")
 
 	// Bucket name comes from the resource identifier (Cloud Control returns
 	// the bucket name as the resource identifier).
@@ -3371,7 +3377,7 @@ func TestExtractPropertiesASG(t *testing.T) {
 	}
 	cfg := config.Defaults()
 
-	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion, "")
 	// AutoScalingGroupName falls back to default since it's not in state properties.
 	if props["AutoScalingGroupName"] != "fabrica-horde-agents-asg" {
 		t.Errorf("AutoScalingGroupName = %v, want fabrica-horde-agents-asg (default fallback)", props["AutoScalingGroupName"])
@@ -3407,7 +3413,7 @@ func TestExtractPropertiesInternalKeysDropped(t *testing.T) {
 			"imageId":           "ami-123456",
 		},
 	}
-	props := extractProperties("perforce", res, config.Defaults(), exportAccount, exportRegion)
+	props := extractProperties("perforce", res, config.Defaults(), exportAccount, exportRegion, "")
 	for k := range internalStateKeys {
 		if _, ok := props[k]; ok {
 			t.Errorf("internal key %q leaked into exported properties", k)
@@ -3429,7 +3435,7 @@ func TestExtractPropertiesLaunchTemplate(t *testing.T) {
 	}
 	cfg := config.Defaults()
 
-	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion, "")
 	// LaunchTemplateName falls back to default since it's not in state properties.
 	if props["LaunchTemplateName"] != "fabrica-horde-agents-lt" {
 		t.Errorf("LaunchTemplateName = %v, want fabrica-horde-agents-lt (default fallback)", props["LaunchTemplateName"])
@@ -3458,7 +3464,7 @@ func TestExtractPropertiesScalingPolicyFallback(t *testing.T) {
 	}
 	cfg := config.Defaults()
 
-	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion, "")
 	// PolicyName falls back to default since it's not in state properties.
 	if props["PolicyName"] != "fabrica-horde-agents-scaling-policy" {
 		t.Errorf("PolicyName = %v, want fabrica-horde-agents-scaling-policy (default fallback)", props["PolicyName"])
@@ -3480,7 +3486,7 @@ func TestExtractPropertiesAlarmFallback(t *testing.T) {
 	}
 	cfg := config.Defaults()
 
-	props := extractProperties("horde", res, cfg, exportAccount, exportRegion)
+	props := extractProperties("horde", res, cfg, exportAccount, exportRegion, "")
 	// AlarmName falls back to identifier since it's not in state properties.
 	if props["AlarmName"] != "my-alarm-name" {
 		t.Errorf("AlarmName = %v, want my-alarm-name (derived from identifier)", props["AlarmName"])
@@ -3779,18 +3785,19 @@ func TestIAMRoleInlinePoliciesPerModule(t *testing.T) {
 			want: []map[string]any{iamrole.DeployS3ReadPolicy("fabrica-deploy-bucket")},
 		},
 		{
-			name:   "workstation: SSM output + DCV password parameter",
+			name:   "workstation: SSM output + DCV password parameter (per-create name from state)",
 			module: "workstation",
 			state: state.ModuleState{
 				Name:   "workstation",
 				Status: "ready",
 				Resources: []state.ModuleResource{
 					{TypeName: "AWS::IAM::Role", Identifier: "fabrica-workstation-role"},
+					{TypeName: "AWS::EC2::Instance", Identifier: "i-ws0", Properties: map[string]string{"sessionPasswordParameter": testWSParamName}},
 				},
 			},
 			cfg: config.Defaults(),
 			want: func() []map[string]any {
-				arn, err := workstation.SessionPasswordParameterARN(exportRegion, exportAccount)
+				arn, err := workstation.SessionPasswordParameterARN(exportRegion, exportAccount, testWSParamName)
 				if err != nil {
 					panic(err)
 				}
@@ -3886,14 +3893,17 @@ func TestCloudFormationEmitsInlinePoliciesOnRole(t *testing.T) {
 		{
 			name: "workstation",
 			state: state.ModuleState{
-				Name:      "workstation",
-				Status:    "ready",
-				Resources: []state.ModuleResource{{TypeName: "AWS::IAM::Role", Identifier: "fabrica-workstation-role"}},
+				Name:   "workstation",
+				Status: "ready",
+				Resources: []state.ModuleResource{
+					{TypeName: "AWS::IAM::Role", Identifier: "fabrica-workstation-role"},
+					{TypeName: "AWS::EC2::Instance", Identifier: "i-ws0", Properties: map[string]string{"sessionPasswordParameter": testWSParamName}},
+				},
 			},
 			cfg:      config.Defaults(),
 			roleName: "fabrica-workstation-role",
 			policy: func() map[string]any {
-				arn, err := workstation.SessionPasswordParameterARN(exportRegion, exportAccount)
+				arn, err := workstation.SessionPasswordParameterARN(exportRegion, exportAccount, testWSParamName)
 				if err != nil {
 					panic(err)
 				}
@@ -3941,12 +3951,37 @@ func TestCloudFormationEmitsInlinePoliciesOnRole(t *testing.T) {
 }
 
 func TestWorkstationInlinePoliciesSkipParameterWhenUnscoped(t *testing.T) {
-	got := inlinePoliciesForRole("workstation", config.Defaults(), "", exportRegion)
+	got := inlinePoliciesForRole("workstation", config.Defaults(), exportAccount, exportRegion, "")
 	if len(got) != 1 {
 		t.Fatalf("policy count = %d, want the SSM output policy only", len(got))
 	}
 	if got[0]["PolicyName"] != "fabrica-ssm-output" {
 		t.Fatalf("policy = %v", got[0]["PolicyName"])
+	}
+}
+
+// TestWorkstationInlinePoliciesScopeToRecordedParameter pins the happy path:
+// a recorded per-create session-password name yields the SSM output policy plus
+// the exact-ARN ssm:GetParameter read policy, and a malformed recorded name
+// falls back to the output policy only (the ARN helper rejects it).
+func TestWorkstationInlinePoliciesScopeToRecordedParameter(t *testing.T) {
+	got := inlinePoliciesForRole("workstation", config.Defaults(), exportAccount, exportRegion, testWSParamName)
+	if len(got) != 2 {
+		t.Fatalf("policy count = %d, want the SSM output + parameter read policies", len(got))
+	}
+	if got[0]["PolicyName"] != "fabrica-ssm-output" {
+		t.Fatalf("policy[0] = %v", got[0]["PolicyName"])
+	}
+	if got[1]["PolicyName"] != workstation.SessionPasswordPolicyName {
+		t.Fatalf("policy[1] = %v", got[1]["PolicyName"])
+	}
+
+	fallback := inlinePoliciesForRole("workstation", config.Defaults(), exportAccount, exportRegion, "not-a-per-create-name")
+	if len(fallback) != 1 {
+		t.Fatalf("malformed recorded name: policy count = %d, want the SSM output policy only", len(fallback))
+	}
+	if fallback[0]["PolicyName"] != "fabrica-ssm-output" {
+		t.Fatalf("fallback policy = %v", fallback[0]["PolicyName"])
 	}
 }
 
@@ -3992,9 +4027,12 @@ func TestTerraformEmitsInlinePolicyPerModule(t *testing.T) {
 		}, cfg: testPerforceBackupConfig(),
 			polNames: []string{"fabrica-ssm-output", "fabrica-perforce-backup-s3"}},
 		{name: "workstation", state: state.ModuleState{
-			Name:      "workstation",
-			Status:    "ready",
-			Resources: []state.ModuleResource{{TypeName: "AWS::IAM::Role", Identifier: "fabrica-workstation-role"}},
+			Name:   "workstation",
+			Status: "ready",
+			Resources: []state.ModuleResource{
+				{TypeName: "AWS::IAM::Role", Identifier: "fabrica-workstation-role"},
+				{TypeName: "AWS::EC2::Instance", Identifier: "i-ws0", Properties: map[string]string{"sessionPasswordParameter": testWSParamName}},
+			},
 		}, cfg: config.Defaults(),
 			polNames: []string{"fabrica-ssm-output", "fabrica-workstation-dcv-password"}},
 	}

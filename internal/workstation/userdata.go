@@ -66,7 +66,14 @@ if [ -z "$DCV_PASS" ] || [ "$DCV_PASS" = "None" ]; then
   echo "ERROR: SSM parameter {{ .SessionPasswordParameter }} returned an empty DCV session password."
   exit 1
 fi
-if ! printf '%s:%s\n' "$DCV_USER" "$DCV_PASS" | chpasswd; then
+# Feed chpasswd over stdin (a heredoc), never as a command argument, so the
+# password never appears in argv (ps) or on a command line. The unquoted
+# heredoc delimiter expands $DCV_USER / $DCV_PASS at boot; the value is
+# alphanumeric (see GeneratePassword) so no further quoting is needed.
+if ! chpasswd <<EOF
+$DCV_USER:$DCV_PASS
+EOF
+then
   echo "ERROR: chpasswd failed; the DCV login password was not set. Inspect /var/log/cloud-init-output.log."
   exit 1
 fi

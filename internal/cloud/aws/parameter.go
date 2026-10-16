@@ -16,6 +16,13 @@ import (
 
 // Parameter Store rejects Tags together with Overwrite, so a re-create of a
 // stale parameter writes the value first and tags second.
+//
+// PutSecureParameter never overwrites: each create mints its own per-create
+// parameter name (workstation.SessionPasswordParameterFor), so a successful
+// put implies the name was free. A pre-existing name is a collision (a crash
+// left an orphan or two creates raced on one nonce) and fails loudly so the
+// operator can delete the orphan via AWS Console/CLI — never a blind
+// overwrite of a live instance's secret.
 var _ fabricac.ParameterStore = (*awsProvider)(nil)
 
 type parameterClient interface {
@@ -33,9 +40,9 @@ func (p *awsProvider) parameterClient(cfg aws.Config) parameterClient {
 	return ssm.NewFromConfig(cfg)
 }
 
-// PutSecureParameter stores value as a SecureString. Overwrite is set so a
-// parameter left by a crashed create is replaced. The value is never included
-// in an error string.
+// PutSecureParameter stores value as a SecureString without overwriting.
+// ParameterExists is an error with cleanup guidance; the value is never
+// included in an error string.
 func (p *awsProvider) PutSecureParameter(ctx context.Context, param fabricac.SecureParameter) error {
 	name := strings.TrimSpace(param.Name)
 	if name == "" || !strings.HasPrefix(name, "/") {
@@ -50,12 +57,14 @@ func (p *awsProvider) PutSecureParameter(ctx context.Context, param fabricac.Sec
 	}
 	client := p.parameterClient(cfg)
 	_, err = client.PutParameter(ctx, &ssm.PutParameterInput{
-		Name:      aws.String(name),
-		Value:     aws.String(param.Value),
-		Type:      ssmtypes.ParameterTypeSecureString,
-		Overwrite: aws.Bool(true),
+		Name:  aws.String(name),
+		Value: aws.String(param.Value),
+		Type:  ssmtypes.ParameterTypeSecureString,
 	})
 	if err != nil {
+		if isParameterExists(err) {
+			return fmt.Errorf("SSM parameter %s already exists: a previous create left it behind or a concurrent create raced for the same name; delete the orphan with `aws ssm delete-parameter --name %s` after confirming no live instance uses it, then re-run", name, name)
+		}
 		return fmt.Errorf("storing SSM parameter %s: %w", name, err)
 	}
 	tags := parameterTags(param.Tags)
@@ -121,4 +130,13 @@ func isParameterNotFound(err error) bool {
 	}
 	var api smithy.APIError
 	return errors.As(err, &api) && api.ErrorCode() == "ParameterNotFound"
+}
+
+func isParameterExists(err error) bool {
+	var exists *ssmtypes.ParameterAlreadyExists
+	if errors.As(err, &exists) {
+		return true
+	}
+	var api smithy.APIError
+	return errors.As(err, &api) && api.ErrorCode() == "ParameterAlreadyExists"
 }

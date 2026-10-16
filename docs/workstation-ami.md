@@ -64,16 +64,22 @@ successful boot).
 
 The DCV session password is the OS password for `ubuntu`. DCV authenticates
 the session against that OS password, so the instance must learn it at boot.
-`workstation create` writes it to `.fabrica/workstation-credentials.yaml`
-(mode `0600`) — the operator source of truth — and to one Parameter Store
-SecureString, `/fabrica/workstation/dcv-password`, tagged `ManagedBy=fabrica`.
-The value is not placed in UserData, Cloud Control desired state, or module
-state. State records the parameter name only (`sessionPasswordParameter`).
+`workstation create` mints a unique parameter name per create —
+`/fabrica/workstation/<create-nonce>/dcv-password`, a 32-hex nonce — and
+writes the password to it as a Parameter Store SecureString, tagged
+`ManagedBy=fabrica`. There is no shared name and no overwrite: a create
+that finds an existing name fails and names the orphan. The password is
+also recorded in `.fabrica/workstation-credentials.yaml` (mode `0600`) —
+the operator source of truth. The value is not placed in UserData, Cloud
+Control desired state, or module state. State records the parameter name
+only (`sessionPasswordParameter` on the instance resource).
 
 Cloud-init runs `aws ssm get-parameter --with-decryption` (installing
-`awscli` when the AMI does not already have it) and pipes the value to
-`chpasswd`. The instance role may `ssm:GetParameter` on that parameter ARN
-only. A failed or empty read exits 1 before the session is created.
+`awscli` when the AMI does not already have it) and feeds the value to
+`chpasswd` via a quoted heredoc, so the password never appears on a
+command line. The instance role may `ssm:GetParameter` on that one
+parameter ARN only. A failed or empty read exits 1 before the session is
+created.
 
 After the DCV session is created and verified, the script still truncates
 the local copies (`user-data.txt`, `user-data.txt.i`, and `user-data`),
@@ -85,11 +91,11 @@ the password. The script never enables `set -x`.
 `Scrubbed EC2 userdata (local).` marks the point before the part-001 wipe
 in `/var/log/cloud-init-output.log`.
 
-`workstation terminate` deletes the parameter. A create that fails before
+`workstation terminate` deletes exactly the name recorded in state and
+skips the deletion when nothing is recorded. A create that fails before
 the instance exists deletes it too; once the instance exists the parameter
 stays until terminate so cloud-init can read it. A missing parameter is
-success. A parameter left by an earlier attempt is overwritten on the next
-create. The local credentials file is not deleted.
+success. The local credentials file is not deleted.
 
 HTTPS 200 on 8443 is **not** proof the session setup ran — `dcvserver` starts
 and serves even when cloud-init aborts. Verify the session over SSM (or

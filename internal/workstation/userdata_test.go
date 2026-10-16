@@ -8,9 +8,14 @@ import (
 	"github.com/jpvelasco/fabrica/internal/assert"
 )
 
+// testWSParamName mirrors the per-create name shape minted by the create
+// layer (see SessionPasswordParameterFor); the rendered script must carry
+// the exact name so cloud-init reads exactly the parameter create stored.
+const testWSParamName = "/fabrica/workstation/abc123def4567890/dcv-password"
+
 func testUserData() UserDataConfig {
 	return UserDataConfig{
-		SessionPasswordParameter: SessionPasswordParameter,
+		SessionPasswordParameter: testWSParamName,
 		Region:                   "us-west-2",
 	}
 }
@@ -21,7 +26,7 @@ func TestGenerateRawRequiresSessionPasswordParameter(t *testing.T) {
 		t.Fatal("expected error when SessionPasswordParameter is empty")
 	}
 	assert.Contains(t, err.Error(), "SessionPasswordParameter")
-	_, err = GenerateRaw(UserDataConfig{SessionPasswordParameter: SessionPasswordParameter})
+	_, err = GenerateRaw(UserDataConfig{SessionPasswordParameter: testWSParamName})
 	if err == nil {
 		t.Fatal("expected error when Region is empty")
 	}
@@ -36,7 +41,7 @@ func TestGenerateRawRequiresDCVOnAMI(t *testing.T) {
 	for _, want := range []string{
 		"command -v dcv",
 		"NICE DCV is not installed on this AMI",
-		"aws ssm get-parameter --name \"" + SessionPasswordParameter + "\"",
+		"aws ssm get-parameter --name \"" + testWSParamName + "\"",
 		"--with-decryption",
 		"--region \"us-west-2\"",
 		"command -v aws",
@@ -72,8 +77,10 @@ func TestGenerateRawUsesCurrentDCVCLI(t *testing.T) {
 	}
 	for _, want := range []string{
 		"dcv set-config --section connectivity --key idle-timeout",
-		SessionPasswordParameter,
-		"printf '%s:%s\\n' \"$DCV_USER\" \"$DCV_PASS\" | chpasswd",
+		testWSParamName,
+		// The password feeds chpasswd over stdin (heredoc), never argv.
+		"if ! chpasswd <<EOF",
+		"$DCV_USER:$DCV_PASS",
 		"unset DCV_PASS",
 		"dcv list-sessions",
 		"ERROR: DCV session 'workstation' did not appear",
@@ -109,8 +116,10 @@ func TestGenerateRawScrubsUserDataLast(t *testing.T) {
 		t.Fatalf("GenerateRaw: %v", err)
 	}
 	// The password is read from SSM into a shell variable and consumed by
-	// chpasswd. The script itself must not contain a password literal.
-	assert.Contains(t, got, `printf '%s:%s\n' "$DCV_USER" "$DCV_PASS" | chpasswd`)
+	// chpasswd over a heredoc (never argv). The script itself must not
+	// contain a password literal.
+	assert.Contains(t, got, `if ! chpasswd <<EOF`)
+	assert.Contains(t, got, "$DCV_USER:$DCV_PASS")
 	if strings.Contains(got, "hunter2") {
 		t.Error("userdata must not embed the session password")
 	}
@@ -181,15 +190,21 @@ func TestGenerateRawChpasswdFailClosed(t *testing.T) {
 	assert.Contains(t, got, "ERROR: chpasswd failed")
 	// chpasswd must run inside an if-condition (fail closed), not as a
 	// bare line where set -e only would mask a partial failure.
-	const cmd = `printf '%s:%s\n' "$DCV_USER" "$DCV_PASS" | chpasswd`
+	const cmd = "if ! chpasswd <<EOF"
 	idx := strings.Index(got, cmd)
 	if idx < 0 {
-		t.Fatal("chpasswd command missing")
+		t.Fatal("chpasswd heredoc missing")
 	}
 	lineStart := strings.LastIndex(got[:idx], "\n")
 	line := got[lineStart+1 : idx+len(cmd)]
-	if !strings.HasPrefix(strings.TrimSpace(line), "if !") {
-		t.Errorf("chpasswd must be guarded by 'if !' for a fail-closed error line, got: %q", line)
+	if line != cmd {
+		t.Errorf("chpasswd must be guarded by 'if !', got: %q", line)
+	}
+	// The heredoc delimiter is unquoted on purpose: $DCV_USER/$DCV_PASS
+	// must expand at boot. The value is alphanumeric (GeneratePassword),
+	// so the unquoted line needs no further shell quoting.
+	if !strings.Contains(got, "\nEOF\n") {
+		t.Error("chpasswd heredoc must end with an unquoted EOF delimiter")
 	}
 }
 

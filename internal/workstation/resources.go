@@ -42,9 +42,11 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMess
 
 // RoleDesiredState returns Cloud Control desired-state for the workstation EC2
 // instance role: SSM managed instance core, the shared SSM output policy, and
-// ssm:GetParameter on the DCV session password parameter only.
+// ssm:GetParameter on the per-create DCV session password parameter only. The
+// parameter name (plan.SessionPasswordParameter) is set by the create layer
+// before the role is built so the role reads exactly one instance's secret.
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
-	parameterARN, err := SessionPasswordParameterARN(plan.Region, plan.Account)
+	parameterARN, err := SessionPasswordParameterARN(plan.Region, plan.Account, plan.SessionPasswordParameter)
 	if err != nil {
 		return nil, err
 	}

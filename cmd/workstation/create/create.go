@@ -67,12 +67,15 @@ Creates four Cloud Control resources in order:
   4. EC2 Instance — runs NICE DCV from the provided AMI (attached to the instance profile for SSM access)
 
 The DCV session password is a Parameter Store SecureString, not a fifth
-Cloud Control resource and not a UserData field. Cloud-init reads it with
-aws ssm get-parameter. .fabrica/workstation-credentials.yaml stays the
-operator source of truth. Terminate deletes the parameter. A create that
-fails before the instance exists deletes it too; once the instance exists
-the parameter stays so cloud-init can read it. A parameter left by an
-earlier attempt is overwritten.
+Cloud Control resource and not a UserData field. Each create stores it under a
+per-create name /fabrica/workstation/<create-nonce>/dcv-password, so a
+concurrent create cannot clobber another instance's password. Cloud-init
+reads it with aws ssm get-parameter; the instance role may ssm:GetParameter
+on that parameter ARN only. .fabrica/workstation-credentials.yaml stays the
+operator source of truth. The name is recorded in state on the instance, and
+terminate deletes that recorded name. A create that fails before the instance
+exists deletes the parameter too; once the instance exists the parameter stays
+so cloud-init can read it.
 
 State is written after each resource so a partial failure is recoverable:
 re-running create will detect the already-provisioned module and exit cleanly.
@@ -170,6 +173,19 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("building create plan: %w", err)
 	}
 
+	// Mint the per-create session-password parameter name before any plan is
+	// printed or applied so the dry-run/apply previews name the same
+	// SecureString apply creates. A per-create nonce (not a shared name) keeps
+	// concurrent creates from clobbering one another's password and lets
+	// terminate delete exactly this name.
+	nonce, err := workstation.NewSessionPasswordNonce()
+	if err != nil {
+		return fmt.Errorf("building create plan: %w", err)
+	}
+	if plan.SessionPasswordParameter, err = workstation.SessionPasswordParameterFor(nonce); err != nil {
+		return fmt.Errorf("building create plan: %w", err)
+	}
+
 	return provision.RunCreate(ctx, provision.CreateSpec[*workstation.CreatePlan]{
 		ModuleName:      moduleName,
 		Account:         account,
@@ -252,7 +268,12 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	}
 	fmt.Fprintf(c.out, "\nDCV credentials written to %s\n", credFile)
 
-	paramName := workstation.SessionPasswordParameter
+	// plan.SessionPasswordParameter is minted in run() before the plan is
+	// printed or applied, so the role (which scopes ssm:GetParameter to this
+	// ARN) and cloud-init (which reads this name at boot) and the state record
+	// all agree on one per-create name. A shared name would let a concurrent
+	// create or a re-create clobber another instance's password.
+	paramName := plan.SessionPasswordParameter
 	if err := c.putSecureParameter(ctx, cloud.SecureParameter{
 		Name:  paramName,
 		Value: sessionPass,
@@ -325,9 +346,10 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		return nil
 	}
 
-	// The parameter name is not a state resource. A drift Get of
-	// AWS::SSM::Parameter would return the secret. Terminate always deletes
-	// the stable name, and a failed create deletes it here.
+	// The per-create parameter name is recorded in state on the instance
+	// (Properties "sessionPasswordParameter"), not as a state resource — a
+	// drift Get of AWS::SSM::Parameter would return the secret. Terminate
+	// deletes the recorded name, and a failed create deletes it here.
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:    "Instance",
 		TypeName: cloud.TypeAWSEC2Instance,
@@ -408,7 +430,7 @@ func (c command) printDryRun(plan *workstation.CreatePlan) {
 		},
 		ExtraFields: extraFields,
 		Resources: append([]string{
-			"SSM Parameter:    " + workstation.SessionPasswordParameter,
+			"SSM Parameter:    " + plan.SessionPasswordParameter,
 			"Security Group:   " + plan.SGName,
 			"IAM Role:         " + plan.RoleName,
 			"Instance Profile: " + plan.InstanceProfileName,
@@ -441,7 +463,7 @@ func (c command) printApplyPlan(plan *workstation.CreatePlan) {
 		CompactLabels: true,
 		Resources: append([]string{
 			// Compact resource labels match pre-#162 workstation apply.
-			"SSM Parameter:    " + workstation.SessionPasswordParameter,
+			"SSM Parameter:    " + plan.SessionPasswordParameter,
 			"Security Group:   " + plan.SGName,
 			"IAM Role:         " + plan.RoleName,
 			"Instance Profile: " + plan.InstanceProfileName,

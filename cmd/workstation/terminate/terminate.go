@@ -8,7 +8,6 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
-	"github.com/jpvelasco/fabrica/internal/workstation"
 	"github.com/spf13/cobra"
 )
 
@@ -58,14 +57,17 @@ func workstationResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 			out = append(out, cloud.Resource{TypeName: r.TypeName, Identifier: r.Identifier})
 		}
 	}
+	instRes, _ := byType[cloud.TypeAWSEC2Instance]
 	appendRecorded(cloud.TypeAWSEC2Instance)
-	// Always, and not from state. The name is stable and the value must not
-	// sit in state (a drift Get would return the secret). Delete is success
-	// when the parameter is already gone, including a partial create.
-	out = append(out, cloud.Resource{
-		TypeName:   cloud.TypeAWSSSMParameter,
-		Identifier: workstation.SessionPasswordParameter,
-	})
+	// The per-create name is recorded in state on the instance (Properties
+	// "sessionPasswordParameter"), not as a state resource — a drift Get of
+	// AWS::SSM::Parameter would return the secret. Deleting a shared name
+	// could remove another instance's password, so terminate deletes exactly
+	// the recorded name and skips when it is absent (nothing recorded means
+	// no secret to clean up). Delete is success when it is already gone.
+	if name := instRes.Properties["sessionPasswordParameter"]; name != "" {
+		out = append(out, cloud.Resource{TypeName: cloud.TypeAWSSSMParameter, Identifier: name})
+	}
 	appendRecorded(cloud.TypeAWSIAMInstanceProfile)
 	appendRecorded(cloud.TypeAWSIAMRole)
 	appendRecorded(cloud.TypeAWSEC2SecurityGroup)
@@ -94,10 +96,11 @@ Resources are deleted in reverse-creation order to respect dependencies:
   4. IAM Role
   5. EC2 Security Group
 
-The DCV session password SecureString (/fabrica/workstation/dcv-password) is
-deleted too. It is not recorded in state; terminate always removes it, and a
-parameter already gone is success. .fabrica/workstation-credentials.yaml is
-left on disk.
+The per-create DCV session password SecureString
+(/fabrica/workstation/<create-nonce>/dcv-password) is deleted too. Its name is
+recorded in state on the instance, so terminate removes exactly the parameter
+that create stored and skips when none is recorded. A parameter already gone
+is success. .fabrica/workstation-credentials.yaml is left on disk.
 
 State is updated after each deletion so a partial failure leaves a recoverable
 record. Re-running terminate will skip resources that are already gone.
