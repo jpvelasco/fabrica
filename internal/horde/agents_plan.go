@@ -60,6 +60,11 @@ type AgentsCreatePlan struct {
 	ScaleOutPolicyName string
 	ScaleInPolicyName  string
 
+	// IAM is the resolved path and permissions boundary. Agents share horde.iam.
+	IAM config.IAM
+	// VolumeRequestTags are copied onto the launch template for instance and volume.
+	VolumeRequestTags map[string]string
+
 	CostResources []cost.Resource
 }
 

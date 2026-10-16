@@ -64,12 +64,13 @@ func RoleDesiredState(plan *SetupPlan) (json.RawMessage, error) {
 			iamrole.SSMOutputPolicy(plan.Region, plan.Account),
 		},
 		map[string]string{"FabricaModule": "ddc"},
+		iamrole.Options(plan.IAM.Path, plan.IAM.PermissionsBoundary)...,
 	)
 }
 
 // InstanceProfileDesiredState wraps the DDC role for EC2 attachment.
 func InstanceProfileDesiredState(plan *SetupPlan) (json.RawMessage, error) {
-	return ec2state.InstanceProfileDesiredState(plan.InstanceProfileName, plan.RoleName)
+	return ec2state.InstanceProfileDesiredState(plan.InstanceProfileName, plan.RoleName, ec2state.ProfileOptions(plan.IAM.Path)...)
 }
 
 // InstanceDesiredState returns Cloud Control desired-state for the DDC (Jupiter) EC2 instance.

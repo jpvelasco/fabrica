@@ -3,7 +3,11 @@
 // lore, ddc, workstation) use this instead of duplicating the map construction.
 package ec2state
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
 
 // InstanceSpec holds the common fields needed to build an EC2 instance's
 // Cloud Control desired-state document. UserData must already be base64 encoded.
@@ -56,12 +60,43 @@ func WithExtraTags(key, value string) DesiredStateOption {
 	}
 }
 
+// ProfileOption sets an optional property on an instance profile document.
+// Instance profiles accept Path. They do not accept a permissions boundary.
+type ProfileOption func(map[string]any)
+
+// WithProfilePath sets the instance profile path. The path must start and
+// end with "/".
+func WithProfilePath(path string) ProfileOption {
+	return func(doc map[string]any) {
+		if path != "" {
+			doc["Path"] = path
+		}
+	}
+}
+
+// ProfileOptions builds profile options for a resolved IAM path.
+// An empty path leaves the document unchanged.
+func ProfileOptions(path string) []ProfileOption {
+	if path == "" {
+		return nil
+	}
+	return []ProfileOption{WithProfilePath(path)}
+}
+
 // InstanceProfileDesiredState returns Cloud Control desired-state for an EC2
 // instance profile that wraps an IAM role. Used by perforce and ddc modules.
-func InstanceProfileDesiredState(profileName, roleName string) (json.RawMessage, error) {
+func InstanceProfileDesiredState(profileName, roleName string, opts ...ProfileOption) (json.RawMessage, error) {
 	doc := map[string]any{
 		"InstanceProfileName": profileName,
 		"Roles":               []string{roleName},
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(doc)
+		}
+	}
+	if p, _ := doc["Path"].(string); p != "" && (len(p) < 2 || !strings.HasPrefix(p, "/") || !strings.HasSuffix(p, "/") || strings.Contains(p, "//")) {
+		return nil, fmt.Errorf("iam.path %q must start and end with /", p)
 	}
 	return json.Marshal(doc)
 }

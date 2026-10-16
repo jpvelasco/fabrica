@@ -523,6 +523,10 @@ func (g *terraformGenerator) tfAttributeName(cfAttr string) string {
 		return "description"
 	case "RoleName":
 		return "name"
+	case "Path":
+		return "path"
+	case "PermissionsBoundary":
+		return "permissions_boundary"
 	case "InstanceProfileName":
 		return "name"
 	case "BillingMode":

@@ -50,6 +50,9 @@ type CreatePlan struct {
 	RoleName            string
 	InstanceProfileName string
 
+	// IAM is the resolved path and permissions boundary for the instance role.
+	IAM config.IAM
+
 	CostResources []cost.Resource
 }
 
@@ -87,6 +90,9 @@ func resolveSizing(cfg config.WorkstationConfig, tmpl string) (instanceType stri
 func NewCreatePlan(ctx context.Context, cfg config.WorkstationConfig, account, region string, resolver cloud.VPCResolver, tmpl, perforceAddr string) (*CreatePlan, error) {
 	if cfg.AmiID == "" {
 		return nil, fmt.Errorf("workstation.amiId is required. Provide a NICE DCV-enabled AMI ID.\nSee: https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-installing.html")
+	}
+	if err := cfg.IAM.Validate(); err != nil {
+		return nil, err
 	}
 
 	switch tmpl {
@@ -129,6 +135,7 @@ func NewCreatePlan(ctx context.Context, cfg config.WorkstationConfig, account, r
 		InstanceName:        "fabrica-workstation",
 		RoleName:            "fabrica-workstation-role",
 		InstanceProfileName: "fabrica-workstation-profile",
+		IAM:                 cfg.IAM,
 		CostResources:       CostResourcesFor(instanceType, volumeSize),
 	}, nil
 }

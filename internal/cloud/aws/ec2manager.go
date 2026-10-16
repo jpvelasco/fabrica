@@ -38,6 +38,7 @@ type ec2APIClient interface {
 	DescribeSubnets(ctx context.Context, params *ec2.DescribeSubnetsInput, optFns ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error)
 	DescribeVolumes(ctx context.Context, params *ec2.DescribeVolumesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeVolumesOutput, error)
 	CreateTags(ctx context.Context, params *ec2.CreateTagsInput, optFns ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error)
+	RunInstances(ctx context.Context, params *ec2.RunInstancesInput, optFns ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error)
 }
 
 func (s *ec2Service) ensureClient(ctx context.Context) error {
@@ -63,6 +64,15 @@ func (s *ec2Service) ensureClient(ctx context.Context) error {
 	}
 	s.client = newClient(cfg)
 	return nil
+}
+
+// RunInstances launches one instance. resourceClients uses it when Cloud
+// Control cannot tag the root volume on the create request.
+func (s *ec2Service) RunInstances(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
+	if err := s.ensureClient(ctx); err != nil {
+		return nil, err
+	}
+	return s.client.RunInstances(ctx, in)
 }
 
 // TagInstanceVolumes applies tags to every EBS volume attached to the

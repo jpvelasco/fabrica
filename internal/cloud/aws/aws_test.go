@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -204,4 +205,7 @@ func (stubEC2) DescribeVpcs(context.Context, *ec2.DescribeVpcsInput, ...func(*ec
 }
 func (stubEC2) DescribeSubnets(context.Context, *ec2.DescribeSubnetsInput, ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error) {
 	return &ec2.DescribeSubnetsOutput{}, nil
+}
+func (stubEC2) RunInstances(context.Context, *ec2.RunInstancesInput, ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error) {
+	return nil, fmt.Errorf("RunInstances not stubbed")
 }

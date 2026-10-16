@@ -266,6 +266,30 @@ func TestInstanceProfileDesiredState(t *testing.T) {
 	if len(roles) != 1 || roles[0].(string) != "my-role" {
 		t.Errorf("Roles = %v, want [my-role]", roles)
 	}
+	if _, ok := d["Path"]; ok {
+		t.Errorf("Path = %v, want omitted", d["Path"])
+	}
+}
+
+func TestInstanceProfileDesiredStatePath(t *testing.T) {
+	raw, err := InstanceProfileDesiredState("my-profile", "my-role", ProfileOptions("/fabrica/")...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := doc(t, raw)
+	checkStr(t, d, "Path", "/fabrica/")
+	if _, ok := d["PermissionsBoundary"]; ok {
+		t.Fatal("instance profile must not carry a permissions boundary")
+	}
+	if _, err := InstanceProfileDesiredState("my-profile", "my-role", WithProfilePath("fabrica")); err == nil {
+		t.Fatal("expected invalid path to fail")
+	}
+	if _, err := InstanceProfileDesiredState("my-profile", "my-role", WithProfilePath("/fabrica//roles/")); err == nil {
+		t.Fatal("expected empty path segment to fail")
+	}
+	if got := ProfileOptions(""); got != nil {
+		t.Fatalf("empty profile options = %#v", got)
+	}
 }
 
 func TestSGDesiredStateBasic(t *testing.T) {

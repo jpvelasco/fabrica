@@ -7,8 +7,20 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 )
+
+func TestIAMResourceLines(t *testing.T) {
+	if lines := IAMResourceLines(config.IAM{}); lines != nil {
+		t.Fatalf("empty IAM lines = %#v", lines)
+	}
+	lines := IAMResourceLines(config.IAM{Path: "/fabrica/", PermissionsBoundary: "arn:aws:iam::123456789012:policy/b"})
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, "IAM Path:         /fabrica/") || !strings.Contains(got, "IAM Boundary:     arn:aws:iam::123456789012:policy/b") {
+		t.Fatalf("lines = %q", got)
+	}
+}
 
 func TestDryRunBasic(t *testing.T) {
 	var out bytes.Buffer

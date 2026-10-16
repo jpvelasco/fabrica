@@ -3,6 +3,7 @@ package horde
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -203,6 +204,65 @@ func TestLaunchTemplateDesiredState(t *testing.T) {
 	}
 	if meta["HttpTokens"] != "required" || meta["HttpPutResponseHopLimit"] != float64(1) {
 		t.Errorf("MetadataOptions = %v, want HttpTokens=required HttpPutResponseHopLimit=1", meta)
+	}
+}
+
+func TestLaunchTemplateVolumeRequestTags(t *testing.T) {
+	if specs := agentTagSpecifications(nil); len(specs) != 1 {
+		t.Fatalf("nil plan tags = %v", specs)
+	}
+	plan := newTestAgentsPlan()
+	plan.VolumeRequestTags = map[string]string{"Project": "fabrica-e2e", "": "skip", "ManagedBy": "other"}
+	plan.IAM.Path = "/horde/"
+	plan.IAM.PermissionsBoundary = "arn:aws:iam::123456789012:policy/fabrica-boundary"
+	ds, err := LaunchTemplateDesiredState(plan, "sg-agent123", "dXNlci1kYXRh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(ds, &doc); err != nil {
+		t.Fatal(err)
+	}
+	data := doc["LaunchTemplateData"].(map[string]any)
+	specs := data["TagSpecifications"].([]any)
+	if len(specs) != 2 {
+		t.Fatalf("TagSpecifications = %d, want instance and volume", len(specs))
+	}
+	foundVolume := false
+	for _, spec := range specs {
+		m := spec.(map[string]any)
+		if m["ResourceType"] != "volume" {
+			continue
+		}
+		foundVolume = true
+		keys := map[string]bool{}
+		for _, tag := range m["Tags"].([]any) {
+			keys[tag.(map[string]any)["Key"].(string)] = true
+		}
+		for _, want := range []string{"ManagedBy", "Name", "FabricaModule", "FabricaRole", "Project"} {
+			if !keys[want] {
+				t.Errorf("volume missing %s in %v", want, m["Tags"])
+			}
+		}
+		for _, tag := range m["Tags"].([]any) {
+			pair := tag.(map[string]any)
+			if pair["Key"] == "ManagedBy" && pair["Value"] != "fabrica" {
+				t.Errorf("ManagedBy = %v, want the identity tag", pair["Value"])
+			}
+			if pair["Key"] == "" {
+				t.Errorf("empty tag key was copied: %v", pair)
+			}
+		}
+	}
+	if !foundVolume {
+		t.Fatal("volume TagSpecification missing")
+	}
+	role, err := AgentRoleDesiredState(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(role), `"/horde/"`) || !strings.Contains(string(role), "fabrica-boundary") {
+		t.Fatalf("agent role missing guardrails: %s", role)
 	}
 }
 

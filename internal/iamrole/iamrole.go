@@ -6,6 +6,7 @@ package iamrole
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // AssumeRolePolicyDocument builds the standard IAM trust policy envelope that
@@ -46,10 +47,54 @@ func RoleTags(name string, extra map[string]string) []map[string]string {
 	return tags
 }
 
+// RoleOption sets an optional Cloud Control property on an IAM role document.
+type RoleOption func(*roleOptions)
+
+type roleOptions struct {
+	Path                string
+	PermissionsBoundary string
+}
+
+// WithPath sets the IAM path. The path must start and end with "/".
+func WithPath(path string) RoleOption {
+	return func(o *roleOptions) { o.Path = path }
+}
+
+// WithPermissionsBoundary sets the permissions boundary policy ARN.
+func WithPermissionsBoundary(arn string) RoleOption {
+	return func(o *roleOptions) { o.PermissionsBoundary = arn }
+}
+
+// Options builds the role options for a resolved path and boundary.
+// Empty values are omitted so existing documents stay unchanged.
+func Options(path, boundary string) []RoleOption {
+	var opts []RoleOption
+	if path != "" {
+		opts = append(opts, WithPath(path))
+	}
+	if boundary != "" {
+		opts = append(opts, WithPermissionsBoundary(boundary))
+	}
+	return opts
+}
+
 // RoleDocument builds the Cloud Control desired-state document for an IAM role.
 // It sets RoleName, AssumeRolePolicyDocument, ManagedPolicyArns, Tags, and
-// optionally inline Policies. Pass nil for fields that should be omitted.
-func RoleDocument(roleName string, service string, managedArns []string, policies []map[string]any, tags map[string]string) (json.RawMessage, error) {
+// optionally inline Policies, Path, and PermissionsBoundary. Pass nil for
+// fields that should be omitted.
+func RoleDocument(roleName string, service string, managedArns []string, policies []map[string]any, tags map[string]string, opts ...RoleOption) (json.RawMessage, error) {
+	var o roleOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
+	if err := validateRolePath(o.Path); err != nil {
+		return nil, err
+	}
+	if err := validateRoleBoundary(o.PermissionsBoundary); err != nil {
+		return nil, err
+	}
 	doc := map[string]any{
 		"RoleName":                 roleName,
 		"AssumeRolePolicyDocument": AssumeRolePolicyDocument(service),
@@ -60,8 +105,53 @@ func RoleDocument(roleName string, service string, managedArns []string, policie
 	if len(policies) > 0 {
 		doc["Policies"] = policies
 	}
+	if o.Path != "" {
+		doc["Path"] = o.Path
+	}
+	if o.PermissionsBoundary != "" {
+		doc["PermissionsBoundary"] = o.PermissionsBoundary
+	}
 	doc["Tags"] = RoleTags(roleName, tags)
 	return json.Marshal(doc)
+}
+
+func validateRolePath(path string) error {
+	if path == "" {
+		return nil
+	}
+	if len(path) < 2 || !strings.HasPrefix(path, "/") || !strings.HasSuffix(path, "/") || strings.Contains(path, "//") {
+		return fmt.Errorf("iam.path %q must start and end with /", path)
+	}
+	return nil
+}
+
+func validateRoleBoundary(arn string) error {
+	if arn == "" {
+		return nil
+	}
+	if !rolePolicyARN(arn) {
+		return fmt.Errorf("iam.permissionsBoundary %q must be an IAM policy ARN", arn)
+	}
+	return nil
+}
+
+// rolePolicyARN matches config.iamPolicyARN. The packages stay independent so
+// the plan layer does not import config and config does not import iamrole.
+func rolePolicyARN(arn string) bool {
+	switch {
+	case strings.HasPrefix(arn, "arn:aws:iam::"),
+		strings.HasPrefix(arn, "arn:aws-us-gov:iam::"),
+		strings.HasPrefix(arn, "arn:aws-cn:iam::"):
+	default:
+		return false
+	}
+	const marker = ":policy/"
+	idx := strings.Index(arn, marker)
+	if idx < 0 {
+		return false
+	}
+	name := arn[idx+len(marker):]
+	return name != "" && name != "/"
 }
 
 // SSMOutputPolicy builds the inline policy that lets an EC2 instance publish

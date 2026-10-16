@@ -10,6 +10,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/credentials"
 	"github.com/jpvelasco/fabrica/internal/lore"
@@ -120,6 +121,12 @@ func (c command) run(ctx context.Context) error {
 	if cr, ok := c.runtime.Provider.(cloud.VPCCIDRResolver); ok {
 		cidrResolver = cr
 	}
+
+	resolvedIAM, err := config.ResolveIAM(c.runtime.Config.Cloud.AWS.IAM, loreCfg.IAM)
+	if err != nil {
+		return err
+	}
+	loreCfg.IAM = resolvedIAM
 
 	plan, err := lore.NewCreatePlan(ctx, loreCfg, account, region, provision.VPCResolver(c.runtime.Provider), cidrResolver)
 	if err != nil {
@@ -305,6 +312,7 @@ func (c command) printDryRun(plan *lore.CreatePlan) {
 		"IAM Role:         "+plan.RoleName,
 		"Instance Profile: "+plan.InstanceProfileName,
 	)
+	resources = append(resources, provision.IAMResourceLines(plan.IAM)...)
 	provision.DryRun(c.out, provision.DryRunSpec{
 		Title: "Lore loreserver",
 		Info: provision.PlanInfo{
@@ -350,6 +358,7 @@ func (c command) printApplyPlan(plan *lore.CreatePlan) {
 		"IAM Role:         "+plan.RoleName,
 		"Instance Profile: "+plan.InstanceProfileName,
 	)
+	resources = append(resources, provision.IAMResourceLines(plan.IAM)...)
 	provision.ApplyPlan(c.out, "Lore loreserver", provision.PlanInfo{
 		Account:      plan.Account,
 		Region:       plan.Region,

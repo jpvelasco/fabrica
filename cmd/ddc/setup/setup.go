@@ -10,6 +10,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/credentials"
 	"github.com/jpvelasco/fabrica/internal/ddc"
@@ -98,6 +99,11 @@ func (c command) run(ctx context.Context) error {
 	if c.backend != "" {
 		cfg.Backend = c.backend
 	}
+	resolvedIAM, err := config.ResolveIAM(c.runtime.Config.Cloud.AWS.IAM, cfg.IAM)
+	if err != nil {
+		return err
+	}
+	cfg.IAM = resolvedIAM
 
 	plan, err := ddc.NewSetupPlan(ctx, cfg, account, region, provision.VPCResolver(c.runtime.Provider))
 	if err != nil {
@@ -293,6 +299,9 @@ func (c command) printPlanBody(plan *ddc.SetupPlan) {
 	fmt.Fprintln(c.out, "Resources to create:")
 	fmt.Fprintf(c.out, "  IAM role:         %s\n", plan.RoleName)
 	fmt.Fprintf(c.out, "  Instance profile: %s\n", plan.InstanceProfileName)
+	for _, line := range provision.IAMResourceLines(plan.IAM) {
+		fmt.Fprintf(c.out, "  %s\n", line)
+	}
 	fmt.Fprintf(c.out, "  S3 bucket:        %s\n", plan.Bucket)
 	fmt.Fprintf(c.out, "  Security group:   %s\n", plan.SGName)
 	if plan.Backend == ddc.BackendScylla {

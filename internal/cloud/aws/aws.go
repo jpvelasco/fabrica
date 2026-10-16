@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricav "github.com/jpvelasco/fabrica/internal/version"
@@ -46,7 +47,13 @@ type resourceClients struct {
 	awsCfg       awsConfig
 	version      string
 	operatorTags map[string]string // cloud.aws.tags, merged onto every create
-	waitTimeout  time.Duration     // 0 → defaultWaitTimeout
+	// volumeRequestTags selects the RunInstances path so the root volume
+	// carries the same request tags as the instance. Nil keeps Cloud Control.
+	volumeRequestTags map[string]string
+	instances         *ec2Service
+	// runInstances overrides the EC2 client in tests. Nil uses instances.
+	runInstances func(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error)
+	waitTimeout  time.Duration // 0 → defaultWaitTimeout
 
 	// initMu serializes lazy initialization so concurrent MCP tool calls do
 	// not race client construction. Not held during API calls.
@@ -87,7 +94,22 @@ func newProvider(cfg *config.Config) (fabricac.Provider, error) {
 		ec2:    ec2Service{awsCfg: awsCfg},
 	}
 	p.clients.operatorTags = operatorTagsOf(cfg)
+	p.clients.volumeRequestTags = volumeRequestTagsOf(cfg)
+	p.clients.instances = &p.ec2
 	return p, nil
+}
+
+// volumeRequestTagsOf copies cloud.aws.volumeRequestTags. A nil map means
+// the Cloud Control instance create stays in place.
+func volumeRequestTagsOf(cfg *config.Config) map[string]string {
+	if cfg == nil || len(cfg.Cloud.AWS.VolumeRequestTags) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(cfg.Cloud.AWS.VolumeRequestTags))
+	for k, v := range cfg.Cloud.AWS.VolumeRequestTags {
+		out[k] = v
+	}
+	return out
 }
 
 // operatorTagsOf copies cloud.aws.tags out of config (nil map when unset) so
@@ -171,6 +193,8 @@ func (p *awsProvider) WithRegion(_ context.Context, region string) (fabricac.Reg
 		ec2:    ec2Service{awsCfg: scopedCfg},
 	}
 	scoped.clients.operatorTags = p.clients.operatorTags
+	scoped.clients.volumeRequestTags = p.clients.volumeRequestTags
+	scoped.clients.instances = &scoped.ec2
 	return fabricac.RegionView{Resources: scoped.Resources(), VPCs: scoped}, nil
 }
 
