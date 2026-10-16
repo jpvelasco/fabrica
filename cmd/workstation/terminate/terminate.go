@@ -57,8 +57,8 @@ func workstationResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 			out = append(out, cloud.Resource{TypeName: r.TypeName, Identifier: r.Identifier})
 		}
 	}
-	instRes, _ := byType[cloud.TypeAWSEC2Instance]
 	appendRecorded(cloud.TypeAWSEC2Instance)
+	instRes := byType[cloud.TypeAWSEC2Instance]
 	// The per-create name is recorded in state on the instance (Properties
 	// "sessionPasswordParameter"), not as a state resource — a drift Get of
 	// AWS::SSM::Parameter would return the secret. Deleting a shared name

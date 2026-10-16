@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
@@ -380,16 +379,12 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 }
 
 // abandonSessionPassword deletes the SecureString after a failed create so
-// the secret does not outlive the attempt. The local credentials file is
-// left in place; it is the operator record, and the next create overwrites it.
-//
-// Once the instance exists (volume tagging failed, or the state write after
-// a successful create failed), the parameter stays. Cloud-init still has to
-// read it, and the next create overwrites a copy that never made it into state.
+// the secret does not outlive the attempt. It is called only on pre-instance
+// steps; once the instance exists, create returns the error directly and the
+// parameter stays for the instance's cloud-init and for terminate. The local
+// credentials file is left in place; it is the operator record, and the next
+// create overwrites it.
 func (c command) abandonSessionPassword(ctx context.Context, name string, err error) error {
-	if instanceStillNeedsPassword(err) {
-		return err
-	}
 	if c.deleteParameter == nil {
 		return fmt.Errorf("%w (SSM parameter %s was not deleted: no parameter store)", err, name)
 	}
@@ -397,16 +392,6 @@ func (c command) abandonSessionPassword(ctx context.Context, name string, err er
 		return fmt.Errorf("%w (also failed to delete SSM parameter %s: %v)", err, name, delErr)
 	}
 	return err
-}
-
-// instanceStillNeedsPassword reports whether err comes from a step that
-// already created the EC2 instance. Those errors keep the SecureString.
-func instanceStillNeedsPassword(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "post-create:") || strings.Contains(msg, "writing state after Instance")
 }
 
 func (c command) printDryRun(plan *workstation.CreatePlan) {

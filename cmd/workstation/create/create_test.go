@@ -111,7 +111,7 @@ func assertDryRunNonce(t *testing.T, out string) string {
 		t.Fatalf("nonce = %q, want 32 hex chars", nonce)
 	}
 	for _, r := range nonce {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 			t.Fatalf("nonce %q is not hex", nonce)
 		}
 	}
@@ -330,9 +330,6 @@ func TestCreateConfirmationRejected(t *testing.T) {
 	}
 	if provider.CreateCalls != 0 {
 		t.Fatalf("cancelled: made %d create calls, want 0", provider.CreateCalls)
-	}
-	if len(provider.PutParameters) != 0 {
-		t.Fatalf("cancelled create stored a parameter: %d", len(provider.PutParameters))
 	}
 	if len(provider.PutParameters) != 0 || len(provider.DeletedParameters) != 0 {
 		t.Fatalf("cancelled create touched SSM parameters: put %d delete %d", len(provider.PutParameters), len(provider.DeletedParameters))
