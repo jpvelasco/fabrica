@@ -535,8 +535,8 @@ func TestExtractPropertiesEC2Instance(t *testing.T) {
 	if !ok {
 		t.Fatal("missing MetadataOptions")
 	}
-	if meta["HttpTokens"] != "required" || meta["HopLimit"] != 1 {
-		t.Errorf("default MetadataOptions = %v, want HttpTokens=required HopLimit=1", meta)
+	if meta["HttpTokens"] != "required" || meta["HttpPutResponseHopLimit"] != 1 {
+		t.Errorf("default MetadataOptions = %v, want HttpTokens=required HttpPutResponseHopLimit=1", meta)
 	}
 	// volumeSize should be mapped to BlockDeviceMappings, not leaked as a raw property
 	if _, ok := props["volumeSize"]; ok {
@@ -1836,7 +1836,7 @@ func TestHclPublicAccessWithValid(t *testing.T) {
 // TestHclMetadataOptionsWithValid covers hclMetadataOptions with valid input.
 func TestHclMetadataOptionsWithValid(t *testing.T) {
 	gen := &terraformGenerator{}
-	mo := map[string]any{"HttpTokens": "required", "HopLimit": 1}
+	mo := map[string]any{"HttpTokens": "required", "HttpPutResponseHopLimit": 1}
 	out := gen.hclMetadataOptions(mo)
 	if !strings.Contains(out, `http_tokens = "required"`) {
 		t.Error("hclMetadataOptions should output http_tokens")
@@ -1844,8 +1844,8 @@ func TestHclMetadataOptionsWithValid(t *testing.T) {
 	if !strings.Contains(out, "http_put_response_hop_limit = 1") {
 		t.Error("hclMetadataOptions should output http_put_response_hop_limit")
 	}
-	// State recorded before the hop-limit pin has no HopLimit; the block
-	// must still render without it.
+	// State recorded before the hop-limit pin has no HttpPutResponseHopLimit;
+	// the block must still render without it.
 	legacy := gen.hclMetadataOptions(map[string]any{"HttpTokens": "required"})
 	if strings.Contains(legacy, "hop_limit") {
 		t.Errorf("hclMetadataOptions should omit hop_limit when unset, got %q", legacy)

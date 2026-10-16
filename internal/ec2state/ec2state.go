@@ -130,8 +130,8 @@ func Build(spec InstanceSpec, dsOpts ...DesiredStateOption) (json.RawMessage, er
 			{"Key": "Name", "Value": spec.InstanceName},
 		},
 		"MetadataOptions": map[string]any{
-			"HttpTokens": "required",
-			"HopLimit":   1,
+			"HttpTokens":              "required",
+			"HttpPutResponseHopLimit": 1,
 		},
 	}
 

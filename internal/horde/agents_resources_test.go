@@ -201,8 +201,8 @@ func TestLaunchTemplateDesiredState(t *testing.T) {
 	if !ok {
 		t.Fatal("MetadataOptions missing from launch template data")
 	}
-	if meta["HttpTokens"] != "required" || meta["HopLimit"] != float64(1) {
-		t.Errorf("MetadataOptions = %v, want HttpTokens=required HopLimit=1", meta)
+	if meta["HttpTokens"] != "required" || meta["HttpPutResponseHopLimit"] != float64(1) {
+		t.Errorf("MetadataOptions = %v, want HttpTokens=required HttpPutResponseHopLimit=1", meta)
 	}
 }
 
