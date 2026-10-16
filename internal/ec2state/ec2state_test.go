@@ -81,8 +81,28 @@ func TestBuildCoreFields(t *testing.T) {
 	if meta["HttpTokens"].(string) != "required" {
 		t.Errorf("HttpTokens = %v", meta["HttpTokens"])
 	}
-	if meta["HopLimit"].(float64) != 1 {
-		t.Errorf("HopLimit = %v, want 1", meta["HopLimit"])
+	if meta["HttpPutResponseHopLimit"].(float64) != 1 {
+		t.Errorf("HttpPutResponseHopLimit = %v, want 1", meta["HttpPutResponseHopLimit"])
+	}
+	if _, ok := meta["HopLimit"]; ok {
+		t.Error("stale HopLimit key must not be emitted")
+	}
+}
+
+// TestBuildDesiredStateJSONHasHttpPutResponseHopLimit pins the serialized
+// Cloud Control property name: the JSON must carry
+// "HttpPutResponseHopLimit":1, not the ignored "HopLimit" key, or Cloud
+// Control applies the AWS default (5) instead of the pin.
+func TestBuildDesiredStateJSONHasHttpPutResponseHopLimit(t *testing.T) {
+	raw, err := Build(testSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"HttpPutResponseHopLimit":1`) {
+		t.Errorf("desired-state JSON must contain \"HttpPutResponseHopLimit\":1, got: %s", raw)
+	}
+	if strings.Contains(string(raw), `"HopLimit"`) {
+		t.Errorf("desired-state JSON must not contain the stale \"HopLimit\" key, got: %s", raw)
 	}
 }
 
@@ -108,20 +128,20 @@ func (r *imdsErrorRecorder) Errorf(format string, args ...any) {
 func TestAssertIMDSv2AcceptsHopLimitOne(t *testing.T) {
 	rec := &imdsErrorRecorder{}
 	AssertIMDSv2(rec, map[string]any{
-		"MetadataOptions": map[string]any{"HttpTokens": "required", "HopLimit": float64(1)},
+		"MetadataOptions": map[string]any{"HttpTokens": "required", "HttpPutResponseHopLimit": float64(1)},
 	})
 	if len(rec.errs) != 0 {
-		t.Errorf("AssertIMDSv2 should pass for HttpTokens=required HopLimit=1, got %v", rec.errs)
+		t.Errorf("AssertIMDSv2 should pass for HttpTokens=required HttpPutResponseHopLimit=1, got %v", rec.errs)
 	}
 }
 
 func TestAssertIMDSv2RejectsWrongHopLimit(t *testing.T) {
 	rec := &imdsErrorRecorder{}
 	AssertIMDSv2(rec, map[string]any{
-		"MetadataOptions": map[string]any{"HttpTokens": "required", "HopLimit": float64(2)},
+		"MetadataOptions": map[string]any{"HttpTokens": "required", "HttpPutResponseHopLimit": float64(2)},
 	})
-	if len(rec.errs) != 1 || !strings.Contains(rec.errs[0], "HopLimit") {
-		t.Errorf("AssertIMDSv2 should report the HopLimit mismatch, got %v", rec.errs)
+	if len(rec.errs) != 1 || !strings.Contains(rec.errs[0], "HttpPutResponseHopLimit") {
+		t.Errorf("AssertIMDSv2 should report the HttpPutResponseHopLimit mismatch, got %v", rec.errs)
 	}
 }
 

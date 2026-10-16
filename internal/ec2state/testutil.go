@@ -65,8 +65,8 @@ func AssertIMDSv2(t imdsReporter, doc map[string]any) {
 	if !ok || meta["HttpTokens"] != "required" {
 		t.Errorf("MetadataOptions.HttpTokens not 'required': %v", doc["MetadataOptions"])
 	}
-	if meta["HopLimit"] != float64(1) {
-		t.Errorf("MetadataOptions.HopLimit = %v, want 1: %v", meta["HopLimit"], doc["MetadataOptions"])
+	if meta["HttpPutResponseHopLimit"] != float64(1) {
+		t.Errorf("MetadataOptions.HttpPutResponseHopLimit = %v, want 1: %v", meta["HttpPutResponseHopLimit"], doc["MetadataOptions"])
 	}
 }
 

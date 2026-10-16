@@ -84,7 +84,7 @@ func LaunchTemplateDesiredState(plan *AgentsCreatePlan, sgID, userData string) (
 			"IamInstanceProfile": map[string]any{"Name": plan.InstanceProfileName},
 			"SecurityGroupIds":   []string{sgID},
 			"UserData":           userData,
-			"MetadataOptions":    map[string]any{"HttpTokens": "required", "HopLimit": 1},
+			"MetadataOptions":    map[string]any{"HttpTokens": "required", "HttpPutResponseHopLimit": 1},
 			"TagSpecifications": []map[string]any{
 				{
 					"ResourceType": "instance",
