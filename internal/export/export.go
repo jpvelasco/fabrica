@@ -22,6 +22,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/stateutil"
 	"github.com/jpvelasco/fabrica/internal/workstation"
 )
 
@@ -344,7 +345,7 @@ func buildModule(ms state.ModuleState, cfg *config.Config, account, region strin
 			TypeName:   r.TypeName,
 			LogicalID:  logicalID,
 			Identifier: r.Identifier,
-			Properties: sanitize(extractProperties(ms.Name, *r, cfg, account, region)),
+			Properties: sanitize(extractProperties(ms.Name, *r, cfg, account, region, sessionPasswordParamName(ms))),
 			Module:     ms.Name,
 		})
 	}
@@ -377,24 +378,39 @@ func loreStoreTableLogicalIDs(ms state.ModuleState) map[int]string {
 // Production state stores camelCase keys (instanceType, volumeSize) in
 // ModuleResource.Properties; this function normalizes them to the IaC-appropriate
 // forms and enriches with config-derived defaults.
+// sessionPasswordParamName returns the per-create DCV session-password
+// parameter name recorded on the workstation instance (Properties
+// "sessionPasswordParameter"). The export layer scopes the inline
+// ssm:GetParameter policy to that exact ARN, matching what create attached.
+// Empty when the module has no recorded name (older state or a partial
+// create), in which case the workstation case emits no parameter policy.
+func sessionPasswordParamName(ms state.ModuleState) string {
+	inst, ok := stateutil.ResourceByType(&ms, "AWS::EC2::Instance")
+	if !ok {
+		return ""
+	}
+	return inst.Properties["sessionPasswordParameter"]
+}
+
 // internalStateKeys are module-internal metadata recorded alongside resources
 // for status, teardown, and cost logic. They are not CloudFormation/Terraform
 // resource properties; leaking them into generated templates yields invalid
 // IaC (e.g. "role": "agent" under AWS::EC2::Instance).
 var internalStateKeys = map[string]struct{}{
-	"role":              {},
-	"region":            {},
-	"buildVersion":      {},
-	"lastBackupId":      {},
-	"lastBackupAt":      {},
-	"scalingPolicy":     {},
-	"scalingAlarm":      {},
-	"scaleOutThreshold": {},
-	"scaleInThreshold":  {},
-	"loreTable":         {},
+	"role":                     {},
+	"region":                   {},
+	"buildVersion":             {},
+	"lastBackupId":             {},
+	"lastBackupAt":             {},
+	"scalingPolicy":            {},
+	"scalingAlarm":             {},
+	"scaleOutThreshold":        {},
+	"scaleInThreshold":         {},
+	"loreTable":                {},
+	"sessionPasswordParameter": {},
 }
 
-func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Config, account, region string) map[string]any {
+func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Config, account, region, sessionPasswordParameter string) map[string]any {
 	props := make(map[string]any)
 
 	// Copy state properties, normalizing camelCase keys to their IaC forms
@@ -488,7 +504,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		// inline_policy). State-driven inputs (store bucket, backup S3) come
 		// from config/the module's recorded resources.
 		if _, ok := props["Policies"]; !ok {
-			if policies := inlinePoliciesForRole(moduleName, cfg, account, region); policies != nil {
+			if policies := inlinePoliciesForRole(moduleName, cfg, account, region, sessionPasswordParameter); policies != nil {
 				props["Policies"] = policies
 			}
 		}
@@ -872,7 +888,12 @@ func managedPolicyARNsForModule(module string) []map[string]any {
 // instance role carries, using the same shared helpers the plan layer's
 // RoleDesiredState uses (one document, two renderers). Order matches the
 // create path per module.
-func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, region string) []map[string]any {
+// sessionPasswordParameter is the per-create DCV session-password parameter
+// name recorded on the workstation instance (Properties
+// "sessionPasswordParameter"). The workstation case scopes the inline
+// ssm:GetParameter policy to its exact ARN, matching what create attached; an
+// empty name (older/partial state) omits the parameter policy.
+func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, region, sessionPasswordParameter string) []map[string]any {
 	switch moduleName {
 	case "ci":
 		projectName := ciProjectNameForModule(moduleName, cfg)
@@ -934,7 +955,19 @@ func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, regio
 			iamrole.SSMOutputPolicy(region, account),
 		}
 	case "workstation":
-		return []map[string]any{iamrole.SSMOutputPolicy(region, account)}
+		// The per-create name is recorded on the instance; without it (older
+		// or partial state) emit no parameter policy rather than a wildcard.
+		if sessionPasswordParameter == "" {
+			return []map[string]any{iamrole.SSMOutputPolicy(region, account)}
+		}
+		parameterARN, err := workstation.SessionPasswordParameterARN(region, account, sessionPasswordParameter)
+		if err != nil {
+			return []map[string]any{iamrole.SSMOutputPolicy(region, account)}
+		}
+		return []map[string]any{
+			iamrole.SSMOutputPolicy(region, account),
+			iamrole.SSMParameterReadPolicy(workstation.SessionPasswordPolicyName, parameterARN),
+		}
 	}
 	return nil
 }

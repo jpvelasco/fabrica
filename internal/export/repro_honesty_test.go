@@ -223,7 +223,7 @@ func TestReproCIHelperEquality(t *testing.T) {
 	createPD, _ := json.Marshal(createPol["PolicyDocument"])
 
 	// Build export's expected via inlinePoliciesForRole (which should use same helper)
-	policies := inlinePoliciesForRole("ci", cfg, exportAccount, exportRegion)
+	policies := inlinePoliciesForRole("ci", cfg, exportAccount, exportRegion, "")
 	if len(policies) == 0 {
 		t.Fatal("export inlinePoliciesForRole returned nil for ci")
 	}
@@ -247,7 +247,7 @@ func TestReproDeployHelperEquality(t *testing.T) {
 	createPol, _ := createPols[0].(map[string]any)
 	createPD, _ := json.Marshal(createPol["PolicyDocument"])
 
-	policies := inlinePoliciesForRole("deploy", cfg, exportAccount, exportRegion)
+	policies := inlinePoliciesForRole("deploy", cfg, exportAccount, exportRegion, "")
 	if len(policies) == 0 {
 		t.Fatal("export inlinePoliciesForRole returned nil for deploy")
 	}

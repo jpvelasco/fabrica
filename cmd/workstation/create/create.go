@@ -43,6 +43,9 @@ type command struct {
 	createResource func(ctx context.Context, r *cloud.Resource) error
 	getResource    func(ctx context.Context, r *cloud.Resource) error
 	inspectImage   func(ctx context.Context, imageID string) (cloud.ImageInfo, error)
+
+	putSecureParameter func(ctx context.Context, p cloud.SecureParameter) error
+	deleteParameter    func(ctx context.Context, name string) error
 }
 
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
@@ -56,11 +59,22 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Short: "Provision a cloud workstation",
 		Long: `Provision a NICE DCV cloud workstation on AWS.
 
-Creates four resources in order:
+Creates four Cloud Control resources in order:
   1. EC2 Security Group — allows TCP 8443 inbound (NICE DCV HTTPS)
-  2. IAM Role — AmazonSSMManagedInstanceCore + fabrica-ssm-output inline policy
+  2. IAM Role — AmazonSSMManagedInstanceCore, fabrica-ssm-output, and ssm:GetParameter on the session-password parameter only
   3. IAM Instance Profile — wraps the role for EC2 attachment
   4. EC2 Instance — runs NICE DCV from the provided AMI (attached to the instance profile for SSM access)
+
+The DCV session password is a Parameter Store SecureString, not a fifth
+Cloud Control resource and not a UserData field. Each create stores it under a
+per-create name /fabrica/workstation/<create-nonce>/dcv-password, so a
+concurrent create cannot clobber another instance's password. Cloud-init
+reads it with aws ssm get-parameter; the instance role may ssm:GetParameter
+on that parameter ARN only. .fabrica/workstation-credentials.yaml stays the
+operator source of truth. The name is recorded in state on the instance, and
+terminate deletes that recorded name. A create that fails before the instance
+exists deletes the parameter too; once the instance exists the parameter stays
+so cloud-init can read it.
 
 State is written after each resource so a partial failure is recoverable:
 re-running create will detect the already-provisioned module and exit cleanly.
@@ -102,6 +116,10 @@ making any AWS calls.`,
 				c.getResource = rt.Provider.Resources().Get
 				if insp, ok := rt.Provider.(cloud.ImageInspector); ok {
 					c.inspectImage = insp.DescribeImage
+				}
+				if store, ok := rt.Provider.(cloud.ParameterStore); ok {
+					c.putSecureParameter = store.PutSecureParameter
+					c.deleteParameter = store.DeleteParameter
 				}
 			}
 			return c.run(cmd.Context())
@@ -151,6 +169,19 @@ func (c command) run(ctx context.Context) error {
 
 	plan, err := workstation.NewCreatePlan(ctx, wsCfg, account, region, provision.VPCResolver(c.runtime.Provider), c.template, perforceAddr)
 	if err != nil {
+		return fmt.Errorf("building create plan: %w", err)
+	}
+
+	// Mint the per-create session-password parameter name before any plan is
+	// printed or applied so the dry-run/apply previews name the same
+	// SecureString apply creates. A per-create nonce (not a shared name) keeps
+	// concurrent creates from clobbering one another's password and lets
+	// terminate delete exactly this name.
+	nonce, err := workstation.NewSessionPasswordNonce()
+	if err != nil {
+		return fmt.Errorf("building create plan: %w", err)
+	}
+	if plan.SessionPasswordParameter, err = workstation.SessionPasswordParameterFor(nonce); err != nil {
 		return fmt.Errorf("building create plan: %w", err)
 	}
 
@@ -221,6 +252,10 @@ func (c command) resolvePerforceAddr(ctx context.Context) (string, error) {
 }
 
 func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *workstation.CreatePlan) error {
+	if c.putSecureParameter == nil || c.deleteParameter == nil {
+		return fmt.Errorf("storing the DCV session password requires a provider with SSM parameter support. Run 'fabrica setup' with the AWS provider.")
+	}
+
 	sessionPass, err := credentials.GeneratePassword(passwordLen)
 	if err != nil {
 		return fmt.Errorf("generating session password: %w", err)
@@ -231,6 +266,21 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		return fmt.Errorf("writing credentials file: %w", err)
 	}
 	fmt.Fprintf(c.out, "\nDCV credentials written to %s\n", credFile)
+
+	// plan.SessionPasswordParameter is minted in run() before the plan is
+	// printed or applied, so the role (which scopes ssm:GetParameter to this
+	// ARN) and cloud-init (which reads this name at boot) and the state record
+	// all agree on one per-create name. A shared name would let a concurrent
+	// create or a re-create clobber another instance's password.
+	paramName := plan.SessionPasswordParameter
+	if err := c.putSecureParameter(ctx, cloud.SecureParameter{
+		Name:  paramName,
+		Value: sessionPass,
+		Tags:  map[string]string{"ManagedBy": "fabrica"},
+	}); err != nil {
+		return fmt.Errorf("storing the DCV session password in SSM parameter %s: %w", paramName, err)
+	}
+	fmt.Fprintf(c.out, "Stored DCV session password in SSM parameter %s\n", paramName)
 
 	fmt.Fprintln(c.out)
 	fmt.Fprintf(c.out, "Creating security group %s...\n", plan.SGName)
@@ -244,7 +294,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		},
 	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return fmt.Errorf("creating security group: %w", err)
+		return c.abandonSessionPassword(ctx, paramName, fmt.Errorf("creating security group: %w", err))
 	}
 	sgID := resources[len(resources)-1].Identifier
 
@@ -257,7 +307,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		},
 	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return fmt.Errorf("creating IAM role: %w", err)
+		return c.abandonSessionPassword(ctx, paramName, fmt.Errorf("creating IAM role: %w", err))
 	}
 
 	fmt.Fprintf(c.out, "Creating instance profile %s...\n", plan.InstanceProfileName)
@@ -269,20 +319,36 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		},
 	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return fmt.Errorf("creating instance profile: %w", err)
+		return c.abandonSessionPassword(ctx, paramName, fmt.Errorf("creating instance profile: %w", err))
 	}
 
 	fmt.Fprintf(c.out, "Creating instance %s...\n", plan.InstanceName)
 	userData, err := workstation.Generate(workstation.UserDataConfig{
-		SessionPassword:    sessionPass,
-		IdleTimeoutMinutes: plan.IdleTimeoutMinutes,
-		MountPerforce:      plan.MountPerforce,
-		PerforceServerAddr: plan.PerforceServerAddr,
+		SessionPasswordParameter: paramName,
+		Region:                   plan.Region,
+		IdleTimeoutMinutes:       plan.IdleTimeoutMinutes,
+		MountPerforce:            plan.MountPerforce,
+		PerforceServerAddr:       plan.PerforceServerAddr,
 	})
 	if err != nil {
-		return fmt.Errorf("generating user data: %w", err)
+		return c.abandonSessionPassword(ctx, paramName, fmt.Errorf("generating user data: %w", err))
 	}
 
+	// Set only when Create itself returns nil. ExecuteStep also fails when the
+	// following state write fails, and in that case the instance already exists.
+	instanceCreated := false
+	createInstance := func(ctx context.Context, r *cloud.Resource) error {
+		if err := c.createResource(ctx, r); err != nil {
+			return err
+		}
+		instanceCreated = true
+		return nil
+	}
+
+	// The per-create parameter name is recorded in state on the instance
+	// (Properties "sessionPasswordParameter"), not as a state resource — a
+	// drift Get of AWS::SSM::Parameter would return the secret. Terminate
+	// deletes the recorded name, and a failed create deletes it here.
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:    "Instance",
 		TypeName: cloud.TypeAWSEC2Instance,
@@ -290,18 +356,42 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 			return workstation.InstanceDesiredState(plan, sgID, userData)
 		},
 		Properties: map[string]string{
-			"instanceType": plan.InstanceType,
-			"volumeSize":   strconv.Itoa(plan.VolumeSize),
+			"instanceType":             plan.InstanceType,
+			"volumeSize":               strconv.Itoa(plan.VolumeSize),
+			"sessionPasswordParameter": paramName,
 		},
 		PostCreate: provision.TagVolumesPostCreate(c.runtime.Provider, "workstation", plan.InstanceName),
 		// fail on writeState error (default)
-	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, createInstance, c.writeState)
 	if err != nil {
-		return fmt.Errorf("creating EC2 instance: %w", err)
+		wrapped := fmt.Errorf("creating EC2 instance: %w", err)
+		// The instance exists (volume tagging or the state write failed) and
+		// cloud-init still has to read the password. Terminate deletes it.
+		// Every earlier failure deletes it now.
+		if instanceCreated {
+			return wrapped
+		}
+		return c.abandonSessionPassword(ctx, paramName, wrapped)
 	}
 
 	c.printPostCreate(plan, resources[len(resources)-1].Identifier)
 	return nil
+}
+
+// abandonSessionPassword deletes the SecureString after a failed create so
+// the secret does not outlive the attempt. It is called only on pre-instance
+// steps; once the instance exists, create returns the error directly and the
+// parameter stays for the instance's cloud-init and for terminate. The local
+// credentials file is left in place; it is the operator record, and the next
+// create overwrites it.
+func (c command) abandonSessionPassword(ctx context.Context, name string, err error) error {
+	if c.deleteParameter == nil {
+		return fmt.Errorf("%w (SSM parameter %s was not deleted: no parameter store)", err, name)
+	}
+	if delErr := c.deleteParameter(ctx, name); delErr != nil {
+		return fmt.Errorf("%w (also failed to delete SSM parameter %s: %v)", err, name, delErr)
+	}
+	return err
 }
 
 func (c command) printDryRun(plan *workstation.CreatePlan) {
@@ -325,6 +415,7 @@ func (c command) printDryRun(plan *workstation.CreatePlan) {
 		},
 		ExtraFields: extraFields,
 		Resources: append([]string{
+			"SSM Parameter:    " + plan.SessionPasswordParameter,
 			"Security Group:   " + plan.SGName,
 			"IAM Role:         " + plan.RoleName,
 			"Instance Profile: " + plan.InstanceProfileName,
@@ -357,6 +448,7 @@ func (c command) printApplyPlan(plan *workstation.CreatePlan) {
 		CompactLabels: true,
 		Resources: append([]string{
 			// Compact resource labels match pre-#162 workstation apply.
+			"SSM Parameter:    " + plan.SessionPasswordParameter,
 			"Security Group:   " + plan.SGName,
 			"IAM Role:         " + plan.RoleName,
 			"Instance Profile: " + plan.InstanceProfileName,

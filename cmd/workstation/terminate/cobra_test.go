@@ -49,8 +49,12 @@ func TestTerminateCobraDryRunNoDeleteCalls(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	testutil.AssertContains(t, got, "dry run")
+	testutil.AssertContains(t, got, testWSParamName)
 	if provider.DeleteCalls != 0 {
 		t.Errorf("dry-run made %d delete calls, want 0", provider.DeleteCalls)
+	}
+	if len(provider.DeletedParameters) != 0 {
+		t.Errorf("dry-run deleted SSM parameters: %v", provider.DeletedParameters)
 	}
 }
 
@@ -67,6 +71,11 @@ func TestTerminateCobraYesFlagTerminatesResources(t *testing.T) {
 	}
 	if provider.DeleteCalls != 2 {
 		t.Errorf("expected 2 delete calls, got %d", provider.DeleteCalls)
+	}
+	// terminate deletes exactly the per-create name recorded on the
+	// instance, never a shared name.
+	if len(provider.DeletedParameters) != 1 || provider.DeletedParameters[0] != testWSParamName {
+		t.Errorf("deleted parameters = %v, want %q once", provider.DeletedParameters, testWSParamName)
 	}
 	testutil.AssertContains(t, got, "terminated")
 }
@@ -88,8 +97,17 @@ func TestTerminateCobraJSONYes(t *testing.T) {
 	if result.DryRun {
 		t.Error("dryRun must be false")
 	}
-	if len(result.Destroyed) != 2 {
-		t.Errorf("expected 2 destroyed, got %d: %v", len(result.Destroyed), result.Destroyed)
+	if len(result.Destroyed) != 3 {
+		t.Errorf("expected 3 destroyed (instance, security group, session parameter), got %d: %v", len(result.Destroyed), result.Destroyed)
+	}
+	found := false
+	for _, id := range result.Destroyed {
+		if id == testWSParamName {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("destroyed = %v, missing %s", result.Destroyed, testWSParamName)
 	}
 }
 
@@ -153,13 +171,23 @@ func TestNewTeardownNilProvider(t *testing.T) {
 	if tc.DeleteResource != nil || tc.GetResource != nil {
 		t.Fatal("DeleteResource/GetResource must be nil when provider is nil")
 	}
+	if tc.SDKDeleteFunc != nil {
+		t.Fatal("SDKDeleteFunc must be nil when provider is nil")
+	}
 }
 
 // ---- helpers ----
 
+// testWSParamName is the per-create session-password parameter name the
+// fixture records on the instance (Properties "sessionPasswordParameter").
+const testWSParamName = "/fabrica/workstation/abc123def4567890/dcv-password"
+
 func provisionedStateJSON() string {
 	return testutil.NewProvisionedStateJSON(testutil.StateModule{
 		Name: "workstation", Version: "ami-test", Status: "ready",
-		Resources: testutil.EC2Pair("sg-cobrawstest", "i-cobrawstest"),
+		Resources: []testutil.StateResource{
+			{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-cobrawstest"},
+			{TypeName: "AWS::EC2::Instance", Identifier: "i-cobrawstest", Properties: map[string]any{"sessionPasswordParameter": testWSParamName}},
+		},
 	})
 }

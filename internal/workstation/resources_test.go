@@ -2,6 +2,7 @@ package workstation
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -107,6 +108,12 @@ func TestInstanceDesiredStateAttachesInstanceProfile(t *testing.T) {
 
 func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 	plan := &CreatePlan{RoleName: "fabrica-workstation-role", Account: "123456789012", Region: "us-east-1"}
+	// The per-create name is minted by the create layer; the role reads it.
+	paramName, err := SessionPasswordParameterFor("abc123def4567890")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.SessionPasswordParameter = paramName
 	raw, err := RoleDesiredState(plan)
 	if err != nil {
 		t.Fatalf("RoleDesiredState: %v", err)
@@ -146,11 +153,26 @@ func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 	if !ok {
 		t.Fatal("Policies not found in role")
 	}
-	if len(policies) != 1 {
-		t.Fatalf("Policies len = %d, want 1 (SSM output)", len(policies))
+	if len(policies) != 2 {
+		t.Fatalf("Policies len = %d, want 2 (SSM output + DCV password)", len(policies))
 	}
 	if pm := policies[0].(map[string]any); pm["PolicyName"] != "fabrica-ssm-output" {
 		t.Errorf("Policies[0] = %v, want fabrica-ssm-output", pm["PolicyName"])
+	}
+	passwordPolicy := policies[1].(map[string]any)
+	if passwordPolicy["PolicyName"] != "fabrica-workstation-dcv-password" {
+		t.Errorf("Policies[1] = %v, want fabrica-workstation-dcv-password", passwordPolicy["PolicyName"])
+	}
+	docJSON, err := json.Marshal(passwordPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantARN := "arn:aws:ssm:us-east-1:123456789012:parameter/fabrica/workstation/abc123def4567890/dcv-password"
+	if !strings.Contains(string(docJSON), wantARN) {
+		t.Errorf("password policy = %s, want ARN %s", docJSON, wantARN)
+	}
+	if strings.Contains(string(docJSON), "\"*\"") || strings.Contains(string(docJSON), "parameter/*") {
+		t.Errorf("password policy must be the one parameter ARN, got %s", docJSON)
 	}
 
 	if got := ec2state.ParseTags(t, doc["Tags"].([]any))["FabricaModule"]; got != "workstation" {
@@ -160,10 +182,11 @@ func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 
 func TestRoleDesiredStateGuardrails(t *testing.T) {
 	plan := &CreatePlan{
-		RoleName:            "fabrica-workstation-role",
-		InstanceProfileName: "fabrica-workstation-profile",
-		Account:             "123456789012",
-		Region:              "us-east-1",
+		RoleName:                 "fabrica-workstation-role",
+		InstanceProfileName:      "fabrica-workstation-profile",
+		Account:                  "123456789012",
+		Region:                   "us-east-1",
+		SessionPasswordParameter: "/fabrica/workstation/abcdef0123456789/dcv-password",
 		IAM: config.IAM{
 			Path:                "/workstation/",
 			PermissionsBoundary: "arn:aws:iam::123456789012:policy/fabrica-boundary",
@@ -190,6 +213,24 @@ func TestRoleDesiredStateGuardrails(t *testing.T) {
 	}
 	if _, ok := pdoc["PermissionsBoundary"]; ok {
 		t.Fatal("instance profile must not carry a permissions boundary")
+	}
+}
+
+func TestRoleDesiredStateRequiresRegionAndAccount(t *testing.T) {
+	const paramName = "/fabrica/workstation/abc123def4567890/dcv-password"
+	_, err := RoleDesiredState(&CreatePlan{RoleName: "fabrica-workstation-role", Account: "123456789012", SessionPasswordParameter: paramName})
+	if err == nil {
+		t.Fatal("expected error when region is empty")
+	}
+	_, err = RoleDesiredState(&CreatePlan{RoleName: "fabrica-workstation-role", Region: "us-east-1", SessionPasswordParameter: paramName})
+	if err == nil {
+		t.Fatal("expected error when account is empty")
+	}
+	// Without a recorded per-create name the ARN cannot be scoped, so the
+	// role itself cannot be built.
+	_, err = RoleDesiredState(&CreatePlan{RoleName: "fabrica-workstation-role", Region: "us-east-1", Account: "123456789012"})
+	if err == nil {
+		t.Fatal("expected error when the session-password parameter name is empty")
 	}
 }
 

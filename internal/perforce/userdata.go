@@ -20,6 +20,8 @@ var userDataRenderer = userdata.New(template.Must(template.New("userdata").Parse
 	perforceUserData + userdata.ScrubShell("configure", "admin password", ".fabrica/perforce-credentials.yaml"),
 )))
 
+// ADMIN_PASS still rides UserData. It can adopt the workstation Parameter Store
+// seam (cloud.ParameterStore) later; this module does not.
 const perforceUserData = `#!/bin/bash
 set -euo pipefail
 

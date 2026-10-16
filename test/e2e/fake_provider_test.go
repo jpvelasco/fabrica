@@ -60,9 +60,10 @@ type fakeStore struct {
 	resources map[string]*storedResource // keyed by identifier
 	counters  map[string]int             // per-type-slug counter
 
-	buckets  map[string]bool
-	tables   map[string]bool
-	projects map[string]bool
+	buckets    map[string]bool
+	tables     map[string]bool
+	projects   map[string]bool
+	parameters map[string]string
 
 	// failDeleteType, when non-empty, makes ResourceClient.Delete return an
 	// error for resources of that TypeName (drives the destroy-all failure case).
@@ -82,11 +83,12 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		resources: make(map[string]*storedResource),
-		counters:  make(map[string]int),
-		buckets:   make(map[string]bool),
-		tables:    make(map[string]bool),
-		projects:  make(map[string]bool),
+		resources:  make(map[string]*storedResource),
+		counters:   make(map[string]int),
+		buckets:    make(map[string]bool),
+		tables:     make(map[string]bool),
+		projects:   make(map[string]bool),
+		parameters: make(map[string]string),
 	}
 }
 
@@ -115,6 +117,22 @@ func (p *fakeProvider) Identity(context.Context) (string, string, string, error)
 }
 
 func (p *fakeProvider) Resources() cloud.ResourceClient { return &fakeRC{store: p.store} }
+
+var _ cloud.ParameterStore = (*fakeProvider)(nil)
+
+func (p *fakeProvider) PutSecureParameter(_ context.Context, param cloud.SecureParameter) error {
+	p.store.mu.Lock()
+	defer p.store.mu.Unlock()
+	p.store.parameters[param.Name] = param.Value
+	return nil
+}
+
+func (p *fakeProvider) DeleteParameter(_ context.Context, name string) error {
+	p.store.mu.Lock()
+	defer p.store.mu.Unlock()
+	delete(p.store.parameters, name)
+	return nil
+}
 
 // --- RegionProvider + VPCResolver ---
 

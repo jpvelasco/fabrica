@@ -1,6 +1,7 @@
 package terminate
 
 import (
+	"context"
 	"io"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -18,29 +19,58 @@ var spec = teardown.Spec{
 	NotProvisioned: "Workstation is not provisioned. Nothing to terminate.",
 	PlanHeader:     "Cloud Workstation — terminate plan",
 	DryRunHeader:   "Cloud Workstation (terminate dry run)",
-	Irreversible:   "IRREVERSIBLE: This will permanently delete the workstation, IAM role/profile, and its data.",
+	Irreversible:   "IRREVERSIBLE: This will permanently delete the workstation, IAM role/profile, the DCV session password parameter, and its data.",
 	SuccessMessage: "Cloud workstation terminated.",
 	// Instance → profile → role → SG (reverse of create: SG → role → profile → instance).
 	ResourceOrder: workstationResourceOrder,
+	WireCommand:   wireSessionPasswordDelete,
+}
+
+// wireSessionPasswordDelete removes the DCV SecureString. The parameter is
+// appended by workstationResourceOrder and is not a Cloud Control resource,
+// so this hook handles only that type and returns nil. Every other type
+// falls through. A missing parameter is success. Dry-run never calls it.
+func wireSessionPasswordDelete(tc *teardown.Command, rt globals.Runtime) {
+	if rt.Provider == nil {
+		return
+	}
+	store, ok := rt.Provider.(cloud.ParameterStore)
+	if !ok {
+		return
+	}
+	tc.SDKDeleteFunc = func(ctx context.Context, typeName, identifier string) error {
+		if typeName != cloud.TypeAWSSSMParameter {
+			return cloud.ErrNotHandled
+		}
+		return store.DeleteParameter(ctx, identifier)
+	}
 }
 
 func workstationResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
-	order := []string{
-		"AWS::EC2::Instance",
-		"AWS::IAM::InstanceProfile",
-		"AWS::IAM::Role",
-		"AWS::EC2::SecurityGroup",
-	}
 	byType := map[string]fabricastate.ModuleResource{}
 	for _, r := range m.Resources {
 		byType[r.TypeName] = r
 	}
-	out := make([]cloud.Resource, 0, len(order))
-	for _, t := range order {
-		if r, ok := byType[t]; ok && r.Identifier != "" {
+	out := make([]cloud.Resource, 0, 5)
+	appendRecorded := func(typeName string) {
+		if r, ok := byType[typeName]; ok && r.Identifier != "" {
 			out = append(out, cloud.Resource{TypeName: r.TypeName, Identifier: r.Identifier})
 		}
 	}
+	appendRecorded(cloud.TypeAWSEC2Instance)
+	instRes := byType[cloud.TypeAWSEC2Instance]
+	// The per-create name is recorded in state on the instance (Properties
+	// "sessionPasswordParameter"), not as a state resource — a drift Get of
+	// AWS::SSM::Parameter would return the secret. Deleting a shared name
+	// could remove another instance's password, so terminate deletes exactly
+	// the recorded name and skips when it is absent (nothing recorded means
+	// no secret to clean up). Delete is success when it is already gone.
+	if name := instRes.Properties["sessionPasswordParameter"]; name != "" {
+		out = append(out, cloud.Resource{TypeName: cloud.TypeAWSSSMParameter, Identifier: name})
+	}
+	appendRecorded(cloud.TypeAWSIAMInstanceProfile)
+	appendRecorded(cloud.TypeAWSIAMRole)
+	appendRecorded(cloud.TypeAWSEC2SecurityGroup)
 	return out
 }
 
@@ -61,9 +91,16 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 
 Resources are deleted in reverse-creation order to respect dependencies:
   1. EC2 Instance (terminated first)
-  2. IAM Instance Profile
-  3. IAM Role
-  4. EC2 Security Group
+  2. SSM Parameter Store SecureString (the DCV session password)
+  3. IAM Instance Profile
+  4. IAM Role
+  5. EC2 Security Group
+
+The per-create DCV session password SecureString
+(/fabrica/workstation/<create-nonce>/dcv-password) is deleted too. Its name is
+recorded in state on the instance, so terminate removes exactly the parameter
+that create stored and skips when none is recorded. A parameter already gone
+is success. .fabrica/workstation-credentials.yaml is left on disk.
 
 State is updated after each deletion so a partial failure leaves a recoverable
 record. Re-running terminate will skip resources that are already gone.

@@ -11,6 +11,7 @@ func TestResourceTypeConstants(t *testing.T) {
 		"EC2Volume":          "AWS::EC2::Volume",
 		"IAMRole":            "AWS::IAM::Role",
 		"IAMInstanceProfile": "AWS::IAM::InstanceProfile",
+		"SSMParameter":       "AWS::SSM::Parameter",
 		"S3Bucket":           "AWS::S3::Bucket",
 		"DynamoDBTable":      "AWS::DynamoDB::Table",
 	}
@@ -21,6 +22,7 @@ func TestResourceTypeConstants(t *testing.T) {
 		"EC2Volume":          TypeAWSEC2Volume,
 		"IAMRole":            TypeAWSIAMRole,
 		"IAMInstanceProfile": TypeAWSIAMInstanceProfile,
+		"SSMParameter":       TypeAWSSSMParameter,
 		"S3Bucket":           TypeAWSS3Bucket,
 		"DynamoDBTable":      TypeAWSDynamoDBTable,
 	}

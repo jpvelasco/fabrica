@@ -199,6 +199,26 @@ func SSMOutputPolicy(region, account string) map[string]any {
 	}
 }
 
+// SSMParameterReadPolicy is the inline policy that lets an instance read one
+// SecureString. resource must be the parameter ARN, not a wildcard: the
+// workstation DCV password is the only caller today.
+func SSMParameterReadPolicy(policyName, parameterARN string) map[string]any {
+	return map[string]any{
+		"PolicyName": policyName,
+		"PolicyDocument": map[string]any{
+			"Version": "2012-10-17",
+			"Statement": []map[string]any{
+				{
+					"Sid":      "ReadSecureParameter",
+					"Effect":   "Allow",
+					"Action":   []string{"ssm:GetParameter"},
+					"Resource": []string{parameterARN},
+				},
+			},
+		},
+	}
+}
+
 // S3BucketPolicy builds an inline policy document that grants S3 access to a
 // specific bucket. bucketName is the bucket name; bucketActions are the actions
 // allowed on the bucket ARN (e.g. "s3:ListBucket"); objectActions are the
