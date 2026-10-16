@@ -49,6 +49,17 @@ does not appear within 3 minutes. It also starts `dcvserver` **before**
 `dcv create-session`: with the daemon stopped, `create-session` exits 0 but
 the session is never persisted (verified live on DCV 2025.0.x).
 
+The first Xdcv launch on a cold boot can exceed the session starter's
+display-number read window (30s). `list-sessions` may show the session for
+a few seconds before the starter tears it down. After the session first
+appears, cloud-init waits 45s and checks again. If the session is gone, it
+closes any leftover, removes a stale `/tmp/.X11-unix/X0` socket, and runs
+`dcv create-session` again, backing off 15s then 30s, for up to three
+attempts. A later launch on the same host succeeds once GLX init has warmed.
+The script exits 1 if the session never appears, or if it is still gone
+after the last attempt (`session was torn down after creation` is not a
+successful boot).
+
 ## Session password exposure (UserData)
 
 The DCV session password is the OS password for `ubuntu`, so it must reach
