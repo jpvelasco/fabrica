@@ -124,12 +124,15 @@ func TestCreate_VolumeTagDenyFallback(t *testing.T) {
 		err          error
 		wantFallback bool
 	}{
-		{name: "access denied request tag on volume", err: ccAPIErrorWithMessage("AccessDenied", "User: arn:aws:iam::123456789012:user/op is not authorized to perform: ec2:RunInstances because aws:RequestTag/Project on the volume is not satisfied"), wantFallback: true},
-		{name: "unauthorized create tags on volume", err: ccAPIErrorWithMessage("UnauthorizedOperation", "You are not authorized to perform 'ec2:CreateTags' on the volume"), wantFallback: true},
+		{name: "access denied request tag on volume", err: ccAPIErrorWithMessage("AccessDenied", "User: arn:aws:iam::123456789012:user/op is not authorized to perform: ec2:RunInstances because aws:RequestTag/Project on the volume arn:aws:ec2:us-east-1:123456789012:volume/vol-0123456789abcdef0 is not satisfied"), wantFallback: true},
+		{name: "unauthorized create tags on volume", err: ccAPIErrorWithMessage("UnauthorizedOperation", "You are not authorized to perform 'ec2:CreateTags' on the volume arn:aws:ec2:us-east-1:123456789012:volume/vol-0123456789abcdef0"), wantFallback: true},
 		{name: "access denied pass role", err: ccAPIErrorWithMessage("AccessDenied", "User: arn:aws:iam::123456789012:user/op is not authorized to perform: iam:PassRole on ec2:RunInstances"), wantFallback: false},
 		{name: "access denied kms", err: ccAPIErrorWithMessage("AccessDenied", "not authorized to perform: kms:Encrypt on ec2:RunInstances"), wantFallback: false},
 		{name: "access denied ssm", err: ccAPIErrorWithMessage("AccessDenied", "not authorized to perform: ssm:GetParameter on ec2:RunInstances"), wantFallback: false},
 		{name: "unauthorized without any tag or volume", err: ccAPIErrorWithMessage("UnauthorizedOperation", "explicit deny on ec2:RunInstances"), wantFallback: false},
+		// "volume" in prose, but no EC2 volume resource ARN: the bare word
+		// must not trigger the fallback (the predicate matches the ARN shape).
+		{name: "word volume without a volume ARN", err: ccAPIErrorWithMessage("AccessDenied", "ec2:RunInstances failed because the volume was locked by another request"), wantFallback: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &fakeCCClient{createErr: tc.err}
@@ -585,14 +588,24 @@ func TestAdoptFabricaInstanceSkipsWithoutNameTag(t *testing.T) {
 }
 
 // TestCreate_ExistingTaggedInstanceAdopted pins the double-launch guard: before
-// a RunInstances fallback launches a second instance, it looks for an instance a
-// previous attempt already tagged (ManagedBy=fabrica, Name=<name>) in pending or
-// running state and adopts it.
+// a RunInstances fallback launches a second instance, it looks for the instance
+// a previous attempt of the SAME create already tagged (ManagedBy=fabrica,
+// Name=<name>, FabricaCreateNonce=<nonce>) in pending or running state and
+// adopts it. The match must have IMDSv2 required and the desired state's
+// instance profile; the nonce filter keeps a re-create from adopting a foreign
+// same-named instance.
 func TestCreate_ExistingTaggedInstanceAdopted(t *testing.T) {
 	id := "i-existing"
 	rec := &recordingEC2{
 		describeOut: &ec2.DescribeInstancesOutput{
-			Reservations: []types.Reservation{{Instances: []types.Instance{{InstanceId: &id, State: &types.InstanceState{Name: types.InstanceStateNamePending}}}}},
+			Reservations: []types.Reservation{{Instances: []types.Instance{{
+				InstanceId: &id,
+				State:      &types.InstanceState{Name: types.InstanceStateNamePending},
+				IamInstanceProfile: &types.IamInstanceProfile{
+					Arn: awssdk.String("arn:aws:iam::123456789012:instance-profile/fabrica-workstation-profile"),
+				},
+				MetadataOptions: &types.InstanceMetadataOptionsResponse{HttpTokens: types.HttpTokensStateRequired},
+			}}}},
 		},
 	}
 	rc := &resourceClients{
@@ -604,7 +617,8 @@ func TestCreate_ExistingTaggedInstanceAdopted(t *testing.T) {
 		TypeName: fabricac.TypeAWSEC2Instance,
 		DesiredState: json.RawMessage(`{
 			"ImageId":"ami-123","InstanceType":"g6.xlarge",
-			"Tags":[{"Key":"Name","Value":"fabrica-workstation"},{"Key":"ManagedBy","Value":"fabrica"}]
+			"IamInstanceProfile":"fabrica-workstation-profile",
+			"Tags":[{"Key":"Name","Value":"fabrica-workstation"},{"Key":"ManagedBy","Value":"fabrica"},{"Key":"FabricaCreateNonce","Value":"0123456789abcdef0123456789abcdef"}]
 		}`),
 	}
 	if err := rc.Create(context.Background(), r); err != nil {
@@ -629,29 +643,198 @@ func TestCreate_ExistingTaggedInstanceAdopted(t *testing.T) {
 	if got := filter["tag:Name"]; len(got) != 1 || got[0] != "fabrica-workstation" {
 		t.Fatalf("Name filter = %v, want [fabrica-workstation]", got)
 	}
+	if got := filter["tag:FabricaCreateNonce"]; len(got) != 1 || got[0] != "0123456789abcdef0123456789abcdef" {
+		t.Fatalf("create-nonce filter = %v, want [0123456789abcdef0123456789abcdef]", got)
+	}
 	if got := filter["instance-state-name"]; len(got) != 2 {
 		t.Fatalf("state filter = %v, want pending and running", got)
 	}
 }
 
-// TestRunInstancesClientTokenStable pins idempotency: the token is derived from
-// the resource identity (type, name, region, version), is stable across retries,
-// and changes when the identity changes.
-func TestRunInstancesClientTokenStable(t *testing.T) {
+// TestCreate_ExistingTaggedInstanceWithoutNonceAdopted pins the adoption
+// fallback for desired states without a create nonce (older modules and
+// partial-failure re-runs): the nonce filter is omitted and the match is
+// adopted on ManagedBy + Name alone.
+func TestCreate_ExistingTaggedInstanceWithoutNonceAdopted(t *testing.T) {
+	id := "i-existing"
+	rec := &recordingEC2{
+		describeOut: &ec2.DescribeInstancesOutput{
+			Reservations: []types.Reservation{{Instances: []types.Instance{{
+				InstanceId:      &id,
+				State:           &types.InstanceState{Name: types.InstanceStateNameRunning},
+				MetadataOptions: &types.InstanceMetadataOptionsResponse{HttpTokens: types.HttpTokensStateRequired},
+			}}}},
+		},
+	}
+	rc := &resourceClients{
+		version:           "test",
+		volumeRequestTags: map[string]string{"Project": "fabrica-e2e"},
+		instances:         &ec2Service{client: rec},
+	}
+	r := &fabricac.Resource{
+		TypeName: fabricac.TypeAWSEC2Instance,
+		DesiredState: json.RawMessage(`{
+			"ImageId":"ami-123","InstanceType":"g6.xlarge",
+			"Tags":[{"Key":"Name","Value":"fabrica-workstation"},{"Key":"ManagedBy","Value":"fabrica"}]
+		}`),
+	}
+	if err := rc.Create(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	if r.Identifier != id {
+		t.Fatalf("identifier = %q, want the adopted %q", r.Identifier, id)
+	}
+	if rec.in != nil {
+		t.Fatal("RunInstances must not launch a second instance")
+	}
+	for _, f := range rec.describeIn.Filters {
+		if got := awssdk.ToString(f.Name); got == "tag:FabricaCreateNonce" {
+			t.Fatalf("filters must not carry a create-nonce filter, got %s=%v", got, f.Values)
+		}
+	}
+}
+
+// adoptedInstanceFixture builds a pending match whose IMDSv2 and profile
+// settings the test can flip to exercise the adoption verification.
+func adoptedInstanceFixture(id string, imdsRequired bool, profile string) types.Instance {
+	inst := types.Instance{
+		InstanceId: &id,
+		State:      &types.InstanceState{Name: types.InstanceStateNamePending},
+	}
+	if imdsRequired {
+		inst.MetadataOptions = &types.InstanceMetadataOptionsResponse{HttpTokens: types.HttpTokensStateRequired}
+	}
+	if profile != "" {
+		inst.IamInstanceProfile = &types.IamInstanceProfile{
+			Arn: awssdk.String("arn:aws:iam::123456789012:instance-profile/" + profile),
+		}
+	}
+	return inst
+}
+
+const adoptedDesiredState = `{
+	"ImageId":"ami-123","InstanceType":"g6.xlarge",
+	"IamInstanceProfile":"fabrica-workstation-profile",
+	"Tags":[{"Key":"Name","Value":"fabrica-workstation"},{"Key":"ManagedBy","Value":"fabrica"},{"Key":"FabricaCreateNonce","Value":"0123456789abcdef0123456789abcdef"}]
+}`
+
+func adoptedResource() *fabricac.Resource {
+	return &fabricac.Resource{
+		TypeName:     fabricac.TypeAWSEC2Instance,
+		DesiredState: json.RawMessage(adoptedDesiredState),
+	}
+}
+
+func adoptRC(rec *recordingEC2) *resourceClients {
+	return &resourceClients{
+		version:           "test",
+		volumeRequestTags: map[string]string{"Project": "fabrica-e2e"},
+		instances:         &ec2Service{client: rec},
+	}
+}
+
+// TestAdoptRejectsWrongIMDS pins the adoption verification: a match without
+// IMDSv2 required is a misconfigured or foreign instance, so the create fails
+// instead of adopting it or launching a second one.
+func TestAdoptRejectsWrongIMDS(t *testing.T) {
+	rec := &recordingEC2{
+		describeOut: &ec2.DescribeInstancesOutput{
+			Reservations: []types.Reservation{{Instances: []types.Instance{
+				adoptedInstanceFixture("i-bad-imds", false, "fabrica-workstation-profile"),
+			}}},
+		},
+	}
+	if err := adoptRC(rec).Create(context.Background(), adoptedResource()); err == nil ||
+		!strings.Contains(err.Error(), "IMDSv2 is not required") {
+		t.Fatalf("err = %v, want the IMDSv2 adoption error", err)
+	}
+	if rec.in != nil {
+		t.Fatal("RunInstances must not launch a second instance after a rejected match")
+	}
+}
+
+// TestAdoptRejectsWrongProfile pins the other adoption invariant: a match that
+// carries a different instance profile is not this create's instance.
+func TestAdoptRejectsWrongProfile(t *testing.T) {
+	rec := &recordingEC2{
+		describeOut: &ec2.DescribeInstancesOutput{
+			Reservations: []types.Reservation{{Instances: []types.Instance{
+				adoptedInstanceFixture("i-bad-profile", true, "other-profile"),
+			}}},
+		},
+	}
+	if err := adoptRC(rec).Create(context.Background(), adoptedResource()); err == nil ||
+		!strings.Contains(err.Error(), "instance profile = \"other-profile\", want \"fabrica-workstation-profile\"") {
+		t.Fatalf("err = %v, want the profile adoption error", err)
+	}
+	if rec.in != nil {
+		t.Fatal("RunInstances must not launch a second instance after a rejected match")
+	}
+}
+
+// TestAdoptNoMatchFallsThroughToLaunch pins the 0-match path: the filters
+// restrict to this create's tags, no instance matches, and the launch proceeds.
+func TestAdoptNoMatchFallsThroughToLaunch(t *testing.T) {
+	rec := &recordingEC2{} // DescribeInstances returns an empty output
+	if err := adoptRC(rec).Create(context.Background(), adoptedResource()); err != nil {
+		t.Fatal(err)
+	}
+	if rec.in == nil {
+		t.Fatal("RunInstances must launch when no instance matches")
+	}
+	if rec.describeIn == nil || len(rec.describeIn.Filters) != 4 {
+		t.Fatalf("filters = %+v, want the four adoption filters", rec.describeIn.Filters)
+	}
+}
+
+// TestAdoptTwoMatchesIsAnError pins the safety gate: two pending or running
+// matches (e.g. an earlier partial create plus a foreign same-named instance
+// the nonce filter cannot separate) must fail loudly — never launch a second
+// instance and never pick one arbitrarily.
+func TestAdoptTwoMatchesIsAnError(t *testing.T) {
+	rec := &recordingEC2{
+		describeOut: &ec2.DescribeInstancesOutput{
+			Reservations: []types.Reservation{{Instances: []types.Instance{
+				adoptedInstanceFixture("i-one", true, "fabrica-workstation-profile"),
+				adoptedInstanceFixture("i-two", true, "fabrica-workstation-profile"),
+			}}},
+		},
+	}
+	err := adoptRC(rec).Create(context.Background(), adoptedResource())
+	if err == nil || !strings.Contains(err.Error(), "found 2 pending or running instances") {
+		t.Fatalf("err = %v, want the multiple-match error", err)
+	}
+	if rec.in != nil {
+		t.Fatal("RunInstances must not launch when more than one instance matches")
+	}
+}
+
+// TestRunInstancesClientTokenPerCreate pins the token semantics: derived from
+// the resource identity (type, name, region, version) plus the per-create
+// nonce tag, it is stable across retries of the same create and changes for a
+// different create (a new nonce, a different name, or a different region).
+func TestRunInstancesClientTokenPerCreate(t *testing.T) {
 	mk := func() *resourceClients {
 		return &resourceClients{awsCfg: awsConfig{region: "us-east-1"}, version: "test"}
 	}
-	state := json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro","Tags":[{"Key":"Name","Value":"box"}]}`)
+	state := json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro","Tags":[{"Key":"Name","Value":"box"},{"Key":"FabricaCreateNonce","Value":"0123456789abcdef0123456789abcdef"}]}`)
 	base := &fabricac.Resource{TypeName: fabricac.TypeAWSEC2Instance, DesiredState: state}
 
 	token := mk().runInstancesClientToken(base)
 	if len(token) != 64 {
 		t.Fatalf("token length = %d, want 64 (a 256-bit hex digest)", len(token))
 	}
+	// A retry of the same create reuses the token, on a fresh provider.
 	if again := mk().runInstancesClientToken(base); again != token {
 		t.Fatalf("token = %q then %q, want identical on retry", token, again)
 	}
-	rename := &fabricac.Resource{TypeName: base.TypeName, DesiredState: json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro","Tags":[{"Key":"Name","Value":"other"}]}`)}
+	// A separate create of the same name mints a fresh nonce: a different
+	// token, so the re-create cannot reuse the first create's idempotency.
+	otherCreate := &fabricac.Resource{TypeName: base.TypeName, DesiredState: json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro","Tags":[{"Key":"Name","Value":"box"},{"Key":"FabricaCreateNonce","Value":"fedcba9876543210fedcba9876543210"}]}`)}
+	if other := mk().runInstancesClientToken(otherCreate); other == token {
+		t.Fatal("a separate create of the same name must produce a different token")
+	}
+	rename := &fabricac.Resource{TypeName: base.TypeName, DesiredState: json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro","Tags":[{"Key":"Name","Value":"other"},{"Key":"FabricaCreateNonce","Value":"0123456789abcdef0123456789abcdef"}]}`)}
 	if other := mk().runInstancesClientToken(rename); other == token {
 		t.Fatal("token must change when the instance name changes")
 	}
@@ -659,6 +842,13 @@ func TestRunInstancesClientTokenStable(t *testing.T) {
 	otherRegion.awsCfg.region = "eu-west-1"
 	if other := otherRegion.runInstancesClientToken(base); other == token {
 		t.Fatal("token must change when the region changes")
+	}
+	// Without a nonce tag the token keeps the legacy identity shape, so
+	// nonce-less desired states are untouched.
+	legacy := &fabricac.Resource{TypeName: base.TypeName, DesiredState: json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro","Tags":[{"Key":"Name","Value":"box"}]}`)}
+	legacyToken := mk().runInstancesClientToken(legacy)
+	if legacyToken == token || len(legacyToken) != 64 {
+		t.Fatalf("legacy token = %q, want a distinct 64-char token without the nonce seed", legacyToken)
 	}
 }
 
@@ -688,6 +878,27 @@ func TestEC2ServiceDescribeInstancesConfigError(t *testing.T) {
 	_, err := svc.DescribeInstances(context.Background(), &ec2.DescribeInstancesInput{})
 	if err == nil || !strings.Contains(err.Error(), "no creds") {
 		t.Fatal(err)
+	}
+}
+
+func TestInstanceProfileNameFromARN(t *testing.T) {
+	cases := []struct {
+		arn  string
+		want string
+	}{
+		{arn: "arn:aws:iam::123456789012:instance-profile/fabrica-workstation-profile", want: "fabrica-workstation-profile"},
+		{arn: "arn:aws:iam::123456789012:instance-profile/a-b-c", want: "a-b-c"},
+		{arn: "not-an-arn", want: ""},
+		{arn: "arn:aws:iam::123456789012:instance-profile/", want: ""},
+		{arn: "", want: ""},
+	}
+	for _, tc := range cases {
+		if got := instanceProfileNameFromARN(&types.IamInstanceProfile{Arn: awssdk.String(tc.arn)}); got != tc.want {
+			t.Fatalf("profile name from %q = %q, want %q", tc.arn, got, tc.want)
+		}
+	}
+	if got := instanceProfileNameFromARN(nil); got != "" {
+		t.Fatalf("nil profile = %q, want empty", got)
 	}
 }
 

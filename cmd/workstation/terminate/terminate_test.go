@@ -18,7 +18,7 @@ import (
 // testWSParamName is a per-create session-password parameter name (see
 // workstation.SessionPasswordParameterFor); cobra_test.go keeps its own
 // copy because the two packages cannot share constants.
-const testWSParamName = "/fabrica/workstation/abc123def4567890/dcv-password"
+const testWSParamName = "/fabrica/workstation/abc123def4567890abc123def4567890/dcv-password"
 
 func TestNewTeardownWiring(t *testing.T) {
 	rt := globals.Runtime{Config: config.Defaults()}

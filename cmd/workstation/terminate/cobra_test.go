@@ -180,7 +180,7 @@ func TestNewTeardownNilProvider(t *testing.T) {
 
 // testWSParamName is the per-create session-password parameter name the
 // fixture records on the instance (Properties "sessionPasswordParameter").
-const testWSParamName = "/fabrica/workstation/abc123def4567890/dcv-password"
+const testWSParamName = "/fabrica/workstation/abc123def4567890abc123def4567890/dcv-password"
 
 func provisionedStateJSON() string {
 	return testutil.NewProvisionedStateJSON(testutil.StateModule{
