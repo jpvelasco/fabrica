@@ -106,10 +106,36 @@ func TestInstanceDesiredStateAttachesInstanceProfile(t *testing.T) {
 	}
 }
 
+// TestInstanceDesiredStateStampsCreateNonce pins the per-create identity tag:
+// the SDK launch path matches adoption on it and derives the RunInstances
+// ClientToken from it.
+func TestInstanceDesiredStateStampsCreateNonce(t *testing.T) {
+	plan := testPlan(t)
+	plan.CreateNonce = "0123456789abcdef0123456789abcdef"
+	raw, err := InstanceDesiredState(plan, "sg-test123", "dXNlcmRhdGE=")
+	if err != nil {
+		t.Fatalf("InstanceDesiredState: %v", err)
+	}
+	got := ec2state.ParseTags(t, ec2state.UnmarshalDesiredState(t, raw)["Tags"].([]any))["FabricaCreateNonce"]
+	if got != plan.CreateNonce {
+		t.Errorf("FabricaCreateNonce tag = %q, want %q", got, plan.CreateNonce)
+	}
+	// An empty nonce (a plan built before the create layer mints one) omits
+	// the tag entirely.
+	blank := testPlan(t)
+	blankRaw, err := InstanceDesiredState(blank, "sg-test123", "dXNlcmRhdGE=")
+	if err != nil {
+		t.Fatalf("InstanceDesiredState: %v", err)
+	}
+	if _, present := ec2state.ParseTags(t, ec2state.UnmarshalDesiredState(t, blankRaw)["Tags"].([]any))["FabricaCreateNonce"]; present {
+		t.Error("FabricaCreateNonce tag must be omitted for an empty nonce")
+	}
+}
+
 func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 	plan := &CreatePlan{RoleName: "fabrica-workstation-role", Account: "123456789012", Region: "us-east-1"}
 	// The per-create name is minted by the create layer; the role reads it.
-	paramName, err := SessionPasswordParameterFor("abc123def4567890")
+	paramName, err := SessionPasswordParameterFor("abc123def4567890abc123def4567890")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +193,7 @@ func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantARN := "arn:aws:ssm:us-east-1:123456789012:parameter/fabrica/workstation/abc123def4567890/dcv-password"
+	wantARN := "arn:aws:ssm:us-east-1:123456789012:parameter/fabrica/workstation/abc123def4567890abc123def4567890/dcv-password"
 	if !strings.Contains(string(docJSON), wantARN) {
 		t.Errorf("password policy = %s, want ARN %s", docJSON, wantARN)
 	}
@@ -186,7 +212,7 @@ func TestRoleDesiredStateGuardrails(t *testing.T) {
 		InstanceProfileName:      "fabrica-workstation-profile",
 		Account:                  "123456789012",
 		Region:                   "us-east-1",
-		SessionPasswordParameter: "/fabrica/workstation/abcdef0123456789/dcv-password",
+		SessionPasswordParameter: "/fabrica/workstation/abcdef0123456789abcdef0123456789/dcv-password",
 		IAM: config.IAM{
 			Path:                "/workstation/",
 			PermissionsBoundary: "arn:aws:iam::123456789012:policy/fabrica-boundary",
@@ -217,7 +243,7 @@ func TestRoleDesiredStateGuardrails(t *testing.T) {
 }
 
 func TestRoleDesiredStateRequiresRegionAndAccount(t *testing.T) {
-	const paramName = "/fabrica/workstation/abc123def4567890/dcv-password"
+	const paramName = "/fabrica/workstation/abc123def4567890abc123def4567890/dcv-password"
 	_, err := RoleDesiredState(&CreatePlan{RoleName: "fabrica-workstation-role", Account: "123456789012", SessionPasswordParameter: paramName})
 	if err == nil {
 		t.Fatal("expected error when region is empty")

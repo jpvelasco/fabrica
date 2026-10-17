@@ -18,7 +18,7 @@ import (
 // testWSParamName is a per-create session-password parameter name (see
 // workstation.SessionPasswordParameterFor); cobra_test.go keeps its own
 // copy because the two packages cannot share constants.
-const testWSParamName = "/fabrica/workstation/abc123def4567890/dcv-password"
+const testWSParamName = "/fabrica/workstation/abc123def4567890abc123def4567890/dcv-password"
 
 func TestNewTeardownWiring(t *testing.T) {
 	rt := globals.Runtime{Config: config.Defaults()}
@@ -136,6 +136,39 @@ func TestResourceOrderUsesRecordedParameterName(t *testing.T) {
 	}
 	if found != testWSParamName {
 		t.Fatalf("parameter identifier = %q, want %q", found, testWSParamName)
+	}
+}
+
+// TestResourceOrderSkipsMalformedParameterName pins the guard against a
+// hand-edited or corrupted state entry: a recorded sessionPasswordParameter
+// that is not a well-formed per-create name must be skipped (with a warning)
+// instead of deleting an arbitrary SSM parameter.
+func TestResourceOrderSkipsMalformedParameterName(t *testing.T) {
+	for _, bad := range []string{
+		"/fabrica/workstation/a/b/dcv-password",             // nested segment in the nonce
+		"fabrica/workstation/abc123def4567890/dcv-password", // missing leading slash
+		"/fabrica/perforce/abc123def4567890/dcv-password",   // wrong prefix
+		"/fabrica/workstation/abc123def4567890/dcv-secret",  // wrong leaf
+		"/fabrica/workstation/dcv-password",                 // missing nonce segment
+	} {
+		t.Run(bad, func(t *testing.T) {
+			m := &fabricastate.ModuleState{
+				Name:   "workstation",
+				Status: "ready",
+				Resources: []fabricastate.ModuleResource{
+					{TypeName: "AWS::EC2::Instance", Identifier: "i-1", Properties: map[string]string{"sessionPasswordParameter": bad}},
+				},
+			}
+			order := workstationResourceOrder(m)
+			for _, r := range order {
+				if r.TypeName == cloud.TypeAWSSSMParameter {
+					t.Fatalf("order includes the malformed SSM parameter name %q: %+v", bad, order)
+				}
+			}
+			if len(order) != 1 {
+				t.Fatalf("order = %+v, want the instance only", order)
+			}
+		})
 	}
 }
 

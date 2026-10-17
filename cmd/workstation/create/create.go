@@ -185,6 +185,15 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("building create plan: %w", err)
 	}
 
+	// Mint the per-create identity nonce before any plan is printed or
+	// applied. It is stamped on the instance as the FabricaCreateNonce tag at
+	// launch, derived into the RunInstances ClientToken (a retry of the same
+	// create reuses the token, a re-create after terminate gets a fresh one),
+	// and recorded in state (Properties "createNonce").
+	if plan.CreateNonce, err = workstation.NewCreateNonce(); err != nil {
+		return fmt.Errorf("building create plan: %w", err)
+	}
+
 	return provision.RunCreate(ctx, provision.CreateSpec[*workstation.CreatePlan]{
 		ModuleName:      moduleName,
 		Account:         account,
@@ -345,10 +354,11 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		return nil
 	}
 
-	// The per-create parameter name is recorded in state on the instance
-	// (Properties "sessionPasswordParameter"), not as a state resource — a
-	// drift Get of AWS::SSM::Parameter would return the secret. Terminate
-	// deletes the recorded name, and a failed create deletes it here.
+	// The per-create parameter name and identity nonce are recorded in state
+	// on the instance (Properties "sessionPasswordParameter" and
+	// "createNonce"), not as state resources — a drift Get of
+	// AWS::SSM::Parameter would return the secret. Terminate deletes the
+	// recorded name, and a failed create deletes it here.
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:    "Instance",
 		TypeName: cloud.TypeAWSEC2Instance,
@@ -359,6 +369,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 			"instanceType":             plan.InstanceType,
 			"volumeSize":               strconv.Itoa(plan.VolumeSize),
 			"sessionPasswordParameter": paramName,
+			"createNonce":              plan.CreateNonce,
 		},
 		PostCreate: provision.TagVolumesPostCreate(c.runtime.Provider, "workstation", plan.InstanceName),
 		// fail on writeState error (default)

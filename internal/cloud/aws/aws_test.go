@@ -209,3 +209,7 @@ func (stubEC2) DescribeSubnets(context.Context, *ec2.DescribeSubnetsInput, ...fu
 func (stubEC2) RunInstances(context.Context, *ec2.RunInstancesInput, ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error) {
 	return nil, fmt.Errorf("RunInstances not stubbed")
 }
+
+func (stubEC2) DescribeInstances(context.Context, *ec2.DescribeInstancesInput, ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
+	return &ec2.DescribeInstancesOutput{}, nil
+}

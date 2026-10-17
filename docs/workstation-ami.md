@@ -76,7 +76,7 @@ only (`sessionPasswordParameter` on the instance resource).
 
 Cloud-init runs `aws ssm get-parameter --with-decryption` (installing
 `awscli` when the AMI does not already have it) and feeds the value to
-`chpasswd` via a quoted heredoc, so the password never appears on a
+`chpasswd` via an unquoted heredoc, so the password never appears on a
 command line. The instance role may `ssm:GetParameter` on that one
 parameter ARN only. A failed or empty read exits 1 before the session is
 created.
