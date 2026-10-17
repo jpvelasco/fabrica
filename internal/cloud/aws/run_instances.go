@@ -2,6 +2,8 @@ package aws
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -11,11 +13,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 )
 
-// fallbackVolumeTags retries an EC2 instance create once through RunInstances
-// when Cloud Control was denied for a missing volume request tag. Any other
-// error is returned unchanged. A successful fallback replaces the error.
+// fallbackVolumeTags retries an EC2 instance create once through direct
+// RunInstances, only on a volume-tag deny. Any other error is returned
+// unchanged: waiter and polling errors never reach this path (the create path
+// returns them to the operator), and a failure that already names an
+// identifier never reaches it (failedInstanceCreate gates on an empty
+// identifier) — in both cases a retry would risk launching a second instance.
+// A successful fallback replaces the error.
 func (c *resourceClients) fallbackVolumeTags(ctx context.Context, r *fabricac.Resource, err error) error {
 	if err == nil || r == nil || r.TypeName != fabricac.TypeAWSEC2Instance || !isVolumeTagDeny(err) {
 		return err
@@ -26,33 +33,37 @@ func (c *resourceClients) fallbackVolumeTags(ctx context.Context, r *fabricac.Re
 	return nil
 }
 
-// isVolumeTagDeny reports a permission or request-tag failure. Cloud Control
-// can tag the instance and still omit the tag on the auto-created root volume.
-// Matching is case-insensitive and does not require both the action name and
-// the word "volume": accounts phrase the same deny in several ways.
+// isVolumeTagDeny reports a volume-tag deny in the error text (matched without
+// case sensitivity): the deny code (AccessDenied or UnauthorizedOperation),
+// the EC2 action (ec2:RunInstances or ec2:CreateTags), and a volume or
+// aws:RequestTag condition. Any other deny — iam:PassRole, KMS, SSM, a path
+// or boundary deny, throttling, a bad AMI — does not match: the retry cannot
+// fix the underlying permission, and the launch would risk a second instance.
 func isVolumeTagDeny(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
-	for _, needle := range []string{
-		"unauthorizedoperation",
-		"accessdenied",
-		"not authorized",
-		"explicit deny",
-		"requesttag",
-	} {
-		if strings.Contains(msg, needle) {
-			return true
-		}
+	if !strings.Contains(msg, "accessdenied") && !strings.Contains(msg, "unauthorizedoperation") {
+		return false
 	}
-	return false
+	if !strings.Contains(msg, "ec2:runinstances") && !strings.Contains(msg, "ec2:createtags") {
+		return false
+	}
+	return strings.Contains(msg, "requesttag") || strings.Contains(msg, "volume")
 }
 
 // createInstanceWithVolumeTags launches the instance with TagSpecifications
-// for both the instance and the volume, and IMDSv2 required.
+// for both the instance and the volume, and IMDSv2 required. Before launching
+// it looks for a fabrica-tagged instance already pending or running and
+// adopts it instead of launching a second one. The request carries a stable
+// ClientToken so a repeated attempt is an idempotent retry.
 func (c *resourceClients) createInstanceWithVolumeTags(ctx context.Context, r *fabricac.Resource) error {
-	input, err := runInstancesInput(r.DesiredState, c.volumeRequestTags)
+	if id, ok := c.adoptFabricaInstance(ctx, r); ok {
+		r.Identifier = id
+		return nil
+	}
+	input, err := runInstancesInput(r.DesiredState, c.volumeRequestTags, c.runInstancesClientToken(r))
 	if err != nil {
 		return err
 	}
@@ -73,6 +84,71 @@ func (c *resourceClients) createInstanceWithVolumeTags(ctx context.Context, r *f
 	}
 	r.Identifier = aws.ToString(out.Instances[0].InstanceId)
 	return nil
+}
+
+// nameTag returns the value of the Name tag in the desired state — the
+// identity the RunInstances path uses for adoption and the idempotency token.
+// Empty when the document has no Name tag or does not parse.
+func nameTag(desired json.RawMessage) string {
+	var doc ccInstanceDoc
+	if err := json.Unmarshal(desired, &doc); err != nil {
+		return ""
+	}
+	for _, tag := range doc.Tags {
+		if tag.Key == "Name" {
+			return tag.Value
+		}
+	}
+	return ""
+}
+
+// runInstancesClientToken derives a stable idempotency token from the
+// resource identity: type, name tag, region, and the fabrica version. Retries
+// of the same create send the same token, so EC2 returns the original
+// instance instead of a second one. The sha256 hex digest is exactly 64
+// characters, the RunInstances ClientToken limit.
+func (c *resourceClients) runInstancesClientToken(r *fabricac.Resource) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s|%s", r.TypeName, nameTag(r.DesiredState), c.awsCfg.region, c.version)))
+	return hex.EncodeToString(sum[:])
+}
+
+// adoptFabricaInstance looks for an instance a previous attempt already
+// launched and tagged (ManagedBy=fabrica, Name=<name>) in pending or running
+// state, so a retried create adopts it instead of launching a second
+// instance. The lookup needs the EC2 client and a Name tag in the desired
+// state; any lookup error falls through to the launch, where the stable
+// ClientToken keeps the attempt idempotent.
+func (c *resourceClients) adoptFabricaInstance(ctx context.Context, r *fabricac.Resource) (string, bool) {
+	if c.instances == nil {
+		return "", false
+	}
+	name := nameTag(r.DesiredState)
+	if name == "" {
+		return "", false
+	}
+	out, err := c.instances.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []types.Filter{
+			{Name: aws.String("tag:ManagedBy"), Values: []string{"fabrica"}},
+			{Name: aws.String("tag:Name"), Values: []string{name}},
+			{Name: aws.String("instance-state-name"), Values: []string{
+				string(types.InstanceStateNamePending),
+				string(types.InstanceStateNameRunning),
+			}},
+		},
+	})
+	if err != nil {
+		oplog.WithResourceAndRegion(r.TypeName, name, c.awsCfg.region).Warn("lookup of an existing fabrica instance failed; the stable ClientToken keeps the launch idempotent", "error", err)
+		return "", false
+	}
+	for _, res := range out.Reservations {
+		for _, inst := range res.Instances {
+			if id := aws.ToString(inst.InstanceId); id != "" {
+				oplog.WithResourceAndRegion(r.TypeName, id, c.awsCfg.region).Info("adopting an existing fabrica instance", "name", name)
+				return id, true
+			}
+		}
+	}
+	return "", false
 }
 
 type ccInstanceDoc struct {
@@ -105,7 +181,7 @@ type ccInstanceDoc struct {
 // instead of silently clamping.
 const maxIMDSv2HopLimit = 64
 
-func runInstancesInput(desired json.RawMessage, volumeTags map[string]string) (*ec2.RunInstancesInput, error) {
+func runInstancesInput(desired json.RawMessage, volumeTags map[string]string, clientToken string) (*ec2.RunInstancesInput, error) {
 	var doc ccInstanceDoc
 	if err := json.Unmarshal(desired, &doc); err != nil {
 		return nil, fmt.Errorf("reading EC2 instance desired state: %w", err)
@@ -158,6 +234,12 @@ func runInstancesInput(desired json.RawMessage, volumeTags map[string]string) (*
 			{ResourceType: types.ResourceTypeInstance, Tags: instanceTags},
 			{ResourceType: types.ResourceTypeVolume, Tags: vol},
 		},
+	}
+	if clientToken != "" {
+		// A stable token keyed on the resource identity makes a repeated
+		// RunInstances the same idempotent request: EC2 returns the original
+		// instance instead of a second one when the token repeats.
+		input.ClientToken = aws.String(clientToken)
 	}
 	if doc.UserData != "" {
 		input.UserData = aws.String(doc.UserData)

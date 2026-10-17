@@ -65,6 +65,14 @@ func NewSessionPasswordNonce() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
+// IsSessionPasswordName reports whether name is a well-formed per-create
+// session-password parameter name. Exported so the terminate flow validates
+// the recorded name before deleting it: a hand-edited or corrupted state entry
+// must not widen the delete target.
+func IsSessionPasswordName(name string) bool {
+	return isSessionPasswordName(name)
+}
+
 // isSessionPasswordName reports whether name is a well-formed per-create
 // session-password parameter name.
 func isSessionPasswordName(name string) bool {

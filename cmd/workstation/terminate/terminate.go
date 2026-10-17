@@ -7,7 +7,9 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/workstation"
 	"github.com/spf13/cobra"
 )
 
@@ -66,7 +68,13 @@ func workstationResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 	// the recorded name and skips when it is absent (nothing recorded means
 	// no secret to clean up). Delete is success when it is already gone.
 	if name := instRes.Properties["sessionPasswordParameter"]; name != "" {
-		out = append(out, cloud.Resource{TypeName: cloud.TypeAWSSSMParameter, Identifier: name})
+		// Validate before deleting: a malformed recorded name must not widen
+		// the delete target to an arbitrary SSM parameter.
+		if !workstation.IsSessionPasswordName(name) {
+			oplog.WithModule("workstation").Warn("skipping DCV session password parameter: the recorded name is not a well-formed per-create name", "name", name)
+		} else {
+			out = append(out, cloud.Resource{TypeName: cloud.TypeAWSSSMParameter, Identifier: name})
+		}
 	}
 	appendRecorded(cloud.TypeAWSIAMInstanceProfile)
 	appendRecorded(cloud.TypeAWSIAMRole)

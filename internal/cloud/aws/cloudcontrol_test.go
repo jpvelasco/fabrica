@@ -934,13 +934,27 @@ func (f *fakeCCWaiter) WaitForOutput(_ context.Context, in *cloudcontrol.GetReso
 	return f.out, nil
 }
 
-// ccAPIErrorImpl satisfies the local interface{ ErrorCode() string } used by isNotFound.
-type ccAPIErrorImpl struct{ code string }
+// ccAPIErrorImpl satisfies the local interface{ ErrorCode() string } used by
+// isNotFound. msg is optional: when set, Error() returns "<code>: <msg>", so
+// message-only checks (e.g. isVolumeTagDeny) can see the provider detail.
+type ccAPIErrorImpl struct {
+	code string
+	msg  string
+}
 
 func (e *ccAPIErrorImpl) ErrorCode() string { return e.code }
-func (e *ccAPIErrorImpl) Error() string     { return e.code }
+func (e *ccAPIErrorImpl) Error() string {
+	if e.msg == "" {
+		return e.code
+	}
+	return e.code + ": " + e.msg
+}
 
 func ccAPIError(code string) error { return &ccAPIErrorImpl{code: code} }
+
+func ccAPIErrorWithMessage(code, msg string) error {
+	return &ccAPIErrorImpl{code: code, msg: msg}
+}
 
 // --- createAsync ---
 

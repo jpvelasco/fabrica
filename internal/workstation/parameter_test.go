@@ -79,6 +79,25 @@ func TestSessionPasswordParameterForRejectsMalformedNonces(t *testing.T) {
 	}
 }
 
+func TestIsSessionPasswordName(t *testing.T) {
+	valid := "/fabrica/workstation/abc123def4567890/dcv-password"
+	if !IsSessionPasswordName(valid) {
+		t.Fatalf("IsSessionPasswordName(%q) = false, want true", valid)
+	}
+	for _, bad := range []string{
+		"",
+		"/fabrica/workstation/dcv-password",     // missing nonce segment
+		"/fabrica/workstation/a/b/dcv-password", // nested nonce
+		"fabrica/workstation/abc123def4567890/dcv-password", // missing leading slash
+		"/fabrica/perforce/abc123def4567890/dcv-password",   // wrong prefix
+		"/fabrica/workstation/abc123def4567890/dcv-secret",  // wrong leaf
+	} {
+		if IsSessionPasswordName(bad) {
+			t.Errorf("IsSessionPasswordName(%q) = true, want false", bad)
+		}
+	}
+}
+
 var nonceHex = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 func TestNewSessionPasswordNonce(t *testing.T) {
