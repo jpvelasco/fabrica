@@ -187,9 +187,10 @@ func (c command) run(ctx context.Context) error {
 
 	// Mint the per-create identity nonce before any plan is printed or
 	// applied. It is stamped on the instance as the FabricaCreateNonce tag at
-	// launch, derived into the RunInstances ClientToken (a retry of the same
-	// create reuses the token, a re-create after terminate gets a fresh one),
-	// and recorded in state (Properties "createNonce").
+	// launch, narrows the SDK launch path's adoption lookup and keys its
+	// RunInstances ClientToken (fresh per invocation, so a re-create after
+	// terminate cannot reuse the previous create's idempotency), and is
+	// recorded in state (Properties "createNonce").
 	if plan.CreateNonce, err = workstation.NewCreateNonce(); err != nil {
 		return fmt.Errorf("building create plan: %w", err)
 	}

@@ -63,8 +63,9 @@ func (c *resourceClients) Create(ctx context.Context, r *fabricac.Resource) erro
 		}
 		// A waiter or polling error is a transport or watchdog failure, not a
 		// Cloud Control verdict: the request may have created the instance.
-		// Returning it to the operator (who re-runs and adopts the instance)
-		// is safer than a retry that could launch a second one.
+		// Returning it to the operator (who re-runs; the re-run's adoption
+		// finds the instance by its base fabrica tags and adopts it) is
+		// safer than a retry that could launch a second one.
 		return fmt.Errorf("waiting for %s creation: %w", r.TypeName, err)
 	}
 

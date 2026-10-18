@@ -82,9 +82,11 @@ func IsSessionPasswordName(name string) bool {
 
 // NewCreateNonce returns a 16-byte random hex nonce that names a create: the
 // SDK launch path stamps it on the instance (CreateNonceTag) and the state
-// layer records it (Properties "createNonce"), so a terminate + re-create of
-// the same instance name gets a fresh nonce — and a fresh idempotency token —
-// while a retry of the same create reuses the recorded one.
+// layer records it (Properties "createNonce"). Each invocation mints a fresh
+// nonce, so a terminate + re-create of the same instance name gets a fresh
+// nonce and a fresh idempotency token; the nonce is per-invocation, and a
+// re-run that must find an earlier run's instance relies on the SDK adoption
+// fallback to the base fabrica tags (ManagedBy + Name).
 func NewCreateNonce() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {

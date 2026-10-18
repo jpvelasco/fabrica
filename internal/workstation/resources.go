@@ -31,8 +31,8 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMess
 		ec2state.WithExtraTags("FabricaModule", "workstation"),
 	}
 	if plan.CreateNonce != "" {
-		// The per-create nonce lets the SDK launch path adopt only this
-		// create's own instance and key the idempotency token on it.
+		// The per-create nonce narrows the SDK launch path's adoption lookup
+		// to this create's own instance and keys the idempotency token on it.
 		dsOpts = append(dsOpts, ec2state.WithExtraTags(cloud.CreateNonceTag, plan.CreateNonce))
 	}
 	return ec2state.Build(

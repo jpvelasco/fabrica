@@ -128,11 +128,11 @@ func createNonceTag(desired json.RawMessage) string {
 
 // runInstancesClientToken derives the idempotency token from the resource
 // identity: type, name tag, region, and the fabrica version, plus the
-// per-create nonce tag when present. Retries of the same create send the same
-// token, so EC2 returns the original instance instead of a second one; a
-// re-create after terminate carries a fresh nonce and therefore a fresh
-// token. The sha256 hex digest is exactly 64 characters, the RunInstances
-// ClientToken limit.
+// per-create nonce tag when present. The digest is stable for one create
+// (same desired state → same token), and each fresh create mints a fresh
+// nonce, so a re-create after terminate carries a different token and
+// cannot reuse the previous create's idempotency with EC2. The sha256 hex
+// digest is exactly 64 characters, the RunInstances ClientToken limit.
 func (c *resourceClients) runInstancesClientToken(r *fabricac.Resource) string {
 	seed := fmt.Sprintf("%s|%s|%s|%s", r.TypeName, nameTag(r.DesiredState), c.awsCfg.region, c.version)
 	if nonce := createNonceTag(r.DesiredState); nonce != "" {
@@ -142,25 +142,12 @@ func (c *resourceClients) runInstancesClientToken(r *fabricac.Resource) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// adoptFabricaInstance looks for the instance this create already launched:
-// the desired state names it by its fabrica tags (ManagedBy=fabrica,
-// Name=<name>, and the per-create FabricaCreateNonce when present) in
-// pending or running state, so a retried create adopts it instead of
-// launching a second instance. Adoption only accepts exactly one match; a
-// match must also have IMDSv2 required and the instance profile the desired
-// state names, or the create fails instead of adopting a foreign or
-// misconfigured instance. Two or more matches are an error: the second
-// instance cannot be launched and the extras need operator attention. A
-// lookup error falls through to the launch, where the ClientToken keeps the
-// attempt idempotent.
-func (c *resourceClients) adoptFabricaInstance(ctx context.Context, r *fabricac.Resource) (string, error) {
-	if c.instances == nil {
-		return "", nil
-	}
-	name := nameTag(r.DesiredState)
-	if name == "" {
-		return "", nil
-	}
+// adoptionFilter builds the DescribeInstances filters for one adoption
+// lookup: the fabrica tags the create stamps on its instance (ManagedBy,
+// Name, and the per-create FabricaCreateNonce when withNonce) restricted to
+// pending or running state, plus the human-readable display name error
+// messages and logs quote.
+func adoptionFilter(name, nonce string, withNonce bool) ([]types.Filter, string) {
 	filters := []types.Filter{
 		{Name: aws.String("tag:ManagedBy"), Values: []string{"fabrica"}},
 		{Name: aws.String("tag:Name"), Values: []string{name}},
@@ -169,13 +156,20 @@ func (c *resourceClients) adoptFabricaInstance(ctx context.Context, r *fabricac.
 			string(types.InstanceStateNameRunning),
 		}},
 	}
-	if nonce := createNonceTag(r.DesiredState); nonce != "" {
+	display := "ManagedBy=fabrica and Name=" + name
+	if withNonce {
 		filters = append(filters, types.Filter{Name: aws.String("tag:" + fabricac.CreateNonceTag), Values: []string{nonce}})
+		display += fmt.Sprintf(" and %s=%s", fabricac.CreateNonceTag, nonce)
 	}
+	return filters, display
+}
+
+// describeInstances returns the pending or running instances carrying the
+// adoption filters, or an error when DescribeInstances itself fails.
+func (c *resourceClients) describeInstances(ctx context.Context, typeName, name string, filters []types.Filter) ([]types.Instance, error) {
 	out, err := c.instances.DescribeInstances(ctx, &ec2.DescribeInstancesInput{Filters: filters})
 	if err != nil {
-		oplog.WithResourceAndRegion(r.TypeName, name, c.awsCfg.region).Warn("lookup of an existing fabrica instance failed; the ClientToken keeps the launch idempotent", "error", err)
-		return "", nil
+		return nil, fmt.Errorf("DescribeInstances: %w", err)
 	}
 	var matches []types.Instance
 	for _, res := range out.Reservations {
@@ -183,6 +177,62 @@ func (c *resourceClients) adoptFabricaInstance(ctx context.Context, r *fabricac.
 			if aws.ToString(inst.InstanceId) != "" {
 				matches = append(matches, inst)
 			}
+		}
+	}
+	oplog.WithResourceAndRegion(typeName, name, c.awsCfg.region).Debug("adoption lookup", "filters", len(filters), "matches", len(matches))
+	return matches, nil
+}
+
+// adoptFabricaInstance looks for the instance this create already launched so
+// a retried create adopts it instead of launching a second one. It looks by
+// the fabrica tags the create stamps (ManagedBy=fabrica, Name=<name>) and by
+// the per-create FabricaCreateNonce when the desired state carries one: the
+// nonce filter is the first-choice match for a same-nonce launch (e.g. inside
+// the Cloud Control fallback), and a nonce-filtered miss falls back to the
+// nonce-less tag match, which is the cross-run path — a fresh invocation mints
+// a fresh nonce, so a re-run after a waiter error or lost local state cannot
+// match the prior run's nonce and still has to find its instance. Adoption
+// only accepts exactly one match; a match must also have IMDSv2 required and
+// the instance profile the desired state names, or the create fails instead
+// of adopting a foreign or misconfigured instance. Two or more matches are an
+// error: the second instance cannot be launched and the extras need operator
+// attention. A failed nonce-filtered lookup falls through to the launch,
+// where the ClientToken keeps the attempt idempotent; a failed nonce-less
+// fallback fails the create: adoption has not verified what already exists,
+// and launching without that check risks a second instance.
+func (c *resourceClients) adoptFabricaInstance(ctx context.Context, r *fabricac.Resource) (string, error) {
+	if c.instances == nil {
+		return "", nil
+	}
+	name := nameTag(r.DesiredState)
+	if name == "" {
+		return "", nil
+	}
+	nonce := createNonceTag(r.DesiredState)
+	firstFilters, firstDisplay := adoptionFilter(name, nonce, nonce != "")
+	matches, err := c.describeInstances(ctx, r.TypeName, name, firstFilters)
+	if err != nil {
+		oplog.WithResourceAndRegion(r.TypeName, name, c.awsCfg.region).Warn("lookup of an existing fabrica instance failed; the ClientToken keeps the launch idempotent", "error", err)
+		return "", nil
+	}
+	if len(matches) == 0 && nonce != "" {
+		// A nonce-filtered miss on a re-run: the prior run stamped a
+		// different nonce, so its instance is only findable by the base
+		// tags. This fallback is the cross-run double-launch guard. Its
+		// match count hands off to the switch below (same verification and
+		// the same multiple-match error); only a failed lookup fails the
+		// create, since no verified match means a launch risks a second
+		// instance.
+		secondFilters, secondDisplay := adoptionFilter(name, "", false)
+		matches, err = c.describeInstances(ctx, r.TypeName, name, secondFilters)
+		if err != nil {
+			return "", fmt.Errorf("adopting %s: the nonce-filtered adoption lookup matched nothing and the nonce-less fallback failed, so the launch is not attempted (adoption has not verified what exists — launching risks a second instance): %w. Check for a leftover %s before re-running",
+				name, err, firstDisplay)
+		}
+		oplog.WithResourceAndRegion(r.TypeName, name, c.awsCfg.region).Info("nonce-filtered lookup matched nothing; adopting via the nonce-less fallback (a re-run cannot carry the prior run's create nonce)")
+		if len(matches) > 1 {
+			return "", fmt.Errorf("adopting %s: found %d pending or running instances matching %s; only exactly one may match. Delete the extras, then re-run the create",
+				name, len(matches), secondDisplay)
 		}
 	}
 	switch len(matches) {
@@ -197,12 +247,8 @@ func (c *resourceClients) adoptFabricaInstance(ctx context.Context, r *fabricac.
 		oplog.WithResourceAndRegion(r.TypeName, id, c.awsCfg.region).Info("adopting an existing fabrica instance", "name", name)
 		return id, nil
 	default:
-		filters := "ManagedBy=fabrica and Name=" + name
-		if nonce := createNonceTag(r.DesiredState); nonce != "" {
-			filters += fmt.Sprintf(" and %s=%s", fabricac.CreateNonceTag, nonce)
-		}
 		return "", fmt.Errorf("adopting %s: found %d pending or running instances matching %s; only exactly one may match. Delete the extras, then re-run the create",
-			name, len(matches), filters)
+			name, len(matches), firstDisplay)
 	}
 }
 

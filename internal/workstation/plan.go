@@ -61,9 +61,13 @@ type CreatePlan struct {
 	// CreateNonce is the per-create random nonce the create layer mints (same
 	// pattern as the session-password nonce). InstanceDesiredState stamps it
 	// as the FabricaCreateNonce tag at launch, the SDK launch path derives the
-	// RunInstances ClientToken from it (a retry of the same create reuses the
-	// token; a re-create after terminate gets a fresh one), and the create
-	// layer records it in state (Properties "createNonce").
+	// RunInstances ClientToken from it, and the create layer records it in
+	// state (Properties "createNonce"). It is minted fresh on every
+	// invocation and never read back from state, so it keys the idempotency
+	// token for one create's request shape; a re-create under the same name
+	// carries a fresh nonce and a fresh token, and the SDK adoption lookup
+	// falls back to the base fabrica tags (ManagedBy + Name) to find an
+	// earlier run's instance.
 	CreateNonce string
 
 	// IAM is the resolved path and permissions boundary for the instance role.
