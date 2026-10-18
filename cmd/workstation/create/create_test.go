@@ -224,9 +224,10 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	if param := inst.Properties["sessionPasswordParameter"]; !strings.HasPrefix(param, workstation.SessionPasswordParameterPrefix+"/") || !strings.HasSuffix(param, "/dcv-password") {
 		t.Errorf("sessionPasswordParameter = %q, want the per-create name shape", param)
 	}
-	// The per-create identity nonce is recorded in state so a retry of the
-	// same create keeps the RunInstances ClientToken idempotent, and a
-	// re-create after terminate mints a fresh one.
+	// The per-create identity nonce is recorded in state for traceability.
+	// It is minted fresh per invocation, so a re-create after terminate gets
+	// a fresh token; cross-run double launches are prevented by the SDK
+	// launch path's base-tag leftover check, not by reusing this value.
 	recordedNonce := inst.Properties["createNonce"]
 	if len(recordedNonce) != 32 {
 		t.Errorf("createNonce = %q, want a 32-hex nonce", recordedNonce)
