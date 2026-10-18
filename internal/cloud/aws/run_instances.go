@@ -65,7 +65,8 @@ const volumeResourceARNNeedle = ":volume/"
 // for both the instance and the volume, and IMDSv2 required. Before launching
 // it looks for the instance this create already launched and adopts it
 // instead of launching a second one. The request carries a per-create
-// ClientToken so a repeated attempt is an idempotent retry.
+// ClientToken when the desired state carries the nonce tag, so a repeated
+// attempt is an idempotent retry.
 func (c *resourceClients) createInstanceWithVolumeTags(ctx context.Context, r *fabricac.Resource) error {
 	id, err := c.adoptFabricaInstance(ctx, r)
 	if err != nil {
@@ -126,18 +127,25 @@ func createNonceTag(desired json.RawMessage) string {
 	return docTagValue(desired, fabricac.CreateNonceTag)
 }
 
-// runInstancesClientToken derives the idempotency token from the resource
-// identity: type, name tag, region, and the fabrica version, plus the
-// per-create nonce tag when present. The digest is stable for one create
-// (same desired state → same token), and each fresh create mints a fresh
-// nonce, so a re-create after terminate carries a different token and
-// cannot reuse the previous create's idempotency with EC2. The sha256 hex
+// runInstancesClientToken derives the idempotency token from the per-create
+// nonce tag when the desired state carries one, mixed with the resource
+// identity (type, name tag, region, fabrica version). The digest is stable
+// for one create's request shape (same desired state → same token), and each
+// fresh create mints a fresh nonce, so a re-create after terminate carries a
+// different token and cannot reuse the previous create's idempotency at
+// EC2. Empty for a desired state without the nonce tag: a token derived from
+// the identity alone would repeat across separate creates of the same name
+// and collide with the prior create's token at EC2 (a re-create either
+// returns the terminated instance's ID or fails with
+// IdempotentParameterMismatch on changed user data), and the pre-#501
+// requests never carried a token — so the field stays unset. The sha256 hex
 // digest is exactly 64 characters, the RunInstances ClientToken limit.
 func (c *resourceClients) runInstancesClientToken(r *fabricac.Resource) string {
-	seed := fmt.Sprintf("%s|%s|%s|%s", r.TypeName, nameTag(r.DesiredState), c.awsCfg.region, c.version)
-	if nonce := createNonceTag(r.DesiredState); nonce != "" {
-		seed += "|" + nonce
+	nonce := createNonceTag(r.DesiredState)
+	if nonce == "" {
+		return ""
 	}
+	seed := fmt.Sprintf("%s|%s|%s|%s|%s", r.TypeName, nameTag(r.DesiredState), c.awsCfg.region, c.version, nonce)
 	sum := sha256.Sum256([]byte(seed))
 	return hex.EncodeToString(sum[:])
 }
@@ -188,18 +196,21 @@ func (c *resourceClients) describeInstances(ctx context.Context, typeName, name 
 // the fabrica tags the create stamps (ManagedBy=fabrica, Name=<name>) and by
 // the per-create FabricaCreateNonce when the desired state carries one: the
 // nonce filter is the first-choice match for a same-nonce launch (e.g. inside
-// the Cloud Control fallback), and a nonce-filtered miss falls back to the
-// nonce-less tag match, which is the cross-run path — a fresh invocation mints
-// a fresh nonce, so a re-run after a waiter error or lost local state cannot
-// match the prior run's nonce and still has to find its instance. Adoption
-// only accepts exactly one match; a match must also have IMDSv2 required and
-// the instance profile the desired state names, or the create fails instead
-// of adopting a foreign or misconfigured instance. Two or more matches are an
-// error: the second instance cannot be launched and the extras need operator
-// attention. A failed nonce-filtered lookup falls through to the launch,
-// where the ClientToken keeps the attempt idempotent; a failed nonce-less
-// fallback fails the create: adoption has not verified what already exists,
-// and launching without that check risks a second instance.
+// the Cloud Control fallback), where the instance's cloud-init belongs to
+// this create. A nonce-filtered miss consults the base tags (ManagedBy +
+// Name) as the cross-run double-launch guard — a fresh invocation mints a
+// fresh nonce, so a re-run after a waiter error or lost local state cannot
+// match the prior run's nonce. The base-tag match is a leftover check, not an
+// adoption: a leftover from the prior run was configured by that run's own
+// cloud-init (for a workstation, that run's session-password parameter),
+// which this create cannot match, so it fails the create with the leftover's
+// ID and an actionable remedy instead of adopting it or launching a second
+// one. A same-nonce match must also have IMDSv2 required and the instance
+// profile the desired state names, or the create fails instead of adopting a
+// foreign or misconfigured instance. Two or more matches on either lookup are
+// an error: the second instance cannot be launched and the extras need
+// operator attention. A failed lookup fails the create: without a verified
+// view of what already exists, launching risks a second instance.
 func (c *resourceClients) adoptFabricaInstance(ctx context.Context, r *fabricac.Resource) (string, error) {
 	if c.instances == nil {
 		return "", nil
@@ -212,27 +223,30 @@ func (c *resourceClients) adoptFabricaInstance(ctx context.Context, r *fabricac.
 	firstFilters, firstDisplay := adoptionFilter(name, nonce, nonce != "")
 	matches, err := c.describeInstances(ctx, r.TypeName, name, firstFilters)
 	if err != nil {
-		oplog.WithResourceAndRegion(r.TypeName, name, c.awsCfg.region).Warn("lookup of an existing fabrica instance failed; the ClientToken keeps the launch idempotent", "error", err)
-		return "", nil
+		return "", fmt.Errorf("adopting %s: the lookup of existing fabrica instances failed, so the launch is not attempted (a failed lookup cannot rule out a prior instance — launching risks a second one): %w. Check the account's ec2:DescribeInstances grant and re-run",
+			name, err)
 	}
 	if len(matches) == 0 && nonce != "" {
 		// A nonce-filtered miss on a re-run: the prior run stamped a
 		// different nonce, so its instance is only findable by the base
-		// tags. This fallback is the cross-run double-launch guard. Its
-		// match count hands off to the switch below (same verification and
-		// the same multiple-match error); only a failed lookup fails the
-		// create, since no verified match means a launch risks a second
-		// instance.
+		// tags. The leftover check is the cross-run double-launch guard.
 		secondFilters, secondDisplay := adoptionFilter(name, "", false)
-		matches, err = c.describeInstances(ctx, r.TypeName, name, secondFilters)
+		second, err := c.describeInstances(ctx, r.TypeName, name, secondFilters)
 		if err != nil {
-			return "", fmt.Errorf("adopting %s: the nonce-filtered adoption lookup matched nothing and the nonce-less fallback failed, so the launch is not attempted (adoption has not verified what exists — launching risks a second instance): %w. Check for a leftover %s before re-running",
+			return "", fmt.Errorf("adopting %s: the nonce-filtered lookup matched nothing and the nonce-less leftover check failed, so the launch is not attempted (the leftover check has not verified what exists — launching risks a second instance): %w. Check for a leftover %s before re-running",
 				name, err, firstDisplay)
 		}
-		oplog.WithResourceAndRegion(r.TypeName, name, c.awsCfg.region).Info("nonce-filtered lookup matched nothing; adopting via the nonce-less fallback (a re-run cannot carry the prior run's create nonce)")
-		if len(matches) > 1 {
-			return "", fmt.Errorf("adopting %s: found %d pending or running instances matching %s; only exactly one may match. Delete the extras, then re-run the create",
-				name, len(matches), secondDisplay)
+		oplog.WithResourceAndRegion(r.TypeName, name, c.awsCfg.region).Info("nonce-filtered lookup matched nothing; checking for a leftover instance by the base fabrica tags (a re-run cannot carry the prior run's create nonce)")
+		switch len(second) {
+		case 0:
+			return "", nil
+		case 1:
+			inst := second[0]
+			return "", fmt.Errorf("found a pending or running instance %s matching %s from a previous run of this create (its %s tag differs from this create's). It was configured by that run's cloud-init, which this create cannot match. Terminate %s (or restore the state file that recorded it) and re-run the create",
+				aws.ToString(inst.InstanceId), secondDisplay, fabricac.CreateNonceTag, aws.ToString(inst.InstanceId))
+		default:
+			return "", fmt.Errorf("found %d pending or running instances matching %s, left over from a previous run of this create; only exactly one may match. Delete the extras, then re-run the create",
+				len(second), secondDisplay)
 		}
 	}
 	switch len(matches) {
@@ -392,9 +406,9 @@ func runInstancesInput(desired json.RawMessage, volumeTags map[string]string, cl
 		},
 	}
 	if clientToken != "" {
-		// A stable token keyed on the resource identity makes a repeated
-		// RunInstances the same idempotent request: EC2 returns the original
-		// instance instead of a second one when the token repeats.
+		// A stable per-create token makes a repeated RunInstances the same
+		// idempotent request: EC2 returns the original instance instead of a
+		// second one when the token repeats.
 		input.ClientToken = aws.String(clientToken)
 	}
 	if doc.UserData != "" {

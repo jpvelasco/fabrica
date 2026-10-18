@@ -30,7 +30,7 @@ func TestCreate_VolumeRequestTagsSkipCloudControl(t *testing.T) {
 			"SecurityGroupIds":["sg-1"],"UserData":"dXNlcmRhdGE=",
 			"IamInstanceProfile":"fabrica-workstation-profile",
 			"BlockDeviceMappings":[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":100,"VolumeType":"gp3","DeleteOnTermination":true}}],
-			"Tags":[{"Key":"Name","Value":"fabrica-workstation"},{"Key":"ManagedBy","Value":"fabrica"}],
+			"Tags":[{"Key":"Name","Value":"fabrica-workstation"},{"Key":"ManagedBy","Value":"fabrica"},{"Key":"FabricaCreateNonce","Value":"0123456789abcdef0123456789abcdef"}],
 			"MetadataOptions":{"HttpTokens":"optional","HttpPutResponseHopLimit":1}
 		}`),
 	}
@@ -62,8 +62,9 @@ func TestCreate_VolumeRequestTagsSkipCloudControl(t *testing.T) {
 	assertTagSpec(t, in, types.ResourceTypeInstance, "Project", "fabrica-e2e")
 	assertTagSpec(t, in, types.ResourceTypeInstance, "ManagedBy", "fabrica")
 	assertTagSpec(t, in, types.ResourceTypeInstance, "Name", "fabrica-workstation")
-	// The launch carries a stable idempotency token keyed on the resource
-	// identity, so a retry of the same create reuses the original instance.
+	// The launch carries the per-create idempotency token (keyed on the
+	// create-nonce tag), so a re-send of the same request shape is one
+	// idempotent request to EC2.
 	wantToken := rc.runInstancesClientToken(r)
 	if got := awssdk.ToString(in.ClientToken); got == "" || got != wantToken {
 		t.Fatalf("ClientToken = %q, want the stable token %q", got, wantToken)
@@ -358,8 +359,10 @@ func TestRunInstancesInputRequiresShape(t *testing.T) {
 	if awssdk.ToString(in.ClientToken) != "tok-abc" {
 		t.Fatalf("ClientToken = %q, want tok-abc", awssdk.ToString(in.ClientToken))
 	}
-	// An empty token leaves the field unset (the fallback is never called with
-	// an empty token, but the builder must not mint one on its own).
+	// An empty token leaves the field unset: runInstancesClientToken returns
+	// empty for a nonce-less desired state (an identity-only token would
+	// repeat across separate creates), so the builder must not mint one on
+	// its own.
 	if inEmpty, err := runInstancesInput(json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro"}`), nil, ""); err != nil {
 		t.Fatal(err)
 	} else if inEmpty.ClientToken != nil {
@@ -518,7 +521,7 @@ type recordingEC2 struct {
 	describeErr    error                         // returned for every DescribeInstances call
 	// describeFn, when set, returns the per-call DescribeInstances output by
 	// inspecting the request's filters (e.g. whether a create-nonce filter is
-	// present) — used to script the nonce-first / nonce-less-fallback two-step.
+	// present) — used to script the nonce-first / nonce-less-leftover two-step.
 	describeFn func(filters []types.Filter) (*ec2.DescribeInstancesOutput, error)
 }
 
@@ -545,7 +548,7 @@ func (r *recordingEC2) DescribeInstances(_ context.Context, in *ec2.DescribeInst
 
 // hasNonceFilter reports whether a DescribeInstances request carries a
 // FabricaCreateNonce filter (the nonce-first adoption lookup, versus the
-// nonce-less fallback lookup).
+// nonce-less leftover check).
 func hasNonceFilter(filters []types.Filter) bool {
 	for _, f := range filters {
 		if awssdk.ToString(f.Name) == "tag:FabricaCreateNonce" {
@@ -555,31 +558,26 @@ func hasNonceFilter(filters []types.Filter) bool {
 	return false
 }
 
-// TestAdoptFabricaInstanceErrorFallsThroughToLaunch pins the adoption safety
-// net: a failed DescribeInstances lookup must not fail the create — the launch
-// proceeds and the stable ClientToken keeps it idempotent.
-func TestAdoptFabricaInstanceErrorFallsThroughToLaunch(t *testing.T) {
+// TestAdoptFirstLookupErrorFailsTheCreate pins the first-stage error path:
+// a failed adoption lookup (with the create-nonce filter present, so the
+// base-tag leftover check would otherwise still have to run) fails the
+// create and makes exactly one DescribeInstances call — without a verified
+// view of what exists, a launch risks a second instance.
+func TestAdoptFirstLookupErrorFailsTheCreate(t *testing.T) {
 	rec := &recordingEC2{describeErr: errors.New("describe denied")}
-	rc := &resourceClients{
-		version:           "test",
-		volumeRequestTags: map[string]string{"Project": "fabrica-e2e"},
-		instances:         &ec2Service{client: rec},
+	err := adoptRC(rec).Create(context.Background(), adoptedResource())
+	if err == nil || !strings.Contains(err.Error(), "lookup of existing fabrica instances failed") ||
+		!strings.Contains(err.Error(), "ec2:DescribeInstances grant") {
+		t.Fatalf("err = %v, want the lookup-failure error", err)
 	}
-	r := &fabricac.Resource{
-		TypeName: fabricac.TypeAWSEC2Instance,
-		DesiredState: json.RawMessage(`{
-			"ImageId":"ami-123","InstanceType":"g6.xlarge",
-			"Tags":[{"Key":"Name","Value":"fabrica-workstation"},{"Key":"ManagedBy","Value":"fabrica"}]
-		}`),
+	if rec.in != nil {
+		t.Fatal("RunInstances must not launch when the adoption lookup fails")
 	}
-	if err := rc.Create(context.Background(), r); err != nil {
-		t.Fatal(err)
+	if len(rec.describeInputs) != 1 {
+		t.Fatalf("DescribeInstances calls = %d, want the single failed nonce lookup (no leftover check)", len(rec.describeInputs))
 	}
-	if r.Identifier != "i-from-sdk" {
-		t.Fatalf("identifier = %q, want the launched i-from-sdk", r.Identifier)
-	}
-	if rec.describeIn == nil {
-		t.Fatal("DescribeInstances was not consulted before the launch")
+	if !hasNonceFilter(rec.describeIn.Filters) {
+		t.Fatalf("lookup filters = %+v, want the create-nonce filter", rec.describeIn.Filters)
 	}
 }
 
@@ -795,8 +793,8 @@ func TestAdoptRejectsWrongProfile(t *testing.T) {
 }
 
 // TestAdoptNoMatchFallsThroughToLaunch pins the 0-match path: the nonce-first
-// lookup finds nothing, the nonce-less fallback finds nothing either, and the
-// launch proceeds.
+// lookup finds nothing, the nonce-less leftover check finds nothing either,
+// and the launch proceeds.
 func TestAdoptNoMatchFallsThroughToLaunch(t *testing.T) {
 	rec := &recordingEC2{describeFn: func(filters []types.Filter) (*ec2.DescribeInstancesOutput, error) {
 		return &ec2.DescribeInstancesOutput{}, nil // no match on either lookup
@@ -821,52 +819,42 @@ func TestAdoptNoMatchFallsThroughToLaunch(t *testing.T) {
 	}
 }
 
-// TestAdoptNonceFilteredLookupErrorFallsThroughToLaunch pins the first-stage
-// error path: a failed nonce-filtered lookup falls through to the launch (the
-// ClientToken keeps the attempt idempotent); the nonce-less fallback does not
-// run because the first stage did not rule out a match.
-func TestAdoptNonceFilteredLookupErrorFallsThroughToLaunch(t *testing.T) {
-	rec := &recordingEC2{describeErr: errors.New("describe denied")}
-	if err := adoptRC(rec).Create(context.Background(), adoptedResource()); err != nil {
-		t.Fatal(err)
-	}
-	if rec.in == nil {
-		t.Fatal("RunInstances must launch when the nonce-filtered lookup fails")
-	}
-	if len(rec.describeInputs) != 1 {
-		t.Fatalf("DescribeInstances calls = %d, want the single failed nonce lookup", len(rec.describeInputs))
-	}
-}
-
-// TestAdoptFallbackRejectsMisconfigured pins the fallback verification: a
-// nonce-less fallback match without IMDSv2 required is a misconfigured or
-// foreign instance, so the create fails instead of adopting it or launching a
-// second one.
-func TestAdoptFallbackRejectsMisconfigured(t *testing.T) {
+// TestAdoptFallbackRejectsLeftover pins the leftover error: a base-tag match
+// after a nonce-filtered miss is a leftover from a prior run — its cloud-init
+// (a workstation's session-password parameter, for example) belongs to that
+// run, so the create fails with the leftover's ID and an actionable remedy
+// instead of adopting it or launching a second one.
+func TestAdoptFallbackRejectsLeftover(t *testing.T) {
+	id := "i-leftover"
 	rec := &recordingEC2{describeFn: func(filters []types.Filter) (*ec2.DescribeInstancesOutput, error) {
 		if hasNonceFilter(filters) {
-			return &ec2.DescribeInstancesOutput{}, nil
+			return &ec2.DescribeInstancesOutput{}, nil // prior run carried a different nonce
 		}
 		return &ec2.DescribeInstancesOutput{
 			Reservations: []types.Reservation{{Instances: []types.Instance{
-				adoptedInstanceFixture("i-fallback-bad", false, "fabrica-workstation-profile"),
+				adoptedInstanceFixture(id, true, "fabrica-workstation-profile"),
 			}}},
 		}, nil
 	}}
 	err := adoptRC(rec).Create(context.Background(), adoptedResource())
-	if err == nil || !strings.Contains(err.Error(), "IMDSv2 is not required") {
-		t.Fatalf("err = %v, want the IMDSv2 adoption error", err)
+	if err == nil || !strings.Contains(err.Error(), "found a pending or running instance i-leftover") ||
+		!strings.Contains(err.Error(), "from a previous run of this create") ||
+		!strings.Contains(err.Error(), "Terminate i-leftover") {
+		t.Fatalf("err = %v, want the leftover error naming the instance and the remedy", err)
 	}
 	if rec.in != nil {
-		t.Fatal("RunInstances must not launch a second instance after a rejected fallback match")
+		t.Fatal("RunInstances must not launch a second instance over a leftover")
+	}
+	if len(rec.describeInputs) != 2 {
+		t.Fatalf("DescribeInstances calls = %d, want the nonce lookup + the leftover check", len(rec.describeInputs))
 	}
 }
 
-// TestAdoptFallbackTwoMatchesIsAnError pins the fallback safety gate: two
-// pending or running matches found only by the nonce-less fallback (the
-// re-run's nonce matches neither) fail loudly with the fallback's filter
-// description — the operator must delete the extras, and nothing is launched.
-func TestAdoptFallbackTwoMatchesIsAnError(t *testing.T) {
+// TestAdoptFallbackMultipleLeftoversIsAnError pins the leftover safety gate:
+// two pending or running base-tag matches found after a nonce-filtered miss
+// fail loudly with the nonce-less filter description — the operator must
+// delete the extras, and nothing is launched.
+func TestAdoptFallbackMultipleLeftoversIsAnError(t *testing.T) {
 	rec := &recordingEC2{describeFn: func(filters []types.Filter) (*ec2.DescribeInstancesOutput, error) {
 		if hasNonceFilter(filters) {
 			return &ec2.DescribeInstancesOutput{}, nil
@@ -879,73 +867,38 @@ func TestAdoptFallbackTwoMatchesIsAnError(t *testing.T) {
 		}, nil
 	}}
 	err := adoptRC(rec).Create(context.Background(), adoptedResource())
-	if err == nil || !strings.Contains(err.Error(), "found 2 pending or running instances") {
-		t.Fatalf("err = %v, want the multiple-match error", err)
+	if err == nil || !strings.Contains(err.Error(), "found 2 pending or running instances") ||
+		!strings.Contains(err.Error(), "left over from a previous run of this create") {
+		t.Fatalf("err = %v, want the multiple-leftover error", err)
 	}
 	if strings.Contains(err.Error(), "FabricaCreateNonce") {
-		t.Fatalf("error must name the nonce-less fallback filters, got: %v", err)
+		t.Fatalf("error must name the nonce-less leftover filters, got: %v", err)
 	}
 	if rec.in != nil {
-		t.Fatal("RunInstances must not launch when the fallback finds multiple matches")
+		t.Fatal("RunInstances must not launch when the leftover check finds multiple matches")
 	}
 }
 
-// TestAdoptFallbackLookupErrorFailsTheCreate pins the second-stage error path:
-// a nonce-filtered miss plus a failed nonce-less fallback is not adopted and
-// not launched — with the fallback (the cross-run double-launch guard) gone,
-// launching risks a second instance.
-func TestAdoptFallbackLookupErrorFailsTheCreate(t *testing.T) {
+// TestAdoptLeftoverCheckLookupErrorFailsTheCreate pins the second-stage error
+// path: a nonce-filtered miss plus a failed nonce-less leftover check is not
+// adopted and not launched — with the leftover check (the cross-run
+// double-launch guard) gone, launching risks a second instance.
+func TestAdoptLeftoverCheckLookupErrorFailsTheCreate(t *testing.T) {
 	rec := &recordingEC2{describeFn: func(filters []types.Filter) (*ec2.DescribeInstancesOutput, error) {
 		if hasNonceFilter(filters) {
-			return &ec2.DescribeInstancesOutput{}, nil // nonce lookup: no match → fallback
+			return &ec2.DescribeInstancesOutput{}, nil // nonce lookup: no match → leftover check
 		}
-		return nil, errors.New("describe denied on fallback")
+		return nil, errors.New("describe denied on the leftover check")
 	}}
 	err := adoptRC(rec).Create(context.Background(), adoptedResource())
-	if err == nil || !strings.Contains(err.Error(), "nonce-less fallback failed") {
-		t.Fatalf("err = %v, want the fallback-failure error", err)
+	if err == nil || !strings.Contains(err.Error(), "nonce-less leftover check failed") {
+		t.Fatalf("err = %v, want the leftover-check-failure error", err)
 	}
 	if rec.in != nil {
-		t.Fatal("RunInstances must not launch when the nonce-less fallback fails")
+		t.Fatal("RunInstances must not launch when the nonce-less leftover check fails")
 	}
 	if len(rec.describeInputs) != 2 {
-		t.Fatalf("DescribeInstances calls = %d, want the nonce lookup + the failed fallback", len(rec.describeInputs))
-	}
-}
-
-// TestAdoptFallbackAdoptsPriorRunInstance pins the cross-run double-launch
-// guard: a re-run mints a fresh nonce, so the nonce-filtered lookup cannot
-// match the prior run's instance — the nonce-less fallback finds it by the
-// base tags (ManagedBy + Name) and adopts it instead of launching a second
-// one.
-func TestAdoptFallbackAdoptsPriorRunInstance(t *testing.T) {
-	id := "i-prior-run"
-	rec := &recordingEC2{describeFn: func(filters []types.Filter) (*ec2.DescribeInstancesOutput, error) {
-		if hasNonceFilter(filters) {
-			return &ec2.DescribeInstancesOutput{}, nil // prior run carried a different nonce
-		}
-		return &ec2.DescribeInstancesOutput{
-			Reservations: []types.Reservation{{Instances: []types.Instance{
-				adoptedInstanceFixture(id, true, "fabrica-workstation-profile"),
-			}}},
-		}, nil
-	}}
-	r := adoptedResource()
-	rc := adoptRC(rec)
-	if err := rc.Create(context.Background(), r); err != nil {
-		t.Fatalf("create = %v, want the fallback adoption", err)
-	}
-	if r.Identifier != id {
-		t.Fatalf("identifier = %q, want the adopted prior-run %q", r.Identifier, id)
-	}
-	if rec.in != nil {
-		t.Fatal("RunInstances must not launch a second instance when the fallback adopts")
-	}
-	if len(rec.describeInputs) != 2 {
-		t.Fatalf("DescribeInstances calls = %d, want the nonce lookup + the fallback", len(rec.describeInputs))
-	}
-	if !hasNonceFilter(rec.describeInputs[0].Filters) || hasNonceFilter(rec.describeInputs[1].Filters) {
-		t.Fatalf("lookup order wrong: want the nonce filter first and the nonce-less fallback second (inputs = %d)", len(rec.describeInputs))
+		t.Fatalf("DescribeInstances calls = %d, want the nonce lookup + the failed leftover check", len(rec.describeInputs))
 	}
 }
 
@@ -972,9 +925,10 @@ func TestAdoptTwoMatchesIsAnError(t *testing.T) {
 }
 
 // TestRunInstancesClientTokenPerCreate pins the token semantics: derived from
-// the resource identity (type, name, region, version) plus the per-create
-// nonce tag, it is stable for one create's request shape and changes for a
-// different create (a new nonce, a different name, or a different region).
+// the per-create nonce tag mixed with the resource identity (type, name,
+// region, version), it is stable for one create's request shape, changes for
+// a different create (a new nonce, a different name, or a different region),
+// and is empty for a desired state without the nonce tag.
 func TestRunInstancesClientTokenPerCreate(t *testing.T) {
 	mk := func() *resourceClients {
 		return &resourceClients{awsCfg: awsConfig{region: "us-east-1"}, version: "test"}
@@ -1006,12 +960,13 @@ func TestRunInstancesClientTokenPerCreate(t *testing.T) {
 	if other := otherRegion.runInstancesClientToken(base); other == token {
 		t.Fatal("token must change when the region changes")
 	}
-	// Without a nonce tag the token keeps the legacy identity shape, so
-	// nonce-less desired states are untouched.
+	// Without a nonce tag the token is empty: an identity-only token would
+	// repeat across separate creates of the same name and collide with the
+	// previous create's token at EC2. Nonce-less desired states launch
+	// without a ClientToken, as before this change.
 	legacy := &fabricac.Resource{TypeName: base.TypeName, DesiredState: json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro","Tags":[{"Key":"Name","Value":"box"}]}`)}
-	legacyToken := mk().runInstancesClientToken(legacy)
-	if legacyToken == token || len(legacyToken) != 64 {
-		t.Fatalf("legacy token = %q, want a distinct 64-char token without the nonce seed", legacyToken)
+	if legacyToken := mk().runInstancesClientToken(legacy); legacyToken != "" {
+		t.Fatalf("legacy token = %q, want empty (no ClientToken without a create nonce)", legacyToken)
 	}
 }
 

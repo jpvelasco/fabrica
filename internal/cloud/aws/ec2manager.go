@@ -77,8 +77,9 @@ func (s *ec2Service) RunInstances(ctx context.Context, in *ec2.RunInstancesInput
 }
 
 // DescribeInstances queries EC2 instances by tag or state filter. The
-// RunInstances fallback path uses it to adopt an instance a previous attempt
-// already launched, before launching a second one.
+// RunInstances fallback path uses it to adopt a same-nonce instance a
+// previous attempt already launched, and to surface a leftover from a
+// previous run — which fails the create instead of launching a second one.
 func (s *ec2Service) DescribeInstances(ctx context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
 	if err := s.ensureClient(ctx); err != nil {
 		return nil, err
