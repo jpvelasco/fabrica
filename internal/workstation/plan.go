@@ -58,6 +58,18 @@ type CreatePlan struct {
 	// (Properties "sessionPasswordParameter") so terminate deletes exactly it.
 	SessionPasswordParameter string
 
+	// CreateNonce is the per-create random nonce the create layer mints (same
+	// pattern as the session-password nonce). InstanceDesiredState stamps it
+	// as the FabricaCreateNonce tag at launch, the SDK launch path derives the
+	// RunInstances ClientToken from it, and the create layer records it in
+	// state (Properties "createNonce"). It is minted fresh on every
+	// invocation and never read back from state, so it keys the idempotency
+	// token for one create's request shape; a re-create under the same name
+	// carries a fresh nonce and a fresh token, and the SDK launch path's
+	// base-tag leftover check (ManagedBy + Name) fails a re-run that finds
+	// an earlier run's instance instead of launching a second one.
+	CreateNonce string
+
 	// IAM is the resolved path and permissions boundary for the instance role.
 	IAM config.IAM
 

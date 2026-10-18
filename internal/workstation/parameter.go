@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -13,6 +14,12 @@ import (
 // write the same name, and terminate deletes exactly the name it recorded.
 // The operator source of truth remains .fabrica/workstation-credentials.yaml.
 const SessionPasswordParameterPrefix = "/fabrica/workstation"
+
+// sessionPasswordName is the exact per-create name shape: the prefix, a 32
+// lowercase-hex nonce (NewSessionPasswordNonce), and the leaf. Terminate
+// validates the recorded name against it, so a hand-edited state entry cannot
+// widen the delete target.
+var sessionPasswordName = regexp.MustCompile(`^/fabrica/workstation/[0-9a-f]{32}/dcv-password$`)
 
 // SessionPasswordPolicyName is the inline policy that allows ssm:GetParameter
 // on exactly one DCV session-password parameter ARN and nothing else.
@@ -45,7 +52,7 @@ func SessionPasswordParameterARN(region, account, name string) (string, error) {
 	if region == "" || account == "" {
 		return "", fmt.Errorf("region and account are required to scope %s", name)
 	}
-	if !isSessionPasswordName(name) {
+	if !sessionPasswordName.MatchString(name) {
 		return "", fmt.Errorf("session-password parameter name %q is not a per-create %s name", name, SessionPasswordParameterPrefix)
 	}
 	return fmt.Sprintf("arn:aws:ssm:%s:%s:parameter%s", region, account, name), nil
@@ -65,19 +72,27 @@ func NewSessionPasswordNonce() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// isSessionPasswordName reports whether name is a well-formed per-create
-// session-password parameter name.
-func isSessionPasswordName(name string) bool {
-	const delim = "/"
-	if len(name) < len(SessionPasswordParameterPrefix)+len(delim)+len(sessionPasswordNameSuffix) {
-		return false
+// IsSessionPasswordName reports whether name is a well-formed per-create
+// session-password parameter name. Exported so the terminate flow validates
+// the recorded name before deleting it: a hand-edited or corrupted state entry
+// must not widen the delete target.
+func IsSessionPasswordName(name string) bool {
+	return sessionPasswordName.MatchString(name)
+}
+
+// NewCreateNonce returns a 16-byte random hex nonce that names a create: the
+// SDK launch path stamps it on the instance (CreateNonceTag) and the state
+// layer records it (Properties "createNonce"). Each invocation mints a fresh
+// nonce, so a terminate + re-create of the same instance name gets a fresh
+// nonce and a fresh idempotency token; the nonce is per-invocation, and a
+// re-run that finds an earlier run's instance (the SDK launch path's
+// base-tag leftover check, ManagedBy + Name) fails with an actionable
+// error instead of adopting the prior run's instance or launching a second
+// one.
+func NewCreateNonce() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generating create nonce: %w", err)
 	}
-	if !strings.HasPrefix(name, SessionPasswordParameterPrefix+delim) {
-		return false
-	}
-	if !strings.HasSuffix(name, sessionPasswordNameSuffix) {
-		return false
-	}
-	mid := name[len(SessionPasswordParameterPrefix+delim) : len(name)-len(sessionPasswordNameSuffix)]
-	return mid != "" && !strings.ContainsAny(mid, "/\\")
+	return hex.EncodeToString(b[:]), nil
 }

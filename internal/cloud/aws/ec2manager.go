@@ -39,6 +39,7 @@ type ec2APIClient interface {
 	DescribeVolumes(ctx context.Context, params *ec2.DescribeVolumesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeVolumesOutput, error)
 	CreateTags(ctx context.Context, params *ec2.CreateTagsInput, optFns ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error)
 	RunInstances(ctx context.Context, params *ec2.RunInstancesInput, optFns ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error)
+	DescribeInstances(ctx context.Context, params *ec2.DescribeInstancesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error)
 }
 
 func (s *ec2Service) ensureClient(ctx context.Context) error {
@@ -73,6 +74,17 @@ func (s *ec2Service) RunInstances(ctx context.Context, in *ec2.RunInstancesInput
 		return nil, err
 	}
 	return s.client.RunInstances(ctx, in)
+}
+
+// DescribeInstances queries EC2 instances by tag or state filter. The
+// RunInstances fallback path uses it to adopt a same-nonce instance a
+// previous attempt already launched, and to surface a leftover from a
+// previous run — which fails the create instead of launching a second one.
+func (s *ec2Service) DescribeInstances(ctx context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+	if err := s.ensureClient(ctx); err != nil {
+		return nil, err
+	}
+	return s.client.DescribeInstances(ctx, in)
 }
 
 // TagInstanceVolumes applies tags to every EBS volume attached to the

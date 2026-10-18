@@ -224,7 +224,15 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	if param := inst.Properties["sessionPasswordParameter"]; !strings.HasPrefix(param, workstation.SessionPasswordParameterPrefix+"/") || !strings.HasSuffix(param, "/dcv-password") {
 		t.Errorf("sessionPasswordParameter = %q, want the per-create name shape", param)
 	}
-	assertSessionPasswordNotInDesiredState(t, provider)
+	// The per-create identity nonce is recorded in state for traceability.
+	// It is minted fresh per invocation, so a re-create after terminate gets
+	// a fresh token; cross-run double launches are prevented by the SDK
+	// launch path's base-tag leftover check, not by reusing this value.
+	recordedNonce := inst.Properties["createNonce"]
+	if len(recordedNonce) != 32 {
+		t.Errorf("createNonce = %q, want a 32-hex nonce", recordedNonce)
+	}
+	assertSessionPasswordNotInDesiredState(t, provider, recordedNonce)
 	if len(provider.DeletedParameters) != 0 {
 		t.Errorf("successful create deleted the parameter: %v", provider.DeletedParameters)
 	}
@@ -765,7 +773,7 @@ func TestCreateRequiresParameterStore(t *testing.T) {
 	}
 }
 
-func assertSessionPasswordNotInDesiredState(t *testing.T, provider *testutil.TestProvider) {
+func assertSessionPasswordNotInDesiredState(t *testing.T, provider *testutil.TestProvider, createNonce string) {
 	t.Helper()
 	if len(provider.PutParameters) != 1 {
 		t.Fatalf("put calls = %d, want 1", len(provider.PutParameters))
@@ -815,6 +823,27 @@ func assertSessionPasswordNotInDesiredState(t *testing.T, provider *testutil.Tes
 		}
 		if !strings.Contains(script, "aws ssm get-parameter") {
 			t.Fatal("userdata does not fetch the parameter")
+		}
+		// The per-create identity nonce is stamped on the instance as the
+		// FabricaCreateNonce tag: the SDK launch path matches adoption on it
+		// and derives the RunInstances ClientToken from it.
+		var doc struct {
+			Tags []struct {
+				Key   string `json:"Key"`
+				Value string `json:"Value"`
+			} `json:"Tags"`
+		}
+		if err := json.Unmarshal(res.DesiredState, &doc); err != nil {
+			t.Fatalf("instance desired state: %v", err)
+		}
+		stamped := ""
+		for _, tag := range doc.Tags {
+			if tag.Key == cloud.CreateNonceTag {
+				stamped = tag.Value
+			}
+		}
+		if stamped != createNonce {
+			t.Errorf("instance desired state %s tag = %q, want the recorded nonce %q", cloud.CreateNonceTag, stamped, createNonce)
 		}
 	}
 }

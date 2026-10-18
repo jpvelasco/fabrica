@@ -34,8 +34,40 @@ Tag keys keep the case written in the file. A condition such as `aws:RequestTag/
 
 `cloud.aws.tags` is still merged onto Cloud Control resources. `volumeRequestTags` is the set that must also be request tags on the root volume.
 
-- When the map is non-empty, an EC2 instance create skips Cloud Control and calls `RunInstances`. The request carries `TagSpecifications` for resource types `instance` and `volume`. Both specifications carry the same tags: the desired-state tags plus `volumeRequestTags`. `MetadataOptions.HttpTokens` is `required`. UserData is already base64 and is not encoded again. An empty UserData is omitted.
-- When the map is empty, create still uses Cloud Control. If that call fails with a permission or request-tag error (`UnauthorizedOperation`, `AccessDenied`, `not authorized`, `explicit deny`, or `RequestTag`, matched without case sensitivity), Fabrica retries once through `RunInstances` and puts the same tags on the instance and the volume. A failure that already names an identifier, an `AlreadyExists` failure with no identifier, a bad AMI, or any other error is returned as-is. The retry does not loop.
+- When the map is non-empty, an EC2 instance create skips Cloud Control and calls `RunInstances`. The request carries `TagSpecifications` for resource types `instance` and `volume`. Both specifications carry the same tags: the desired-state tags plus `volumeRequestTags`. `MetadataOptions.HttpTokens` is `required`. UserData is already base64 and is not encoded again. An empty UserData is omitted. Before the launch, Fabrica looks for an instance a previous attempt already tagged (`ManagedBy=fabrica`, `Name=<instance name>`) in `pending` or `running` state. The lookup first carries the `FabricaCreateNonce=<create nonce>` filter when the create stamped one; exactly one same-nonce match is adopted (verified: `MetadataOptions.HttpTokens` must be `required` and the instance profile must be the one the desired state names, checked against the profile ARN the instance carries), and two or more matches is an error that asks the operator to delete the extras. A nonce-filtered miss (a re-run mints a fresh nonce, so it cannot match the prior run's instance) runs a base-tag leftover check, which is the cross-run double-launch guard: one leftover from a previous run fails the create with the instance's ID and a terminate-and-re-run remedy (the prior run's cloud-init — a workstation's session password, for example — belongs to that run, so this create cannot adopt it), and two or more leftovers is the same multiple-match error. A failed lookup fails the create: without a verified view of what exists, a launch risks a second instance. The request carries a `ClientToken` derived from the per-create nonce plus the resource identity when the create stamped one: stable within one create's request shape (so EC2-side idempotency covers the same request being re-sent) and fresh for each re-create (fresh nonce); desired states without the nonce tag launch without a `ClientToken`.
+- When the map is empty, create still uses Cloud Control. The fallback to `RunInstances` fires for a `FAILED` Cloud Control event with no resource identifier, or for a synchronous `CreateResource` deny, whose error code is `AccessDenied` or `UnauthorizedOperation` and whose message names `ec2:RunInstances` or `ec2:CreateTags` with a volume or `aws:RequestTag` condition (matched without case sensitivity; the volume is matched on the EC2 volume resource ARN shape `arn:aws:ec2:*:*:volume/...`, so a deny that merely mentions "volume" in prose does not match). A waiter or polling error, a failure that already names an identifier, an `AlreadyExists` failure with no identifier, an `iam:PassRole`, KMS, or SSM deny, a bad AMI, or any other error is returned as-is. The retry does not loop.
 - Horde agent pools launch from an Auto Scaling group and a launch template, not from `AWS::EC2::Instance`. The agent role and instance profile still take the IAM path and boundary. When `volumeRequestTags` is set, the launch template puts the same tag set on the instance and the volume. Auto Scaling does not retry through `RunInstances`.
 
 `workstation create --dry-run` prints `IAM Path` and `IAM Boundary` when they are set. The dry run does not create resources. Resolving the caller still uses the configured AWS identity.
+
+## Boundary must allow
+
+A boundary policy that blocks any of the actions below breaks the affected flow at the point the action is used. Grant the instance-side actions to the instance profile or role (via the boundary), and the operator-side actions to the operator identity used by `fabrica`.
+
+**Instance-side (workstation, `ssm:GetParameter`)** — the workstation instance reads its DCV session password at boot through the instance profile:
+
+```json
+{
+  "Sid": "FabricaWorkstationSessionPassword",
+  "Effect": "Allow",
+  "Action": "ssm:GetParameter",
+  "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/fabrica/workstation/*/dcv-password"
+}
+```
+
+**Instance-side (`iamrole.SSMOutputPolicy`)** — every Fabrica instance role that uses SSM (perforce, horde, horde agents, lore, ddc) writes SSM output to a `parameter/MDS-*` parameter and a `/fabrica/ssm/*` CloudWatch Logs group:
+
+- `ssm:PutParameter`, `ssm:GetParameter`, `ssm:DescribeParameters` on `arn:aws:ssm:REGION:ACCOUNT:parameter/MDS-*`
+- `logs:CreateLogGroup` on `arn:aws:logs:REGION:ACCOUNT:log-group:/fabrica/ssm/*`
+- `logs:CreateLogStream`, `logs:PutLogEvents` on `arn:aws:logs:REGION:ACCOUNT:log-group:/fabrica/ssm/*` and `arn:aws:logs:REGION:ACCOUNT:log-group:/fabrica/ssm/*:*`
+
+**Operator-side (`fabrica` CLI identity)** — `workstation create` stores and tags the per-create session-password SecureString; `workstation terminate` deletes the recorded name:
+
+- `ssm:PutParameter` (create writes the SecureString)
+- `ssm:DeleteParameter` (terminate deletes the recorded name)
+- `ssm:AddTagsToResource` (the parameter is tagged `ManagedBy=fabrica`)
+
+**Operator-side (SDK launch path, `volumeRequestTags`)** — when `volumeRequestTags` is non-empty, create calls `RunInstances` directly and consults `DescribeInstances` to adopt an instance a previous attempt already launched:
+
+- `ec2:RunInstances` (the direct launch that tags the volume on the create request)
+- `ec2:DescribeInstances` (the adoption lookup before the launch)

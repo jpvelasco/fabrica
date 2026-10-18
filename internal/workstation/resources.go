@@ -3,6 +3,7 @@ package workstation
 import (
 	"encoding/json"
 
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/ec2state"
 	"github.com/jpvelasco/fabrica/internal/iamrole"
 )
@@ -24,6 +25,16 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 // InstanceDesiredState returns the Cloud Control desired-state JSON for the
 // workstation EC2 instance. Uses /dev/sda1 as the root EBS device.
 func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMessage, error) {
+	dsOpts := []ec2state.DesiredStateOption{
+		ec2state.WithDeviceName("/dev/sda1"),
+		ec2state.WithIAMProfile(plan.InstanceProfileName),
+		ec2state.WithExtraTags("FabricaModule", "workstation"),
+	}
+	if plan.CreateNonce != "" {
+		// The per-create nonce narrows the SDK launch path's adoption lookup
+		// to this create's own instance and keys the idempotency token on it.
+		dsOpts = append(dsOpts, ec2state.WithExtraTags(cloud.CreateNonceTag, plan.CreateNonce))
+	}
 	return ec2state.Build(
 		ec2state.InstanceSpec{
 			ImageID:         plan.AmiID,
@@ -34,9 +45,7 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMess
 			VolumeSize:      plan.VolumeSize,
 			InstanceName:    plan.InstanceName,
 		},
-		ec2state.WithDeviceName("/dev/sda1"),
-		ec2state.WithIAMProfile(plan.InstanceProfileName),
-		ec2state.WithExtraTags("FabricaModule", "workstation"),
+		dsOpts...,
 	)
 }
 

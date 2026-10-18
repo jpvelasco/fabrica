@@ -27,7 +27,7 @@ const (
 // workstation test module records on its instance (Properties
 // "sessionPasswordParameter"). Export scopes the inline ssm:GetParameter
 // policy to its exact ARN.
-const testWSParamName = "/fabrica/workstation/abc123def4567890/dcv-password"
+const testWSParamName = "/fabrica/workstation/abc123def4567890abc123def4567890/dcv-password"
 
 func testStateWithHorde() *state.State {
 	st := state.NewState(exportAccount, exportRegion)

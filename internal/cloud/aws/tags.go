@@ -33,9 +33,10 @@ var tagUnsupportedTypes = map[string]struct{}{
 // tag set but never shadow these — a resource that lost ManagedBy would leak
 // on `destroy --all` and skew drift/cost reporting.
 var reservedTagKeys = map[string]struct{}{
-	"ManagedBy":      {},
-	"FabricaModule":  {},
-	"FabricaVersion": {},
+	"ManagedBy":          {},
+	"FabricaModule":      {},
+	"FabricaVersion":     {},
+	"FabricaCreateNonce": {},
 }
 
 // isReservedTagKey reports whether k is a Fabrica-owned identity tag that

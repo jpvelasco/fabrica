@@ -61,7 +61,12 @@ func (c *resourceClients) Create(ctx context.Context, r *fabricac.Resource) erro
 		if ev != nil && ev.OperationStatus == types.OperationStatusFailed {
 			return c.failedInstanceCreate(ctx, r, ev)
 		}
-		return c.fallbackVolumeTags(ctx, r, fmt.Errorf("waiting for %s creation: %w", r.TypeName, err))
+		// A waiter or polling error is a transport or watchdog failure, not a
+		// Cloud Control verdict: the request may have created the instance.
+		// Returning it to the operator (who re-runs; the re-run's adoption or
+		// leftover check surfaces any surviving instance before a launch) is
+		// safer than a retry that could launch a second one.
+		return fmt.Errorf("waiting for %s creation: %w", r.TypeName, err)
 	}
 
 	if result.ProgressEvent.OperationStatus == types.OperationStatusFailed {
@@ -361,8 +366,8 @@ func (c *resourceClients) timeout() time.Duration {
 // the resource but failed to write state can continue. Any other event that
 // already names an identifier is returned unchanged: RunInstances would launch
 // a second instance. AlreadyExists with an empty identifier cannot be recovered
-// and does not fall back. Remaining failures may fall back once when the error
-// is a volume-tag or permission deny.
+// and does not fall back. Remaining failures fall back once, and only when the
+// event is a volume-tag deny — every other deny is returned to the operator.
 func (c *resourceClients) failedInstanceCreate(ctx context.Context, r *fabricac.Resource, ev *types.ProgressEvent) error {
 	if ev.ErrorCode == types.HandlerErrorCodeAlreadyExists {
 		id := aws.ToString(ev.Identifier)

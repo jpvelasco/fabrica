@@ -2,6 +2,8 @@ package aws
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -11,11 +13,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 )
 
-// fallbackVolumeTags retries an EC2 instance create once through RunInstances
-// when Cloud Control was denied for a missing volume request tag. Any other
-// error is returned unchanged. A successful fallback replaces the error.
+// fallbackVolumeTags retries an EC2 instance create once through direct
+// RunInstances, only on a volume-tag deny. Any other error is returned
+// unchanged: waiter and polling errors never reach this path (the create path
+// returns them to the operator), and a failure that already names an
+// identifier never reaches it (failedInstanceCreate gates on an empty
+// identifier) — in both cases a retry would risk launching a second instance.
+// A successful fallback replaces the error.
 func (c *resourceClients) fallbackVolumeTags(ctx context.Context, r *fabricac.Resource, err error) error {
 	if err == nil || r == nil || r.TypeName != fabricac.TypeAWSEC2Instance || !isVolumeTagDeny(err) {
 		return err
@@ -26,33 +33,50 @@ func (c *resourceClients) fallbackVolumeTags(ctx context.Context, r *fabricac.Re
 	return nil
 }
 
-// isVolumeTagDeny reports a permission or request-tag failure. Cloud Control
-// can tag the instance and still omit the tag on the auto-created root volume.
-// Matching is case-insensitive and does not require both the action name and
-// the word "volume": accounts phrase the same deny in several ways.
+// isVolumeTagDeny reports a volume-tag deny in the error text (matched without
+// case sensitivity): the deny code (AccessDenied or UnauthorizedOperation),
+// the EC2 action (ec2:RunInstances or ec2:CreateTags), and a volume or
+// aws:RequestTag condition. The volume is matched on the EC2 volume resource
+// ARN shape (arn:aws:ec2:*:*:volume/...), not on the bare word "volume", so a
+// deny that merely mentions volumes in prose cannot trigger the retry. Any
+// other deny — iam:PassRole, KMS, SSM, a path or boundary deny, throttling, a
+// bad AMI — does not match: the retry cannot fix the underlying permission,
+// and the launch would risk a second instance.
 func isVolumeTagDeny(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
-	for _, needle := range []string{
-		"unauthorizedoperation",
-		"accessdenied",
-		"not authorized",
-		"explicit deny",
-		"requesttag",
-	} {
-		if strings.Contains(msg, needle) {
-			return true
-		}
+	if !strings.Contains(msg, "accessdenied") && !strings.Contains(msg, "unauthorizedoperation") {
+		return false
 	}
-	return false
+	if !strings.Contains(msg, "ec2:runinstances") && !strings.Contains(msg, "ec2:createtags") {
+		return false
+	}
+	return strings.Contains(msg, "requesttag") || strings.Contains(msg, volumeResourceARNNeedle)
 }
 
+// volumeResourceARNNeedle is the lowercased marker of an EC2 volume resource
+// ARN (arn:aws:ec2:region:account:volume/vol-...); the region and account
+// segments vary, so the match stops at the ":volume/" boundary.
+const volumeResourceARNNeedle = ":volume/"
+
 // createInstanceWithVolumeTags launches the instance with TagSpecifications
-// for both the instance and the volume, and IMDSv2 required.
+// for both the instance and the volume, and IMDSv2 required. Before launching
+// it looks for the instance this create already launched and adopts it
+// instead of launching a second one. The request carries a per-create
+// ClientToken when the desired state carries the nonce tag, so a repeated
+// attempt is an idempotent retry.
 func (c *resourceClients) createInstanceWithVolumeTags(ctx context.Context, r *fabricac.Resource) error {
-	input, err := runInstancesInput(r.DesiredState, c.volumeRequestTags)
+	id, err := c.adoptFabricaInstance(ctx, r)
+	if err != nil {
+		return err
+	}
+	if id != "" {
+		r.Identifier = id
+		return nil
+	}
+	input, err := runInstancesInput(r.DesiredState, c.volumeRequestTags, c.runInstancesClientToken(r))
 	if err != nil {
 		return err
 	}
@@ -73,6 +97,228 @@ func (c *resourceClients) createInstanceWithVolumeTags(ctx context.Context, r *f
 	}
 	r.Identifier = aws.ToString(out.Instances[0].InstanceId)
 	return nil
+}
+
+// docTagValue returns the value of the named tag in the desired state.
+// Empty when the document has no such tag or does not parse.
+func docTagValue(desired json.RawMessage, key string) string {
+	var doc ccInstanceDoc
+	if err := json.Unmarshal(desired, &doc); err != nil {
+		return ""
+	}
+	for _, tag := range doc.Tags {
+		if tag.Key == key {
+			return tag.Value
+		}
+	}
+	return ""
+}
+
+// nameTag returns the value of the Name tag in the desired state — the
+// identity the RunInstances path uses for adoption and the idempotency token.
+func nameTag(desired json.RawMessage) string {
+	return docTagValue(desired, "Name")
+}
+
+// createNonceTag returns the value of the FabricaCreateNonce tag in the
+// desired state — the per-create identity the RunInstances path matches on
+// during adoption and seeds into the idempotency token.
+func createNonceTag(desired json.RawMessage) string {
+	return docTagValue(desired, fabricac.CreateNonceTag)
+}
+
+// runInstancesClientToken derives the idempotency token from the per-create
+// nonce tag when the desired state carries one, mixed with the resource
+// identity (type, name tag, region, fabrica version). The digest is stable
+// for one create's request shape (same desired state → same token), and each
+// fresh create mints a fresh nonce, so a re-create after terminate carries a
+// different token and cannot reuse the previous create's idempotency at
+// EC2. Empty for a desired state without the nonce tag: a token derived from
+// the identity alone would repeat across separate creates of the same name
+// and collide with the prior create's token at EC2 (a re-create either
+// returns the terminated instance's ID or fails with
+// IdempotentParameterMismatch on changed user data), and the pre-#501
+// requests never carried a token — so the field stays unset. The sha256 hex
+// digest is exactly 64 characters, the RunInstances ClientToken limit.
+func (c *resourceClients) runInstancesClientToken(r *fabricac.Resource) string {
+	nonce := createNonceTag(r.DesiredState)
+	if nonce == "" {
+		return ""
+	}
+	seed := fmt.Sprintf("%s|%s|%s|%s|%s", r.TypeName, nameTag(r.DesiredState), c.awsCfg.region, c.version, nonce)
+	sum := sha256.Sum256([]byte(seed))
+	return hex.EncodeToString(sum[:])
+}
+
+// adoptionFilter builds the DescribeInstances filters for one adoption
+// lookup: the fabrica tags the create stamps on its instance (ManagedBy,
+// Name, and the per-create FabricaCreateNonce when withNonce) restricted to
+// pending or running state, plus the human-readable display name error
+// messages and logs quote.
+func adoptionFilter(name, nonce string, withNonce bool) ([]types.Filter, string) {
+	filters := []types.Filter{
+		{Name: aws.String("tag:ManagedBy"), Values: []string{"fabrica"}},
+		{Name: aws.String("tag:Name"), Values: []string{name}},
+		{Name: aws.String("instance-state-name"), Values: []string{
+			string(types.InstanceStateNamePending),
+			string(types.InstanceStateNameRunning),
+		}},
+	}
+	display := "ManagedBy=fabrica and Name=" + name
+	if withNonce {
+		filters = append(filters, types.Filter{Name: aws.String("tag:" + fabricac.CreateNonceTag), Values: []string{nonce}})
+		display += fmt.Sprintf(" and %s=%s", fabricac.CreateNonceTag, nonce)
+	}
+	return filters, display
+}
+
+// describeInstances returns the pending or running instances carrying the
+// adoption filters, or an error when DescribeInstances itself fails.
+func (c *resourceClients) describeInstances(ctx context.Context, typeName, name string, filters []types.Filter) ([]types.Instance, error) {
+	out, err := c.instances.DescribeInstances(ctx, &ec2.DescribeInstancesInput{Filters: filters})
+	if err != nil {
+		return nil, fmt.Errorf("DescribeInstances: %w", err)
+	}
+	var matches []types.Instance
+	for _, res := range out.Reservations {
+		for _, inst := range res.Instances {
+			if aws.ToString(inst.InstanceId) != "" {
+				matches = append(matches, inst)
+			}
+		}
+	}
+	oplog.WithResourceAndRegion(typeName, name, c.awsCfg.region).Debug("adoption lookup", "filters", len(filters), "matches", len(matches))
+	return matches, nil
+}
+
+// adoptFabricaInstance looks for the instance this create already launched so
+// a retried create adopts it instead of launching a second one. It looks by
+// the fabrica tags the create stamps (ManagedBy=fabrica, Name=<name>) and by
+// the per-create FabricaCreateNonce when the desired state carries one: the
+// nonce filter is the first-choice match for a same-nonce launch (e.g. inside
+// the Cloud Control fallback), where the instance's cloud-init belongs to
+// this create. A nonce-filtered miss consults the base tags (ManagedBy +
+// Name) as the cross-run double-launch guard — a fresh invocation mints a
+// fresh nonce, so a re-run after a waiter error or lost local state cannot
+// match the prior run's nonce. The base-tag match is a leftover check, not an
+// adoption: a leftover from the prior run was configured by that run's own
+// cloud-init (for a workstation, that run's session-password parameter),
+// which this create cannot match, so it fails the create with the leftover's
+// ID and an actionable remedy instead of adopting it or launching a second
+// one. A same-nonce match must also have IMDSv2 required and the instance
+// profile the desired state names, or the create fails instead of adopting a
+// foreign or misconfigured instance. Two or more matches on either lookup are
+// an error: the second instance cannot be launched and the extras need
+// operator attention. A failed lookup fails the create: without a verified
+// view of what already exists, launching risks a second instance.
+func (c *resourceClients) adoptFabricaInstance(ctx context.Context, r *fabricac.Resource) (string, error) {
+	if c.instances == nil {
+		return "", nil
+	}
+	name := nameTag(r.DesiredState)
+	if name == "" {
+		return "", nil
+	}
+	nonce := createNonceTag(r.DesiredState)
+	firstFilters, firstDisplay := adoptionFilter(name, nonce, nonce != "")
+	matches, err := c.describeInstances(ctx, r.TypeName, name, firstFilters)
+	if err != nil {
+		return "", fmt.Errorf("adopting %s: the lookup of existing fabrica instances failed, so the launch is not attempted (a failed lookup cannot rule out a prior instance — launching risks a second one): %w. Check the account's ec2:DescribeInstances grant and re-run",
+			name, err)
+	}
+	if len(matches) == 0 && nonce != "" {
+		// A nonce-filtered miss on a re-run: the prior run stamped a
+		// different nonce, so its instance is only findable by the base
+		// tags. The leftover check is the cross-run double-launch guard.
+		secondFilters, secondDisplay := adoptionFilter(name, "", false)
+		second, err := c.describeInstances(ctx, r.TypeName, name, secondFilters)
+		if err != nil {
+			return "", fmt.Errorf("adopting %s: the nonce-filtered lookup matched nothing and the nonce-less leftover check failed, so the launch is not attempted (the leftover check has not verified what exists — launching risks a second instance): %w. Check for a leftover %s before re-running",
+				name, err, firstDisplay)
+		}
+		oplog.WithResourceAndRegion(r.TypeName, name, c.awsCfg.region).Info("nonce-filtered lookup matched nothing; checking for a leftover instance by the base fabrica tags (a re-run cannot carry the prior run's create nonce)")
+		switch len(second) {
+		case 0:
+			return "", nil
+		case 1:
+			inst := second[0]
+			return "", fmt.Errorf("found a pending or running instance %s matching %s from a previous run of this create (its %s tag differs from this create's). It was configured by that run's cloud-init, which this create cannot match. Terminate %s (or restore the state file that recorded it) and re-run the create",
+				aws.ToString(inst.InstanceId), secondDisplay, fabricac.CreateNonceTag, aws.ToString(inst.InstanceId))
+		default:
+			return "", fmt.Errorf("found %d pending or running instances matching %s, left over from a previous run of this create; only exactly one may match. Delete the extras, then re-run the create",
+				len(second), secondDisplay)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", nil
+	case 1:
+		inst := matches[0]
+		id := aws.ToString(inst.InstanceId)
+		if err := verifyAdoptedInstance(inst, r.DesiredState); err != nil {
+			return "", fmt.Errorf("adopting existing instance %s for %s: %w", id, name, err)
+		}
+		oplog.WithResourceAndRegion(r.TypeName, id, c.awsCfg.region).Info("adopting an existing fabrica instance", "name", name)
+		return id, nil
+	default:
+		return "", fmt.Errorf("adopting %s: found %d pending or running instances matching %s; only exactly one may match. Delete the extras, then re-run the create",
+			name, len(matches), firstDisplay)
+	}
+}
+
+// verifyAdoptedInstance checks the adoption safety invariants on a match:
+// IMDSv2 must be required and the instance profile must be the one the
+// desired state names. A match that fails either is a foreign or
+// misconfigured instance, and adopting it would hand the create over to the
+// wrong machine.
+func verifyAdoptedInstance(inst types.Instance, desired json.RawMessage) error {
+	if inst.MetadataOptions == nil || inst.MetadataOptions.HttpTokens != types.HttpTokensStateRequired {
+		return fmt.Errorf("IMDSv2 is not required (MetadataOptions.HttpTokens = %q, want %q)",
+			httpTokensString(inst.MetadataOptions), string(types.HttpTokensStateRequired))
+	}
+	if want := instanceProfileName(instanceProfileRaw(desired)); want != "" {
+		got := instanceProfileNameFromARN(inst.IamInstanceProfile)
+		if got != want {
+			return fmt.Errorf("instance profile = %q, want %q", got, want)
+		}
+	}
+	return nil
+}
+
+// instanceProfileNameFromARN extracts the profile name from the instance's
+// profile ARN (arn:aws:iam::<account>:instance-profile/<name>). The EC2
+// response carries only the ARN and ID — no name — so the suffix is the
+// identity adoption compares against the desired state. Empty for an absent
+// profile or an ARN without the expected shape.
+func instanceProfileNameFromARN(p *types.IamInstanceProfile) string {
+	if p == nil {
+		return ""
+	}
+	arn := aws.ToString(p.Arn)
+	const marker = "instance-profile/"
+	if i := strings.LastIndex(arn, marker); i >= 0 {
+		return arn[i+len(marker):]
+	}
+	return ""
+}
+
+// httpTokensString renders the IMDSv2 token mode of a match for the adoption
+// error message; a nil metadata block is the "absent" case.
+func httpTokensString(opts *types.InstanceMetadataOptionsResponse) string {
+	if opts == nil {
+		return "absent"
+	}
+	return string(opts.HttpTokens)
+}
+
+// instanceProfileRaw extracts the raw IamInstanceProfile value from the
+// desired state so adoption can verify the profile name on the match.
+func instanceProfileRaw(desired json.RawMessage) json.RawMessage {
+	var doc ccInstanceDoc
+	if err := json.Unmarshal(desired, &doc); err != nil {
+		return nil
+	}
+	return doc.IamInstanceProfile
 }
 
 type ccInstanceDoc struct {
@@ -105,7 +351,7 @@ type ccInstanceDoc struct {
 // instead of silently clamping.
 const maxIMDSv2HopLimit = 64
 
-func runInstancesInput(desired json.RawMessage, volumeTags map[string]string) (*ec2.RunInstancesInput, error) {
+func runInstancesInput(desired json.RawMessage, volumeTags map[string]string, clientToken string) (*ec2.RunInstancesInput, error) {
 	var doc ccInstanceDoc
 	if err := json.Unmarshal(desired, &doc); err != nil {
 		return nil, fmt.Errorf("reading EC2 instance desired state: %w", err)
@@ -158,6 +404,12 @@ func runInstancesInput(desired json.RawMessage, volumeTags map[string]string) (*
 			{ResourceType: types.ResourceTypeInstance, Tags: instanceTags},
 			{ResourceType: types.ResourceTypeVolume, Tags: vol},
 		},
+	}
+	if clientToken != "" {
+		// A stable per-create token makes a repeated RunInstances the same
+		// idempotent request: EC2 returns the original instance instead of a
+		// second one when the token repeats.
+		input.ClientToken = aws.String(clientToken)
 	}
 	if doc.UserData != "" {
 		input.UserData = aws.String(doc.UserData)

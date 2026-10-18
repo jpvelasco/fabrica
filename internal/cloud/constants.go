@@ -27,3 +27,12 @@ const (
 	TypeAWSAutoScalingScalingPolicy    = "AWS::AutoScaling::ScalingPolicy"
 	TypeAWSCloudWatchAlarm             = "AWS::CloudWatch::Alarm"
 )
+
+// CreateNonceTag is the instance tag the create layers stamp with the
+// per-create random nonce at launch. The SDK launch path narrows its adoption
+// lookup to this tag when the desired state carries one (a nonce-filtered
+// miss runs the base-tag leftover check, which fails the create instead of
+// launching over a prior run's instance), and it keys the RunInstances
+// ClientToken, so a re-create under the same name — fresh nonce, fresh token
+// — cannot reuse the previous create's idempotency at EC2.
+const CreateNonceTag = "FabricaCreateNonce"
