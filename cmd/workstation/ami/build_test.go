@@ -56,14 +56,25 @@ func TestBuildWritesDCVAndSSM(t *testing.T) {
 		"52651a93844ce3d5ad918ee7666b007bb2a1c7ff7cf68dc50692e6b18efaa35a",
 		"sha256sum -c -",
 		"5B9EEBC864449701F6CE566A11B5C70A170C6114",
-		// dpkg-sig verifies each .deb's GpgBuilder signature before install.
-		"dpkg-sig --verify",
+		// Per-deb verification of the embedded _gpgbuilder signature
+		// member: GPG GOODSIG against the pinned fingerprint, then MD5 /
+		// SHA1 / size re-checks of every manifest member, all fail-closed.
+		// The loop runs before any install and the member checks are
+		// gated on at least 3 manifest lines, so an empty signed body
+		// cannot pass silently.
+		"verify_deb",
+		`gpg --batch --no-tty --status-fd 1 --verify "$work/_gpgbuilder"`,
+		`( cd "$work" && ar x "$abs" )`,
+		"-----BEGIN PGP SIGNED MESSAGE-----",
+		`stat -c%s "$work/$name"`,
+		`if [ "$filesseen" -lt 3 ]; then`,
+		// binutils provides ar for the _gpgbuilder extraction;
 		// x11-xserver-utils provides xsetroot and dbus-x11 provides
-		// dbus-launch on jammy (plain dbus does not); both are required for
-		// the DCV virtual session to survive boot (#489). xterm is the
-		// terminal emulator Xsession requires when no session manager, window
-		// manager, or user ~/.xsession is present (#492).
-		"apt-get install -y wget gnupg dpkg-sig xvfb x11-xserver-utils dbus-x11 xdg-user-dirs xterm",
+		// dbus-launch on jammy (plain dbus does not); both are required
+		// for the DCV virtual session to survive boot (#489). xterm is
+		// the terminal emulator Xsession requires when no session
+		// manager, window manager, or user ~/.xsession is present (#492).
+		"apt-get install -y wget gnupg binutils xvfb x11-xserver-utils dbus-x11 xdg-user-dirs xterm",
 		`dcvdir=$(find . -maxdepth 1 -type d -name 'nice-dcv-*' | head -n1)`,
 		"systemctl enable dcvserver",
 		"command -v dcv",
@@ -84,6 +95,13 @@ func TestBuildWritesDCVAndSSM(t *testing.T) {
 	}
 	if strings.Contains(s, "|| true") {
 		t.Error("component must not soft-fail SSM")
+	}
+	// dpkg-sig is no longer the verification path: jammy's
+	// dpkg-sig 0.13.1 rejects the control.tar.zst format every 2026.0
+	// deb uses (BADSIG rc=2 on all seven correctly-signed debs), so the
+	// check runs directly against the _gpgbuilder member with GPG.
+	if strings.Contains(s, "dpkg-sig --verify") {
+		t.Error("component must not use dpkg-sig --verify (broken on control.tar.zst on jammy)")
 	}
 	recipe, err := os.ReadFile(filepath.Join(dir, "image-builder-recipe.json"))
 	if err != nil {

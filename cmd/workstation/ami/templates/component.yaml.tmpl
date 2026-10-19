@@ -16,8 +16,9 @@ phases:
               # xterm satisfies /etc/X11/Xsession's requirement for a terminal
               # emulator (or a session manager, window manager, or user
               # ~/.xsession). Without one the boot-created DCV session aborts
-              # a few seconds after Xsession starts.
-              apt-get install -y wget gnupg dpkg-sig xvfb x11-xserver-utils dbus-x11 xdg-user-dirs xterm
+              # a few seconds after Xsession starts. binutils provides ar,
+              # used below to extract each deb's _gpgbuilder signature member.
+              apt-get install -y wget gnupg binutils xvfb x11-xserver-utils dbus-x11 xdg-user-dirs xterm
 
               # NICE GPG key: pin the primary-key fingerprint and fail closed
               # if the downloaded key does not match, so a tampered key file
@@ -41,12 +42,98 @@ phases:
               test -n "$dcvdir"
               cd "$dcvdir"
 
-              # Verify every .deb's GpgBuilder signature against the imported
-              # NICE key before installing any of them. dpkg-sig exits 2 on a
-              # bad signature and 3 on an unknown key; both abort under
-              # set -e.
+              # Verify every .deb's GPG signature against the imported NICE
+              # key before installing any of them.
+              #
+              # Method (per the official DCV admin guide):
+              #   https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-installing-linux-x11-installation.html
+              #   https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-installing-linux-x11-post-installation-checks.html
+              # The guide describes the packages as "digitally signed with a
+              # secure GPG signature" and specifies GPG verification against
+              # the imported key. It also says to import NICE-GPG-KEY-SECRET
+              # (URL https://d1uj6qtbmh3dt5.cloudfront.net/NICE-GPG-KEY-SECRET),
+              # which is a live 404 as of 2026-10-18; the public
+              # NICE-GPG-KEY fetched above is the working file. The guide's
+              # suggested dpkg-sig check is unusable on this base image:
+              # dpkg-sig 0.13.1+nmu4 (Ubuntu 22.04) whitelists only
+              # control.tar, control.tar.gz and control.tar.xz, so it exits
+              # BADSIG with rc=2 on all seven correctly-signed 2026.0 debs,
+              # which use control.tar.zst. We therefore verify the embedded
+              # _gpgbuilder signature member directly with GPG — the method
+              # the guide documents — and re-check the manifest digests it
+              # covers (MD5, SHA1, and byte size per member) so a tampered
+              # member is caught even if the GPG layer is bypassed.
+              verify_deb() {
+                local d="$1"
+                local abs work out manifest line rest md5 sha1 size name filesseen=0
+                case "$d" in /*) abs="$d";; *) abs="$(pwd)/$d";; esac
+                work="$(mktemp -d /tmp/chk.XXXXXX)"
+                ( cd "$work" && ar x "$abs" ) >/dev/null 2>&1 || {
+                  rm -rf "$work"
+                  echo "ERROR: ar extraction failed for $d"
+                  return 1
+                }
+                if [ ! -f "$work/_gpgbuilder" ]; then
+                  rm -rf "$work"
+                  echo "ERROR: no _gpgbuilder member in $d"
+                  return 1
+                fi
+                out="$(gpg --batch --no-tty --status-fd 1 --verify "$work/_gpgbuilder" 2>&1)" || {
+                  rm -rf "$work"
+                  echo "ERROR: gpg verification failed for $d: $out"
+                  return 1
+                }
+                case "$out" in *GOODSIG*) ;; *)
+                  rm -rf "$work"
+                  echo "ERROR: gpg status for $d does not contain GOODSIG: $out"
+                  return 1 ;;
+                esac
+                if ! printf '%s\n' "$out" | grep -q "5B9EEBC864449701F6CE566A11B5C70A170C6114"; then
+                  rm -rf "$work"
+                  echo "ERROR: gpg GOODSIG for $d is not from the pinned NICE key: $out"
+                  return 1
+                fi
+                # Cleartext body of the PGP-signed manifest
+                manifest="$(awk '/^-----BEGIN PGP SIGNED MESSAGE-----$/{f=1;next} /^-----BEGIN PGP SIGNATURE-----$/{f=0} f' "$work/_gpgbuilder")"
+                while IFS= read -r line; do
+                  case "$line" in *$'\t'*) ;; *) continue ;; esac
+                  rest="${line#*$'\t'}"
+                  read -r md5 sha1 size name <<<"$rest"
+                  filesseen=$((filesseen + 1))
+                  if [ ! -f "$work/$name" ]; then
+                    rm -rf "$work"
+                    echo "ERROR: manifest member $name missing from archive in $d"
+                    return 1
+                  fi
+                  if [ "$(md5sum "$work/$name" | awk '{print $1}')" != "$md5" ]; then
+                    rm -rf "$work"
+                    echo "ERROR: md5 mismatch for $name in $d"
+                    return 1
+                  fi
+                  if [ "$(sha1sum "$work/$name" | awk '{print $1}')" != "$sha1" ]; then
+                    rm -rf "$work"
+                    echo "ERROR: sha1 mismatch for $name in $d"
+                    return 1
+                  fi
+                  if [ "$(stat -c%s "$work/$name")" != "$size" ]; then
+                    rm -rf "$work"
+                    echo "ERROR: size mismatch for $name in $d"
+                    return 1
+                  fi
+                done <<<"$manifest"
+                # A v4 manifest lists exactly the three ar members
+                # (debian-binary, control.tar.*, data.tar.*); an empty or
+                # truncated body would otherwise pass with zero member
+                # checks.
+                if [ "$filesseen" -lt 3 ]; then
+                  rm -rf "$work"
+                  echo "ERROR: _gpgbuilder manifest in $d lists $filesseen file(s), expected at least 3"
+                  return 1
+                fi
+                rm -rf "$work"
+              }
               for deb in *.deb; do
-                dpkg-sig --verify "$deb"
+                verify_deb "$deb"
               done
 
               apt-get install -y ./nice-dcv-server_*.deb ./nice-xdcv_*.deb ./nice-dcv-web-viewer_*.deb
