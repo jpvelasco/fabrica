@@ -66,19 +66,27 @@ func TestBuildWritesDCVAndSSM(t *testing.T) {
 		`[ "$keyringpubs" -ne 1 ] || [ "$keyringprimary" != "$NICE_KEY_FPR" ]`,
 		// Per-deb verification of the embedded _gpgbuilder signature
 		// member: the gpg status stream goes to a dedicated fd 3 and must
-		// contain exactly one anchored VALIDSIG whose primary-key
+		// contain exactly one anchored VALIDSIG whose signing-key
 		// fingerprint field (first field of the line) is the pinned key;
 		// any BADSIG/ERRSIG/EXPKEYSIG/REVKEYSIG/NO_PUBKEY line fails.
+		// That field is the signing key's fingerprint; it equals the
+		// pinned primary fingerprint because the pinned NICE key has no
+		// signing subkey (the primary signs directly).
 		// The manifest is parsed from gpg's verified --output (the data
 		// the signature covers) and its names must equal the archive's
 		// ar members exactly, in order: exactly 3 members plus
 		// _gpgbuilder, no duplicates, no unlisted members, no '/' in
-		// any name, and the three members must be exactly
-		// debian-binary, control.tar.*, data.tar.* in that order.
+		// any name, no '..' path component — all checked from the
+		// member list BEFORE ar extraction — and the three members must
+		// be exactly debian-binary, control.tar.*, data.tar.* in that
+		// order. The gpg status capture uses "|| rc=$?" so the specific
+		// error message and cleanup still run under set -e.
 		"verify_deb",
-		`gpg --batch --no-tty --status-fd 3 --verify "$work/_gpgbuilder"`,
+		`gpg --batch --no-tty --status-fd 3 --verify "$work/_gpgbuilder" >"$work/vout" 2>"$work/verr" 3>"$vstat" || rc=$?`,
+		`arnames="$( ( cd "$work" && ar t "$abs" ) 2>/dev/null || true)"`,
+		`grep -qE '(^|/)\.\.(/|$)'`,
+		"member name containing a '..' path component in",
 		`( cd "$work" && ar x "$abs" )`,
-		`( cd "$work" && ar t "$abs" )`,
 		`gpg --batch --no-tty --status-fd 3 --verify --output "$work/manifest" "$work/_gpgbuilder"`,
 		`stat -c%s "$work/$name"`,
 		`grep -Ec '^\[GNUPG:\] VALIDSIG '`,

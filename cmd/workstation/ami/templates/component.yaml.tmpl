@@ -93,7 +93,9 @@ phases:
               # member is caught even if the GPG layer is bypassed. The
               # signature gate reads gpg's machine status on a dedicated
               # fd (fd 3) and requires exactly one anchored VALIDSIG line
-              # whose primary-key fingerprint field is the pinned key;
+              # whose signing-key fingerprint field is the pinned key
+              # (valid: the pinned NICE key has no signing subkey, so the
+              # primary signs directly and the two fingerprints match);
               # BADSIG, ERRSIG, EXPKEYSIG, REVKEYSIG and NO_PUBKEY fail.
               # The manifest is parsed from gpg's verified --output
               # (the data the signature covers), and its member names
@@ -103,22 +105,15 @@ phases:
                 local abs work manifest line rest md5 sha1 size name filesseen=0
                 case "$d" in /*) abs="$d";; *) abs="$(pwd)/$d";; esac
                 work="$(mktemp -d /tmp/chk.XXXXXX)"
-                ( cd "$work" && ar x "$abs" ) >/dev/null 2>&1 || {
-                  rm -rf "$work"
-                  echo "ERROR: ar extraction failed for $d"
-                  return 1
-                }
-                # Exact member binding: the archive must hold exactly the
-                # three ar members listed in the signed manifest plus the
-                # _gpgbuilder signature member — nothing else. No
-                # duplicates, no unlisted members, no '/' in any member
-                # name (an ar member named a path could write outside the
-                # working dir).
-                if [ ! -f "$work/_gpgbuilder" ]; then
-                  rm -rf "$work"
-                  echo "ERROR: no _gpgbuilder member in $d"
-                  return 1
-                fi
+                # Exact member binding, checked BEFORE extraction so a
+                # hostile member name can never be written anywhere: the
+                # archive must hold exactly the three ar members listed
+                # in the signed manifest plus the _gpgbuilder signature
+                # member — nothing else. No duplicates, no unlisted
+                # members, no '/' in any member name (an ar member named
+                # a path could write outside the working dir), and no
+                # '..' path component (traversal).
+                local arnames
                 arnames="$( ( cd "$work" && ar t "$abs" ) 2>/dev/null || true)"
                 if [ "$(printf '%s\n' "$arnames" | grep -c .)" -ne 4 ]; then
                   rm -rf "$work"
@@ -135,16 +130,31 @@ phases:
                   echo "ERROR: member name containing '/' in $d"
                   return 1
                 fi
+                if printf '%s\n' "$arnames" | grep -qE '(^|/)\.\.(/|$)'; then
+                  rm -rf "$work"
+                  echo "ERROR: member name containing a '..' path component in $d"
+                  return 1
+                fi
+                ( cd "$work" && ar x "$abs" ) >/dev/null 2>&1 || {
+                  rm -rf "$work"
+                  echo "ERROR: ar extraction failed for $d"
+                  return 1
+                }
+                if [ ! -f "$work/_gpgbuilder" ]; then
+                  rm -rf "$work"
+                  echo "ERROR: no _gpgbuilder member in $d"
+                  return 1
+                fi
                 # Signature gate: gpg status goes to a dedicated fd 3,
                 # human text is discarded separately, and the status
-                # stream must contain exactly one anchored VALIDSIG whose
-                # primary-key fingerprint field is the pinned NICE key.
+                # stream must contain exactly one anchored VALIDSIG
+                # whose signing-key fingerprint field is the pinned NICE
+                # key.
                 # Any BADSIG/ERRSIG/EXPKEYSIG/REVKEYSIG/NO_PUBKEY line
                 # fails.
-                local vstat rc
+                local vstat rc=0
                 vstat="$work/vstat"
-                gpg --batch --no-tty --status-fd 3 --verify "$work/_gpgbuilder" >"$work/vout" 2>"$work/verr" 3>"$vstat"
-                rc=$?
+                gpg --batch --no-tty --status-fd 3 --verify "$work/_gpgbuilder" >"$work/vout" 2>"$work/verr" 3>"$vstat" || rc=$?
                 if grep -Eq '^\[GNUPG:\] (BADSIG|ERRSIG|EXPKEYSIG|REVKEYSIG|NO_PUBKEY) ' "$vstat"; then
                   rm -rf "$work"
                   echo "ERROR: bad gpg signature status in $d: $(grep -E '^\[GNUPG:\] (BADSIG|ERRSIG|EXPKEYSIG|REVKEYSIG|NO_PUBKEY) ' "$vstat" | head -n1 | cut -c13-80)"
@@ -155,14 +165,18 @@ phases:
                   echo "ERROR: expected exactly one VALIDSIG status line for $d (got $(grep -Ec '^\[GNUPG:\] VALIDSIG ' "$vstat"))"
                   return 1
                 fi
-                # The first field of a VALIDSIG line is the signing key's
-                # primary-key fingerprint. It must equal the pinned NICE
-                # key. (A wrong key's signature — even one carrying the
-                # pin in a notation — reports the wrong primary fpr here.)
+                # The first field of a VALIDSIG line is the signing
+                # key's fingerprint. It must equal the pinned NICE key;
+                # that is a correct equality check because the pinned
+                # NICE key has no signing subkey, so the primary key
+                # signs directly and the signing-key fingerprint IS the
+                # pinned primary fingerprint. (A wrong key's signature
+                # reports the wrong fingerprint here even if the signed
+                # cleartext embeds the pin in a decoy line.)
                 validsig_fpr="$(grep -E '^\[GNUPG:\] VALIDSIG ' "$vstat" | sed 's/^\[GNUPG:\] VALIDSIG //' | awk '{print $1}')"
                 if [ "$validsig_fpr" != "$NICE_KEY_FPR" ]; then
                   rm -rf "$work"
-                  echo "ERROR: VALIDSIG primary-key fingerprint in $d (${validsig_fpr:-<none>}) is not the pinned NICE key"
+                  echo "ERROR: VALIDSIG signing-key fingerprint in $d (${validsig_fpr:-<none>}) is not the pinned NICE key"
                   return 1
                 fi
                 if [ "$rc" -ne 0 ]; then
