@@ -53,9 +53,10 @@ Do not mark an AMI known-good from Image Builder success alone.
 
 `workstation create` reads `workstation.amiId` and `workstation.subnetId`
 from `fabrica.yaml`. Both can silently go stale: an AMI deregistered after a
-bake, or a VPC rebuilt after a `fabrica destroy` pass. Create fails fast on
-both — before any resource is written — so a stale value never launches a
-half-broken instance.
+bake, or a VPC rebuilt after a `fabrica destroy` pass. A stale `amiId` fails
+fast at AMI inspection, before any resource is written; a stale `subnetId`
+fails at the instance step and leaves the SG, IAM role, and instance profile
+for `fabrica workstation destroy` (or `fabrica drift`) to clear.
 
 - `workstation.amiId` points at a missing (or stock Ubuntu) image:
 

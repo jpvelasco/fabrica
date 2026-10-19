@@ -56,18 +56,41 @@ func TestBuildWritesDCVAndSSM(t *testing.T) {
 		"52651a93844ce3d5ad918ee7666b007bb2a1c7ff7cf68dc50692e6b18efaa35a",
 		"sha256sum -c -",
 		"5B9EEBC864449701F6CE566A11B5C70A170C6114",
+		// Isolated throwaway keyring: show-only preview must hold exactly
+		// one primary key with the pinned fingerprint before import, and
+		// the keyring must hold exactly that key afterwards, so a
+		// second key cannot emit an extra VALIDSIG line.
+		"GNUPGHOME=\"$(mktemp -d /tmp/fabrica-gnupg.XXXXXX)\"",
+		"gpg --batch --no-tty --show-keys --import-options show-only --with-colons --keyid-format long NICE-GPG-KEY",
+		"gpg --batch --no-tty --yes --import NICE-GPG-KEY",
+		`[ "$keyringpubs" -ne 1 ] || [ "$keyringprimary" != "$NICE_KEY_FPR" ]`,
 		// Per-deb verification of the embedded _gpgbuilder signature
-		// member: GPG GOODSIG against the pinned fingerprint, then MD5 /
-		// SHA1 / size re-checks of every manifest member, all fail-closed.
-		// The loop runs before any install and the member checks are
-		// gated on at least 3 manifest lines, so an empty signed body
-		// cannot pass silently.
+		// member: the gpg status stream goes to a dedicated fd 3 and must
+		// contain exactly one anchored VALIDSIG whose primary-key
+		// fingerprint field (first field of the line) is the pinned key;
+		// any BADSIG/ERRSIG/EXPKEYSIG/REVKEYSIG/NO_PUBKEY line fails.
+		// The manifest is parsed from gpg's verified --output (the data
+		// the signature covers) and its names must equal the archive's
+		// ar members exactly, in order: exactly 3 members plus
+		// _gpgbuilder, no duplicates, no unlisted members, no '/' in
+		// any name, and the three members must be exactly
+		// debian-binary, control.tar.*, data.tar.* in that order.
 		"verify_deb",
-		`gpg --batch --no-tty --status-fd 1 --verify "$work/_gpgbuilder"`,
+		`gpg --batch --no-tty --status-fd 3 --verify "$work/_gpgbuilder"`,
 		`( cd "$work" && ar x "$abs" )`,
-		"-----BEGIN PGP SIGNED MESSAGE-----",
+		`( cd "$work" && ar t "$abs" )`,
+		`gpg --batch --no-tty --status-fd 3 --verify --output "$work/manifest" "$work/_gpgbuilder"`,
 		`stat -c%s "$work/$name"`,
-		`if [ "$filesseen" -lt 3 ]; then`,
+		`grep -Ec '^\[GNUPG:\] VALIDSIG '`,
+		`(BADSIG|ERRSIG|EXPKEYSIG|REVKEYSIG|NO_PUBKEY)`,
+		`sed 's/^\[GNUPG:\] VALIDSIG //' | awk '{print $1}'`,
+		`[ "$validsig_fpr" != "$NICE_KEY_FPR" ]`,
+		// Manifest member names are bound to the exact deb layout, in
+		// order: debian-binary, control.tar.*, data.tar.*.
+		"first manifest member of",
+		"debian-binary",
+		`^control\.tar\.`,
+		`^data\.tar\.`,
 		// binutils provides ar for the _gpgbuilder extraction;
 		// x11-xserver-utils provides xsetroot and dbus-x11 provides
 		// dbus-launch on jammy (plain dbus does not); both are required
@@ -93,7 +116,16 @@ func TestBuildWritesDCVAndSSM(t *testing.T) {
 	if strings.Contains(s, "https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-x86_64.tgz") {
 		t.Error("component must not use the unversioned DCV tarball URL")
 	}
-	if strings.Contains(s, "|| true") {
+	// The SSM section must not soft-fail. ("|| true" inside the GPG
+	// preflight command substitutions is intentional: every captured
+	// value is strictly validated by the comparison that follows, so a
+	// failed capture fails closed.)
+	i := strings.Index(s, "EnsureSSMAgent")
+	if i < 0 {
+		t.Fatal("component missing EnsureSSMAgent step")
+	}
+	ssm := s[i:]
+	if strings.Contains(ssm, "|| true") {
 		t.Error("component must not soft-fail SSM")
 	}
 	// dpkg-sig is no longer the verification path: jammy's

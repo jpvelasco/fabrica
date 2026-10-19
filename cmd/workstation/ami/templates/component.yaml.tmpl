@@ -24,12 +24,40 @@ phases:
               # if the downloaded key does not match, so a tampered key file
               # can never be trusted on import.
               wget -q https://d1uj6qtbmh3dt5.cloudfront.net/NICE-GPG-KEY
-              gpgfpr=$(gpg --show-keys --with-colons NICE-GPG-KEY | awk -F: '/^fpr:/ {print $10; exit}')
-              if [ "$gpgfpr" != "5B9EEBC864449701F6CE566A11B5C70A170C6114" ]; then
-                echo "ERROR: NICE GPG key fingerprint mismatch (got ${gpgfpr:-<none>}); refusing to import"
+
+              # Isolated throwaway keyring: the import and every gpg
+              # --verify below run against this home, never the image
+              # default, so unrelated keys cannot satisfy the gate and
+              # nothing lands in the base keyring.
+              GNUPGHOME="$(mktemp -d /tmp/fabrica-gnupg.XXXXXX)"
+              export GNUPGHOME
+              NICE_KEY_FPR="5B9EEBC864449701F6CE566A11B5C70A170C6114"
+              # --show-keys / --import-options show-only previews the key
+              # file without importing it: it must hold exactly one
+              # primary key, and that key's fingerprint must be the
+              # pinned one, before anything is imported.
+              keycheck="$(gpg --batch --no-tty --show-keys --import-options show-only --with-colons --keyid-format long NICE-GPG-KEY 2>/dev/null || true)"
+              pubcount="$(printf '%s\n' "$keycheck" | grep -c '^pub:' || true)"
+              primaryfpr="$(printf '%s\n' "$keycheck" | awk -F: '$1 == "pub" {p = 1; next} p && $1 == "fpr" {print $10; exit}')"
+              if [ "$pubcount" -ne 1 ] || [ "$primaryfpr" != "$NICE_KEY_FPR" ]; then
+                echo "ERROR: NICE-GPG-KEY must contain exactly one primary key with fingerprint $NICE_KEY_FPR (pubs: $pubcount, primary fpr: ${primaryfpr:-<none>}); refusing to import"
                 exit 1
               fi
-              gpg --import NICE-GPG-KEY
+              gpg --batch --no-tty --yes --import NICE-GPG-KEY || {
+                echo "ERROR: NICE GPG key import failed"
+                exit 1
+              }
+              # The isolated keyring must hold exactly one primary key,
+              # and that primary must be the pinned one (subkeys of the
+              # primary are fine). A second primary could emit an extra
+              # VALIDSIG line and hide a wrong-key signature.
+              keyringcheck="$(gpg --batch --no-tty --with-colons --list-keys 2>/dev/null)"
+              keyringpubs="$(printf '%s\n' "$keyringcheck" | grep -c '^pub:' || true)"
+              keyringprimary="$(printf '%s\n' "$keyringcheck" | awk -F: '$1 == "pub" {p = 1; next} p && $1 == "fpr" {print $10; exit}')"
+              if [ "$keyringpubs" -ne 1 ] || [ "$keyringprimary" != "$NICE_KEY_FPR" ]; then
+                echo "ERROR: isolated keyring does not hold exactly the pinned NICE primary key after import (pubs: $keyringpubs, primary: ${keyringprimary:-<none>})"
+                exit 1
+              fi
 
               # Pinned DCV tarball (2026.0-24952) with a hard SHA256 check. The
               # hash is pinned here rather than fetched from the same CDN, so a
@@ -62,10 +90,17 @@ phases:
               # _gpgbuilder signature member directly with GPG — the method
               # the guide documents — and re-check the manifest digests it
               # covers (MD5, SHA1, and byte size per member) so a tampered
-              # member is caught even if the GPG layer is bypassed.
+              # member is caught even if the GPG layer is bypassed. The
+              # signature gate reads gpg's machine status on a dedicated
+              # fd (fd 3) and requires exactly one anchored VALIDSIG line
+              # whose primary-key fingerprint field is the pinned key;
+              # BADSIG, ERRSIG, EXPKEYSIG, REVKEYSIG and NO_PUBKEY fail.
+              # The manifest is parsed from gpg's verified --output
+              # (the data the signature covers), and its member names
+              # must equal the archive's ar members exactly, in order.
               verify_deb() {
                 local d="$1"
-                local abs work out manifest line rest md5 sha1 size name filesseen=0
+                local abs work manifest line rest md5 sha1 size name filesseen=0
                 case "$d" in /*) abs="$d";; *) abs="$(pwd)/$d";; esac
                 work="$(mktemp -d /tmp/chk.XXXXXX)"
                 ( cd "$work" && ar x "$abs" ) >/dev/null 2>&1 || {
@@ -73,28 +108,122 @@ phases:
                   echo "ERROR: ar extraction failed for $d"
                   return 1
                 }
+                # Exact member binding: the archive must hold exactly the
+                # three ar members listed in the signed manifest plus the
+                # _gpgbuilder signature member — nothing else. No
+                # duplicates, no unlisted members, no '/' in any member
+                # name (an ar member named a path could write outside the
+                # working dir).
                 if [ ! -f "$work/_gpgbuilder" ]; then
                   rm -rf "$work"
                   echo "ERROR: no _gpgbuilder member in $d"
                   return 1
                 fi
-                out="$(gpg --batch --no-tty --status-fd 1 --verify "$work/_gpgbuilder" 2>&1)" || {
+                arnames="$( ( cd "$work" && ar t "$abs" ) 2>/dev/null || true)"
+                if [ "$(printf '%s\n' "$arnames" | grep -c .)" -ne 4 ]; then
                   rm -rf "$work"
-                  echo "ERROR: gpg verification failed for $d: $out"
-                  return 1
-                }
-                case "$out" in *GOODSIG*) ;; *)
-                  rm -rf "$work"
-                  echo "ERROR: gpg status for $d does not contain GOODSIG: $out"
-                  return 1 ;;
-                esac
-                if ! printf '%s\n' "$out" | grep -q "5B9EEBC864449701F6CE566A11B5C70A170C6114"; then
-                  rm -rf "$work"
-                  echo "ERROR: gpg GOODSIG for $d is not from the pinned NICE key: $out"
+                  echo "ERROR: $d must contain exactly 3 ar members plus _gpgbuilder (got: $(printf '%s' "$arnames" | tr '\n' ' '))"
                   return 1
                 fi
-                # Cleartext body of the PGP-signed manifest
-                manifest="$(awk '/^-----BEGIN PGP SIGNED MESSAGE-----$/{f=1;next} /^-----BEGIN PGP SIGNATURE-----$/{f=0} f' "$work/_gpgbuilder")"
+                if [ "$(printf '%s\n' "$arnames" | sort | uniq -d | grep -c .)" -ne 0 ]; then
+                  rm -rf "$work"
+                  echo "ERROR: duplicate member names in $d"
+                  return 1
+                fi
+                if printf '%s\n' "$arnames" | grep -q '/'; then
+                  rm -rf "$work"
+                  echo "ERROR: member name containing '/' in $d"
+                  return 1
+                fi
+                # Signature gate: gpg status goes to a dedicated fd 3,
+                # human text is discarded separately, and the status
+                # stream must contain exactly one anchored VALIDSIG whose
+                # primary-key fingerprint field is the pinned NICE key.
+                # Any BADSIG/ERRSIG/EXPKEYSIG/REVKEYSIG/NO_PUBKEY line
+                # fails.
+                local vstat rc
+                vstat="$work/vstat"
+                gpg --batch --no-tty --status-fd 3 --verify "$work/_gpgbuilder" >"$work/vout" 2>"$work/verr" 3>"$vstat"
+                rc=$?
+                if grep -Eq '^\[GNUPG:\] (BADSIG|ERRSIG|EXPKEYSIG|REVKEYSIG|NO_PUBKEY) ' "$vstat"; then
+                  rm -rf "$work"
+                  echo "ERROR: bad gpg signature status in $d: $(grep -E '^\[GNUPG:\] (BADSIG|ERRSIG|EXPKEYSIG|REVKEYSIG|NO_PUBKEY) ' "$vstat" | head -n1 | cut -c13-80)"
+                  return 1
+                fi
+                if [ "$(grep -Ec '^\[GNUPG:\] VALIDSIG ' "$vstat")" -ne 1 ]; then
+                  rm -rf "$work"
+                  echo "ERROR: expected exactly one VALIDSIG status line for $d (got $(grep -Ec '^\[GNUPG:\] VALIDSIG ' "$vstat"))"
+                  return 1
+                fi
+                # The first field of a VALIDSIG line is the signing key's
+                # primary-key fingerprint. It must equal the pinned NICE
+                # key. (A wrong key's signature — even one carrying the
+                # pin in a notation — reports the wrong primary fpr here.)
+                validsig_fpr="$(grep -E '^\[GNUPG:\] VALIDSIG ' "$vstat" | sed 's/^\[GNUPG:\] VALIDSIG //' | awk '{print $1}')"
+                if [ "$validsig_fpr" != "$NICE_KEY_FPR" ]; then
+                  rm -rf "$work"
+                  echo "ERROR: VALIDSIG primary-key fingerprint in $d (${validsig_fpr:-<none>}) is not the pinned NICE key"
+                  return 1
+                fi
+                if [ "$rc" -ne 0 ]; then
+                  rm -rf "$work"
+                  echo "ERROR: gpg verification failed for $d (rc=$rc): $(head -n1 "$work/verr")"
+                  return 1
+                fi
+                # Parse the manifest from gpg's verified cleartext output
+                # (--output), never from the raw _gpgbuilder file: the
+                # body is the data the signature actually covers.
+                gpg --batch --no-tty --status-fd 3 --verify --output "$work/manifest" "$work/_gpgbuilder" >/dev/null 2>"$work/verr2" 3>"$work/vstat2" || {
+                  rm -rf "$work"
+                  echo "ERROR: gpg --output of the verified manifest failed for $d: $(head -n1 "$work/verr2")"
+                  return 1
+                }
+                if [ "$(grep -Ec '^\[GNUPG:\] VALIDSIG ' "$work/vstat2")" -ne 1 ]; then
+                  rm -rf "$work"
+                  echo "ERROR: manifest re-verification did not produce exactly one VALIDSIG for $d"
+                  return 1
+                fi
+                manifest="$(cat "$work/manifest")"
+                # Manifest names must equal the archive members exactly,
+                # in order: debian-binary, control.tar.*, data.tar.*.
+                local mnames
+                # Member lines are tab-indented: <md5> <sha1> <size> <name>.
+                # Header lines (Version/Signer/Date/Role/Files) are not, so
+                # only tab-indented lines are member lines; the name is the
+                # fourth space-separated field after the leading tab.
+                mnames="$(printf '%s\n' "$manifest" | awk 'substr($0, 1, 1) == "\t" {sub(/^\t/, ""); print $4}')"
+                local expected
+                expected="$( ( cd "$work" && ar t "$abs" ) 2>/dev/null | grep -v '^_gpgbuilder$' )"
+                if [ "$mnames" != "$expected" ]; then
+                  rm -rf "$work"
+                  echo "ERROR: manifest members do not match the archive members of $d in name or order (manifest: $(printf '%s' "$mnames" | tr '\n' ' '); archive: $(printf '%s' "$expected" | tr '\n' ' '))"
+                  return 1
+                fi
+                if [ "$(printf '%s\n' "$mnames" | grep -c .)" -ne 3 ]; then
+                  rm -rf "$work"
+                  echo "ERROR: manifest in $d must list exactly 3 members (got $(printf '%s\n' "$mnames" | grep -c .))"
+                  return 1
+                fi
+                # The three members must be exactly the deb layout, in
+                # order: debian-binary, control.tar.*, data.tar.*.
+                case "$(printf '%s\n' "$mnames" | sed -n 1p)" in
+                  debian-binary) ;;
+                  *)
+                    rm -rf "$work"
+                    echo "ERROR: first manifest member of $d must be debian-binary (got $(printf '%s\n' "$mnames" | sed -n 1p))"
+                    return 1
+                    ;;
+                esac
+                if ! printf '%s\n' "$mnames" | sed -n 2p | grep -q '^control\.tar\.'; then
+                  rm -rf "$work"
+                  echo "ERROR: second manifest member of $d must be control.tar.* (got $(printf '%s\n' "$mnames" | sed -n 2p))"
+                  return 1
+                fi
+                if ! printf '%s\n' "$mnames" | sed -n 3p | grep -q '^data\.tar\.'; then
+                  rm -rf "$work"
+                  echo "ERROR: third manifest member of $d must be data.tar.* (got $(printf '%s\n' "$mnames" | sed -n 3p))"
+                  return 1
+                fi
                 while IFS= read -r line; do
                   case "$line" in *$'\t'*) ;; *) continue ;; esac
                   rest="${line#*$'\t'}"
@@ -121,15 +250,6 @@ phases:
                     return 1
                   fi
                 done <<<"$manifest"
-                # A v4 manifest lists exactly the three ar members
-                # (debian-binary, control.tar.*, data.tar.*); an empty or
-                # truncated body would otherwise pass with zero member
-                # checks.
-                if [ "$filesseen" -lt 3 ]; then
-                  rm -rf "$work"
-                  echo "ERROR: _gpgbuilder manifest in $d lists $filesseen file(s), expected at least 3"
-                  return 1
-                fi
                 rm -rf "$work"
               }
               for deb in *.deb; do
