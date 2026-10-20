@@ -19,24 +19,28 @@ package ami
 //
 // The bash crafter mirrors the manual container harness (throwaway rsa2048
 // keys, clearsigned composite v4 manifests, ar-built archives). Skipped —
-// not failed — only when bash, gpg, ar, md5sum, or sha1sum are absent; the
-// CI linux leg installs gnupg + binutils so the test runs there.
+// not failed — only when bash, gpg, ar, md5sum, or sha1sum are absent; CI
+// installs gnupg + binutils on all three test legs so the test runs there.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 // craftScript builds the negative and positive debs plus the throwaway keys.
-// It runs once, before any gate execution. $1 is the stage dir.
+// It runs once, before any gate execution. $1 is the stage dir, $2 the gpg
+// home dir (Go creates it first; it sits outside the stage so the gpg-agent
+// socket path stays short enough for macOS).
 const craftScript = `set -euo pipefail
 stage="$1"
-export GNUPGHOME="$stage/gpg-home"
-mkdir -p "$GNUPGHOME"
+export GNUPGHOME="$2"
 gpg --batch --pinentry-mode loopback --passphrase '' --quick-generate-key 'Correct Builder <correct@example.com>' rsa2048 sign never
 gpg --batch --pinentry-mode loopback --passphrase '' --quick-generate-key 'Decoy Builder <decoy@example.com>' rsa2048 sign never
 pin="$(gpg --batch --with-colons --list-keys correct@example.com | awk -F: '$1 == "fpr" {print $10; exit}')"
@@ -49,7 +53,7 @@ digests() {
   for f in debian-binary control.tar.zst data.tar.zst; do
     m="$(md5sum "members/$f" | awk '{print $1}')"
     s="$(sha1sum "members/$f" | awk '{print $1}')"
-    z="$(stat -c%s "members/$f")"
+    z="$(wc -c < "members/$f" | awk '{print $1}')"
     printf '\t%s %s %s %s\n' "$m" "$s" "$z" "$f"
   done
 }
@@ -95,7 +99,7 @@ printf 'Xata1' > st-bitflip/data.tar.zst
 func TestVerifyDebExecutesAgainstCraftedDebs(t *testing.T) {
 	for _, tool := range []string{"bash", "gpg", "ar", "md5sum", "sha1sum"} {
 		if _, err := exec.LookPath(tool); err != nil {
-			t.Skip(tool + " not available; executed verify_deb test skipped (CI linux leg installs gnupg + binutils)")
+			t.Skip(tool + " not available; executed verify_deb test skipped (CI installs gnupg + binutils on all test legs)")
 		}
 	}
 	comp := mustRenderComponent(t)
@@ -113,17 +117,17 @@ func TestVerifyDebExecutesAgainstCraftedDebs(t *testing.T) {
 		regexp.QuoteMeta(ind+"verify_deb() {"), regexp.QuoteMeta(ind+"}")))
 
 	stage := t.TempDir()
+	gpgHome := shortGPGHome(t)
 	craftPath := filepath.Join(stage, "craft.sh")
 	if err := os.WriteFile(craftPath, []byte(craftScript), 0755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("bash", craftPath, stage)
+	cmd := exec.Command("bash", craftPath, stage, gpgHome)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("crafting debs: %v:\n%s", err, out)
 	}
 
-	gpgHome := filepath.Join(stage, "gpg-home")
 	pin := keyFPR(t, gpgHome, "correct@example.com")
 	runBash := func(script, dir string) (int, string) {
 		cmd := exec.Command("bash", "-c", script)
@@ -195,6 +199,32 @@ func TestVerifyDebExecutesAgainstCraftedDebs(t *testing.T) {
 	if rc, out := runBash("set -euo pipefail\n"+gatePost+"\n", stage); rc == 0 || !strings.Contains(out, "does not hold exactly the pinned") {
 		t.Errorf("multi-key keyring: post-import gate did not refuse (rc=%d);\n%s", rc, out)
 	}
+}
+
+// shortGPGHome returns a GNUPGHOME outside t.TempDir() with a short path:
+// the gpg-agent socket must stay under 104 chars (macOS), and on Windows the
+// PATH gpg is Git Bash's msys build, which mangles raw C:\... paths — so it
+// receives a /c/Users/... form there. t.Cleanup removes it.
+func shortGPGHome(t *testing.T) string {
+	t.Helper()
+	nonce := make([]byte, 4)
+	if _, err := rand.Read(nonce); err != nil {
+		t.Fatalf("nonce for gpg home: %v", err)
+	}
+	dir, err := os.MkdirTemp("", "fabrica-verify-deb-*")
+	if err != nil {
+		t.Fatalf("gpg home: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	home := filepath.Join(dir, hex.EncodeToString(nonce))
+	if err := os.MkdirAll(home, 0700); err != nil {
+		t.Fatalf("gpg home: %v", err)
+	}
+	if runtime.GOOS == "windows" {
+		// Go filepath paths use forward slashes: C:/Users/... → /c/Users/...
+		home = "/" + strings.ToLower(home[:1]) + home[1:]
+	}
+	return home
 }
 
 func keyFPR(t *testing.T, gpgHome, user string) string {
