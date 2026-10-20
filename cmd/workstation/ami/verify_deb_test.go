@@ -150,7 +150,10 @@ func TestVerifyDebExecutesAgainstCraftedDebs(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("bash", craftPath, stage)
-	cmd.Env = gpgEnv(gpgHome)
+	// AR_NO_AUTOLINK: macOS binutils ar appends a __.SYMDEF SORTED
+	// symbol-table member to archives it creates, which would break the
+	// exact member-count check; GNU ar (linux) ignores it.
+	cmd.Env = append(gpgEnv(gpgHome), "AR_NO_AUTOLINK=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("crafting debs: %v:\n%s", err, out)
