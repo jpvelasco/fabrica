@@ -100,15 +100,17 @@ func TestVerifyDebExecutesAgainstCraftedDebs(t *testing.T) {
 	}
 	comp := mustRenderComponent(t)
 	const ind = "              " // the component's fixed 14-space YAML indent
-	// Region end markers must sit at the region's own 14-space indent;
-	// interior lines (inside the if/function bodies) are more indented, so
-	// the extracted block ends at the enclosing construct's own close.
+	// End anchors are the region's own closer at the base indent (full line,
+	// so a more-indented nested closer never ends the region).
 	gatePre := dedentSh(t, extractRegion(t, comp,
-		regexp.QuoteMeta(ind+"keycheck="), regexp.QuoteMeta(ind+"gpg --batch --no-tty --yes --import NICE-GPG-KEY")))
+		regexp.QuoteMeta(ind+"keycheck="), regexp.QuoteMeta(ind+"fi")))
 	gatePost := dedentSh(t, extractRegion(t, comp,
-		regexp.QuoteMeta(ind+"keyringcheck="), regexp.QuoteMeta(ind+"# Pinned DCV tarball")))
+		regexp.QuoteMeta(ind+"keyringcheck="), regexp.QuoteMeta(ind+"fi")))
+	// verify_deb region is the function itself, from its definition to its
+	// own closing brace (NOT the for-loop that follows it, which would make
+	// each per-deb call run the whole loop again).
 	verify := dedentSh(t, extractRegion(t, comp,
-		regexp.QuoteMeta(ind+"verify_deb() {"), regexp.QuoteMeta(ind+"for deb in *.deb")))
+		regexp.QuoteMeta(ind+"verify_deb() {"), regexp.QuoteMeta(ind+"}")))
 
 	stage := t.TempDir()
 	craftPath := filepath.Join(stage, "craft.sh")
@@ -166,7 +168,7 @@ func TestVerifyDebExecutesAgainstCraftedDebs(t *testing.T) {
 	// a single-key keyfile must pass the show-only preview, and a keyring
 	// holding a second primary must be refused after import.
 	exportKey := func(user string) []byte {
-		cmd := exec.Command("gpg", "--batch", "yes", "export", user)
+		cmd := exec.Command("gpg", "--batch", "--yes", "--export", user)
 		cmd.Env = append(os.Environ(), "GNUPGHOME="+gpgHome)
 		out, err := cmd.Output()
 		if err != nil {
@@ -204,8 +206,11 @@ func keyFPR(t *testing.T, gpgHome, user string) string {
 		t.Fatalf("listing key %s: %v", user, err)
 	}
 	for _, l := range strings.Split(string(out), "\n") {
-		if f, ok := strings.CutPrefix(l, "fpr:"); ok {
-			return f
+		// Colon format: fpr:<8 empty fields>:<40-hex-fpr>; the fpr is field 10
+		// (index 9), matching the gate's awk '{print $10}' extraction.
+		f := strings.Split(l, ":")
+		if len(f) >= 10 && f[0] == "fpr" {
+			return f[9]
 		}
 	}
 	t.Fatalf("no fpr line for %s", user)
@@ -225,12 +230,14 @@ func mustRenderComponent(t *testing.T) string {
 	return string(body)
 }
 
-// extractRegion returns the lines from the line matching start (first
+// extractRegion returns the lines from the line starting with start (first
 // occurrence) through the line matching end (first occurrence at or after
-// start), inclusive.
+// start), inclusive. start is a line prefix — the anchored region begins
+// mid-line (e.g. `keycheck="$(gpg ...)"`); end is a full line — the region's
+// own closer, which is never a prefix.
 func extractRegion(t *testing.T, comp, start, end string) string {
 	t.Helper()
-	reStart := regexp.MustCompile("^" + start + "$")
+	reStart := regexp.MustCompile("^" + start)
 	reEnd := regexp.MustCompile("^" + end + "$")
 	lines := strings.Split(comp, "\n")
 	startIdx := -1
