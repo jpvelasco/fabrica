@@ -11,6 +11,17 @@ Generate bake artifacts (local, no AWS calls):
 fabrica workstation ami build --region us-west-2 --base-image ami-REPLACE --output-dir workstation-ami
 ```
 
+The `--base-image` default is a placeholder ID; always pass a live Ubuntu
+22.04 server AMI from your target region (`aws ec2 describe-images` with a
+`ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-*` filter, `State`
+`available`).
+
+In guardrailed accounts (IAM writes gated on a path + boundary,
+`ec2:RunInstances` gated on request tags), set `cloud.aws.iam` and
+`cloud.aws.volumeRequestTags` in `fabrica.yaml` before running
+`workstation create`; otherwise the role and instance steps fail. See
+[guardrailed-accounts.md](guardrailed-accounts.md).
+
 ## Contract
 
 | Requirement | Detail |
@@ -34,9 +45,48 @@ private IP. Endpoint SG inbound TCP 443 from the VPC CIDR: [ssm-private.md](ssm-
 
 | Date (UTC) | Region | AMI ID | Notes |
 | --- | --- | --- | --- |
-| 2026-09-20 | us-west-2 | `ami-0219a686f7416f70a` | Image Builder 1.0.1; private subnet, no public IP, SSM Online; `dcv` on PATH; `dcvserver` enabled; instance terminated |
+| 2026-09-20 | us-west-2 | `ami-0219a686f7416f70a` | Image Builder 1.0.1; private subnet, no public IP, SSM Online; `dcv` on PATH; `dcvserver` enabled; instance terminated. **Deregistered** — this row is the last known-good record; a live account may hold no DCV AMI. Bake a fresh one (`workstation ami build`, then Image Builder) before the next `workstation create`. |
 
 Do not mark an AMI known-good from Image Builder success alone.
+
+## Stale `amiId` / `subnetId` in `fabrica.yaml`
+
+`workstation create` reads `workstation.amiId` and `workstation.subnetId`
+from `fabrica.yaml`. Both can silently go stale: an AMI deregistered after a
+bake, or a VPC rebuilt after a `fabrica destroy` pass. A stale `amiId` fails
+fast at AMI inspection, before any resource is written; a stale `subnetId`
+fails at the instance step and leaves the SG, IAM role, and instance profile
+for `fabrica workstation destroy` (or `fabrica drift`) to clear.
+
+- `workstation.amiId` points at a missing (or stock Ubuntu) image:
+
+  ```
+  inspecting workstation.amiId ami-0…: describing AMI ami-0…: … InvalidAMIID.NotFound.
+  Confirm the AMI exists and is a NICE DCV image (see docs/workstation-ami.md)
+  ```
+
+  Bake a fresh AMI with `workstation ami build` (see below) and point
+  `workstation.amiId` at the new ID. A stock Canonical Ubuntu AMI is
+  rejected by name — it is not a DCV AMI.
+
+- `workstation.subnetId` points at a missing subnet: the EC2 instance step
+  fails at apply with `InvalidSubnetID.NotFound`. The subnet is referenced
+  only by the instance create, which runs after the security group, IAM
+  role, and instance profile, so a stale subnet leaves those three
+  recorded in state — `fabrica workstation destroy` (or `fabrica drift`)
+  clears them, then fix the subnet and re-run create. Pick a live subnet in
+  the account:
+
+  ```
+  aws ec2 describe-subnets --filters Name=state,Values=available \
+    --query 'Subnets[].SubnetId' --output text
+  ```
+
+  Omitting both `vpcId` and `subnetId` lets create resolve the account's
+  default VPC instead of pinning one.
+
+The local `fabrica.yaml` is not checked in; keep it in sync with the VPC
+after every rebuild.
 
 ## Boot verification (session, not just HTTPS 200)
 

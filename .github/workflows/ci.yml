@@ -117,6 +117,14 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: go.mod
+      # gnupg + binutils: the executed verify_deb test (cmd/workstation/ami)
+      # shells out to gpg and ar. It skips cleanly when those are absent, so
+      # the install is a no-op safety net on non-Linux legs.
+      - name: Install gnupg + binutils (verify_deb test)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gnupg binutils
       # Run in bash on every OS so the working directory and tooling are
       # consistent. Go on the Windows runner writes coverage.out with CRLF line
       # endings, which Codecov's parser rejects (the upload lands in an ERROR
