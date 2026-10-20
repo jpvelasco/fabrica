@@ -45,6 +45,12 @@ type CreatePlan struct {
 	MountPerforce      bool
 	PerforceServerAddr string
 
+	// RootDeviceName is the AMI's root device, read from the AMI at create
+	// time (ImageInfo.RootDeviceName) and validated by RootDeviceFor. The
+	// encrypted root mapping is placed on exactly this device; there is no
+	// default, so InstanceDesiredState fails when it is unset (#507).
+	RootDeviceName string
+
 	SGName              string
 	InstanceName        string
 	RoleName            string

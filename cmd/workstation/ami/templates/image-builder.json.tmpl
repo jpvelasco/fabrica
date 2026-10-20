@@ -5,7 +5,7 @@
   "parentImage": "{{ .BaseImage }}",
   "blockDeviceMappings": [
     {
-      "deviceName": "/dev/sda1",
+      "deviceName": "{{ .RootDevice }}",
       "ebs": {
         "volumeSize": 50,
         "volumeType": "gp3",

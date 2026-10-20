@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -94,5 +95,42 @@ func TestWorkstationPasswordIsNotInUserData(t *testing.T) {
 	}
 	if len(store.parameters) != 0 {
 		t.Fatalf("terminate left parameters: %v", store.parameters)
+	}
+}
+
+// TestWorkstationRootVolumeEncrypted: the instance create carries one block
+// device mapping, on the root device the AMI reports (the fake reports
+// /dev/sda1), with Ebs.Encrypted=true (#507).
+func TestWorkstationRootVolumeEncrypted(t *testing.T) {
+	store := setupE2E(t)
+
+	out, err := runCLI(t, "workstation", "create", "--yes")
+	if err != nil {
+		t.Fatalf("workstation create: %v\n%s", err, out)
+	}
+	found := false
+	for id, sr := range store.resources {
+		if sr.typeName != "AWS::EC2::Instance" {
+			continue
+		}
+		found = true
+		var doc struct {
+			BlockDeviceMappings []struct {
+				DeviceName string
+				Ebs        struct{ Encrypted *bool }
+			}
+		}
+		if err := json.Unmarshal(sr.desired, &doc); err != nil {
+			t.Fatalf("instance %s desired state: %v", id, err)
+		}
+		if len(doc.BlockDeviceMappings) != 1 || doc.BlockDeviceMappings[0].DeviceName != "/dev/sda1" {
+			t.Fatalf("instance %s mappings = %+v, want only the /dev/sda1 root", id, doc.BlockDeviceMappings)
+		}
+		if enc := doc.BlockDeviceMappings[0].Ebs.Encrypted; enc == nil || !*enc {
+			t.Fatalf("instance %s root Ebs.Encrypted = %v, want true", id, enc)
+		}
+	}
+	if !found {
+		t.Fatal("no EC2 instance was created")
 	}
 }

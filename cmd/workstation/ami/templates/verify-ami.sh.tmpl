@@ -6,8 +6,9 @@
 #
 #   ./verify-ami.sh <new-image-id>
 #
-# Exits 0 only when the AMI has at least one EBS snapshot and every EBS
-# snapshot is encrypted and tagged ManagedBy=fabrica. Any other result,
+# Exits 0 only when the AMI reports its root device, that device is an
+# encrypted EBS mapping, and every EBS snapshot is encrypted and tagged
+# ManagedBy=fabrica. Any other result,
 # including an AWS CLI error, exits nonzero: do not record that AMI.
 set -euo pipefail
 
@@ -16,6 +17,22 @@ image="${1:-}"
 if [ -z "$image" ]; then
   echo "usage: $0 <image-id>" >&2
   exit 2
+fi
+
+# The root device must be named and mapped as an encrypted EBS volume: an
+# encrypted mapping on any other device would leave the real root
+# unencrypted.
+root="$(aws ec2 describe-images --region "$REGION" --image-ids "$image" \
+  --query 'Images[0].RootDeviceName' --output text)"
+if ! [[ "$root" =~ ^/dev/(sd|xvd)[a-z]{1,2}[0-9]{0,2}$ ]]; then
+  echo "ERROR: AMI $image reports no usable root device name (RootDeviceName=$root); do not record this AMI." >&2
+  exit 1
+fi
+root_encrypted="$(aws ec2 describe-images --region "$REGION" --image-ids "$image" \
+  --query "Images[0].BlockDeviceMappings[?DeviceName=='${root}'].Ebs.Encrypted | [0]" --output text)"
+if [ "$root_encrypted" != "True" ]; then
+  echo "ERROR: root device $root of AMI $image is not an encrypted EBS mapping (Encrypted=$root_encrypted). Re-bake with --root-device $root; do not record this AMI." >&2
+  exit 1
 fi
 
 encrypted="$(aws ec2 describe-images --region "$REGION" --image-ids "$image" \
@@ -52,4 +69,4 @@ for s in $snapshots; do
   fi
 done
 
-echo "OK: AMI $image has $count EBS snapshot(s), all encrypted and tagged ManagedBy=fabrica."
+echo "OK: AMI $image root $root is encrypted; $count EBS snapshot(s), all encrypted and tagged ManagedBy=fabrica."

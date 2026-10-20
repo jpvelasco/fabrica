@@ -20,6 +20,7 @@ func testPlan(t *testing.T) *CreatePlan {
 	if err != nil {
 		t.Fatalf("NewCreatePlan: %v", err)
 	}
+	plan.RootDeviceName = "/dev/sda1"
 	return plan
 }
 
@@ -92,6 +93,49 @@ func TestInstanceDesiredStateRootVolumeEncrypted(t *testing.T) {
 	}
 }
 
+// TestInstanceDesiredStateEncryptsTheAMIRootDevice pins #507 for AMIs whose
+// root is not /dev/sda1: the encrypted mapping lands on the AMI's own root
+// device (an Amazon Linux style /dev/xvda here), so the real root volume is
+// encrypted and no second, empty volume is attached on /dev/sda1.
+func TestInstanceDesiredStateEncryptsTheAMIRootDevice(t *testing.T) {
+	plan := testPlan(t)
+	plan.RootDeviceName = "/dev/xvda"
+	raw, err := InstanceDesiredState(plan, "test-security-group", "dXNlcmRhdGE=")
+	if err != nil {
+		t.Fatalf("InstanceDesiredState: %v", err)
+	}
+	bdms := ec2state.UnmarshalDesiredState(t, raw)["BlockDeviceMappings"].([]any)
+	if len(bdms) != 1 {
+		t.Fatalf("BlockDeviceMappings = %v, want only the root", bdms)
+	}
+	m0 := bdms[0].(map[string]any)
+	if m0["DeviceName"] != "/dev/xvda" {
+		t.Errorf("DeviceName = %v, want /dev/xvda", m0["DeviceName"])
+	}
+	if enc, ok := m0["Ebs"].(map[string]any)["Encrypted"].(bool); !ok || !enc {
+		t.Errorf("Ebs.Encrypted = %v, want true", m0["Ebs"])
+	}
+}
+
+// TestInstanceDesiredStateRefusesUnknownRootDevice pins the fail-closed rule:
+// with no (or a malformed) root device there is no launch document at all,
+// never one that falls back to a default device.
+func TestInstanceDesiredStateRefusesUnknownRootDevice(t *testing.T) {
+	for _, dev := range []string{"", "sda1", "/dev/nvme0n1", "/dev/sda1; rm", "/dev/"} {
+		t.Run(dev, func(t *testing.T) {
+			plan := testPlan(t)
+			plan.RootDeviceName = dev
+			raw, err := InstanceDesiredState(plan, "test-security-group", "dXNlcmRhdGE=")
+			if err == nil {
+				t.Fatalf("InstanceDesiredState(%q) = %s, want an error", dev, raw)
+			}
+			if !strings.Contains(err.Error(), "encrypted root volume") {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
 // TestDesiredStatesStampFabricaModule guards fix #329: workstation resources
 // must carry FabricaModule=workstation.
 func TestDesiredStatesStampFabricaModule(t *testing.T) {
@@ -108,7 +152,7 @@ func TestDesiredStatesStampFabricaModule(t *testing.T) {
 	instRaw, err := InstanceDesiredState(&CreatePlan{
 		AmiID: "ami-1", InstanceType: "g4dn.xlarge", SubnetID: "subnet-abc",
 		InstanceName: "fabrica-workstation", VolumeSize: 100,
-		InstanceProfileName: "fabrica-workstation-profile",
+		InstanceProfileName: "fabrica-workstation-profile", RootDeviceName: "/dev/sda1",
 	}, "sg-123", "ud")
 	if err != nil {
 		t.Fatalf("InstanceDesiredState: %v", err)

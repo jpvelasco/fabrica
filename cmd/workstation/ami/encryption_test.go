@@ -21,10 +21,17 @@ import (
 // renderBuild runs the generator into a temp dir and returns it.
 func renderBuild(t *testing.T) string {
 	t.Helper()
+	return renderBuildRoot(t, defaultRootDevice)
+}
+
+// renderBuildRoot runs the generator for a base image whose root device is
+// root and returns the output dir.
+func renderBuildRoot(t *testing.T, root string) string {
+	t.Helper()
 	dir := t.TempDir()
 	c := buildCommand{
 		out:       &bytes.Buffer{},
-		cfg:       BuildConfig{BaseImage: defaultBaseImage, Region: "us-west-2", Name: "fabrica-workstation-dcv", OutputDir: dir},
+		cfg:       BuildConfig{BaseImage: defaultBaseImage, Region: "us-west-2", Name: "fabrica-workstation-dcv", OutputDir: dir, RootDevice: root},
 		writeFile: os.WriteFile,
 		mkdirAll:  os.MkdirAll,
 	}
@@ -67,9 +74,13 @@ func TestBuildRecipeRootVolumeEncryptedAndAMITagged(t *testing.T) {
 
 func TestValidateRecipeEncryption(t *testing.T) {
 	for _, tc := range []struct {
-		name, recipe, wantErr string
+		name, root, recipe, wantErr string
 	}{
 		{name: "encrypted root", recipe: `{"blockDeviceMappings":[{"deviceName":"/dev/sda1","ebs":{"encrypted":true}}]}`},
+		{name: "encrypted mapping on another device than the root", root: "/dev/xvda", recipe: `{"blockDeviceMappings":[{"deviceName":"/dev/sda1","ebs":{"encrypted":true}}]}`, wantErr: "no /dev/xvda"},
+		{name: "encrypted xvda root", root: "/dev/xvda", recipe: `{"blockDeviceMappings":[{"deviceName":"/dev/xvda","ebs":{"encrypted":true}}]}`},
+		{name: "invalid root device", root: "xvda", recipe: `{"blockDeviceMappings":[{"deviceName":"xvda","ebs":{"encrypted":true}}]}`, wantErr: "not an EC2 device name"},
+		{name: "empty root device", root: "-", recipe: `{"blockDeviceMappings":[{"deviceName":"/dev/sda1","ebs":{"encrypted":true}}]}`, wantErr: "not an EC2 device name"},
 		{name: "encrypted false", recipe: `{"blockDeviceMappings":[{"deviceName":"/dev/sda1","ebs":{"encrypted":false}}]}`, wantErr: `"encrypted": true`},
 		{name: "encrypted absent", recipe: `{"blockDeviceMappings":[{"deviceName":"/dev/sda1","ebs":{"volumeSize":50}}]}`, wantErr: `"encrypted": true`},
 		{name: "no ebs block", recipe: `{"blockDeviceMappings":[{"deviceName":"/dev/sda1"}]}`, wantErr: `"encrypted": true`},
@@ -78,7 +89,14 @@ func TestValidateRecipeEncryption(t *testing.T) {
 		{name: "invalid json", recipe: `{`, wantErr: "not valid JSON"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateRecipeEncryption([]byte(tc.recipe))
+			root := tc.root
+			switch root {
+			case "":
+				root = defaultRootDevice
+			case "-":
+				root = ""
+			}
+			err := validateRecipeEncryption([]byte(tc.recipe), root)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("err = %v, want nil", err)
@@ -89,6 +107,38 @@ func TestValidateRecipeEncryption(t *testing.T) {
 				t.Fatalf("err = %v, want it to contain %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestBuildRecipeUsesRootDeviceFlag: --root-device /dev/xvda puts the
+// encrypted mapping (and the guide's run-instances mapping) on /dev/xvda.
+func TestBuildRecipeUsesRootDeviceFlag(t *testing.T) {
+	dir := renderBuildRoot(t, "/dev/xvda")
+	raw, err := os.ReadFile(filepath.Join(dir, "image-builder-recipe.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRecipeEncryption(raw, "/dev/xvda"); err != nil {
+		t.Fatalf("recipe for /dev/xvda: %v", err)
+	}
+	if strings.Contains(string(raw), "/dev/sda1") {
+		t.Errorf("recipe for an xvda base still maps /dev/sda1:\n%s", raw)
+	}
+	guide, err := os.ReadFile(filepath.Join(dir, "build-guide.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(guide), "DeviceName=/dev/xvda,Ebs={") {
+		t.Errorf("guide run-instances mapping is not on /dev/xvda")
+	}
+}
+
+func TestBuildValidateRootDevice(t *testing.T) {
+	for _, bad := range []string{"", "xvda", "/dev/nvme0n1", "/dev/sda1 --x"} {
+		c := buildCommand{cfg: BuildConfig{BaseImage: defaultBaseImage, Region: "us-west-2", Name: "x", OutputDir: "out", RootDevice: bad}}
+		if err := c.validate(); err == nil || !strings.Contains(err.Error(), "--root-device") {
+			t.Errorf("validate(--root-device %q) = %v, want a --root-device error", bad, err)
+		}
 	}
 }
 
@@ -108,6 +158,8 @@ func TestBuildGuideDocumentsEncryptedTaggedBake(t *testing.T) {
 		"aws ec2 create-tags --region us-west-2",
 		"./verify-ami.sh",
 		"Exit 0 is the only pass",
+		"--query 'Images[0].RootDeviceName'",
+		"customer managed key (CMK)",
 	} {
 		if !strings.Contains(g, want) {
 			t.Errorf("build guide missing %q", want)
@@ -151,6 +203,8 @@ const fakeAWS = `#!/usr/bin/env bash
 if [ -n "${FAKE_AWS_FAIL:-}" ]; then echo "fake aws: AccessDenied" >&2; exit 254; fi
 args="$*"
 case "$args" in
+  *describe-images*RootDeviceName*) printf '%s\n' "$FAKE_ROOT_DEVICE" ;;
+  *describe-images*DeviceName==*) printf '%s\n' "$FAKE_ROOT_ENCRYPTED" ;;
   *describe-images*Ebs.Encrypted*) printf '%s\n' "$FAKE_IMAGE_ENCRYPTED" ;;
   *describe-images*Ebs.SnapshotId*) printf '%s\n' "$FAKE_SNAPSHOTS" ;;
   *describe-snapshots*Snapshots\[0\].Encrypted*) printf '%s\n' "$FAKE_SNAPSHOT_ENCRYPTED" ;;
@@ -175,6 +229,8 @@ func TestVerifyAMIScriptGate(t *testing.T) {
 	}
 
 	pass := map[string]string{
+		"FAKE_ROOT_DEVICE":        "/dev/sda1",
+		"FAKE_ROOT_ENCRYPTED":     "True",
 		"FAKE_IMAGE_ENCRYPTED":    "True",
 		"FAKE_SNAPSHOTS":          "test-root-snapshot",
 		"FAKE_SNAPSHOT_ENCRYPTED": "True",
@@ -197,7 +253,12 @@ func TestVerifyAMIScriptGate(t *testing.T) {
 		wantCode int
 		wantOut  string
 	}{
-		{name: "encrypted and tagged passes", args: []string{"test-image"}, env: pass, wantCode: 0, wantOut: "OK: AMI test-image has 1 EBS snapshot(s)"},
+		{name: "encrypted and tagged passes", args: []string{"test-image"}, env: pass, wantCode: 0, wantOut: "OK: AMI test-image root /dev/sda1 is encrypted; 1 EBS snapshot(s)"},
+		{name: "xvda root encrypted passes", args: []string{"test-image"}, env: with(map[string]string{"FAKE_ROOT_DEVICE": "/dev/xvda"}), wantCode: 0, wantOut: "root /dev/xvda is encrypted"},
+		{name: "missing root device name fails", args: []string{"test-image"}, env: with(map[string]string{"FAKE_ROOT_DEVICE": "None"}), wantCode: 1, wantOut: "no usable root device name (RootDeviceName=None)"},
+		{name: "malformed root device name fails", args: []string{"test-image"}, env: with(map[string]string{"FAKE_ROOT_DEVICE": "/dev/sda1' || true"}), wantCode: 1, wantOut: "no usable root device name"},
+		{name: "root mapping not encrypted fails", args: []string{"test-image"}, env: with(map[string]string{"FAKE_ROOT_DEVICE": "/dev/xvda", "FAKE_ROOT_ENCRYPTED": "False"}), wantCode: 1, wantOut: "root device /dev/xvda of AMI test-image is not an encrypted EBS mapping (Encrypted=False)"},
+		{name: "root device without a mapping fails", args: []string{"test-image"}, env: with(map[string]string{"FAKE_ROOT_DEVICE": "/dev/xvda", "FAKE_ROOT_ENCRYPTED": "None"}), wantCode: 1, wantOut: "Encrypted=None"},
 		{name: "two snapshots pass", args: []string{"test-image"}, env: with(map[string]string{"FAKE_IMAGE_ENCRYPTED": "True\tTrue", "FAKE_SNAPSHOTS": "root\tdata"}), wantCode: 0, wantOut: "2 EBS snapshot(s)"},
 		{name: "unencrypted image mapping fails", args: []string{"test-image"}, env: with(map[string]string{"FAKE_IMAGE_ENCRYPTED": "False"}), wantCode: 1, wantOut: "not encrypted (Encrypted=False)"},
 		{name: "one of two unencrypted fails", args: []string{"test-image"}, env: with(map[string]string{"FAKE_IMAGE_ENCRYPTED": "True\tFalse"}), wantCode: 1, wantOut: "not encrypted"},

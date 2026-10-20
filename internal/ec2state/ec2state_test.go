@@ -2,6 +2,7 @@ package ec2state
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -223,12 +224,44 @@ func TestEncryptedVolume(t *testing.T) {
 	}
 }
 
-// TestEncryptedVolumeNoMappings is a no-op on a document without mappings.
-func TestEncryptedVolumeNoMappings(t *testing.T) {
-	d := map[string]any{}
-	WithEncryptedVolume()(d)
-	if len(d) != 0 {
-		t.Fatalf("doc = %v, want unchanged", d)
+// TestEncryptedVolumeUnexpectedShapeErrors pins the Security LOW on #512:
+// the option fails instead of silently doing nothing when the document does
+// not have the mapping shape Build produces.
+func TestEncryptedVolumeUnexpectedShapeErrors(t *testing.T) {
+	for name, d := range map[string]map[string]any{
+		"no mappings":        {},
+		"empty mappings":     {"BlockDeviceMappings": []map[string]any{}},
+		"wrong mapping type": {"BlockDeviceMappings": []any{map[string]any{"Ebs": map[string]any{}}}},
+		"no ebs block":       {"BlockDeviceMappings": []map[string]any{{"DeviceName": "/dev/sda1"}}},
+		"wrong ebs type":     {"BlockDeviceMappings": []map[string]any{{"Ebs": map[string]string{}}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := WithEncryptedVolume()(d); err == nil {
+				t.Fatalf("WithEncryptedVolume on %v: want an error", d)
+			}
+		})
+	}
+}
+
+// TestDeviceNameUnexpectedShapeErrors: a device override that cannot apply
+// fails instead of leaving the mapping on the default device.
+func TestDeviceNameUnexpectedShapeErrors(t *testing.T) {
+	if err := WithDeviceName("/dev/sda1")(map[string]any{}); err == nil {
+		t.Fatal("WithDeviceName on a document without mappings: want an error")
+	}
+	d := map[string]any{"BlockDeviceMappings": []map[string]any{{"DeviceName": "/dev/sdf"}}}
+	if err := WithDeviceName("")(d); err == nil {
+		t.Fatal("WithDeviceName(\"\"): want an error")
+	}
+}
+
+// TestBuildPropagatesOptionError: Build returns the option's error and no
+// document.
+func TestBuildPropagatesOptionError(t *testing.T) {
+	failing := func(map[string]any) error { return errors.New("option boom") }
+	raw, err := Build(testSpec(), WithDeviceName("/dev/sda1"), failing)
+	if err == nil || !strings.Contains(err.Error(), "option boom") || raw != nil {
+		t.Fatalf("Build = %s, %v; want the option error and no document", raw, err)
 	}
 }
 

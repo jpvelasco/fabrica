@@ -80,3 +80,33 @@ func TestAwsProviderDescribeImageDelegates(t *testing.T) {
 		t.Errorf("Name = %q", info.Name)
 	}
 }
+
+// TestDescribeImageRootDevice pins #507: the inspector reports the AMI's root
+// device name and type, which workstation create maps its encrypted root on.
+// A missing RootDeviceName is reported as empty (create then refuses).
+func TestDescribeImageRootDevice(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		root     *string
+		rootType types.DeviceType
+		wantName string
+		wantType string
+	}{
+		{name: "xvda ebs", root: aws.String("/dev/xvda"), rootType: types.DeviceTypeEbs, wantName: "/dev/xvda", wantType: "ebs"},
+		{name: "sda1 ebs", root: aws.String("/dev/sda1"), rootType: types.DeviceTypeEbs, wantName: "/dev/sda1", wantType: "ebs"},
+		{name: "missing root device name", root: nil, rootType: types.DeviceTypeEbs, wantName: "", wantType: "ebs"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &ec2Service{client: &fakeEC2ImagesClient{images: []types.Image{{
+				Name: aws.String("fabrica-workstation-dcv"), RootDeviceName: tc.root, RootDeviceType: tc.rootType,
+			}}}}
+			info, err := svc.DescribeImage(context.Background(), "test-image")
+			if err != nil {
+				t.Fatalf("DescribeImage: %v", err)
+			}
+			if info.RootDeviceName != tc.wantName || info.RootDeviceType != tc.wantType {
+				t.Fatalf("root = %q/%q, want %q/%q", info.RootDeviceName, info.RootDeviceType, tc.wantName, tc.wantType)
+			}
+		})
+	}
+}

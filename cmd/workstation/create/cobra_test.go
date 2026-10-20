@@ -38,15 +38,23 @@ func newCobraRuntime(provider cloud.Provider) globals.RuntimeSource {
 
 type inspectorProvider struct {
 	testutil.TestProvider
-	name string
-	err  error
+	name     string
+	rootName string
+	rootType string
+	err      error
 }
 
 func (p *inspectorProvider) DescribeImage(_ context.Context, id string) (cloud.ImageInfo, error) {
 	if p.err != nil {
 		return cloud.ImageInfo{}, p.err
 	}
-	return cloud.ImageInfo{ID: id, Name: p.name}, nil
+	return cloud.ImageInfo{ID: id, Name: p.name, RootDeviceName: p.rootName, RootDeviceType: p.rootType}, nil
+}
+
+// dcvProvider is a provider whose AMI is a DCV image with an EBS root on
+// /dev/sda1, the shape create needs before it will launch.
+func dcvProvider() *inspectorProvider {
+	return &inspectorProvider{name: "fabrica-workstation-dcv", rootName: "/dev/sda1", rootType: "ebs"}
 }
 
 func TestCreateCobraRejectsStockUbuntuViaInspector(t *testing.T) {
@@ -122,7 +130,7 @@ func TestCreateCobraRejectsBadIAMPath(t *testing.T) {
 
 func TestCreateCobraYesFlagSkipsConfirmation(t *testing.T) {
 	t.Chdir(t.TempDir())
-	provider := &testutil.TestProvider{}
+	provider := dcvProvider()
 	_, err := runCreate(t, newCobraRuntime(provider), "--yes")
 	if err != nil {
 		t.Fatalf("--yes run failed: %v", err)

@@ -20,9 +20,10 @@ on CPU; artist/g6 templates still want a GPU AMI).
 ## Generated files
 
 - `component.yaml` — installs NICE DCV (Ubuntu 22.04 tarball) and SSM Agent
-- `image-builder-recipe.json` — parent `{{ .BaseImage }}`; root volume `/dev/sda1` encrypted
-- `verify-ami.sh` — fail-closed bake gate (read-only): every EBS snapshot of the
-  baked AMI must be encrypted and tagged `ManagedBy=fabrica`
+- `image-builder-recipe.json` — parent `{{ .BaseImage }}`; root volume `{{ .RootDevice }}` encrypted
+- `verify-ami.sh` — fail-closed bake gate (read-only): the AMI's root device
+  must be an encrypted EBS mapping, and every EBS snapshot must be encrypted
+  and tagged `ManagedBy=fabrica`
 
 ## Bake with an encrypted root volume
 
@@ -30,10 +31,23 @@ The AMI's root snapshot must be encrypted. Encrypt the volume the bake runs
 on, so the snapshot taken from it is encrypted when it is created. Do not bake
 unencrypted and then `copy-image --encrypted`: that leaves an unencrypted AMI
 and snapshot behind to clean up, and that AMI could be recorded by mistake.
-No `kmsKeyId` is set, so EBS uses the account's default key (`aws/ebs`).
+No `kmsKeyId` is set, so EBS uses the account's default EBS encryption key:
+the AWS managed key `aws/ebs`, unless the account default has been changed to
+a customer managed key (CMK). With a CMK default, the bake and launch
+identities need KMS permissions on that key.
+
+The recipe encrypts `{{ .RootDevice }}`, which must be the base image's root
+device. Check it before you bake and pass `--root-device` if it differs (a
+mapping on any other device adds an encrypted extra volume while the real
+root stays unencrypted):
+
+```bash
+aws ec2 describe-images --region {{ .Region }} --image-ids {{ .BaseImage }} \
+  --query 'Images[0].RootDeviceName' --output text
+```
 
 **Image Builder (recommended).** `image-builder-recipe.json` requests
-`/dev/sda1` with `"encrypted": true`. Image Builder applies the recipe's
+`{{ .RootDevice }}` with `"encrypted": true`. Image Builder applies the recipe's
 mappings to the build instance and the output AMI, so the snapshot is
 encrypted even when the parent image's snapshot is not and EBS default
 encryption is off. `amiTags` tag the output AMI. Image Builder does not tag
@@ -55,7 +69,7 @@ and its snapshots when you create the AMI:
 ```bash
 aws ec2 run-instances --region {{ .Region }} --image-id {{ .BaseImage }} \
   --metadata-options HttpTokens=required \
-  --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=50,VolumeType=gp3,DeleteOnTermination=true,Encrypted=true}' \
+  --block-device-mappings 'DeviceName={{ .RootDevice }},Ebs={VolumeSize=50,VolumeType=gp3,DeleteOnTermination=true,Encrypted=true}' \
   ...   # instance type, subnet, security group, SSM instance profile
 
 aws ec2 create-image --region {{ .Region }} --instance-id "$BAKE_INSTANCE" \
@@ -71,8 +85,9 @@ aws ec2 create-image --region {{ .Region }} --instance-id "$BAKE_INSTANCE" \
 ./verify-ami.sh "$AMI"
 ```
 
-Exit 0 is the only pass. It fails when an EBS snapshot is not encrypted, is
-missing the `ManagedBy=fabrica` tag, or the AWS CLI call fails. Record the
+Exit 0 is the only pass. It fails when the AMI reports no root device, the
+root device has no encrypted EBS mapping, an EBS snapshot is not encrypted or
+is missing the `ManagedBy=fabrica` tag, or an AWS CLI call fails. Record the
 AMI in `workstation.amiId` only after it passes. The bake instance, its
 volume, and any pipeline resources are not Fabrica resources; clean them up
 yourself.

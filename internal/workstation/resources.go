@@ -2,6 +2,7 @@ package workstation
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/ec2state"
@@ -23,13 +24,20 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 }
 
 // InstanceDesiredState returns the Cloud Control desired-state JSON for the
-// workstation EC2 instance. Uses /dev/sda1 as the root EBS device, encrypted
-// at launch (#507): the flag rides the Cloud Control desired state and the
-// direct RunInstances path alike, so the root volume is encrypted even when
-// the AMI snapshot is not and account EBS default encryption is off.
+// workstation EC2 instance. The root EBS mapping goes on the AMI's own root
+// device (plan.RootDeviceName, read from the AMI at create time) and is
+// encrypted at launch (#507): the flag rides the Cloud Control desired state
+// and the direct RunInstances path alike, so the root volume is encrypted
+// even when the AMI snapshot is not and account EBS default encryption is
+// off. There is no default device: an unset or malformed root device is an
+// error, because a mapping on the wrong device would leave the real root
+// unencrypted.
 func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMessage, error) {
+	if !ValidRootDeviceName(plan.RootDeviceName) {
+		return nil, fmt.Errorf("workstation root device %q is unset or invalid; refusing to build a launch without an encrypted root volume mapping", plan.RootDeviceName)
+	}
 	dsOpts := []ec2state.DesiredStateOption{
-		ec2state.WithDeviceName("/dev/sda1"),
+		ec2state.WithDeviceName(plan.RootDeviceName),
 		ec2state.WithEncryptedVolume(),
 		ec2state.WithIAMProfile(plan.InstanceProfileName),
 		ec2state.WithExtraTags("FabricaModule", "workstation"),

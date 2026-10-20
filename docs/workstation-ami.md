@@ -38,17 +38,29 @@ GPU-capable instance type; bake GPU drivers separately if you need them.
 
 ## EBS encryption
 
-`workstation create` requests the root volume (`/dev/sda1`) with
-`Encrypted=true` on both launch paths (Cloud Control and the direct
-`RunInstances` path), so the root volume is encrypted with the account's
-default EBS key even when the AMI snapshot is not and account-level EBS
-default encryption is off. Fabrica sets no `KmsKeyId`, so EBS uses the
-default key (`aws/ebs`).
+`workstation create` reads the AMI's root device (`RootDeviceName`, for
+example `/dev/sda1` on Ubuntu or `/dev/xvda` on Amazon Linux) during its
+AMI inspection and requests exactly that device with `Encrypted=true` on
+both launch paths (Cloud Control and the direct `RunInstances` path). The
+root volume is encrypted even when the AMI snapshot is not and account-level
+EBS default encryption is off. Create fails closed, before any resource or
+parameter is written, when the AMI reports no root device name, a name that
+is not an EC2 device name, or a root that is not EBS, and when the provider
+cannot inspect the AMI at all. It never falls back to a default device: an
+encrypted mapping on a device that is not the root would attach an extra
+volume and boot the real root unencrypted.
+
+Fabrica sets no `KmsKeyId`, so EBS uses the account's default EBS
+encryption key: the AWS managed key `aws/ebs`, unless the account default
+has been changed to a customer managed key (CMK). With a CMK default, the
+identity that launches (and the bake) needs KMS permissions on that key.
 
 The bake encrypts the AMI itself: the generated `image-builder-recipe.json`
-maps `/dev/sda1` with `"encrypted": true` (`workstation ami build` refuses
-to write a recipe without it), so Image Builder snapshots an encrypted
-volume. The generated `build-guide.md` also covers a direct EC2 bake:
+maps the base image's root device (`--root-device`, default `/dev/sda1`,
+Canonical Ubuntu's) with `"encrypted": true` (`workstation ami build`
+refuses to write a recipe without it, or with a malformed device), so Image
+Builder snapshots an encrypted volume. The build guide shows how to read the
+base image's `RootDeviceName` first. It also covers a direct EC2 bake:
 launch the bake instance with `Encrypted=true` on the root mapping, then
 `create-image` with `--tag-specifications` for both `image` and `snapshot`.
 We bake on an encrypted volume rather than `copy-image --encrypted` after
@@ -57,8 +69,10 @@ could be recorded by mistake.
 
 Before recording a baked AMI in `workstation.amiId`, run the generated
 `verify-ami.sh <image-id>`. It only reads (`ec2:DescribeImages`,
-`ec2:DescribeSnapshots`) and exits 0 only when every EBS snapshot of the
-AMI is encrypted and tagged `ManagedBy=fabrica`. Image Builder tags the
+`ec2:DescribeSnapshots`) and exits 0 only when the AMI reports its root
+device, that device is an encrypted EBS mapping, and every EBS snapshot is
+encrypted and tagged `ManagedBy=fabrica`. So a recipe whose
+`--root-device` missed the real root fails the gate. Image Builder tags the
 output AMI (`amiTags`) but not its snapshots; the build guide shows the
 `create-tags` loop that tags them.
 

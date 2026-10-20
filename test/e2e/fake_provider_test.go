@@ -118,6 +118,14 @@ func (p *fakeProvider) Identity(context.Context) (string, string, string, error)
 
 func (p *fakeProvider) Resources() cloud.ResourceClient { return &fakeRC{store: p.store} }
 
+var _ cloud.ImageInspector = (*fakeProvider)(nil)
+
+// DescribeImage reports a DCV AMI with an EBS root on /dev/sda1: workstation
+// create reads the root device from the AMI and refuses to launch without it.
+func (p *fakeProvider) DescribeImage(_ context.Context, id string) (cloud.ImageInfo, error) {
+	return cloud.ImageInfo{ID: id, Name: "fabrica-workstation-dcv", RootDeviceName: "/dev/sda1", RootDeviceType: "ebs"}, nil
+}
+
 var _ cloud.ParameterStore = (*fakeProvider)(nil)
 
 func (p *fakeProvider) PutSecureParameter(_ context.Context, param cloud.SecureParameter) error {
