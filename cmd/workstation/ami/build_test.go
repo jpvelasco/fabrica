@@ -88,7 +88,7 @@ func TestBuildWritesDCVAndSSM(t *testing.T) {
 		"member name containing a '..' path component in",
 		`( cd "$work" && ar x "$abs" )`,
 		`gpg --batch --no-tty --status-fd 3 --verify --output "$work/manifest" "$work/_gpgbuilder"`,
-		`stat -c%s "$work/$name"`,
+		`wc -c < "$work/$name" | awk '{print $1}'`,
 		`grep -Ec '^\[GNUPG:\] VALIDSIG '`,
 		`(BADSIG|ERRSIG|EXPKEYSIG|REVKEYSIG|NO_PUBKEY)`,
 		`sed 's/^\[GNUPG:\] VALIDSIG //' | awk '{print $1}'`,

@@ -258,7 +258,9 @@ phases:
                     echo "ERROR: sha1 mismatch for $name in $d"
                     return 1
                   fi
-                  if [ "$(stat -c%s "$work/$name")" != "$size" ]; then
+                  # wc -c <file> (not stat -c%s) so the executed test can run
+                  # the function on macOS too, where stat has no -c flag.
+                  if [ "$(wc -c < "$work/$name" | awk '{print $1}')" != "$size" ]; then
                     rm -rf "$work"
                     echo "ERROR: size mismatch for $name in $d"
                     return 1
