@@ -23,8 +23,6 @@ package ami
 // installs gnupg + binutils on all three test legs so the test runs there.
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,13 +32,42 @@ import (
 	"testing"
 )
 
+// winDrivePath matches a leading Windows drive prefix (e.g. "C:/") so the
+// path can be rewritten into the /c/... POSIX form msys tools expect.
+var winDrivePath = regexp.MustCompile(`^[A-Za-z]:[/\\]`)
+
+// toPosixPath converts a Windows path (C:\Users\...) to the /c/Users/... POSIX
+// form that Git Bash's msys gpg understands. The whole path is normalized to
+// forward slashes first: os.TempDir() and filepath.Join on Windows use
+// backslashes, so a prefix-only swap would yield the mixed /c:\... form that
+// msys gpg rejects.
+func toPosixPath(p string) string {
+	return winDrivePath.ReplaceAllStringFunc(filepath.ToSlash(p), func(m string) string {
+		return "/" + strings.ToLower(m[:1]) + "/"
+	})
+}
+
+// gpgEnv returns the environment every gpg invocation in this test runs with:
+// GNUPGHOME (in the platform-native form, so msys gpg on Windows gets a
+// /c/... path). GNUPGHOME is an environment variable, so it is passed to gpg
+// literally — MSYS2 argument conversion only rewrites argv, never env values.
+func gpgEnv(gpgHome string) []string {
+	return append(os.Environ(), "GNUPGHOME="+gpgHome)
+}
+
+// runEnv is the environment the gate/verify_deb bash scripts run with: the gpg
+// env plus the pinned fingerprint the gate asserts against.
+func runEnv(gpgHome, pin string) []string {
+	return append(gpgEnv(gpgHome), "NICE_KEY_FPR="+pin)
+}
+
 // craftScript builds the negative and positive debs plus the throwaway keys.
-// It runs once, before any gate execution. $1 is the stage dir, $2 the gpg
-// home dir (Go creates it first; it sits outside the stage so the gpg-agent
-// socket path stays short enough for macOS).
+// It runs once, before any gate execution. $1 is the stage dir; GNUPGHOME is
+// inherited from the environment (Go sets it so the gpg home sits outside the
+// stage, keeping the gpg-agent socket path short enough for macOS, and in
+// POSIX form for Git Bash's msys gpg on Windows).
 const craftScript = `set -euo pipefail
 stage="$1"
-export GNUPGHOME="$2"
 gpg --batch --pinentry-mode loopback --passphrase '' --quick-generate-key 'Correct Builder <correct@example.com>' rsa2048 sign never
 gpg --batch --pinentry-mode loopback --passphrase '' --quick-generate-key 'Decoy Builder <decoy@example.com>' rsa2048 sign never
 pin="$(gpg --batch --with-colons --list-keys correct@example.com | awk -F: '$1 == "fpr" {print $10; exit}')"
@@ -122,7 +149,8 @@ func TestVerifyDebExecutesAgainstCraftedDebs(t *testing.T) {
 	if err := os.WriteFile(craftPath, []byte(craftScript), 0755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("bash", craftPath, stage, gpgHome)
+	cmd := exec.Command("bash", craftPath, stage)
+	cmd.Env = gpgEnv(gpgHome)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("crafting debs: %v:\n%s", err, out)
@@ -132,7 +160,7 @@ func TestVerifyDebExecutesAgainstCraftedDebs(t *testing.T) {
 	runBash := func(script, dir string) (int, string) {
 		cmd := exec.Command("bash", "-c", script)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "GNUPGHOME="+gpgHome, "NICE_KEY_FPR="+pin)
+		cmd.Env = runEnv(gpgHome, pin)
 		out, err := cmd.CombinedOutput()
 		if ee, ok := err.(*exec.ExitError); ok {
 			return ee.ExitCode(), string(out)
@@ -173,7 +201,7 @@ func TestVerifyDebExecutesAgainstCraftedDebs(t *testing.T) {
 	// holding a second primary must be refused after import.
 	exportKey := func(user string) []byte {
 		cmd := exec.Command("gpg", "--batch", "--yes", "--export", user)
-		cmd.Env = append(os.Environ(), "GNUPGHOME="+gpgHome)
+		cmd.Env = gpgEnv(gpgHome)
 		out, err := cmd.Output()
 		if err != nil {
 			t.Fatalf("exporting %s: %v", user, err)
@@ -201,28 +229,26 @@ func TestVerifyDebExecutesAgainstCraftedDebs(t *testing.T) {
 	}
 }
 
-// shortGPGHome returns a GNUPGHOME outside t.TempDir() with a short path:
-// the gpg-agent socket must stay under 104 chars (macOS), and on Windows the
-// PATH gpg is Git Bash's msys build, which mangles raw C:\... paths — so it
-// receives a /c/Users/... form there. t.Cleanup removes it.
+// shortGPGHome returns a GNUPGHOME with a short path, removed by t.Cleanup.
+// The gpg-agent socket ($GNUPGHOME/S.gpg-agent) must stay under 104 chars;
+// macOS's per-user $TMPDIR base is already ~68, so on darwin the home is
+// created under /tmp instead. On Windows the PATH gpg is Git Bash's msys
+// build, which mangles raw C:\... paths, so the home is returned in
+// /c/Users/... POSIX form and only ever crosses process boundaries via the
+// environment.
 func shortGPGHome(t *testing.T) string {
 	t.Helper()
-	nonce := make([]byte, 4)
-	if _, err := rand.Read(nonce); err != nil {
-		t.Fatalf("nonce for gpg home: %v", err)
+	base := os.TempDir()
+	if runtime.GOOS == "darwin" {
+		base = "/tmp"
 	}
-	dir, err := os.MkdirTemp("", "fabrica-verify-deb-*")
+	home, err := os.MkdirTemp(base, "fvdb-*")
 	if err != nil {
 		t.Fatalf("gpg home: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	home := filepath.Join(dir, hex.EncodeToString(nonce))
-	if err := os.MkdirAll(home, 0700); err != nil {
-		t.Fatalf("gpg home: %v", err)
-	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	if runtime.GOOS == "windows" {
-		// Go filepath paths use forward slashes: C:/Users/... → /c/Users/...
-		home = "/" + strings.ToLower(home[:1]) + home[1:]
+		home = toPosixPath(home)
 	}
 	return home
 }
@@ -230,7 +256,7 @@ func shortGPGHome(t *testing.T) string {
 func keyFPR(t *testing.T, gpgHome, user string) string {
 	t.Helper()
 	cmd := exec.Command("gpg", "--batch", "--with-colons", "--list-keys", user)
-	cmd.Env = append(os.Environ(), "GNUPGHOME="+gpgHome)
+	cmd.Env = gpgEnv(gpgHome)
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("listing key %s: %v", user, err)
