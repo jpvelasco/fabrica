@@ -36,6 +36,36 @@ In guardrailed accounts (IAM writes gated on a path + boundary,
 Virtual sessions do not require a GPU. Artist (`g6`) templates still want a
 GPU-capable instance type; bake GPU drivers separately if you need them.
 
+## EBS encryption
+
+`workstation create` requests the root volume (`/dev/sda1`) with
+`Encrypted=true` on both launch paths (Cloud Control and the direct
+`RunInstances` path), so the root volume is encrypted with the account's
+default EBS key even when the AMI snapshot is not and account-level EBS
+default encryption is off. Fabrica sets no `KmsKeyId`, so EBS uses the
+default key (`aws/ebs`).
+
+The bake encrypts the AMI itself: the generated `image-builder-recipe.json`
+maps `/dev/sda1` with `"encrypted": true` (`workstation ami build` refuses
+to write a recipe without it), so Image Builder snapshots an encrypted
+volume. The generated `build-guide.md` also covers a direct EC2 bake:
+launch the bake instance with `Encrypted=true` on the root mapping, then
+`create-image` with `--tag-specifications` for both `image` and `snapshot`.
+We bake on an encrypted volume rather than `copy-image --encrypted` after
+the bake: one AMI, one snapshot, and no unencrypted AMI left behind that
+could be recorded by mistake.
+
+Before recording a baked AMI in `workstation.amiId`, run the generated
+`verify-ami.sh <image-id>`. It only reads (`ec2:DescribeImages`,
+`ec2:DescribeSnapshots`) and exits 0 only when every EBS snapshot of the
+AMI is encrypted and tagged `ManagedBy=fabrica`. Image Builder tags the
+output AMI (`amiTags`) but not its snapshots; the build guide shows the
+`create-tags` loop that tags them.
+
+Fabrica's `permissionsBoundary` setting does **not** enforce encryption.
+It bounds the roles Fabrica creates, not the identity that launches the
+instance. See [guardrailed-accounts.md](guardrailed-accounts.md#ebs-encryption-is-not-enforced-by-the-permissions-boundary).
+
 ## Private path
 
 Verify through SSM (or VPN/in-VPC), not laptop `workstation list` against a

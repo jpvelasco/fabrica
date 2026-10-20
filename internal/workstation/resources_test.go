@@ -68,6 +68,30 @@ func TestInstanceDesiredStateVolume(t *testing.T) {
 	ec2state.AssertEBS(t, doc, plan.VolumeSize, true)
 }
 
+// TestInstanceDesiredStateRootVolumeEncrypted pins #507: the workstation root
+// volume (/dev/sda1) is requested with Encrypted=true, so it is encrypted even
+// when the AMI snapshot is not and account EBS default encryption is off.
+func TestInstanceDesiredStateRootVolumeEncrypted(t *testing.T) {
+	plan := testPlan(t)
+	raw, err := InstanceDesiredState(plan, "test-security-group", "dXNlcmRhdGE=")
+	if err != nil {
+		t.Fatalf("InstanceDesiredState: %v", err)
+	}
+	doc := ec2state.UnmarshalDesiredState(t, raw)
+	bdms, ok := doc["BlockDeviceMappings"].([]any)
+	if !ok || len(bdms) != 1 {
+		t.Fatalf("BlockDeviceMappings = %v, want 1 entry", doc["BlockDeviceMappings"])
+	}
+	m0 := bdms[0].(map[string]any)
+	if m0["DeviceName"] != "/dev/sda1" {
+		t.Errorf("DeviceName = %v, want /dev/sda1", m0["DeviceName"])
+	}
+	ebs := m0["Ebs"].(map[string]any)
+	if enc, ok := ebs["Encrypted"].(bool); !ok || !enc {
+		t.Errorf("Ebs.Encrypted = %v, want true", ebs["Encrypted"])
+	}
+}
+
 // TestDesiredStatesStampFabricaModule guards fix #329: workstation resources
 // must carry FabricaModule=workstation.
 func TestDesiredStatesStampFabricaModule(t *testing.T) {

@@ -51,6 +51,22 @@ func WithDeleteOnTermination(v bool) DesiredStateOption {
 	}
 }
 
+// WithEncryptedVolume sets Encrypted=true on the EBS block device mapping, so
+// the volume is encrypted (with the account's default EBS KMS key) even when
+// the AMI snapshot is unencrypted and account-level EBS default encryption is
+// off. EC2 can encrypt a volume created from an unencrypted snapshot at
+// launch; it cannot launch an unencrypted volume from an encrypted snapshot,
+// so the flag never conflicts with an encrypted AMI.
+func WithEncryptedVolume() DesiredStateOption {
+	return func(doc map[string]any) {
+		if mappings, ok := doc["BlockDeviceMappings"].([]map[string]any); ok && len(mappings) > 0 {
+			if ebs, ok := mappings[0]["Ebs"].(map[string]any); ok {
+				ebs["Encrypted"] = true
+			}
+		}
+	}
+}
+
 // WithExtraTags appends additional tags to the instance.
 func WithExtraTags(key, value string) DesiredStateOption {
 	return func(doc map[string]any) {

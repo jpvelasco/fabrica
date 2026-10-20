@@ -23,10 +23,14 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 }
 
 // InstanceDesiredState returns the Cloud Control desired-state JSON for the
-// workstation EC2 instance. Uses /dev/sda1 as the root EBS device.
+// workstation EC2 instance. Uses /dev/sda1 as the root EBS device, encrypted
+// at launch (#507): the flag rides the Cloud Control desired state and the
+// direct RunInstances path alike, so the root volume is encrypted even when
+// the AMI snapshot is not and account EBS default encryption is off.
 func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMessage, error) {
 	dsOpts := []ec2state.DesiredStateOption{
 		ec2state.WithDeviceName("/dev/sda1"),
+		ec2state.WithEncryptedVolume(),
 		ec2state.WithIAMProfile(plan.InstanceProfileName),
 		ec2state.WithExtraTags("FabricaModule", "workstation"),
 	}

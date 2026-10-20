@@ -2,6 +2,7 @@ package ami
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -54,6 +55,11 @@ The AMI must include NICE DCV server and Amazon SSM Agent. Fabrica's
 workstation create only configures a DCV session — it does not install DCV.
 Stock Ubuntu AMIs are rejected at create time.
 
+The recipe bakes on an encrypted root volume, so the AMI's root snapshot is
+encrypted. Run the generated verify-ami.sh against the baked AMI before you
+record it: it fails unless every EBS snapshot is encrypted and tagged
+ManagedBy=fabrica.
+
 No AWS calls. Record the resulting AMI ID in workstation.amiId.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c := buildCommand{out: out, cfg: cfg, writeFile: os.WriteFile, mkdirAll: os.MkdirAll}
@@ -71,7 +77,7 @@ func (c buildCommand) run() error {
 	if err := c.validate(); err != nil {
 		return err
 	}
-	files := []string{"component.yaml", "image-builder-recipe.json", "build-guide.md"}
+	files := []string{"component.yaml", "image-builder-recipe.json", "build-guide.md", "verify-ami.sh"}
 	fmt.Fprintf(c.out, "Generating workstation DCV AMI build files\n")
 	fmt.Fprintf(c.out, "  Base image: %s\n  Region:     %s\n  Name:       %s\n  Output dir: %s\n\n", c.cfg.BaseImage, c.cfg.Region, c.cfg.Name, c.cfg.OutputDir)
 	if err := c.mkdirAll(c.cfg.OutputDir, 0755); err != nil {
@@ -82,23 +88,67 @@ func (c buildCommand) run() error {
 		EnsureSSM  string
 		RequireSSM string
 	}{BuildConfig: c.cfg, EnsureSSM: amissm.EnsureScript(), RequireSSM: amissm.RequireEnabledScript(false)}
-	for _, pair := range []struct{ tmpl, out string }{
-		{"component.yaml.tmpl", "component.yaml"},
-		{"image-builder.json.tmpl", "image-builder-recipe.json"},
-		{"build-guide.md.tmpl", "build-guide.md"},
+	for _, pair := range []struct {
+		tmpl, out string
+		perm      os.FileMode
+	}{
+		{"component.yaml.tmpl", "component.yaml", 0644},
+		{"image-builder.json.tmpl", "image-builder-recipe.json", 0644},
+		{"build-guide.md.tmpl", "build-guide.md", 0644},
+		{"verify-ami.sh.tmpl", "verify-ami.sh", 0755},
 	} {
 		body, err := c.render(pair.tmpl, data)
 		if err != nil {
 			return err
 		}
+		if pair.out == "image-builder-recipe.json" {
+			if err := validateRecipeEncryption(body); err != nil {
+				return err
+			}
+		}
 		path := filepath.Join(c.cfg.OutputDir, pair.out)
-		if err := c.writeFile(path, body, 0644); err != nil {
+		if err := c.writeFile(path, body, pair.perm); err != nil {
 			return fmt.Errorf("writing %s: %w", path, err)
 		}
 		fmt.Fprintf(c.out, "  wrote %s\n", path)
 	}
 	fmt.Fprintf(c.out, "\nGenerated %d files in %s/. See %s.\n", len(files), c.cfg.OutputDir, filepath.Join(c.cfg.OutputDir, "build-guide.md"))
 	return nil
+}
+
+// rootDeviceName is the workstation AMI's root device; workstation create
+// launches /dev/sda1 with Encrypted=true as well (#507).
+const rootDeviceName = "/dev/sda1"
+
+// validateRecipeEncryption fails closed unless the rendered Image Builder
+// recipe maps the root device with "encrypted": true (#507). Image Builder
+// applies the recipe's block device mappings to the build instance and the
+// output AMI, so this flag is what makes the baked snapshot encrypted when
+// the parent image's snapshot is not and account EBS default encryption is
+// off. Generation refuses to write a recipe that would bake an unencrypted
+// root snapshot.
+func validateRecipeEncryption(recipe []byte) error {
+	var doc struct {
+		BlockDeviceMappings []struct {
+			DeviceName string `json:"deviceName"`
+			Ebs        *struct {
+				Encrypted *bool `json:"encrypted"`
+			} `json:"ebs"`
+		} `json:"blockDeviceMappings"`
+	}
+	if err := json.Unmarshal(recipe, &doc); err != nil {
+		return fmt.Errorf("image-builder-recipe.json is not valid JSON: %w", err)
+	}
+	for _, m := range doc.BlockDeviceMappings {
+		if m.DeviceName != rootDeviceName {
+			continue
+		}
+		if m.Ebs == nil || m.Ebs.Encrypted == nil || !*m.Ebs.Encrypted {
+			return fmt.Errorf("image-builder-recipe.json must map %s with \"encrypted\": true so the baked root snapshot is encrypted", rootDeviceName)
+		}
+		return nil
+	}
+	return fmt.Errorf("image-builder-recipe.json has no %s block device mapping; the root volume must be mapped with \"encrypted\": true", rootDeviceName)
 }
 
 func (c buildCommand) validate() error {

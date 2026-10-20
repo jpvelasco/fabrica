@@ -40,6 +40,53 @@ Tag keys keep the case written in the file. A condition such as `aws:RequestTag/
 
 `workstation create --dry-run` prints `IAM Path` and `IAM Boundary` when they are set. The dry run does not create resources. Resolving the caller still uses the configured AWS identity.
 
+## EBS encryption is not enforced by the permissions boundary
+
+Workstation launches request the root volume with `Encrypted=true` (see
+[workstation-ami.md](workstation-ami.md#ebs-encryption)). Fabrica's
+`permissionsBoundary` setting does not enforce that. It is the wrong
+principal for the job:
+
+- **A permissions boundary only limits the IAM entity it is attached to.**
+  Fabrica attaches `permissionsBoundary` to the roles it creates (the
+  instance roles). `ec2:RunInstances` is called by the operator identity
+  that runs `fabrica`, either directly (the `volumeRequestTags` path) or
+  through Cloud Control, which makes the downstream EC2 calls with the
+  caller's credentials. Passing a bounded role with `iam:PassRole` does not
+  apply that role's boundary to the caller's request. So a deny for
+  unencrypted volumes in the instance-role boundary is never evaluated for
+  the launch, and it cannot fire.
+- **The condition itself is sound when it sits on the right principal.**
+  For `ec2:RunInstances`, EC2 evaluates `ec2:Encrypted` on the volume
+  resource (`arn:aws:ec2:*:*:volume/*`), and its value reflects the volume
+  the launch creates: the AMI snapshot's encryption, or `Encrypted=true`
+  from the block device mapping. Use `Bool`, not `BoolIfExists`. The key
+  is present on the volume resource, so `Bool` matches there. On the other
+  resources in the same request (instance, network interface, image), the
+  key is absent and `Bool` does not match. A `BoolIfExists` deny on
+  `Resource: "*"` treats the missing key as a match and denies every
+  launch.
+
+To enforce encryption, put the deny on the principal that launches: the
+operator's identity policy or its permissions boundary, or an SCP:
+
+```json
+{
+  "Sid": "DenyUnencryptedVolumesAtLaunch",
+  "Effect": "Deny",
+  "Action": "ec2:RunInstances",
+  "Resource": "arn:aws:ec2:*:*:volume/*",
+  "Condition": { "Bool": { "ec2:Encrypted": "false" } }
+}
+```
+
+Fabrica does not create or attach that policy, and we have not run the
+deny against a live launch. Releases before this change sent no
+`Encrypted` flag, so that deny can block their launches from an
+unencrypted AMI. When Cloud Control returns a deny that names
+`ec2:Encrypted`, Fabrica does not retry it through `RunInstances`. Both
+paths request the same encryption, so a retry cannot pass.
+
 ## Boundary must allow
 
 A boundary policy that blocks any of the actions below breaks the affected flow at the point the action is used. Grant the instance-side actions to the instance profile or role (via the boundary), and the operator-side actions to the operator identity used by `fabrica`.

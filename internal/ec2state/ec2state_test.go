@@ -200,6 +200,38 @@ func TestDeleteOnTerminationFalse(t *testing.T) {
 	}
 }
 
+// TestEncryptedVolume pins #507: WithEncryptedVolume sets Encrypted=true on
+// the block device mapping, and Build without the option leaves the key out
+// (the other modules keep their current request shape).
+func TestEncryptedVolume(t *testing.T) {
+	raw, err := Build(testSpec(), WithDeviceName("/dev/sda1"), WithEncryptedVolume())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ebs := doc(t, raw)["BlockDeviceMappings"].([]any)[0].(map[string]any)["Ebs"].(map[string]any)
+	if enc, ok := ebs["Encrypted"].(bool); !ok || !enc {
+		t.Fatalf("Ebs.Encrypted = %v, want true", ebs["Encrypted"])
+	}
+
+	raw, err = Build(testSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ebs = doc(t, raw)["BlockDeviceMappings"].([]any)[0].(map[string]any)["Ebs"].(map[string]any)
+	if _, ok := ebs["Encrypted"]; ok {
+		t.Fatalf("Ebs.Encrypted present without WithEncryptedVolume: %v", ebs)
+	}
+}
+
+// TestEncryptedVolumeNoMappings is a no-op on a document without mappings.
+func TestEncryptedVolumeNoMappings(t *testing.T) {
+	d := map[string]any{}
+	WithEncryptedVolume()(d)
+	if len(d) != 0 {
+		t.Fatalf("doc = %v, want unchanged", d)
+	}
+}
+
 func TestExtraTags(t *testing.T) {
 	raw, err := Build(testSpec(), WithExtraTags("FabricaModule", "ddc"))
 	if err != nil {
