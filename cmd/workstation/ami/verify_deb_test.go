@@ -99,37 +99,34 @@ manifest() {
 sign_with() {
   gpg --batch --pinentry-mode loopback --passphrase '' --local-user "$1" --clearsign --no-armor --output "$2" "$3"
 }
-# ar_create appends members without the symbol-table member: Apple's ar
-# (macOS) adds __.SYMDEF SORTED by default and only its -S flag suppresses
-# it; GNU ar (linux) and Git Bash's ar (windows) ignore -S, so the exact
-# 4-member count check holds on every leg.
-ar_create() {
-  local out="$1"; shift
-  [ "$(uname -s)" = "Darwin" ] && ar -qS "$@" || ar -q "$@"
-}
+# ar qS, no leading dash: GNU ar reads "-q" as its quiet option, not the
+# append command. The S modifier suppresses the __.SYMDEF symbol-table
+# member Apple's ar (macOS) adds by default; GNU (linux) and Git Bash's
+# (windows) ar accept it as a no-op, so each archive holds exactly the
+# listed members on every leg.
 manifest '' > manifest.good
 manifest "DecoyFingerprint: $pin" > manifest.decoy
 sign_with 'correct@example.com' sig.good manifest.good
 sign_with 'decoy@example.com' sig.decoy manifest.decoy
 # good: 3 members + correct-key signature
 mkdir st-good && cp sig.good st-good/_gpgbuilder && cp members/debian-binary members/control.tar.zst members/data.tar.zst st-good/
-( cd st-good && ar_create ../good.deb debian-binary control.tar.zst data.tar.zst _gpgbuilder )
+( cd st-good && ar qS ../good.deb debian-binary control.tar.zst data.tar.zst _gpgbuilder )
 # dup: control.tar.zst repeated, data.tar.zst absent (4 members, duplicate)
 mkdir st-dup && cp sig.good st-dup/_gpgbuilder && cp members/debian-binary members/control.tar.zst st-dup/
-( cd st-dup && ar_create ../dup.deb debian-binary control.tar.zst control.tar.zst _gpgbuilder )
+( cd st-dup && ar qS ../dup.deb debian-binary control.tar.zst control.tar.zst _gpgbuilder )
 # extra: an unlisted fifth member
 mkdir st-extra && cp sig.good st-extra/_gpgbuilder && cp members/debian-binary members/control.tar.zst members/data.tar.zst st-extra/
 printf 'x' > st-extra/extra-extra
-( cd st-extra && ar_create ../extra.deb debian-binary control.tar.zst data.tar.zst extra-extra _gpgbuilder )
+( cd st-extra && ar qS ../extra.deb debian-binary control.tar.zst data.tar.zst extra-extra _gpgbuilder )
 # wrongkey: decoy-key signature; the pin is embedded in the signed cleartext
 # as a non-tab decoy line, so only the VALIDSIG fingerprint discriminates.
 mkdir st-wrongkey && cp sig.decoy st-wrongkey/_gpgbuilder && cp members/debian-binary members/control.tar.zst members/data.tar.zst st-wrongkey/
-( cd st-wrongkey && ar_create ../wrongkey.deb debian-binary control.tar.zst data.tar.zst _gpgbuilder )
+( cd st-wrongkey && ar qS ../wrongkey.deb debian-binary control.tar.zst data.tar.zst _gpgbuilder )
 # bitflip: 1-bit tamper of data.tar.zst (same size) after the signature was
 # made; the GPG layer or the per-member digest gate must catch it.
 mkdir st-bitflip && cp sig.good st-bitflip/_gpgbuilder && cp members/debian-binary members/control.tar.zst st-bitflip/
 printf 'Xata1' > st-bitflip/data.tar.zst
-( cd st-bitflip && ar_create ../bitflip.deb debian-binary control.tar.zst data.tar.zst _gpgbuilder )
+( cd st-bitflip && ar qS ../bitflip.deb debian-binary control.tar.zst data.tar.zst _gpgbuilder )
 `
 
 func TestVerifyDebExecutesAgainstCraftedDebs(t *testing.T) {
