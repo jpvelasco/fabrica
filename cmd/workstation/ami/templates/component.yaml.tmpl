@@ -264,6 +264,11 @@ phases:
                     return 1
                   fi
                 done <<<"$manifest"
+                if [ "$filesseen" -ne 3 ]; then
+                  rm -rf "$work"
+                  echo "ERROR: digest check covered $filesseen members in $d (want 3)"
+                  return 1
+                fi
                 rm -rf "$work"
               }
               for deb in *.deb; do

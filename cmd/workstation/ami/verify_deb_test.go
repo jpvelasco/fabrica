@@ -19,8 +19,9 @@ package ami
 //
 // The bash crafter mirrors the manual container harness (throwaway rsa2048
 // keys, clearsigned composite v4 manifests, ar-built archives). Skipped —
-// not failed — only when bash, gpg, ar, md5sum, or sha1sum are absent; CI
-// installs gnupg + binutils on all three test legs so the test runs there.
+// not failed — only when bash, gpg, ar, md5sum, or sha1sum are absent; the
+// linux test leg installs gnupg + binutils (apt) and the windows/macOS
+// runner images provide them natively, so the test runs on all three legs.
 
 import (
 	"os"
@@ -126,7 +127,7 @@ printf 'Xata1' > st-bitflip/data.tar.zst
 func TestVerifyDebExecutesAgainstCraftedDebs(t *testing.T) {
 	for _, tool := range []string{"bash", "gpg", "ar", "md5sum", "sha1sum"} {
 		if _, err := exec.LookPath(tool); err != nil {
-			t.Skip(tool + " not available; executed verify_deb test skipped (CI installs gnupg + binutils on all test legs)")
+			t.Skip(tool + " not available; executed verify_deb test skipped (CI test legs provide gnupg + binutils)")
 		}
 	}
 	comp := mustRenderComponent(t)
