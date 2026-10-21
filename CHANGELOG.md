@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
+- **Go toolchain 1.26.10** — clears GO-2026-6809 (`crypto/x509` distrusts compromised intermediate certificates), which govulncheck `@v1.1.4` reports as reachable from `modstatus.WriteProbeStatusText` on 1.26.9.
 - `golang.org/x/text` 0.40 → 0.41, `golang.org/x/tools` 0.47 → 0.48
 
 ### Security
