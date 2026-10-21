@@ -270,6 +270,7 @@ func TestIntegration_ServerIdentity(t *testing.T) {
 	initResult := session.InitializeResult()
 	if initResult == nil {
 		t.Fatal("expected initialize result")
+		return
 	}
 	if initResult.ServerInfo.Name != "fabrica" {
 		t.Errorf("server name = %q, want fabrica", initResult.ServerInfo.Name)

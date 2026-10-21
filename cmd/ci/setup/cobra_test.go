@@ -126,6 +126,7 @@ func TestSetupCobraWithVPCResolvesSGAndVpcConfig(t *testing.T) {
 	vc := provider.LastEnsureProjectSpec.VpcConfig
 	if vc == nil {
 		t.Fatal("project spec has no VpcConfig")
+		return
 	}
 	if vc.VpcID != "vpc-default" || vc.SubnetID != "subnet-default" {
 		t.Errorf("VpcConfig = %+v, want vpc-default/subnet-default", vc)
