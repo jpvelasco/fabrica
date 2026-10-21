@@ -3525,6 +3525,7 @@ func TestExportHordeWithAgents(t *testing.T) {
 	}
 	if hordeMod == nil {
 		t.Fatal("horde module not found in export")
+		return
 	}
 
 	// Should have 7 resources: coord SG, coord instance, agent SG, agent role, agent profile, LT, ASG.
@@ -3582,6 +3583,7 @@ func TestExportHordeAgentsWithScaling(t *testing.T) {
 	}
 	if hordeMod == nil {
 		t.Fatal("horde module not found in export")
+		return
 	}
 
 	// Should have 11 resources: 7 base + 2 policies + 2 alarms.

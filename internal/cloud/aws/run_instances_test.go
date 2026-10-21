@@ -43,6 +43,7 @@ func TestCreate_VolumeRequestTagsSkipCloudControl(t *testing.T) {
 	in := rec.in
 	if in == nil {
 		t.Fatal("RunInstances was not called")
+		return
 	}
 	if awssdk.ToString(in.ImageId) != "ami-123" || in.InstanceType != types.InstanceType("g6.xlarge") {
 		t.Fatalf("launch shape = %+v", in)
