@@ -7,15 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-21
+
 ### Added
 
 - **Guardrailed accounts can set an IAM path, a permissions boundary, and volume request tags** — `cloud.aws.iam` (`path`, `permissionsBoundary`) and the same keys on workstation, horde (coordinator and agents), lore, perforce, and ddc are applied to the roles those modules create. Instance profiles receive the path only. The boundary must be a policy ARN in the commercial, GovCloud, or China partition. CI and Deploy ignore the keys. `cloud.aws.volumeRequestTags` launches with EC2 `RunInstances` when the map is non-empty, so the instance and the root volume carry the same tags, with IMDSv2 required. A `RunInstances` launch first adopts an instance a previous attempt already tagged (`ManagedBy=fabrica`, `Name=<name>`) in `pending` or `running` state — preferring a match that also carries the per-create `FabricaCreateNonce` tag, and — when a nonce-filtered lookup matches nothing (a re-run mints a fresh nonce) — checking the base tags (`ManagedBy=fabrica`, `Name=<name>`) for a leftover from a previous run instead of launching a second one; a leftover fails the create with the instance's ID and a terminate-and-re-run remedy, since the prior run's cloud-init (a workstation's session password, for example) belongs to that run. The launch adopts exactly one same-nonce match after verifying IMDSv2 is required and the instance profile matches; two or more matches is an error. The request carries a `ClientToken` derived from the per-create nonce plus the resource identity when the create stamped one: stable within one create's request shape, fresh for each re-create (a fresh nonce), so a re-create under the same name cannot reuse the previous create's idempotency at EC2; desired states without the nonce tag launch without a `ClientToken`, as before. An empty map still tries Cloud Control, then falls back once on a volume-tag deny (see the Fixed entry below). Horde agent launch templates put the same tag set on the instance and the volume when `volumeRequestTags` is set. See `docs/guardrailed-accounts.md`. (#488, #498, #499)
 - **Workstation runbook cross-references the guardrail settings** — `docs/workstation-ami.md` now points at `docs/guardrailed-accounts.md` for `cloud.aws.iam` (`path`, `permissionsBoundary`) and `cloud.aws.volumeRequestTags` before the first `workstation create` on a guardrailed account, where the role and instance steps otherwise fail at IAM-path and volume-tag denies. (docs follow-up to #488)
+- **Destroy `--all` residue is named in the README** — new `destroy --all` sections state that AMI bakes (Image Builder pipelines, components, recipes, baked AMIs and snapshots, bake instances) are operator residue, not Fabrica resources, and that Perforce retains its data volume by design, so a successful `destroy --all` is not "zero residue" when the optional Perforce path is in use. The same wording surfaces in `fabrica destroy -h`. (#486)
+- **README: telemetry statement + egress destination list** — a new "Telemetry and network access" section states that Fabrica has no telemetry, no update check, and no crash reporting, and lists every network destination the CLI and the artifacts it generate reach, so operators on locked-down networks can allowlist egress. `npm/README.md` mirrors the telemetry statement. (#485)
 
 ### Dependencies
 
-- **Go toolchain 1.26.10** — clears GO-2026-6809 (`crypto/x509` distrusts compromised intermediate certificates), which govulncheck `@v1.1.4` reports as reachable from `modstatus.WriteProbeStatusText` on 1.26.9.
+- **Go toolchain 1.26.10** — clears GO-2026-6809 (`crypto/x509` distrusts compromised intermediate certificates), which govulncheck `@v1.1.4` reports as reachable from `modstatus.WriteProbeStatusText` on 1.26.9. (#516)
 - `golang.org/x/text` 0.40 → 0.41, `golang.org/x/tools` 0.47 → 0.48
+- **Dependencies** — AWS SDK v2 group (11 updates), `github.com/aws/smithy-go` 1.28.2 → 1.28.4, and the Dependabot action groups (`actions/setup-node` 7.0.0 → 7.1.0, `actions/upload-artifact` 7.0.1 → 7.0.2, `actions/download-artifact` 8.0.1 → 8.0.2, `codeql-action` group with 3 updates) bumped to latest. (#479, #480, #481, #482, #483, #487)
 
 ### Security
 
@@ -442,7 +447,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.4.6...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/jpvelasco/fabrica/compare/v0.4.6...v0.5.0
 [0.4.6]: https://github.com/jpvelasco/fabrica/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/jpvelasco/fabrica/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/jpvelasco/fabrica/compare/v0.4.3...v0.4.4
