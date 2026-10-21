@@ -79,6 +79,7 @@ func TestProjectSpecWithVPC(t *testing.T) {
 
 	if spec.VpcConfig == nil {
 		t.Fatal("VpcConfig = nil, want set when VPC resolved")
+		return
 	}
 	if spec.VpcConfig.VpcID != "vpc-abc" || spec.VpcConfig.SubnetID != "subnet-xyz" {
 		t.Errorf("VpcConfig = %+v, want vpc-abc/subnet-xyz", spec.VpcConfig)

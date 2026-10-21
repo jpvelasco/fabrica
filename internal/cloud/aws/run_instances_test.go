@@ -658,6 +658,7 @@ func TestCreate_ExistingTaggedInstanceAdopted(t *testing.T) {
 	}
 	if rec.describeIn == nil {
 		t.Fatal("DescribeInstances was not consulted")
+		return
 	}
 	filter := map[string][]string{}
 	for _, f := range rec.describeIn.Filters {

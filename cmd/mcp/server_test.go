@@ -81,6 +81,7 @@ func TestIntegration_Version(t *testing.T) {
 	// Verify structured output contains version info.
 	if result.StructuredContent == nil {
 		t.Fatal("expected structured output")
+		return
 	}
 
 	out := result.StructuredContent.(map[string]any)

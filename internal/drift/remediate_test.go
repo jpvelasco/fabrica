@@ -111,6 +111,7 @@ func TestPlanRemediation_MissingSecurityGroup(t *testing.T) {
 		if a.Kind == ActionCreate && a.TypeName == cloud.TypeAWSEC2SecurityGroup {
 			if a.Resource == nil {
 				t.Fatal("expected non-nil resource for SG create")
+				return
 			}
 			var ds map[string]any
 			if err := json.Unmarshal(a.Resource.DesiredState, &ds); err != nil {
