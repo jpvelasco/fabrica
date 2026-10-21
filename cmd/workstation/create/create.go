@@ -225,10 +225,13 @@ func (c command) run(ctx context.Context) error {
 // images and returns the AMI's own root device, validated by
 // workstation.RootDeviceFor (fail closed on a missing or malformed name, or a
 // non-EBS root), so the encrypted root mapping lands on the real root (#507).
-// It returns "" with no error only when it cannot inspect (no inspector, or
-// no AMI configured); run refuses to apply in that case.
+// A missing amiId is reported as a config error. It returns "" with no error
+// only when the provider cannot inspect; run refuses to apply in that case.
 func (c command) inspectAMI(ctx context.Context, amiID string) (string, error) {
-	if c.inspectImage == nil || amiID == "" {
+	if amiID == "" {
+		return "", fmt.Errorf("workstation.amiId is required. Provide a NICE DCV-enabled AMI ID.\nSee: https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-installing.html")
+	}
+	if c.inspectImage == nil {
 		return "", nil
 	}
 	info, err := c.inspectImage(ctx, amiID)

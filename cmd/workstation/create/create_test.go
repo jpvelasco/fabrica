@@ -972,6 +972,28 @@ func TestCreateRefusesAMIWithoutUsableRootDevice(t *testing.T) {
 	}
 }
 
+// TestCreateRefusesEmptyAmiID: a missing workstation.amiId is a config error
+// on apply, not an image-inspector failure.
+func TestCreateRefusesEmptyAmiID(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	c := newTestCommand(&out, provider, testutil.NewTestState())
+	c.assumeYes = true
+	c.runtime.Config.Workstation.AmiID = ""
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected create to refuse an empty amiId")
+	}
+	assert.Contains(t, err.Error(), "workstation.amiId is required")
+	if strings.Contains(err.Error(), "cannot inspect") {
+		t.Fatalf("empty amiId reported as an inspector failure: %v", err)
+	}
+	if provider.CreateCalls != 0 || len(provider.PutParameters) != 0 {
+		t.Fatalf("create calls = %d, parameters = %d; want nothing written", provider.CreateCalls, len(provider.PutParameters))
+	}
+}
+
 // TestCreateRefusesWithoutImageInspector: a provider that cannot inspect the
 // AMI cannot tell create where the root is, so apply refuses to launch
 // rather than guess a device. Dry-run still previews (no launch).
