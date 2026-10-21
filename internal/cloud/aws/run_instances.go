@@ -39,8 +39,8 @@ func (c *resourceClients) fallbackVolumeTags(ctx context.Context, r *fabricac.Re
 // aws:RequestTag condition. The volume is matched on the EC2 volume resource
 // ARN shape (arn:aws:ec2:*:*:volume/...), not on the bare word "volume", so a
 // deny that merely mentions volumes in prose cannot trigger the retry. Any
-// other deny — iam:PassRole, KMS, SSM, a path or boundary deny, throttling, a
-// bad AMI — does not match: the retry cannot fix the underlying permission,
+// other deny — iam:PassRole, KMS, SSM, an ec2:Encrypted condition on the
+// volume, a path or boundary deny, throttling, a bad AMI — does not match: the retry cannot fix the underlying permission,
 // and the launch would risk a second instance.
 func isVolumeTagDeny(err error) bool {
 	if err == nil {
@@ -53,6 +53,13 @@ func isVolumeTagDeny(err error) bool {
 	if !strings.Contains(msg, "ec2:runinstances") && !strings.Contains(msg, "ec2:createtags") {
 		return false
 	}
+	if strings.Contains(msg, encryptedConditionNeedle) {
+		// A deny that names the ec2:Encrypted condition is an encryption
+		// policy on the volume, not a missing request tag. The RunInstances
+		// path requests the same encryption as the Cloud Control desired
+		// state, so a retry cannot satisfy it; return it to the operator.
+		return false
+	}
 	return strings.Contains(msg, "requesttag") || strings.Contains(msg, volumeResourceARNNeedle)
 }
 
@@ -60,6 +67,10 @@ func isVolumeTagDeny(err error) bool {
 // ARN (arn:aws:ec2:region:account:volume/vol-...); the region and account
 // segments vary, so the match stops at the ":volume/" boundary.
 const volumeResourceARNNeedle = ":volume/"
+
+// encryptedConditionNeedle is the lowercased ec2:Encrypted condition key. A
+// deny on the volume resource ARN for that key is not a volume-tag deny.
+const encryptedConditionNeedle = "ec2:encrypted"
 
 // createInstanceWithVolumeTags launches the instance with TagSpecifications
 // for both the instance and the volume, and IMDSv2 required. Before launching
@@ -334,6 +345,10 @@ type ccInstanceDoc struct {
 			VolumeSize          int    `json:"VolumeSize"`
 			VolumeType          string `json:"VolumeType"`
 			DeleteOnTermination bool   `json:"DeleteOnTermination"`
+			// Encrypted is a pointer so an absent key stays absent on the
+			// RunInstances request (EC2 then follows the snapshot and the
+			// account default) and a present one is carried as written.
+			Encrypted *bool `json:"Encrypted"`
 		} `json:"Ebs"`
 	} `json:"BlockDeviceMappings"`
 	Tags []struct {
@@ -432,6 +447,13 @@ func runInstancesInput(desired json.RawMessage, volumeTags map[string]string, cl
 			}
 			if m.Ebs.VolumeType != "" {
 				ebs.VolumeType = types.VolumeType(m.Ebs.VolumeType)
+			}
+			if m.Ebs.Encrypted != nil {
+				// The SDK path must request the same encryption as the Cloud
+				// Control desired state (#507); dropping the flag here would
+				// launch an unencrypted root volume from an unencrypted AMI
+				// snapshot whenever account EBS default encryption is off.
+				ebs.Encrypted = aws.Bool(*m.Ebs.Encrypted)
 			}
 			input.BlockDeviceMappings = append(input.BlockDeviceMappings, types.BlockDeviceMapping{
 				DeviceName: aws.String(m.DeviceName),

@@ -36,6 +36,11 @@ func newTestCommand(out *bytes.Buffer, provider cloud.Provider, st *fabricastate
 	}
 	c.readState = func() (*fabricastate.State, error) { return st, nil }
 	c.writeState = testutil.StateWriteNever()
+	// A DCV AMI with an EBS root on /dev/sda1: create reads the root device
+	// from the AMI and refuses to launch without it (#507).
+	c.inspectImage = func(_ context.Context, id string) (cloud.ImageInfo, error) {
+		return cloud.ImageInfo{ID: id, Name: "fabrica-workstation-dcv", RootDeviceName: "/dev/sda1", RootDeviceType: "ebs"}, nil
+	}
 	if provider != nil {
 		c.createResource = provider.Resources().Create
 		if store, ok := provider.(cloud.ParameterStore); ok {
@@ -156,8 +161,8 @@ func TestCreateAllowsDCVNamedAMI(t *testing.T) {
 	var out bytes.Buffer
 	c := newTestCommand(&out, &testutil.TestProvider{}, testutil.NewTestState())
 	c.dryRun = true
-	c.inspectImage = func(context.Context, string) (cloud.ImageInfo, error) {
-		return cloud.ImageInfo{ID: "ami-test12345", Name: "fabrica-workstation-dcv-ubuntu-jammy"}, nil
+	c.inspectImage = func(_ context.Context, id string) (cloud.ImageInfo, error) {
+		return cloud.ImageInfo{ID: id, Name: "fabrica-workstation-dcv-ubuntu-jammy", RootDeviceName: "/dev/sda1", RootDeviceType: "ebs"}, nil
 	}
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -882,4 +887,150 @@ func TestNewRuntimeSourceError(t *testing.T) {
 		t.Fatal("expected error when runtimeSource fails")
 	}
 	assert.Contains(t, err.Error(), "config load failed")
+}
+
+// instanceRootMapping returns the single block device mapping of the EC2
+// instance create recorded by the fake provider.
+func instanceRootMapping(t *testing.T, provider *testutil.TestProvider) map[string]any {
+	t.Helper()
+	for _, r := range provider.Created {
+		if r.TypeName != cloud.TypeAWSEC2Instance {
+			continue
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(r.DesiredState, &doc); err != nil {
+			t.Fatalf("instance desired state: %v", err)
+		}
+		bdms, ok := doc["BlockDeviceMappings"].([]any)
+		if !ok || len(bdms) != 1 {
+			t.Fatalf("BlockDeviceMappings = %v, want only the root", doc["BlockDeviceMappings"])
+		}
+		return bdms[0].(map[string]any)
+	}
+	t.Fatal("no EC2 instance create recorded")
+	return nil
+}
+
+// TestCreateEncryptsTheAMIRootDevice pins #507 end to end through create: the
+// root device comes from the AMI inspection, so an xvda AMI gets its real
+// root volume encrypted (not an extra encrypted /dev/sda1 volume while the
+// root boots unencrypted), and a sda1 AMI keeps /dev/sda1.
+func TestCreateEncryptsTheAMIRootDevice(t *testing.T) {
+	for _, root := range []string{"/dev/xvda", "/dev/sda1"} {
+		t.Run(root, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			var out bytes.Buffer
+			provider := &testutil.TestProvider{}
+			c := newTestCommand(&out, provider, testutil.NewTestState())
+			c.assumeYes = true
+			c.inspectImage = func(_ context.Context, id string) (cloud.ImageInfo, error) {
+				return cloud.ImageInfo{ID: id, Name: "fabrica-workstation-dcv", RootDeviceName: root, RootDeviceType: "ebs"}, nil
+			}
+			if err := c.run(context.Background()); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			m := instanceRootMapping(t, provider)
+			if m["DeviceName"] != root {
+				t.Errorf("DeviceName = %v, want the AMI root %s", m["DeviceName"], root)
+			}
+			if enc, ok := m["Ebs"].(map[string]any)["Encrypted"].(bool); !ok || !enc {
+				t.Errorf("Ebs.Encrypted = %v, want true", m["Ebs"])
+			}
+		})
+	}
+}
+
+// TestCreateRefusesAMIWithoutUsableRootDevice pins the fail-closed rule: a
+// missing RootDeviceName, a malformed one, or an instance-store root stops
+// create before any resource or parameter is written.
+func TestCreateRefusesAMIWithoutUsableRootDevice(t *testing.T) {
+	for _, tc := range []struct {
+		name, dev, typ, wantErr string
+	}{
+		{name: "missing root device name", dev: "", typ: "ebs", wantErr: "reports no root device name"},
+		{name: "malformed root device name", dev: "root", typ: "ebs", wantErr: "not an EC2 device name"},
+		{name: "instance store root", dev: "/dev/sda1", typ: "instance-store", wantErr: "EBS-backed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			var out bytes.Buffer
+			provider := &testutil.TestProvider{}
+			c := newTestCommand(&out, provider, testutil.NewTestState())
+			c.assumeYes = true
+			c.inspectImage = func(_ context.Context, id string) (cloud.ImageInfo, error) {
+				return cloud.ImageInfo{ID: id, Name: "fabrica-workstation-dcv", RootDeviceName: tc.dev, RootDeviceType: tc.typ}, nil
+			}
+			err := c.run(context.Background())
+			if err == nil {
+				t.Fatal("expected create to refuse the AMI")
+			}
+			assert.Contains(t, err.Error(), tc.wantErr)
+			if provider.CreateCalls != 0 || len(provider.PutParameters) != 0 {
+				t.Fatalf("create calls = %d, parameters = %d; want nothing written", provider.CreateCalls, len(provider.PutParameters))
+			}
+		})
+	}
+}
+
+// TestCreateRefusesEmptyAmiID: a missing workstation.amiId is a config error
+// on apply, not an image-inspector failure.
+func TestCreateRefusesEmptyAmiID(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	c := newTestCommand(&out, provider, testutil.NewTestState())
+	c.assumeYes = true
+	c.runtime.Config.Workstation.AmiID = ""
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected create to refuse an empty amiId")
+	}
+	assert.Contains(t, err.Error(), "workstation.amiId is required")
+	if strings.Contains(err.Error(), "cannot inspect") {
+		t.Fatalf("empty amiId reported as an inspector failure: %v", err)
+	}
+	if provider.CreateCalls != 0 || len(provider.PutParameters) != 0 {
+		t.Fatalf("create calls = %d, parameters = %d; want nothing written", provider.CreateCalls, len(provider.PutParameters))
+	}
+}
+
+// TestCreateRefusesWithoutImageInspector: a provider that cannot inspect the
+// AMI cannot tell create where the root is, so apply refuses to launch
+// rather than guess a device. Dry-run still previews (no launch).
+func TestCreateRefusesWithoutImageInspector(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	c := newTestCommand(&out, provider, testutil.NewTestState())
+	c.assumeYes = true
+	c.inspectImage = nil
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected create to refuse without an image inspector")
+	}
+	assert.Contains(t, err.Error(), "cannot read the root device")
+	if provider.CreateCalls != 0 || len(provider.PutParameters) != 0 {
+		t.Fatalf("create calls = %d, parameters = %d; want nothing written", provider.CreateCalls, len(provider.PutParameters))
+	}
+
+	out.Reset()
+	c.dryRun = true
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("dry-run without an inspector: %v", err)
+	}
+}
+
+// TestCreateDryRunShowsEncryptedRoot: the dry-run names the root device the
+// encrypted volume is mapped on.
+func TestCreateDryRunShowsEncryptedRoot(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCommand(&out, &testutil.TestProvider{}, testutil.NewTestState())
+	c.dryRun = true
+	c.inspectImage = func(_ context.Context, id string) (cloud.ImageInfo, error) {
+		return cloud.ImageInfo{ID: id, Name: "fabrica-workstation-dcv", RootDeviceName: "/dev/xvda", RootDeviceType: "ebs"}, nil
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	assert.Contains(t, out.String(), "/dev/xvda (encrypted)")
 }

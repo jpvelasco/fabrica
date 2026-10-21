@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# verify-ami.sh: fail-closed bake gate for the workstation DCV AMI (#507, #509).
+#
+# Read-only (ec2:DescribeImages, ec2:DescribeSnapshots). Run it after the bake
+# and before recording the AMI in workstation.amiId:
+#
+#   ./verify-ami.sh <new-image-id>
+#
+# Exits 0 only when the AMI reports its root device, that device is an
+# encrypted EBS mapping, and every EBS snapshot is encrypted and tagged
+# ManagedBy=fabrica. Any other result,
+# including an AWS CLI error, exits nonzero: do not record that AMI.
+set -euo pipefail
+
+REGION="{{ .Region }}"
+image="${1:-}"
+if [ -z "$image" ]; then
+  echo "usage: $0 <image-id>" >&2
+  exit 2
+fi
+
+# The root device must be named and mapped as an encrypted EBS volume: an
+# encrypted mapping on any other device would leave the real root
+# unencrypted.
+root="$(aws ec2 describe-images --region "$REGION" --image-ids "$image" \
+  --query 'Images[0].RootDeviceName' --output text)"
+if ! [[ "$root" =~ ^/dev/(sd|xvd)[a-z]{1,2}[0-9]{0,2}$ ]]; then
+  echo "ERROR: AMI $image reports no usable root device name (RootDeviceName=$root); do not record this AMI." >&2
+  exit 1
+fi
+root_encrypted="$(aws ec2 describe-images --region "$REGION" --image-ids "$image" \
+  --query "Images[0].BlockDeviceMappings[?DeviceName=='${root}'].Ebs.Encrypted | [0]" --output text)"
+if [ "$root_encrypted" != "True" ]; then
+  echo "ERROR: root device $root of AMI $image is not an encrypted EBS mapping (Encrypted=$root_encrypted). Re-bake with --root-device $root; do not record this AMI." >&2
+  exit 1
+fi
+
+encrypted="$(aws ec2 describe-images --region "$REGION" --image-ids "$image" \
+  --query 'Images[0].BlockDeviceMappings[?Ebs].Ebs.Encrypted' --output text)"
+count=0
+for v in $encrypted; do
+  if [ "$v" != "True" ]; then
+    echo "ERROR: AMI $image has an EBS snapshot that is not encrypted (Encrypted=$v). Re-bake with an encrypted root volume (see build-guide.md); do not record this AMI." >&2
+    exit 1
+  fi
+  count=$((count + 1))
+done
+if [ "$count" -eq 0 ]; then
+  echo "ERROR: AMI $image reports no EBS snapshots; do not record this AMI." >&2
+  exit 1
+fi
+
+snapshots="$(aws ec2 describe-images --region "$REGION" --image-ids "$image" \
+  --query 'Images[0].BlockDeviceMappings[?Ebs].Ebs.SnapshotId' --output text)"
+for s in $snapshots; do
+  enc="$(aws ec2 describe-snapshots --region "$REGION" --snapshot-ids "$s" \
+    --query 'Snapshots[0].Encrypted' --output text)"
+  if [ "$enc" != "True" ]; then
+    echo "ERROR: snapshot $s of AMI $image is not encrypted (Encrypted=$enc); do not record this AMI." >&2
+    exit 1
+  fi
+  # The backticks are JMESPath string literals, not shell expansion.
+  # shellcheck disable=SC2016
+  managed="$(aws ec2 describe-snapshots --region "$REGION" --snapshot-ids "$s" \
+    --query 'Snapshots[0].Tags[?Key==`ManagedBy`].Value | [0]' --output text)"
+  if [ "$managed" != "fabrica" ]; then
+    echo "ERROR: snapshot $s of AMI $image is not tagged ManagedBy=fabrica. Tag it (aws ec2 create-tags --region $REGION --resources $s --tags Key=ManagedBy,Value=fabrica Key=FabricaModule,Value=workstation) and re-run." >&2
+    exit 1
+  fi
+done
+
+echo "OK: AMI $image root $root is encrypted; $count EBS snapshot(s), all encrypted and tagged ManagedBy=fabrica."

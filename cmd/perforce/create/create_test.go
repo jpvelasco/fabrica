@@ -580,6 +580,7 @@ func TestCreateAMIRecordedInState(t *testing.T) {
 	m := final.GetModule("perforce")
 	if m == nil {
 		t.Fatal("perforce module not in state")
+		return
 	}
 
 	// ModuleState.Version should be the Helix version string (human-readable).

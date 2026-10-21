@@ -157,8 +157,15 @@ func (c command) run(ctx context.Context) error {
 		perforceAddr = addr
 	}
 
-	if err := c.rejectStockUbuntuAMI(ctx, wsCfg.AmiID); err != nil {
+	rootDevice, err := c.inspectAMI(ctx, wsCfg.AmiID)
+	if err != nil {
 		return err
+	}
+	if rootDevice == "" && !c.dryRun {
+		// Without the AMI's own root device there is no way to put the
+		// encrypted mapping on the real root; a guessed device would boot the
+		// root unencrypted from the snapshot (#507). Fail before any write.
+		return fmt.Errorf("cannot read the root device of workstation.amiId %s (the provider cannot inspect AMIs), so the root volume cannot be encrypted; refusing to launch", wsCfg.AmiID)
 	}
 
 	resolvedIAM, err := config.ResolveIAM(c.runtime.Config.Cloud.AWS.IAM, wsCfg.IAM)
@@ -171,6 +178,7 @@ func (c command) run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("building create plan: %w", err)
 	}
+	plan.RootDeviceName = rootDevice
 
 	// Mint the per-create session-password parameter name before any plan is
 	// printed or applied so the dry-run/apply previews name the same
@@ -213,18 +221,27 @@ func (c command) run(ctx context.Context) error {
 	})
 }
 
-func (c command) rejectStockUbuntuAMI(ctx context.Context, amiID string) error {
-	if c.inspectImage == nil || amiID == "" {
-		return nil
+// inspectAMI is the create-time AMI contract check. It rejects stock Ubuntu
+// images and returns the AMI's own root device, validated by
+// workstation.RootDeviceFor (fail closed on a missing or malformed name, or a
+// non-EBS root), so the encrypted root mapping lands on the real root (#507).
+// A missing amiId is reported as a config error. It returns "" with no error
+// only when the provider cannot inspect; run refuses to apply in that case.
+func (c command) inspectAMI(ctx context.Context, amiID string) (string, error) {
+	if amiID == "" {
+		return "", fmt.Errorf("workstation.amiId is required. Provide a NICE DCV-enabled AMI ID.\nSee: https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-installing.html")
+	}
+	if c.inspectImage == nil {
+		return "", nil
 	}
 	info, err := c.inspectImage(ctx, amiID)
 	if err != nil {
-		return fmt.Errorf("inspecting workstation.amiId %s: %w. Confirm the AMI exists and is a NICE DCV image (see docs/workstation-ami.md)", amiID, err)
+		return "", fmt.Errorf("inspecting workstation.amiId %s: %w. Confirm the AMI exists and is a NICE DCV image (see docs/workstation-ami.md)", amiID, err)
 	}
 	if workstation.IsStockUbuntuImage(info.Name) {
-		return fmt.Errorf("workstation.amiId %s is a stock Ubuntu image (%q), not a NICE DCV AMI. Bake one with 'fabrica workstation ami build' and set workstation.amiId to the result. See docs/workstation-ami.md", amiID, info.Name)
+		return "", fmt.Errorf("workstation.amiId %s is a stock Ubuntu image (%q), not a NICE DCV AMI. Bake one with 'fabrica workstation ami build' and set workstation.amiId to the result. See docs/workstation-ami.md", amiID, info.Name)
 	}
-	return nil
+	return workstation.RootDeviceFor(amiID, info.RootDeviceName, info.RootDeviceType)
 }
 
 // resolvePerforceAddr reads the Perforce module state and resolves the instance's
@@ -410,6 +427,9 @@ func (c command) printDryRun(plan *workstation.CreatePlan) {
 	extraFields := []provision.PlanField{
 		{Key: "AMI ID", Value: plan.AmiID},
 		{Key: "Idle timeout", Value: fmt.Sprintf("%d min", plan.IdleTimeoutMinutes)},
+	}
+	if plan.RootDeviceName != "" {
+		extraFields = append(extraFields, provision.PlanField{Key: "Root volume", Value: plan.RootDeviceName + " (encrypted)"})
 	}
 	if plan.MountPerforce {
 		extraFields = append(extraFields, provision.PlanField{Key: "Perforce server", Value: plan.PerforceServerAddr})

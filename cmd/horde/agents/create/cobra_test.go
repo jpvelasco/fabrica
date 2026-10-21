@@ -272,6 +272,7 @@ func TestAgentsCreatePreservesCoordinator(t *testing.T) {
 	m := st.GetModule("horde")
 	if m == nil {
 		t.Fatal("horde module not found in state after agents create")
+		return
 	}
 
 	// Check coordinator instance exists.

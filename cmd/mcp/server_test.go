@@ -81,6 +81,7 @@ func TestIntegration_Version(t *testing.T) {
 	// Verify structured output contains version info.
 	if result.StructuredContent == nil {
 		t.Fatal("expected structured output")
+		return
 	}
 
 	out := result.StructuredContent.(map[string]any)
@@ -270,6 +271,7 @@ func TestIntegration_ServerIdentity(t *testing.T) {
 	initResult := session.InitializeResult()
 	if initResult == nil {
 		t.Fatal("expected initialize result")
+		return
 	}
 	if initResult.ServerInfo.Name != "fabrica" {
 		t.Errorf("server name = %q, want fabrica", initResult.ServerInfo.Name)

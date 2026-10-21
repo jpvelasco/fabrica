@@ -10,6 +10,12 @@ type ImageInfo struct {
 	Name        string
 	Description string
 	Owner       string
+	// RootDeviceName is the AMI's root device (for example /dev/sda1 on
+	// Ubuntu, /dev/xvda on Amazon Linux). Workstation create maps its
+	// encrypted root volume onto exactly this device (#507).
+	RootDeviceName string
+	// RootDeviceType is "ebs" or "instance-store".
+	RootDeviceType string
 }
 
 // ImageInspector returns metadata for a specific AMI. Optional: providers

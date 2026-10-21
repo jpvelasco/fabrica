@@ -159,6 +159,7 @@ func TestStatusCobraJSONWithFleets(t *testing.T) {
 	}
 	if sj.ActiveFleet == nil {
 		t.Fatal("expected ActiveFleet to be non-nil")
+		return
 	}
 	if sj.ActiveFleet.FleetID != "fleet-new" {
 		t.Errorf("expected ActiveFleet.FleetID='fleet-new', got %q", sj.ActiveFleet.FleetID)

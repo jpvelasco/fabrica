@@ -459,6 +459,7 @@ func TestSetupWithVPCResolvesCreatesSGAndVPCConfig(t *testing.T) {
 	}
 	if lastSpec.VpcConfig == nil {
 		t.Fatal("project spec has no VpcConfig, want VPC wiring")
+		return
 	}
 	if lastSpec.VpcConfig.VpcID != "vpc-default" || lastSpec.VpcConfig.SubnetID != "subnet-default" {
 		t.Errorf("VpcConfig = %+v, want vpc-default/subnet-default", lastSpec.VpcConfig)

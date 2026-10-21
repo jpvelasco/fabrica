@@ -33,6 +33,7 @@ func TestParseBuildGraphHappyPath(t *testing.T) {
 	}
 	if job == nil {
 		t.Fatal("expected non-nil BuildGraphJob")
+		return
 	}
 	if job.Name != "BuildAgent" {
 		t.Errorf("job.Name = %q, want BuildAgent", job.Name)

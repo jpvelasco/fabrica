@@ -112,6 +112,7 @@ func TestAwsProviderWithRegion(t *testing.T) {
 	}
 	if view.Resources == nil {
 		t.Fatal("view.Resources is nil")
+		return
 	}
 	if view.VPCs == nil {
 		t.Fatal("view.VPCs is nil")

@@ -11,7 +11,7 @@ import (
 
 var _ fabricac.ImageInspector = (*ec2Service)(nil)
 
-// DescribeImage returns Name/Owner for a single AMI ID.
+// DescribeImage returns Name/Owner and the root device for a single AMI ID.
 func (s *ec2Service) DescribeImage(ctx context.Context, imageID string) (fabricac.ImageInfo, error) {
 	if err := s.ensureClient(ctx); err != nil {
 		return fabricac.ImageInfo{}, err
@@ -31,5 +31,8 @@ func (s *ec2Service) DescribeImage(ctx context.Context, imageID string) (fabrica
 		Name:        aws.ToString(img.Name),
 		Description: aws.ToString(img.Description),
 		Owner:       aws.ToString(img.OwnerId),
+
+		RootDeviceName: aws.ToString(img.RootDeviceName),
+		RootDeviceType: string(img.RootDeviceType),
 	}, nil
 }

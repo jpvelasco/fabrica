@@ -577,6 +577,7 @@ func TestTeardownS3Store_Integration(t *testing.T) {
 	// After successful destroy, state must have no lore module and no tables.
 	if lastWritten == nil {
 		t.Fatal("state was never written")
+		return
 	}
 	if m := lastWritten.GetModule("lore"); m != nil {
 		t.Errorf("lore module must be removed from state after destroy, still has %d resources", len(m.Resources))

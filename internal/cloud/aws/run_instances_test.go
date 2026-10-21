@@ -43,6 +43,7 @@ func TestCreate_VolumeRequestTagsSkipCloudControl(t *testing.T) {
 	in := rec.in
 	if in == nil {
 		t.Fatal("RunInstances was not called")
+		return
 	}
 	if awssdk.ToString(in.ImageId) != "ami-123" || in.InstanceType != types.InstanceType("g6.xlarge") {
 		t.Fatalf("launch shape = %+v", in)
@@ -133,6 +134,10 @@ func TestCreate_VolumeTagDenyFallback(t *testing.T) {
 		{name: "unauthorized without any tag or volume", err: ccAPIErrorWithMessage("UnauthorizedOperation", "explicit deny on ec2:RunInstances"), wantFallback: false},
 		// "volume" in prose, but no EC2 volume resource ARN: the bare word
 		// must not trigger the fallback (the predicate matches the ARN shape).
+		// An encryption deny on the volume ARN (ec2:Encrypted condition) is
+		// not a missing request tag: the RunInstances path requests the same
+		// encryption, so the retry cannot satisfy it (#507).
+		{name: "access denied ec2 encrypted condition on volume", err: ccAPIErrorWithMessage("UnauthorizedOperation", "not authorized to perform: ec2:RunInstances on resource: arn:aws:ec2:region:account:volume/* because the ec2:Encrypted condition is false"), wantFallback: false},
 		{name: "word volume without a volume ARN", err: ccAPIErrorWithMessage("AccessDenied", "ec2:RunInstances failed because the volume was locked by another request"), wantFallback: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -653,6 +658,7 @@ func TestCreate_ExistingTaggedInstanceAdopted(t *testing.T) {
 	}
 	if rec.describeIn == nil {
 		t.Fatal("DescribeInstances was not consulted")
+		return
 	}
 	filter := map[string][]string{}
 	for _, f := range rec.describeIn.Filters {
@@ -1051,4 +1057,41 @@ func assertTagSpec(t *testing.T, in *ec2.RunInstancesInput, kind types.ResourceT
 		}
 	}
 	t.Errorf("missing %s tag %s=%s in %+v", kind, key, value, tagSpec(in, kind).Tags)
+}
+
+// TestRunInstancesInputCarriesEncrypted pins #507 on the SDK launch path: an
+// Encrypted flag in the desired state's block device mapping reaches the
+// RunInstances request, and an absent flag stays absent.
+func TestRunInstancesInputCarriesEncrypted(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ebs  string
+		want *bool
+	}{
+		{name: "encrypted true", ebs: `{"VolumeSize":100,"VolumeType":"gp3","DeleteOnTermination":true,"Encrypted":true}`, want: awssdk.Bool(true)},
+		{name: "encrypted false kept as written", ebs: `{"VolumeSize":100,"VolumeType":"gp3","DeleteOnTermination":true,"Encrypted":false}`, want: awssdk.Bool(false)},
+		{name: "encrypted absent", ebs: `{"VolumeSize":100,"VolumeType":"gp3","DeleteOnTermination":true}`, want: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			desired := json.RawMessage(`{"ImageId":"test-image","InstanceType":"g6.xlarge",` +
+				`"BlockDeviceMappings":[{"DeviceName":"/dev/sda1","Ebs":` + tc.ebs + `}]}`)
+			in, err := runInstancesInput(desired, nil, "")
+			if err != nil {
+				t.Fatalf("runInstancesInput: %v", err)
+			}
+			if len(in.BlockDeviceMappings) != 1 || in.BlockDeviceMappings[0].Ebs == nil {
+				t.Fatalf("BlockDeviceMappings = %+v", in.BlockDeviceMappings)
+			}
+			got := in.BlockDeviceMappings[0].Ebs.Encrypted
+			switch {
+			case tc.want == nil && got != nil:
+				t.Fatalf("Encrypted = %v, want absent", *got)
+			case tc.want != nil && (got == nil || *got != *tc.want):
+				t.Fatalf("Encrypted = %v, want %v", got, *tc.want)
+			}
+			if awssdk.ToString(in.BlockDeviceMappings[0].DeviceName) != "/dev/sda1" {
+				t.Fatalf("DeviceName = %q", awssdk.ToString(in.BlockDeviceMappings[0].DeviceName))
+			}
+		})
+	}
 }

@@ -11,7 +11,7 @@ import (
 )
 
 func TestBuildValidate(t *testing.T) {
-	c := buildCommand{cfg: BuildConfig{BaseImage: "not-ami", Region: "us-west-2", Name: "x", OutputDir: "out"}}
+	c := buildCommand{cfg: BuildConfig{BaseImage: "not-ami", Region: "us-west-2", Name: "x", OutputDir: "out", RootDevice: defaultRootDevice}}
 	if err := c.validate(); err == nil {
 		t.Fatal("expected invalid AMI")
 	}
@@ -41,6 +41,7 @@ func TestBuildWritesDCVAndSSM(t *testing.T) {
 		writeFile: os.WriteFile,
 		mkdirAll:  os.MkdirAll,
 	}
+	c.cfg.RootDevice = defaultRootDevice
 	if err := c.run(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -160,7 +161,7 @@ func TestIndent(t *testing.T) {
 }
 
 func TestBuildValidateEmptyFields(t *testing.T) {
-	c := buildCommand{cfg: BuildConfig{BaseImage: defaultBaseImage, Region: "us-west-2", Name: "", OutputDir: "out"}}
+	c := buildCommand{cfg: BuildConfig{BaseImage: defaultBaseImage, Region: "us-west-2", Name: "", OutputDir: "out", RootDevice: defaultRootDevice}}
 	if err := c.validate(); err == nil {
 		t.Fatal("expected empty name error")
 	}
@@ -174,7 +175,7 @@ func TestBuildValidateEmptyFields(t *testing.T) {
 func TestBuildMkdirError(t *testing.T) {
 	c := buildCommand{
 		out:      io.Discard,
-		cfg:      BuildConfig{BaseImage: defaultBaseImage, Region: "us-west-2", Name: "x", OutputDir: "out"},
+		cfg:      BuildConfig{BaseImage: defaultBaseImage, Region: "us-west-2", Name: "x", OutputDir: "out", RootDevice: defaultRootDevice},
 		mkdirAll: func(string, os.FileMode) error { return errors.New("mkdir boom") },
 	}
 	err := c.run()
@@ -186,7 +187,7 @@ func TestBuildMkdirError(t *testing.T) {
 func TestBuildWriteError(t *testing.T) {
 	c := buildCommand{
 		out:       io.Discard,
-		cfg:       BuildConfig{BaseImage: defaultBaseImage, Region: "us-west-2", Name: "x", OutputDir: t.TempDir()},
+		cfg:       BuildConfig{BaseImage: defaultBaseImage, Region: "us-west-2", Name: "x", OutputDir: t.TempDir(), RootDevice: defaultRootDevice},
 		mkdirAll:  os.MkdirAll,
 		writeFile: func(string, []byte, os.FileMode) error { return errors.New("write boom") },
 	}

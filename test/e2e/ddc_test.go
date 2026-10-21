@@ -44,6 +44,7 @@ func TestDDCLifecycle(t *testing.T) {
 	m := st.GetModule("ddc")
 	if m == nil {
 		t.Fatal("ddc module missing after region add")
+		return
 	}
 	edgeCount := 0
 	for _, r := range m.Resources {
