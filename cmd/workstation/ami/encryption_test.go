@@ -10,6 +10,7 @@ package ami
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -130,6 +131,34 @@ func TestBuildRecipeUsesRootDeviceFlag(t *testing.T) {
 	}
 	if !strings.Contains(string(guide), "DeviceName=/dev/xvda,Ebs={") {
 		t.Errorf("guide run-instances mapping is not on /dev/xvda")
+	}
+}
+
+// TestBuildRunRefusesUnencryptedRecipe: run() returns the encryption
+// check's error and does not write the recipe.
+func TestBuildRunRefusesUnencryptedRecipe(t *testing.T) {
+	dir := t.TempDir()
+	real := buildCommand{}
+	c := buildCommand{
+		out:      io.Discard,
+		cfg:      BuildConfig{BaseImage: defaultBaseImage, Region: "us-west-2", Name: "x", OutputDir: dir, RootDevice: defaultRootDevice},
+		mkdirAll: os.MkdirAll,
+		writeFile: func(path string, data []byte, perm os.FileMode) error {
+			if filepath.Base(path) == "image-builder-recipe.json" {
+				t.Fatal("run wrote the recipe after the encryption check failed")
+			}
+			return os.WriteFile(path, data, perm)
+		},
+		renderFile: func(name string, data any) ([]byte, error) {
+			if name == "image-builder.json.tmpl" {
+				return []byte(`{"blockDeviceMappings":[{"deviceName":"/dev/sda1","ebs":{"encrypted":false}}]}`), nil
+			}
+			return real.render(name, data)
+		},
+	}
+	err := c.run()
+	if err == nil || !strings.Contains(err.Error(), `"encrypted": true`) {
+		t.Fatalf("err = %v, want the encryption refusal", err)
 	}
 }
 

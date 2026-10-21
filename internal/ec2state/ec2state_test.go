@@ -255,6 +255,19 @@ func TestDeviceNameUnexpectedShapeErrors(t *testing.T) {
 	}
 }
 
+// TestBuildSkipsNilOption: a nil option in the list is ignored and the
+// options after it still apply.
+func TestBuildSkipsNilOption(t *testing.T) {
+	raw, err := Build(testSpec(), nil, WithEncryptedVolume())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ebs := doc(t, raw)["BlockDeviceMappings"].([]any)[0].(map[string]any)["Ebs"].(map[string]any)
+	if enc, ok := ebs["Encrypted"].(bool); !ok || !enc {
+		t.Fatalf("Ebs.Encrypted = %v, want true", ebs["Encrypted"])
+	}
+}
+
 // TestBuildPropagatesOptionError: Build returns the option's error and no
 // document.
 func TestBuildPropagatesOptionError(t *testing.T) {

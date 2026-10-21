@@ -45,10 +45,11 @@ type BuildConfig struct {
 }
 
 type buildCommand struct {
-	out       io.Writer
-	cfg       BuildConfig
-	writeFile func(path string, data []byte, perm os.FileMode) error
-	mkdirAll  func(path string, perm os.FileMode) error
+	out        io.Writer
+	cfg        BuildConfig
+	writeFile  func(path string, data []byte, perm os.FileMode) error
+	mkdirAll   func(path string, perm os.FileMode) error
+	renderFile func(name string, data any) ([]byte, error)
 }
 
 func newBuildCmd(out io.Writer) *cobra.Command {
@@ -97,6 +98,10 @@ func (c buildCommand) run() error {
 		EnsureSSM  string
 		RequireSSM string
 	}{BuildConfig: c.cfg, EnsureSSM: amissm.EnsureScript(), RequireSSM: amissm.RequireEnabledScript(false)}
+	render := c.renderFile
+	if render == nil {
+		render = c.render
+	}
 	for _, pair := range []struct {
 		tmpl, out string
 		perm      os.FileMode
@@ -106,7 +111,7 @@ func (c buildCommand) run() error {
 		{"build-guide.md.tmpl", "build-guide.md", 0644},
 		{"verify-ami.sh.tmpl", "verify-ami.sh", 0755},
 	} {
-		body, err := c.render(pair.tmpl, data)
+		body, err := render(pair.tmpl, data)
 		if err != nil {
 			return err
 		}
