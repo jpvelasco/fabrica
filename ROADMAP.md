@@ -4,7 +4,7 @@ This document tracks what Fabrica ships today and where it's headed next.
 The `README.md` describes how to use what exists; this file tracks status and
 sequencing. When they disagree, this file wins.
 
-Last updated: 2026-10-10 (v0.4.6).
+Last updated: 2026-10-23 (v0.5.0).
 
 ## What Fabrica Is
 
@@ -30,10 +30,10 @@ These govern every structural decision and carry across all phases.
 
 ## Current Status
 
-**Current stable: v0.4.6** (2026-10-10). Follows v0.4.5 (2026-09-20). Phase 0, Phase 1, Lore (v0.3: AMI-first, S3 store backend provisioned, AMI build command, TLS on create, SSM on local store), DDC
+**Current stable: v0.5.0** (2026-10-23). Follows v0.4.6 (2026-10-10) and adds guardrailed-account support: an IAM path, a permissions boundary, and volume request tags for the roles and instances Fabrica creates (`docs/guardrailed-accounts.md`). Phase 0, Phase 1, Lore (v0.3: AMI-first, S3 store backend provisioned, AMI build command, TLS on create, SSM on local store), DDC
 (V1 + multi-region edge nodes with live edge probes), and Horde Agents V1 (including queue-based autoscaling) are all complete. Export V2 covers all 8
 modules (state backend, Horde, Perforce, Lore, DDC, Workstation, CI, Deploy).
-Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) ships in this release. Dedicated AMI build guides are available in `docs/horde-agent-ami.md` and `docs/lore-ami.md`.
+Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) is available. Dedicated AMI build guides are available in `docs/horde-agent-ami.md` and `docs/lore-ami.md`.
 
 Not every "Complete" ships AWS: `ci pipeline` prints a CodePipeline plan (no CodePipeline resource is created), `* schedule` commands print windows and start/stop hints (no EventBridge or cron is installed), `spot: true` only discounts cost estimates (no Spot capacity is requested), and `cost` is offline against a static us-east-1 price table (no live Pricing or Cost Explorer).
 
