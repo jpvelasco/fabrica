@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Go toolchain 1.26.10** — clears GO-2026-6809 (`crypto/x509` distrusts compromised intermediate certificates), which govulncheck `@v1.1.4` reports as reachable from `modstatus.WriteProbeStatusText` on 1.26.9. (#516)
 - `golang.org/x/text` 0.40 → 0.41, `golang.org/x/tools` 0.47 → 0.48
-- **Dependencies** — AWS SDK v2 group (11 updates, then 12 more), `github.com/aws/smithy-go` 1.28.2 → 1.28.5, and the Dependabot action groups (`actions/setup-node` 7.0.0 → 7.1.0, `actions/upload-artifact` 7.0.1 → 7.0.2, `actions/download-artifact` 8.0.1 → 8.0.2, `codeql-action` group with 3 updates) bumped to latest. (#479, #480, #481, #482, #483, #487, #504)
+- **Dependencies** — AWS SDK v2 group (11 updates, then 12 more), `github.com/aws/smithy-go` 1.28.2 → 1.28.5, and the Dependabot action groups (`actions/setup-node` 7.0.0 → 7.1.0, `actions/upload-artifact` 7.0.1 → 7.0.2, `actions/download-artifact` 8.0.1 → 8.0.2, `codeql-action` group with 3 updates, then 4.38.3 → 4.39.0, `goreleaser/goreleaser-action` 7.2.3 → 7.3.0) bumped to latest. (#479, #480, #481, #482, #483, #487, #502, #503, #504)
 
 ### Security
 
