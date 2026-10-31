@@ -98,6 +98,75 @@ jobs:
 
   test:
     name: Test
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    # PR runs get no id-token (least privilege). The Codecov OIDC upload
+    # steps live only in the test-main job below, which is where
+    # id-token: write applies (push to main).
+    permissions:
+      contents: read
+    steps:
+      # fetch-depth: 0 so Codecov can walk git history for path mapping and so
+      # parent/base SHAs exist when the App compares PR head vs main (avoids
+      # "Missing base commit" / unusable reports on shallow clones).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+      # gnupg + binutils: the executed verify_deb test (cmd/workstation/ami)
+      # shells out to gpg and ar. It skips cleanly when those are absent, so
+      # the install is a no-op safety net on non-Linux legs.
+      - name: Install gnupg + binutils (verify_deb test)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gnupg binutils
+      # Run in bash on every OS so the working directory and tooling are
+      # consistent. Go on the Windows runner writes coverage.out with CRLF line
+      # endings, which Codecov's parser rejects (the upload lands in an ERROR
+      # state and never merges), so strip CR in the same step. tr is identical
+      # on GNU/BSD/Git-bash; the strip is a no-op on Linux/macOS.
+      #
+      # -race is Linux/macOS only: Windows lacks reliable cgo race support in
+      # this project's documented workflow (see AGENTS.md / CLAUDE.md).
+      - name: Run tests with coverage
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            go test ./... -v -coverprofile=coverage.out -covermode=atomic
+          else
+            go test ./... -v -race -coverprofile=coverage.out -covermode=atomic
+          fi
+          tr -d '\r' < coverage.out > coverage.tmp && mv coverage.tmp coverage.out
+      - name: Install gotestsum (Linux)
+        if: runner.os == 'Linux'
+        run: go install gotest.tools/gotestsum@v1.13.0
+      - name: Generate JUnit XML (Linux)
+        if: runner.os == 'Linux'
+        run: gotestsum --junitfile junit.xml --format pkgname -- ./...
+      # PR jobs must not receive the Codacy repository token. Save the report;
+      # a trusted workflow_run workflow downloads this artifact and uploads it.
+      - name: Save coverage for Codacy
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: codacy-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage.out
+          if-no-files-found: error
+
+  # Same job as `test` for push-to-main runs, which keep id-token: write
+  # so the Codecov legs can mint OIDC upload tokens. Kept as a separate
+  # job because job-level `permissions` only accepts static values —
+  # the token cannot be conditional on the event within one job.
+  test-main:
+    name: Test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
       matrix:
