@@ -79,6 +79,15 @@ type PerforceConfig struct {
 	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
 }
 
+// IsConfigured reports whether any perforce: key is set.
+func (p PerforceConfig) IsConfigured() bool {
+	return p.Version != "" || p.InstanceType != "" || p.VolumeSize != 0 ||
+		p.VPCId != "" || p.SubnetId != "" || p.AllowedCIDR != "" ||
+		p.Backup.Path != "" || p.Backup.S3Export || p.Backup.S3Bucket != "" ||
+		p.Backup.S3Prefix != "" || p.Backup.Schedule != "" || p.Backup.Retain != 0 ||
+		p.IAM.Path != "" || p.IAM.PermissionsBoundary != ""
+}
+
 // PerforceBackupConfig holds the perforce.backup: section of fabrica.yaml.
 // Defaults are applied in the perforce plan layer (path, S3 prefix).
 type PerforceBackupConfig struct {

@@ -267,7 +267,31 @@ func TestCheckPerforceCIDR(t *testing.T) {
 				Perforce: config.PerforceConfig{InstanceType: "c5.2xlarge", AllowedCIDR: "172.31.0.0/16"},
 			}},
 			wantStatus: "ok",
-			wantMsg:    "172.31.0.0/16",
+			wantMsg:    "172.31.0.0/16 (configured)",
+		},
+		{
+			name: "perforce configured via vpcId/subnetId only (#559)",
+			rt: globals.Runtime{Config: &config.Config{
+				Perforce: config.PerforceConfig{VPCId: "vpc-12345678", SubnetId: "subnet-12345678"},
+			}},
+			wantStatus: "warning",
+			wantMsg:    "10.0.0.0/8",
+		},
+		{
+			name: "perforce configured via vpcId/subnetId and allowedCidr only (#559)",
+			rt: globals.Runtime{Config: &config.Config{
+				Perforce: config.PerforceConfig{VPCId: "vpc-12345678", SubnetId: "subnet-12345678", AllowedCIDR: "172.31.0.0/16"},
+			}},
+			wantStatus: "ok",
+			wantMsg:    "172.31.0.0/16 (configured)",
+		},
+		{
+			name: "perforce configured via allowedCidr only",
+			rt: globals.Runtime{Config: &config.Config{
+				Perforce: config.PerforceConfig{AllowedCIDR: "10.1.0.0/16"},
+			}},
+			wantStatus: "ok",
+			wantMsg:    "10.1.0.0/16 (configured)",
 		},
 	}
 

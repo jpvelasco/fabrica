@@ -215,6 +215,32 @@ func TestLoadPerforceBackupConfig(t *testing.T) {
 	assertStr(t, b.S3Prefix, "studio/p4/", "backup.s3Prefix")
 }
 
+func TestPerforceConfigIsConfigured(t *testing.T) {
+	tests := []struct {
+		name string
+		p    PerforceConfig
+		want bool
+	}{
+		{name: "zero value", p: PerforceConfig{}},
+		{name: "instanceType only", p: PerforceConfig{InstanceType: "m5.xlarge"}, want: true},
+		{name: "vpcId and subnetId only", p: PerforceConfig{VPCId: "vpc-1", SubnetId: "subnet-1"}, want: true},
+		{name: "allowedCidr only", p: PerforceConfig{AllowedCIDR: "10.0.0.0/8"}, want: true},
+		{name: "version only", p: PerforceConfig{Version: "2024.2"}, want: true},
+		{name: "volumeSize only", p: PerforceConfig{VolumeSize: 400}, want: true},
+		{name: "backup path only", p: PerforceConfig{Backup: PerforceBackupConfig{Path: "/p4"}}, want: true},
+		{name: "backup schedule only", p: PerforceConfig{Backup: PerforceBackupConfig{Schedule: "15 3 * * *"}}, want: true},
+		{name: "iam only", p: PerforceConfig{IAM: IAM{Path: "roles/p4"}}, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.p.IsConfigured(); got != tt.want {
+				t.Errorf("IsConfigured() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadPartialFile(t *testing.T) {
 	path := writeConfig(t, `cloud:
   aws:
