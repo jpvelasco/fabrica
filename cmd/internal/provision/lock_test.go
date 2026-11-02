@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,10 +17,12 @@ import (
 
 // fakeLockManager records lock calls for bridge tests. Renewals are
 // recognized by the RenewCondition expression and routed to renewErr.
+// The counters are atomic: the heartbeat goroutine renews concurrently
+// with the test goroutine that asserts on them.
 type fakeLockManager struct {
-	acquires   int
-	renews     int
-	releases   int
+	acquires   atomic.Int32
+	renews     atomic.Int32
+	releases   atomic.Int32
 	held       bool
 	releaseErr error
 	acquireErr error
@@ -28,10 +31,10 @@ type fakeLockManager struct {
 
 func (f *fakeLockManager) AcquireStateLockRow(_ context.Context, _ string, _ map[string]string, condition string, _ map[string]string) error {
 	if condition == fabricastate.RenewCondition {
-		f.renews++
+		f.renews.Add(1)
 		return f.renewErr
 	}
-	f.acquires++
+	f.acquires.Add(1)
 	if f.acquireErr != nil {
 		return f.acquireErr
 	}
@@ -42,7 +45,7 @@ func (f *fakeLockManager) AcquireStateLockRow(_ context.Context, _ string, _ map
 }
 
 func (f *fakeLockManager) ReleaseStateLockRow(_ context.Context, _, _, _ string) error {
-	f.releases++
+	f.releases.Add(1)
 	return f.releaseErr
 }
 
@@ -77,12 +80,12 @@ func TestAcquireStateLockAcquiresAndReleases(t *testing.T) {
 	if ctx.Value(lockHeldKey) == nil {
 		t.Error("lock sentinel missing from returned context")
 	}
-	if locker.acquires != 1 {
-		t.Errorf("acquires = %d, want 1", locker.acquires)
+	if locker.acquires.Load() != 1 {
+		t.Errorf("acquires = %d, want 1", locker.acquires.Load())
 	}
 	release()
-	if locker.releases != 1 {
-		t.Errorf("releases = %d, want 1", locker.releases)
+	if locker.releases.Load() != 1 {
+		t.Errorf("releases = %d, want 1", locker.releases.Load())
 	}
 }
 
@@ -100,11 +103,11 @@ func TestAcquireStateLockNestedSkips(t *testing.T) {
 		t.Fatalf("nested acquire must inherit the outer lock: %v", err)
 	}
 	nestedRelease()
-	if locker.acquires != 1 {
-		t.Errorf("acquires = %d, want 1 (nested must not re-acquire)", locker.acquires)
+	if locker.acquires.Load() != 1 {
+		t.Errorf("acquires = %d, want 1 (nested must not re-acquire)", locker.acquires.Load())
 	}
-	if locker.releases != 0 {
-		t.Errorf("releases = %d before outer release; nested release must be a no-op", locker.releases)
+	if locker.releases.Load() != 0 {
+		t.Errorf("releases = %d before outer release; nested release must be a no-op", locker.releases.Load())
 	}
 }
 
@@ -160,8 +163,8 @@ func TestAcquireStateLockNilConfigIsNoop(t *testing.T) {
 		t.Fatalf("nil config must no-op: %v", err)
 	}
 	release()
-	if locker.acquires != 0 {
-		t.Errorf("acquires = %d, want 0", locker.acquires)
+	if locker.acquires.Load() != 0 {
+		t.Errorf("acquires = %d, want 0", locker.acquires.Load())
 	}
 }
 
@@ -201,8 +204,8 @@ func TestAcquireStateLockUnlessDryRunSkipsAcquire(t *testing.T) {
 		t.Fatalf("dry-run lock: %v", err)
 	}
 	release()
-	if locker.acquires != 0 {
-		t.Errorf("dry-run acquires = %d, want 0", locker.acquires)
+	if locker.acquires.Load() != 0 {
+		t.Errorf("dry-run acquires = %d, want 0", locker.acquires.Load())
 	}
 	if ctx.Value(lockHeldKey) != nil {
 		t.Error("dry-run must not set the lock sentinel")
@@ -217,8 +220,8 @@ func TestAcquireStateLockUnlessDryRunAcquiresWhenLive(t *testing.T) {
 		t.Fatalf("live lock: %v", err)
 	}
 	release()
-	if locker.acquires != 1 {
-		t.Errorf("live acquires = %d, want 1", locker.acquires)
+	if locker.acquires.Load() != 1 {
+		t.Errorf("live acquires = %d, want 1", locker.acquires.Load())
 	}
 }
 
@@ -310,7 +313,7 @@ func TestAcquireStateLockHealthyHeartbeatKeepsContext(t *testing.T) {
 	if ctx.Err() != nil {
 		t.Fatalf("command context cancelled by healthy heartbeat: %v", ctx.Err())
 	}
-	if locker.renews < 2 {
-		t.Errorf("renews = %d, want at least 2", locker.renews)
+	if locker.renews.Load() < 2 {
+		t.Errorf("renews = %d, want at least 2", locker.renews.Load())
 	}
 }
