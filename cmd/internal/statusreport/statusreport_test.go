@@ -124,6 +124,31 @@ func TestBuildStatusReport_ModuleFields(t *testing.T) {
 	}
 }
 
+// TestBuildStatusReport_DeployVersionAfterRollback verifies the aggregate
+// status surfaces the module version a rollback wrote (the build that now
+// serves), not the version that was rolled back from.
+func TestBuildStatusReport_DeployVersionAfterRollback(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("deploy", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::GameLift::Alias", Identifier: "alias-1"},
+		{TypeName: "AWS::GameLift::Fleet", Identifier: "fleet-old", Properties: map[string]string{"role": "active", "buildVersion": "v1", "rollbackTarget": "fleet-0"}},
+		{TypeName: "AWS::GameLift::Fleet", Identifier: "fleet-new", Properties: map[string]string{"role": "superseded", "buildVersion": "v2"}},
+	})
+	rt := globals.Runtime{Config: &config.Config{}}
+
+	report := BuildStatusReport(context.Background(), st, rt, BuildOptions{})
+	if len(report.Modules) != 1 {
+		t.Fatalf("modules count = %d, want 1", len(report.Modules))
+	}
+	m := report.Modules[0]
+	if m.Name != "deploy" {
+		t.Errorf("name = %q, want deploy", m.Name)
+	}
+	if m.Version != "v1" {
+		t.Errorf("version = %q, want v1 (rolled-back build)", m.Version)
+	}
+}
+
 func TestSummaryLine(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -516,11 +516,11 @@ Provisions the deploy infrastructure: an IAM role GameLift assumes to read build
 
 #### `fabrica deploy promote <build-version>`
 
-Registers a packaged server build from S3 as a GameLift build, creates a new fleet for it, waits until the fleet is `ACTIVE` (printing phase transitions), then flips the alias to the new fleet. The previously-active fleet is retained for rollback. By default the build is read from `s3://<deploy.buildBucket>/builds/<version>/server.zip` (override with `--s3-bucket`/`--s3-key`). Use `--no-wait` to start fleet creation without blocking (skips the alias flip). On fleet `ERROR` or timeout the alias is left untouched and the failure events are shown.
+Registers a packaged server build from S3 as a GameLift build, creates a new fleet for it, waits until the fleet is `ACTIVE` (printing phase transitions), then flips the alias to the new fleet. The previously-active fleet is retained for rollback and recorded on the new fleet as its explicit rollback target. By default the build is read from `s3://<deploy.buildBucket>/builds/<version>/server.zip` (override with `--s3-bucket`/`--s3-key`). Use `--no-wait` to start fleet creation without blocking (skips the alias flip). On fleet `ERROR` or timeout the alias is left untouched and the failure events are shown.
 
 #### `fabrica deploy rollback`
 
-Flips the alias back to the most-recent retained ("superseded") fleet — an instant blue/green rollback with no re-provisioning. Verifies the target fleet is still `ACTIVE` first, shows current → target, and prompts before flipping (`--yes` to skip, `--dry-run` to preview without changing anything).
+Flips the alias back to the fleet that served immediately before the current one. Each promote records that predecessor as the new fleet's explicit rollback target, so the target stays correct across repeated promote/rollback cycles. An instant blue/green rollback with no re-provisioning. Verifies the target fleet is still `ACTIVE` first, shows current → target, and prompts before flipping (`--yes` to skip, `--dry-run` to preview without changing anything). After a successful flip the module version is updated to the rolled-back build, so `fabrica status` reports the version that actually serves. State written by older fabrica versions has no recorded target and falls back to the most-recent retained fleet, with a warning.
 
 #### `fabrica deploy status`
 

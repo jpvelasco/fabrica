@@ -455,6 +455,53 @@ func TestPromoteSwapActiveFleetSupersedesOld(t *testing.T) {
 	}
 }
 
+// TestPromoteSwapActiveFleetRecordsRollbackTarget verifies the new active
+// fleet records the demoted fleet as its explicit rollback target.
+func TestPromoteSwapActiveFleetRecordsRollbackTarget(t *testing.T) {
+	m := &fabricastate.ModuleState{
+		Resources: []fabricastate.ModuleResource{
+			{TypeName: "AWS::GameLift::Fleet", Identifier: "fleet-old", Properties: map[string]string{"role": "active", "buildVersion": "v1"}},
+			{TypeName: "AWS::GameLift::Fleet", Identifier: "fleet-new", Properties: map[string]string{"role": "provisioning", "buildVersion": "v2"}},
+		},
+	}
+	c := &command{out: io.Discard}
+	c.swapActiveFleet(m, "fleet-new")
+
+	for _, r := range m.Resources {
+		if r.Identifier == "fleet-new" && r.TypeName == "AWS::GameLift::Fleet" {
+			if r.Properties["role"] != "active" {
+				t.Errorf("new fleet role = %q, want active", r.Properties["role"])
+			}
+			if r.Properties["rollbackTarget"] != "fleet-old" {
+				t.Errorf("rollbackTarget = %q, want fleet-old", r.Properties["rollbackTarget"])
+			}
+		}
+	}
+}
+
+// TestPromoteSwapActiveFleetFirstPromoteHasNoTarget verifies a first
+// promotion records no rollback target (there is no predecessor).
+func TestPromoteSwapActiveFleetFirstPromoteHasNoTarget(t *testing.T) {
+	m := &fabricastate.ModuleState{
+		Resources: []fabricastate.ModuleResource{
+			{TypeName: "AWS::GameLift::Fleet", Identifier: "fleet-new", Properties: map[string]string{"role": "provisioning"}},
+		},
+	}
+	c := &command{out: io.Discard}
+	c.swapActiveFleet(m, "fleet-new")
+
+	for _, r := range m.Resources {
+		if r.Identifier == "fleet-new" {
+			if r.Properties["role"] != "active" {
+				t.Errorf("role = %q, want active", r.Properties["role"])
+			}
+			if _, ok := r.Properties["rollbackTarget"]; ok {
+				t.Errorf("first promotion must not record a rollback target, got %q", r.Properties["rollbackTarget"])
+			}
+		}
+	}
+}
+
 func TestPromoteSwapActiveFleetNilProperties(t *testing.T) {
 	m := &fabricastate.ModuleState{
 		Resources: []fabricastate.ModuleResource{
