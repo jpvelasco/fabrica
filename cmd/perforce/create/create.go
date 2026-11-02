@@ -87,8 +87,8 @@ making any AWS calls.`,
 				costs:        fabricacost.Global,
 				confirm:      prompt.ConfirmExact,
 			}
-			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = provision.StateWriter(rt)
+			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
+			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			if rt.Provider != nil {
 				c.createResource = rt.Provider.Resources().Create
 				if resolver, ok := rt.Provider.(cloud.AMIResolver); ok {

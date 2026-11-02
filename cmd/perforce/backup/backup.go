@@ -64,8 +64,8 @@ With no subcommand, creates a new backup.`,
 				confirm:     prompt.Confirm,
 				now:         time.Now,
 			}
-			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = provision.StateWriter(rt)
+			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
+			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			c.readCreds = func() (string, error) {
 				return credentials.ReadPerforceAdminPassword(credFile)
 			}

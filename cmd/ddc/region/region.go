@@ -99,8 +99,8 @@ With --dry-run, shows the plan and monthly cost estimate without AWS writes.`,
 					SubnetID:     subnetID,
 				},
 			}
-			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = provision.StateWriter(rt)
+			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
+			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			return c.run(cmd.Context(), args[0])
 		},
 	}

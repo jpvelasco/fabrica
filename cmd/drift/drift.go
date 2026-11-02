@@ -80,8 +80,8 @@ and CodeBuild projects.`,
 				fixMode:    fixMode,
 				assumeYes:  opts.AssumeYes,
 				out:        out,
-				readState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-				writeState: provision.StateWriter(rt),
+				readState:  func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
+				writeState: provision.StateWriter(cmd.Context(), rt),
 				confirm:    prompt.Confirm,
 			}
 			if rt.Provider != nil {

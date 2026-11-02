@@ -76,8 +76,8 @@ With --dry-run, shows the plan and monthly cost estimate without AWS writes.`,
 				costs:     fabricacost.Global,
 				confirm:   prompt.Confirm,
 			}
-			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = provision.StateWriter(rt)
+			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
+			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			c.writeEndpoints = credentials.WriteCredentials
 			if rt.Provider != nil {
 				c.createResource = rt.Provider.Resources().Create

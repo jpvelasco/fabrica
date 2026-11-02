@@ -117,9 +117,9 @@ func newCobraCommand(commandSpec spec, runtimeSource globals.RuntimeSource, opti
 				out:       out,
 				confirm:   prompt.ConfirmExact,
 				readState: func() (*fabricastate.State, error) {
-					return provision.ReadState(rt)
+					return provision.ReadState(cmd.Context(), rt)
 				},
-				writeState:    provision.StateWriter(rt),
+				writeState:    provision.StateWriter(cmd.Context(), rt),
 				executeAction: defaultExecuteAction(rt, commandSpec.verb),
 			})
 			return actionCommand.run(cmd.Context())

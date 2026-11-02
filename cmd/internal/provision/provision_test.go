@@ -2,6 +2,7 @@ package provision
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,7 +41,7 @@ func TestPrintConfirmInstructions(t *testing.T) {
 func TestReadState_NilConfigDefaultsToEmpty(t *testing.T) {
 	// No config and no state file: returns a fresh state with empty account/region.
 	t.Chdir(t.TempDir())
-	st, err := ReadState(globals.Runtime{})
+	st, err := ReadState(context.Background(), globals.Runtime{})
 	if err != nil {
 		t.Fatalf("ReadState: %v", err)
 	}
@@ -59,7 +60,7 @@ func TestReadState_SeedsAccountRegionFromConfig(t *testing.T) {
 	cfg.Cloud.AWS.AccountID = "123456789012"
 	cfg.Cloud.AWS.Region = "eu-west-1"
 
-	st, err := ReadState(globals.Runtime{Config: cfg})
+	st, err := ReadState(context.Background(), globals.Runtime{Config: cfg})
 	if err != nil {
 		t.Fatalf("ReadState: %v", err)
 	}
@@ -79,7 +80,7 @@ func TestReadState_RejectsMismatchedAccount(t *testing.T) {
 
 	cfg := config.Defaults()
 	cfg.Cloud.AWS.AccountID = "222222222222"
-	_, err := ReadState(globals.Runtime{Config: cfg})
+	_, err := ReadState(context.Background(), globals.Runtime{Config: cfg})
 	if err == nil {
 		t.Fatal("expected account mismatch error, got nil")
 	}
@@ -96,7 +97,7 @@ func TestReadState_ProfileUsesNamespacedFile(t *testing.T) {
 	cfg.Cloud.AWS.Region = "eu-west-1"
 	rt := globals.Runtime{Config: cfg, ConfigPath: "fabrica-prod.yaml"}
 
-	st, err := ReadState(rt)
+	st, err := ReadState(context.Background(), rt)
 	if err != nil {
 		t.Fatalf("ReadState: %v", err)
 	}
@@ -104,7 +105,7 @@ func TestReadState_ProfileUsesNamespacedFile(t *testing.T) {
 		t.Errorf("account/region = %q/%q, want from config", st.Account, st.Region)
 	}
 
-	if err := StateWriter(rt)(st); err != nil {
+	if err := StateWriter(context.Background(), rt)(st); err != nil {
 		t.Fatalf("StateWriter: %v", err)
 	}
 
@@ -131,7 +132,7 @@ func TestStateWriter_WritesToProfileFile(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	rt := globals.Runtime{ConfigPath: "fabrica-staging.yaml"}
-	writer := StateWriter(rt)
+	writer := StateWriter(context.Background(), rt)
 	st := fabricastate.NewState("333333333333", "ap-southeast-2")
 	if err := writer(st); err != nil {
 		t.Fatalf("StateWriter: %v", err)

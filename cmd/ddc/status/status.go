@@ -86,7 +86,7 @@ operator is outside the VPC), its status is reported gracefully as
 				publicPort: port,
 				backend:    backend,
 				provider:   rt.Provider,
-				readState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				readState:  func() (*fabricastate.State, error) { return provision.ReadState(cmdCtx, rt) },
 				getEdgeStatus: func(ctx context.Context, edges []ddc.EdgeResource, p cloud.Provider) []ddc.EdgeStatus {
 					return ddc.ProbeEdges(ctx, edges, p, ddc.ProbeEdgesOptions{PublicPort: port})
 				},

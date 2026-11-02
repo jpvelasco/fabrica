@@ -71,7 +71,7 @@ status from GameLift. Read-only — never changes anything.`,
 				runtime:   rt,
 				jsonOut:   opts.JSONOutput,
 				out:       out,
-				readState: func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				readState: func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
 			}
 			if rt.Provider != nil {
 				if glm, ok := rt.Provider.(cloud.GameLiftManager); ok {

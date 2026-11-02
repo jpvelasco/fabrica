@@ -75,7 +75,7 @@ Use --wait / -w to poll until the build reaches a terminal state (60m timeout).`
 				buildGraphPath: args[0],
 				wait:           wait,
 				out:            out,
-				readState:      func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				readState:      func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
 				waitCtx:        provision.WaitInterval,
 				now:            time.Now,
 			}

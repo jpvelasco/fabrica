@@ -469,8 +469,8 @@ func NewStandalone(spec Spec, rt globals.Runtime, out io.Writer, dryRun, assumeY
 		JSONOut:    jsonOut,
 		Out:        out,
 		Confirm:    prompt.ConfirmExact,
-		ReadState:  func(_ context.Context) (*fabricastate.State, error) { return provision.ReadState(rt) },
-		WriteState: func(_ context.Context, st *fabricastate.State) error { return provision.StateWriter(rt)(st) },
+		ReadState:  func(ctx context.Context) (*fabricastate.State, error) { return provision.ReadState(ctx, rt) },
+		WriteState: func(ctx context.Context, st *fabricastate.State) error { return provision.StateWriter(ctx, rt)(st) },
 	}
 	WireProvider(&tc, rt)
 	if spec.WireCommand != nil {

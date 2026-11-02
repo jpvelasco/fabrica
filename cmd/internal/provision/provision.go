@@ -5,6 +5,7 @@
 package provision
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -17,7 +18,7 @@ import (
 // seeding a fresh state with the configured account/region when the file does
 // not exist yet. Existing state whose recorded account or home region does not
 // match the configured target is rejected.
-func ReadState(rt globals.Runtime) (*fabricastate.State, error) {
+func ReadState(_ context.Context, rt globals.Runtime) (*fabricastate.State, error) {
 	account, region := "", ""
 	if rt.Config != nil {
 		account = rt.Config.Cloud.AWS.AccountID
@@ -35,7 +36,7 @@ func StatePath(rt globals.Runtime) string {
 // StateWriter returns a write seam bound to the runtime's state file — the
 // same file ReadState loads, so a command can never write one profile's
 // records into another profile's cache.
-func StateWriter(rt globals.Runtime) func(*fabricastate.State) error {
+func StateWriter(_ context.Context, rt globals.Runtime) func(*fabricastate.State) error {
 	path := StatePath(rt)
 	return func(st *fabricastate.State) error {
 		return fabricastate.WriteStateTo(st, path)
