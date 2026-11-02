@@ -199,7 +199,9 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 		resources = append(resources, fabricastate.ModuleResource{
 			TypeName:   cloud.TypeAWSEC2SecurityGroup,
 			Identifier: sgID,
-			Properties: map[string]string{"region": region, "role": ddc.RoleEdge},
+			// region + vpcId + role are recorded so `fabrica drift --fix`
+			// can rebuild this group in its own region without guessing.
+			Properties: map[string]string{"region": region, "role": ddc.RoleEdge, "vpcId": plan.VPCID},
 		})
 		st.UpsertModule(moduleName, m.Version, m.Status, resources)
 		if err := c.writeState(st); err != nil {
@@ -237,6 +239,12 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 			"role":         ddc.RoleEdge,
 			"instanceType": plan.InstanceType,
 			"volumeSize":   strconv.Itoa(plan.VolumeSize),
+			// imageId/subnetId/vpcId are recorded so `fabrica drift --fix`
+			// can rebuild this instance in its own region: edge AMIs and
+			// subnets are region-specific and the home config cannot supply them.
+			"imageId":  plan.AmiID,
+			"subnetId": plan.SubnetID,
+			"vpcId":    plan.VPCID,
 		},
 	})
 	st.UpsertModule(moduleName, m.Version, m.Status, resources)

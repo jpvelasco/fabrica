@@ -236,8 +236,8 @@ func TestRun_FixApplySuccess(t *testing.T) {
 		c.fixMode = true
 		c.assumeYes = true
 		c.readState = func() (*fabricastate.State, error) { return st, nil }
-		c.createResource = func(_ context.Context, r *cloud.Resource) error {
-			created = append(created, r)
+		c.createResource = func(_ context.Context, a *drift.RemediationAction) error {
+			created = append(created, a.Resource)
 			return nil
 		}
 		c.writeState = func(s *fabricastate.State) error { return nil }
@@ -275,7 +275,7 @@ func TestRun_FixApplyFailure(t *testing.T) {
 		c.fixMode = true
 		c.assumeYes = true
 		c.readState = func() (*fabricastate.State, error) { return st, nil }
-		c.createResource = func(_ context.Context, r *cloud.Resource) error {
+		c.createResource = func(_ context.Context, a *drift.RemediationAction) error {
 			return errors.New("simulated failure")
 		}
 		c.writeState = func(s *fabricastate.State) error { return nil }
@@ -311,7 +311,7 @@ func TestRun_FixConfirmReject(t *testing.T) {
 		c.assumeYes = false
 		c.readState = func() (*fabricastate.State, error) { return st, nil }
 		c.confirm = func(string) bool { return false }
-		c.createResource = func(_ context.Context, r *cloud.Resource) error {
+		c.createResource = func(_ context.Context, a *drift.RemediationAction) error {
 			t.Fatal("create should not be called when confirm rejected")
 			return nil
 		}
@@ -367,7 +367,7 @@ func TestRun_FixJSONWithResult(t *testing.T) {
 		c.jsonOut = true
 		c.assumeYes = true
 		c.readState = func() (*fabricastate.State, error) { return st, nil }
-		c.createResource = func(_ context.Context, r *cloud.Resource) error { return nil }
+		c.createResource = func(_ context.Context, _ *drift.RemediationAction) error { return nil }
 		c.writeState = func(s *fabricastate.State) error { return nil }
 	})
 	c.getResource = func(_ context.Context, r *cloud.Resource) error {
@@ -405,7 +405,7 @@ func TestRun_FixJSONFailure(t *testing.T) {
 		c.jsonOut = true
 		c.assumeYes = true
 		c.readState = func() (*fabricastate.State, error) { return st, nil }
-		c.createResource = func(_ context.Context, r *cloud.Resource) error {
+		c.createResource = func(_ context.Context, a *drift.RemediationAction) error {
 			return errors.New("simulated failure")
 		}
 		c.writeState = func(s *fabricastate.State) error { return nil }
@@ -560,6 +560,7 @@ func TestPrintFixPlan(t *testing.T) {
 	plan := &drift.RemediationPlan{
 		Actions: []drift.RemediationAction{
 			{Module: "horde", TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Kind: drift.ActionCreate},
+			{Module: "ddc", TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-edge", Kind: drift.ActionCreate, Region: "eu-west-1"},
 			{Module: "horde", TypeName: "AWS::CodeBuild::Project", Identifier: "cb-1", Kind: drift.ActionSkip, Reason: "unsupported"},
 		},
 		ToFix:  1,
@@ -570,11 +571,33 @@ func TestPrintFixPlan(t *testing.T) {
 	if !strings.Contains(got, "[FIX]") {
 		t.Error("expected [FIX]")
 	}
+	if !strings.Contains(got, "(region eu-west-1)") {
+		t.Errorf("expected the edge action's region suffix; got:\n%s", got)
+	}
 	if !strings.Contains(got, "[SKIP]") {
 		t.Error("expected [SKIP]")
 	}
 	if !strings.Contains(got, "To fix:") {
 		t.Error("expected 'To fix:'")
+	}
+}
+
+func TestPlanActionAttrs(t *testing.T) {
+	home := planActionAttrs(drift.RemediationAction{Module: "horde", TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Kind: drift.ActionCreate})
+	for _, a := range home {
+		if a == "region" {
+			t.Error("home action must not carry a region attribute")
+		}
+	}
+	edge := planActionAttrs(drift.RemediationAction{Module: "ddc", TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-edge", Kind: drift.ActionCreate, Region: "eu-west-1"})
+	found := false
+	for i := 0; i+1 < len(edge); i += 2 {
+		if edge[i] == "region" && edge[i+1] == "eu-west-1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a region attribute pair for the edge action, got %v", edge)
 	}
 }
 
@@ -703,7 +726,7 @@ func TestRun_WriteStateError(t *testing.T) {
 		c.fixMode = true
 		c.assumeYes = true
 		c.readState = func() (*fabricastate.State, error) { return st, nil }
-		c.createResource = func(_ context.Context, r *cloud.Resource) error { return nil }
+		c.createResource = func(_ context.Context, _ *drift.RemediationAction) error { return nil }
 		c.writeState = func(s *fabricastate.State) error {
 			return errors.New("disk full")
 		}
@@ -824,7 +847,7 @@ func TestRunFix_ConfirmAccept_Oplog(t *testing.T) {
 		c.assumeYes = false
 		c.readState = func() (*fabricastate.State, error) { return st, nil }
 		c.confirm = func(string) bool { return true }
-		c.createResource = func(_ context.Context, r *cloud.Resource) error {
+		c.createResource = func(_ context.Context, a *drift.RemediationAction) error {
 			created++
 			return nil
 		}
@@ -856,7 +879,7 @@ func TestRunFix_AssumeYes_Oplog(t *testing.T) {
 		c.fixMode = true
 		c.assumeYes = true
 		c.readState = func() (*fabricastate.State, error) { return st, nil }
-		c.createResource = func(_ context.Context, r *cloud.Resource) error {
+		c.createResource = func(_ context.Context, a *drift.RemediationAction) error {
 			created++
 			return nil
 		}
@@ -887,7 +910,7 @@ func TestRunFix_FixPathLogMessages_Oplog(t *testing.T) {
 		c.fixMode = true
 		c.assumeYes = true
 		c.readState = func() (*fabricastate.State, error) { return st, nil }
-		c.createResource = func(_ context.Context, r *cloud.Resource) error { return nil }
+		c.createResource = func(_ context.Context, _ *drift.RemediationAction) error { return nil }
 		c.writeState = func(s *fabricastate.State) error { return nil }
 	})
 	c.getResource = func(_ context.Context, r *cloud.Resource) error {
@@ -921,11 +944,11 @@ func TestRunFix_ResultMixed_Oplog(t *testing.T) {
 		c.fixMode = true
 		c.assumeYes = true
 		c.readState = func() (*fabricastate.State, error) { return st, nil }
-		c.createResource = func(_ context.Context, r *cloud.Resource) error {
+		c.createResource = func(_ context.Context, a *drift.RemediationAction) error {
 			callCount++
 			// First action (SG) succeeds, second (instance) fails.
 			if callCount == 1 {
-				r.Identifier = "sg-new"
+				a.Resource.Identifier = "sg-new"
 				return nil
 			}
 			return errors.New("simulated failure")
@@ -959,7 +982,7 @@ func TestRunFix_WriteStateSuccess_Oplog(t *testing.T) {
 		c.fixMode = true
 		c.assumeYes = true
 		c.readState = func() (*fabricastate.State, error) { return st, nil }
-		c.createResource = func(_ context.Context, r *cloud.Resource) error { return nil }
+		c.createResource = func(_ context.Context, _ *drift.RemediationAction) error { return nil }
 		c.writeState = func(s *fabricastate.State) error {
 			writeCalled = true
 			return nil
@@ -993,7 +1016,7 @@ func TestRunFix_WriteStateError_Oplog(t *testing.T) {
 		c.fixMode = true
 		c.assumeYes = true
 		c.readState = func() (*fabricastate.State, error) { return st, nil }
-		c.createResource = func(_ context.Context, r *cloud.Resource) error { return nil }
+		c.createResource = func(_ context.Context, _ *drift.RemediationAction) error { return nil }
 		c.writeState = func(s *fabricastate.State) error {
 			return errors.New("disk full")
 		}
@@ -1026,12 +1049,12 @@ func TestRunFix_SkippedActions_Oplog(t *testing.T) {
 		c.fixMode = true
 		c.assumeYes = true
 		c.readState = func() (*fabricastate.State, error) { return st, nil }
-		c.createResource = func(_ context.Context, r *cloud.Resource) error {
+		c.createResource = func(_ context.Context, a *drift.RemediationAction) error {
 			callCount++
 			// SG succeeds, instance fails — remaining actions (Volume ActionSkip)
 			// are collected as skipped by ApplyRemediation.
 			if callCount == 1 {
-				r.Identifier = "sg-new"
+				a.Resource.Identifier = "sg-new"
 				return nil
 			}
 			return errors.New("simulated failure")
@@ -1076,6 +1099,102 @@ func (r *recordingRC) Delete(_ context.Context, _ *cloud.Resource) error {
 
 func (r *recordingRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
 	return nil, nil
+}
+
+func TestCreateInRegion_HomeActionUsesHomeClient(t *testing.T) {
+	c := newTestCommand(t)
+	homeRC := &recordingRC{}
+	edgeRC := &recordingRC{}
+	c.withRegion = func(_ context.Context, region string) (cloud.RegionView, error) {
+		return cloud.RegionView{Resources: edgeRC}, nil
+	}
+
+	homeAction := &drift.RemediationAction{
+		Region:   "",
+		TypeName: cloud.TypeAWSEC2Instance,
+		Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-home"},
+	}
+	if err := c.createInRegion(context.Background(), homeRC, homeAction); err != nil {
+		t.Fatalf("home create: %v", err)
+	}
+	// An action explicitly recorded in the configured home region also
+	// routes through the home client.
+	homeRegionAction := &drift.RemediationAction{
+		Region:   config.DefaultAWSRegion,
+		TypeName: cloud.TypeAWSEC2Instance,
+		Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-home-2"},
+	}
+	if err := c.createInRegion(context.Background(), homeRC, homeRegionAction); err != nil {
+		t.Fatalf("home-region create: %v", err)
+	}
+
+	if len(homeRC.created) != 2 || len(edgeRC.created) != 0 {
+		t.Errorf("expected both creates on the home client, got home=%v edge=%v", homeRC.created, edgeRC.created)
+	}
+}
+
+func TestCreateInRegion_EdgeActionUsesRegionClient(t *testing.T) {
+	c := newTestCommand(t)
+	homeRC := &recordingRC{}
+	edgeRC := &recordingRC{}
+	c.withRegion = func(_ context.Context, region string) (cloud.RegionView, error) {
+		if region != "eu-west-1" {
+			return cloud.RegionView{}, fmt.Errorf("unexpected region %s", region)
+		}
+		return cloud.RegionView{Resources: edgeRC}, nil
+	}
+
+	a := &drift.RemediationAction{
+		Region:   "eu-west-1",
+		TypeName: cloud.TypeAWSEC2Instance,
+		Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-edge"},
+	}
+	if err := c.createInRegion(context.Background(), homeRC, a); err != nil {
+		t.Fatalf("edge create: %v", err)
+	}
+	if len(homeRC.created) != 0 || len(edgeRC.created) != 1 || edgeRC.created[0] != "i-edge" {
+		t.Errorf("expected edge create on the region client only, got home=%v edge=%v", homeRC.created, edgeRC.created)
+	}
+}
+
+func TestCreateInRegion_EdgeWithoutRegionSupport(t *testing.T) {
+	c := newTestCommand(t)
+	homeRC := &recordingRC{}
+	// No withRegion seam: the provider does not support additional regions.
+
+	a := &drift.RemediationAction{
+		Region:   "eu-west-1",
+		TypeName: cloud.TypeAWSEC2Instance,
+		Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-edge"},
+	}
+	err := c.createInRegion(context.Background(), homeRC, a)
+	if err == nil {
+		t.Fatal("expected error for edge create without region support")
+	}
+	if !strings.Contains(err.Error(), "does not support additional regions") {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if len(homeRC.created) != 0 {
+		t.Errorf("home client must not receive the edge create, got %v", homeRC.created)
+	}
+}
+
+func TestCreateInRegion_RegionResolveError(t *testing.T) {
+	c := newTestCommand(t)
+	homeRC := &recordingRC{}
+	c.withRegion = func(_ context.Context, region string) (cloud.RegionView, error) {
+		return cloud.RegionView{}, fmt.Errorf("credential error for %s", region)
+	}
+
+	a := &drift.RemediationAction{
+		Region:   "eu-west-1",
+		TypeName: cloud.TypeAWSEC2Instance,
+		Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-edge"},
+	}
+	err := c.createInRegion(context.Background(), homeRC, a)
+	if err == nil || !strings.Contains(err.Error(), "resolving region eu-west-1") {
+		t.Fatalf("expected wrapped resolve error, got %v", err)
+	}
 }
 
 func TestRegionResource_Seam(t *testing.T) {

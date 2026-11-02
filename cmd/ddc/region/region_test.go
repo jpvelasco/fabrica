@@ -115,9 +115,25 @@ func TestRunAdd(t *testing.T) {
 	for _, r := range m.Resources {
 		if r.TypeName == cloud.TypeAWSEC2SecurityGroup && r.Properties["region"] == "eu-west-1" && r.Properties["role"] == ddc.RoleEdge {
 			edgeSG = true
+			// The recorded VPC lets `fabrica drift --fix` rebuild the group
+			// in its own region without falling back to the home VPC.
+			if r.Properties["vpcId"] != "vpc-fake" {
+				t.Errorf("edge SG vpcId = %q, want vpc-fake", r.Properties["vpcId"])
+			}
 		}
 		if r.TypeName == cloud.TypeAWSEC2Instance && r.Properties["region"] == "eu-west-1" && r.Properties["role"] == ddc.RoleEdge {
 			edgeInstance = true
+			// The recorded AMI/subnet/VPC let `fabrica drift --fix` rebuild
+			// the instance from region-specific inputs.
+			if r.Properties["imageId"] != "ami-ddc" {
+				t.Errorf("edge instance imageId = %q, want ami-ddc", r.Properties["imageId"])
+			}
+			if r.Properties["subnetId"] != "subnet-fake" {
+				t.Errorf("edge instance subnetId = %q, want subnet-fake", r.Properties["subnetId"])
+			}
+			if r.Properties["vpcId"] != "vpc-fake" {
+				t.Errorf("edge instance vpcId = %q, want vpc-fake", r.Properties["vpcId"])
+			}
 		}
 	}
 	if !edgeSG || !edgeInstance {

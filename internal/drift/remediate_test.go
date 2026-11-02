@@ -378,8 +378,8 @@ func TestApplyRemediation_Success(t *testing.T) {
 	}
 
 	var created []*cloud.Resource
-	result := ApplyRemediation(context.Background(), plan, st, func(_ context.Context, r *cloud.Resource) error {
-		created = append(created, r)
+	result := ApplyRemediation(context.Background(), plan, st, func(_ context.Context, a *RemediationAction) error {
+		created = append(created, a.Resource)
 		return nil
 	})
 
@@ -435,9 +435,9 @@ func TestApplyRemediation_PartialFailure(t *testing.T) {
 	}
 
 	callCount := 0
-	result := ApplyRemediation(context.Background(), plan, st, func(_ context.Context, r *cloud.Resource) error {
+	result := ApplyRemediation(context.Background(), plan, st, func(_ context.Context, a *RemediationAction) error {
 		callCount++
-		if r.TypeName == cloud.TypeAWSEC2Instance {
+		if a.TypeName == cloud.TypeAWSEC2Instance {
 			return errors.New("simulated create failure")
 		}
 		return nil
@@ -511,7 +511,7 @@ func TestApplyRemediation_NoDesiredState(t *testing.T) {
 		},
 	}
 
-	result := ApplyRemediation(context.Background(), plan, st, func(_ context.Context, r *cloud.Resource) error {
+	result := ApplyRemediation(context.Background(), plan, st, func(_ context.Context, _ *RemediationAction) error {
 		t.Fatal("create should not be called for resource without desired state")
 		return nil
 	})
@@ -541,7 +541,7 @@ func TestApplyRemediation_NothingToFix(t *testing.T) {
 		ToSkip: 1,
 	}
 
-	result := ApplyRemediation(context.Background(), plan, st, func(_ context.Context, r *cloud.Resource) error {
+	result := ApplyRemediation(context.Background(), plan, st, func(_ context.Context, _ *RemediationAction) error {
 		t.Fatal("create should not be called")
 		return nil
 	})
@@ -744,11 +744,16 @@ func TestRebuildSGDesiredState_DDCEdge(t *testing.T) {
 
 	rec := &state.ModuleResource{
 		TypeName:   cloud.TypeAWSEC2SecurityGroup,
-		Properties: map[string]string{"region": "eu-west-1", "role": ddc.RoleEdge},
+		Properties: map[string]string{"region": "eu-west-1", "role": ddc.RoleEdge, "vpcId": "vpc-edge-rec"},
 	}
 	m := rebuildSGDoc(t, rec, &state.ModuleState{Name: "ddc"}, cfg)
 	if m["GroupName"] != "fabrica-ddc-sg-eu-west-1" {
 		t.Errorf("expected edge group name, got %v", m["GroupName"])
+	}
+	// The recorded edge VPC wins; the home config VPC must not leak into an
+	// edge group (it would point at the wrong region's VPC).
+	if m["VpcId"] != "vpc-edge-rec" {
+		t.Errorf("expected recorded edge VPC vpc-edge-rec, got %v", m["VpcId"])
 	}
 	rules := sgIngressRules(t, m)
 	if len(rules) != 2 {
@@ -968,7 +973,10 @@ func TestRebuildInstanceDesiredState_Perforce(t *testing.T) {
 		Properties: map[string]string{"instanceType": "m5.xlarge"},
 	}
 
-	ds := rebuildInstanceDesiredState(rec, mod, cfg)
+	ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
 	var m map[string]any
 	if err := json.Unmarshal(ds, &m); err != nil {
 		t.Fatalf("invalid json: %v", err)
@@ -993,7 +1001,10 @@ func TestRebuildInstanceDesiredState_Lore(t *testing.T) {
 	mod := &state.ModuleState{Name: "lore", Version: "ami-lore"}
 	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance}
 
-	ds := rebuildInstanceDesiredState(rec, mod, cfg)
+	ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
 	var m map[string]any
 	if err := json.Unmarshal(ds, &m); err != nil {
 		t.Fatalf("invalid json: %v", err)
@@ -1011,7 +1022,10 @@ func TestRebuildInstanceDesiredState_DDC(t *testing.T) {
 	mod := &state.ModuleState{Name: "ddc", Version: ""}
 	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance}
 
-	ds := rebuildInstanceDesiredState(rec, mod, cfg)
+	ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
 	var m map[string]any
 	if err := json.Unmarshal(ds, &m); err != nil {
 		t.Fatalf("invalid json: %v", err)
@@ -1029,7 +1043,10 @@ func TestRebuildInstanceDesiredState_Workstation(t *testing.T) {
 	mod := &state.ModuleState{Name: "workstation", Version: ""}
 	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance}
 
-	ds := rebuildInstanceDesiredState(rec, mod, cfg)
+	ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
 	var m map[string]any
 	if err := json.Unmarshal(ds, &m); err != nil {
 		t.Fatalf("invalid json: %v", err)
@@ -1054,7 +1071,10 @@ func TestRebuildInstanceDesiredState_SecurityGroupLink(t *testing.T) {
 	}
 	rec := &mod.Resources[1]
 
-	ds := rebuildInstanceDesiredState(rec, mod, cfg)
+	ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
 	var m map[string]any
 	if err := json.Unmarshal(ds, &m); err != nil {
 		t.Fatalf("invalid json: %v", err)
@@ -1081,7 +1101,10 @@ func TestRebuildInstanceDesiredState_PropertiesOverride(t *testing.T) {
 		},
 	}
 
-	ds := rebuildInstanceDesiredState(rec, mod, cfg)
+	ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
 	var m map[string]any
 	if err := json.Unmarshal(ds, &m); err != nil {
 		t.Fatalf("invalid json: %v", err)
@@ -1227,7 +1250,7 @@ func TestRefreshSGIDs_UpdatesInstanceAfterSG(t *testing.T) {
 		},
 	}
 
-	refreshSGIDs(plan, 0, "horde", "sg-new")
+	refreshSGIDs(plan, 0, "horde", "", "sg-new")
 
 	var ds map[string]any
 	if err := json.Unmarshal(plan.Actions[1].Resource.DesiredState, &ds); err != nil {
@@ -1250,7 +1273,7 @@ func TestRefreshSGIDs_SkipsDifferentModule(t *testing.T) {
 		},
 	}
 
-	refreshSGIDs(plan, 0, "horde", "sg-new")
+	refreshSGIDs(plan, 0, "horde", "", "sg-new")
 
 	var ds map[string]any
 	if err := json.Unmarshal(plan.Actions[1].Resource.DesiredState, &ds); err != nil {
@@ -1273,7 +1296,7 @@ func TestRefreshSGIDs_SkipsNonInstance(t *testing.T) {
 	}
 
 	// Should not panic when next action is not an instance.
-	refreshSGIDs(plan, 0, "horde", "sg-new")
+	refreshSGIDs(plan, 0, "horde", "", "sg-new")
 }
 
 // --- canRecreate tests ---
