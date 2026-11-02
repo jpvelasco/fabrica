@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
+	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -316,6 +318,88 @@ func TestRunCancellationAndErrors(t *testing.T) {
 				}
 				testutil.AssertContains(t, out.String(), "Warning: could not update local state: disk full")
 			})
+		})
+	}
+}
+
+func TestRunHeldLockFailsBeforeStateRead(t *testing.T) {
+	for _, contract := range actionContracts {
+		t.Run(contract.name, func(t *testing.T) {
+			lp := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}
+			readCalls := 0
+			c, _ := newTestCommand(contract.spec(), workstationState(contract.initialStatus), func(opts *commandOptions) {
+				opts.runtime = globals.Runtime{Config: config.Defaults(), Provider: lp}
+				opts.readState = func() (*fabricastate.State, error) {
+					readCalls++
+					return workstationState(contract.initialStatus), nil
+				}
+			})
+			err := c.run(context.Background())
+			if !errors.Is(err, provision.ErrStateLocked) {
+				t.Fatalf("err = %v, want ErrStateLocked", err)
+			}
+			if lp.Acquires != 1 {
+				t.Errorf("acquires = %d, want 1", lp.Acquires)
+			}
+			if readCalls != 0 {
+				t.Errorf("state reads = %d, want 0 (read must wait for the lock)", readCalls)
+			}
+		})
+	}
+}
+
+// TestRunLockAcquiredBeforeStateRead is the stale-snapshot guard for
+// start/stop: the state read happens after the lock is held, so the
+// action cannot apply against a snapshot another run already mutated.
+func TestRunLockAcquiredBeforeStateRead(t *testing.T) {
+	for _, contract := range actionContracts {
+		t.Run(contract.name, func(t *testing.T) {
+			lp := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}}
+			acquiresAtRead := -1
+			c, _ := newTestCommand(contract.spec(), workstationState(contract.initialStatus), func(opts *commandOptions) {
+				opts.runtime = globals.Runtime{Config: config.Defaults(), Provider: lp}
+				opts.assumeYes = true
+				opts.readState = func() (*fabricastate.State, error) {
+					acquiresAtRead = lp.Acquires
+					return workstationState(contract.initialStatus), nil
+				}
+				opts.executeAction = func(context.Context, string) error { return nil }
+			})
+			if err := c.run(context.Background()); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if lp.Acquires != 1 {
+				t.Fatalf("acquires = %d, want 1", lp.Acquires)
+			}
+			if acquiresAtRead < 1 {
+				t.Errorf("acquires at state read = %d, want >= 1", acquiresAtRead)
+			}
+		})
+	}
+}
+
+func TestRunDryRunSkipsLock(t *testing.T) {
+	for _, contract := range actionContracts {
+		t.Run(contract.name, func(t *testing.T) {
+			lp := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}}
+			executeCalls := 0
+			c, _ := newTestCommand(contract.spec(), workstationState(contract.initialStatus), func(opts *commandOptions) {
+				opts.runtime = globals.Runtime{Config: config.Defaults(), Provider: lp}
+				opts.dryRun = true
+				opts.executeAction = func(context.Context, string) error {
+					executeCalls++
+					return nil
+				}
+			})
+			if err := c.run(context.Background()); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if lp.Acquires != 0 {
+				t.Errorf("dry-run acquires = %d, want 0", lp.Acquires)
+			}
+			if executeCalls != 0 {
+				t.Errorf("execute calls = %d, want 0", executeCalls)
+			}
 		})
 	}
 }

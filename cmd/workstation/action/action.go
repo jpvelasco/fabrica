@@ -47,6 +47,7 @@ type spec struct {
 }
 
 type command struct {
+	runtime   globals.Runtime
 	spec      spec
 	dryRun    bool
 	assumeYes bool
@@ -60,6 +61,7 @@ type command struct {
 }
 
 type commandOptions struct {
+	runtime       globals.Runtime
 	dryRun        bool
 	assumeYes     bool
 	jsonOut       bool
@@ -72,6 +74,7 @@ type commandOptions struct {
 
 func newCommand(commandSpec spec, opts commandOptions) *command {
 	return &command{
+		runtime:       opts.runtime,
 		spec:          commandSpec,
 		dryRun:        opts.dryRun,
 		assumeYes:     opts.assumeYes,
@@ -107,6 +110,7 @@ func newCobraCommand(commandSpec spec, runtimeSource globals.RuntimeSource, opti
 
 			opts := optionsSource()
 			actionCommand := newCommand(commandSpec, commandOptions{
+				runtime:   rt,
 				dryRun:    opts.DryRun,
 				assumeYes: opts.AssumeYes,
 				jsonOut:   opts.JSONOutput,
@@ -124,6 +128,14 @@ func newCobraCommand(commandSpec spec, runtimeSource globals.RuntimeSource, opti
 }
 
 func (c *command) run(ctx context.Context) error {
+	// start/stop rewrites the module status, so take the shared account lock
+	// before the state read; dry runs stay read-only and never contend.
+	ctx, release, err := provision.AcquireStateLockUnlessDryRun(ctx, c.runtime, c.spec.verb+" "+moduleName, c.dryRun)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	st, instanceID, err := c.validatePreAction()
 	if err != nil {
 		return err

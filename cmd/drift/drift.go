@@ -103,6 +103,18 @@ and CodeBuild projects.`,
 }
 
 func (c *command) run(ctx context.Context, dryRun bool) error {
+	// --fix rewrites state, so it takes the shared account lock before the
+	// state read; read-only and dry-run scans never contend.
+	release := func() {}
+	if c.fixMode {
+		var err error
+		ctx, release, err = provision.AcquireStateLockUnlessDryRun(ctx, c.runtime, "drift --fix", dryRun)
+		if err != nil {
+			return err
+		}
+	}
+	defer release()
+
 	st, err := c.readState()
 	if err != nil {
 		return fmt.Errorf("reading state: %w", err)

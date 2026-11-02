@@ -97,6 +97,15 @@ func (c command) run(ctx context.Context) error {
 	if err := perforce.ValidateBackupID(c.backupID); err != nil {
 		return err
 	}
+	// A restore replaces server data from a backup, so take the shared
+	// account lock before the state read; the lock is held across the
+	// interactive confirm and the SSM script. Dry runs never contend.
+	ctx, release, err := provision.AcquireStateLockUnlessDryRun(ctx, c.runtime, "perforce restore", c.dryRun)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	target, err := perforceprovisioning.Resolve(c.readState)
 	if err != nil {
 		return err
