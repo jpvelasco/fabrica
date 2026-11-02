@@ -299,7 +299,7 @@ func TestAcquireStateLockTransientRenewLossCancelsAtLeaseLapse(t *testing.T) {
 // heartbeat (succeeding renewals) keeps the command context alive and the
 // renew calls flow through the lock manager.
 func TestAcquireStateLockHealthyHeartbeatKeepsContext(t *testing.T) {
-	withShortStateLockTTL(t, 20*time.Millisecond)
+	withShortStateLockTTL(t, 200*time.Millisecond)
 	locker := &fakeLockManager{}
 	rt := testRuntimeWithLocker(locker)
 
@@ -309,7 +309,19 @@ func TestAcquireStateLockHealthyHeartbeatKeepsContext(t *testing.T) {
 	}
 	defer release()
 
-	time.Sleep(80 * time.Millisecond)
+	// Renewal evidence on a bounded deadline: a healthy heartbeat renews
+	// every ~67 ms, so CI scheduling jitter cannot look like a dead
+	// heartbeat. Each successful renewal extends the 180 ms lease margin,
+	// so the context must stay alive.
+	deadline := time.Now().Add(3 * time.Second)
+	for locker.renews.Load() < 2 {
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// Settle inside the lease the last observed renewal just extended.
+	time.Sleep(50 * time.Millisecond)
 	if ctx.Err() != nil {
 		t.Fatalf("command context cancelled by healthy heartbeat: %v", ctx.Err())
 	}
