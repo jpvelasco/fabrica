@@ -22,6 +22,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/credentials"
 	"github.com/spf13/cobra"
 )
 
@@ -113,6 +114,17 @@ func writeStateFileAt(t fataler, dir, content string) {
 func WriteStateFile(t *testing.T, dir, content string) {
 	t.Helper()
 	writeStateFileAt(t, dir, content)
+}
+
+// WriteHordeCredentials writes a horde credentials file at
+// <dir>/.fabrica/horde-credentials.yaml so --fix tests can exercise the
+// real credential-read seam.
+func WriteHordeCredentials(t *testing.T, dir, password string) {
+	t.Helper()
+	path := filepath.Join(dir, ".fabrica", "horde-credentials.yaml")
+	if err := credentials.WriteCredentials(path, credentials.FormatHorde(password)); err != nil {
+		t.Fatalf("writing horde credentials: %v", err)
+	}
 }
 
 // AssertContains checks that s contains substr and fails the test if not.
