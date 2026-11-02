@@ -9,6 +9,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/ddc"
 	"github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -555,29 +556,89 @@ func TestApplyRemediation_NothingToFix(t *testing.T) {
 
 // --- rebuildSGDesiredState per-module tests ---
 
+// rebuildSGDoc rebuilds an SG desired state and unmarshals it, failing the
+// test on a rebuild error or malformed JSON.
+func rebuildSGDoc(t *testing.T, rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) map[string]any {
+	t.Helper()
+	ds, err := rebuildSGDesiredState(rec, mod, cfg)
+	if err != nil {
+		t.Fatalf("rebuildSGDesiredState: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	return m
+}
+
+func sgIngressRules(t *testing.T, m map[string]any) []map[string]any {
+	t.Helper()
+	raw, ok := m["SecurityGroupIngress"].([]any)
+	if !ok {
+		t.Fatalf("SecurityGroupIngress missing or not an array: %v", m["SecurityGroupIngress"])
+	}
+	out := make([]map[string]any, len(raw))
+	for i, r := range raw {
+		out[i] = r.(map[string]any)
+	}
+	return out
+}
+
 func TestRebuildSGDesiredState_Horde(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Horde.VPCId = "vpc-123"
 	cfg.Horde.AllowedCIDR = "10.0.0.0/16"
 
-	mod := &state.ModuleState{Name: "horde"}
-	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}
-
-	ds := rebuildSGDesiredState(rec, mod, cfg)
-	var m map[string]any
-	if err := json.Unmarshal(ds, &m); err != nil {
-		t.Fatalf("invalid json: %v", err)
+	m := rebuildSGDoc(t, &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}, &state.ModuleState{Name: "horde"}, cfg)
+	if m["GroupName"] != "fabrica-horde-sg" {
+		t.Errorf("expected canonical group name, got %v", m["GroupName"])
 	}
 	if m["VpcId"] != "vpc-123" {
 		t.Errorf("expected VpcId vpc-123, got %v", m["VpcId"])
 	}
-	ingress, ok := m["SecurityGroupIngress"].([]any)
-	if !ok || len(ingress) != 2 {
-		t.Fatalf("expected 2 ingress rules, got %d", len(ingress))
+	rules := sgIngressRules(t, m)
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 ingress rules, got %d", len(rules))
 	}
-	rule0 := ingress[0].(map[string]any)
-	if rule0["FromPort"].(float64) != 5000 {
-		t.Errorf("expected port 5000, got %v", rule0["FromPort"])
+	if rules[0]["FromPort"].(float64) != 5000 || rules[1]["FromPort"].(float64) != 5002 {
+		t.Errorf("expected default ports 5000/5002, got %v/%v", rules[0]["FromPort"], rules[1]["FromPort"])
+	}
+	if rules[0]["CidrIp"] != "10.0.0.0/16" || rules[1]["CidrIp"] != "10.0.0.0/16" {
+		t.Errorf("config CIDR not applied to both rules: %v", rules)
+	}
+}
+
+func TestRebuildSGDesiredState_HordeNonDefaultPorts(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Horde.VPCId = "vpc-123"
+	cfg.Horde.Port = 5100
+	cfg.Horde.GRPCPort = 5102
+
+	m := rebuildSGDoc(t, &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}, &state.ModuleState{Name: "horde"}, cfg)
+	rules := sgIngressRules(t, m)
+	if rules[0]["FromPort"].(float64) != 5100 || rules[1]["FromPort"].(float64) != 5102 {
+		t.Errorf("expected configured ports 5100/5102, got %v/%v", rules[0]["FromPort"], rules[1]["FromPort"])
+	}
+}
+
+func TestRebuildSGDesiredState_HordeAgentSG(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Horde.VPCId = "vpc-coord"
+	cfg.Horde.Agents.VPCID = "vpc-agents"
+
+	rec := &state.ModuleResource{
+		TypeName:   cloud.TypeAWSEC2SecurityGroup,
+		Properties: map[string]string{"role": "agent"},
+	}
+	m := rebuildSGDoc(t, rec, &state.ModuleState{Name: "horde"}, cfg)
+	if m["GroupName"] != "fabrica-horde-agents-sg" {
+		t.Errorf("expected agent group name, got %v", m["GroupName"])
+	}
+	if m["VpcId"] != "vpc-agents" {
+		t.Errorf("expected agents VPC placement, got %v", m["VpcId"])
+	}
+	if _, has := m["SecurityGroupIngress"]; has {
+		t.Errorf("agent SG must have no inbound rules, got %v", m["SecurityGroupIngress"])
 	}
 }
 
@@ -586,17 +647,23 @@ func TestRebuildSGDesiredState_Lore(t *testing.T) {
 	cfg.Lore.VPCId = "vpc-lore"
 	cfg.Lore.AllowedCIDR = "10.0.0.0/16"
 
-	mod := &state.ModuleState{Name: "lore"}
-	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}
-
-	ds := rebuildSGDesiredState(rec, mod, cfg)
-	var m map[string]any
-	if err := json.Unmarshal(ds, &m); err != nil {
-		t.Fatalf("invalid json: %v", err)
+	m := rebuildSGDoc(t, &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}, &state.ModuleState{Name: "lore"}, cfg)
+	rules := sgIngressRules(t, m)
+	if len(rules) != 3 {
+		t.Fatalf("expected 3 ingress rules (gRPC tcp, QUIC udp, health tcp), got %d", len(rules))
 	}
-	ingress, ok := m["SecurityGroupIngress"].([]any)
-	if !ok || len(ingress) != 3 {
-		t.Fatalf("expected 3 ingress rules (gRPC tcp, QUIC udp, health tcp), got %d", len(ingress))
+	want := []struct {
+		proto string
+		port  float64
+	}{
+		{"tcp", 41337},
+		{"udp", 41337},
+		{"tcp", 41339},
+	}
+	for i, w := range want {
+		if rules[i]["IpProtocol"] != w.proto || rules[i]["FromPort"].(float64) != w.port {
+			t.Errorf("rule %d = %v, want %s/%v", i, rules[i], w.proto, w.port)
+		}
 	}
 }
 
@@ -605,17 +672,76 @@ func TestRebuildSGDesiredState_DDC(t *testing.T) {
 	cfg.DDC.VPCId = "vpc-ddc"
 	cfg.DDC.AllowedCIDR = "10.0.0.0/16"
 
-	mod := &state.ModuleState{Name: "ddc"}
-	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}
-
-	ds := rebuildSGDesiredState(rec, mod, cfg)
-	var m map[string]any
-	if err := json.Unmarshal(ds, &m); err != nil {
-		t.Fatalf("invalid json: %v", err)
+	m := rebuildSGDoc(t, &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}, &state.ModuleState{Name: "ddc"}, cfg)
+	if m["GroupName"] != "fabrica-ddc-sg" {
+		t.Errorf("expected home group name, got %v", m["GroupName"])
 	}
-	ingress, ok := m["SecurityGroupIngress"].([]any)
-	if !ok || len(ingress) != 2 {
-		t.Fatalf("expected 2 ingress rules (80, 8080), got %d", len(ingress))
+	rules := sgIngressRules(t, m)
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 ingress rules (80, 8080), got %d", len(rules))
+	}
+}
+
+func TestRebuildSGDesiredState_DDCConfiguredPortsAndCIDRs(t *testing.T) {
+	// Issue #531 repro: non-default DDC ports and distinct public/internal
+	// CIDRs must flow into the rebuilt group.
+	cfg := config.Defaults()
+	cfg.DDC.VPCId = "vpc-ddc"
+	cfg.DDC.PublicPort = 8088
+	cfg.DDC.InternalPort = 9099
+	cfg.DDC.AllowedCIDR = "1.2.3.4/32"
+	cfg.DDC.InternalCIDR = "10.99.0.0/16"
+
+	m := rebuildSGDoc(t, &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}, &state.ModuleState{Name: "ddc"}, cfg)
+	rules := sgIngressRules(t, m)
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 ingress rules, got %d", len(rules))
+	}
+	if rules[0]["FromPort"].(float64) != 8088 || rules[0]["CidrIp"] != "1.2.3.4/32" {
+		t.Errorf("public rule = %v, want 8088 on public CIDR", rules[0])
+	}
+	if rules[1]["FromPort"].(float64) != 9099 || rules[1]["CidrIp"] != "10.99.0.0/16" {
+		t.Errorf("internal rule = %v, want 9099 on internal CIDR", rules[1])
+	}
+}
+
+func TestRebuildSGDesiredState_DDCScylla(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.DDC.Backend = "scylla"
+	cfg.DDC.InternalCIDR = "10.99.0.0/16"
+
+	m := rebuildSGDoc(t, &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}, &state.ModuleState{Name: "ddc"}, cfg)
+	rules := sgIngressRules(t, m)
+	if len(rules) != 3 {
+		t.Fatalf("expected 3 ingress rules with scylla backend, got %d", len(rules))
+	}
+	if rules[2]["FromPort"].(float64) != 9042 || rules[2]["CidrIp"] != "10.99.0.0/16" {
+		t.Errorf("scylla rule = %v, want 9042 on internal CIDR", rules[2])
+	}
+}
+
+func TestRebuildSGDesiredState_DDCEdge(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.DDC.VPCId = "vpc-edge"
+	cfg.DDC.PublicPort = 8088
+	cfg.DDC.InternalPort = 9099
+
+	rec := &state.ModuleResource{
+		TypeName:   cloud.TypeAWSEC2SecurityGroup,
+		Properties: map[string]string{"region": "eu-west-1", "role": ddc.RoleEdge},
+	}
+	m := rebuildSGDoc(t, rec, &state.ModuleState{Name: "ddc"}, cfg)
+	if m["GroupName"] != "fabrica-ddc-sg-eu-west-1" {
+		t.Errorf("expected edge group name, got %v", m["GroupName"])
+	}
+	rules := sgIngressRules(t, m)
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 ingress rules, got %d", len(rules))
+	}
+	for _, r := range rules {
+		if r["FromPort"].(float64) == 9042 {
+			t.Errorf("edge SG must not open Scylla CQL: %v", r)
+		}
 	}
 }
 
@@ -624,53 +750,54 @@ func TestRebuildSGDesiredState_Workstation(t *testing.T) {
 	cfg.Workstation.VPCId = "vpc-ws"
 	cfg.Workstation.AllowedCIDR = "10.0.0.0/16"
 
-	mod := &state.ModuleState{Name: "workstation"}
-	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}
-
-	ds := rebuildSGDesiredState(rec, mod, cfg)
-	var m map[string]any
-	if err := json.Unmarshal(ds, &m); err != nil {
-		t.Fatalf("invalid json: %v", err)
+	m := rebuildSGDoc(t, &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}, &state.ModuleState{Name: "workstation"}, cfg)
+	if m["GroupName"] != "fabrica-workstation-sg" {
+		t.Errorf("expected canonical group name, got %v", m["GroupName"])
 	}
-	ingress, ok := m["SecurityGroupIngress"].([]any)
-	if !ok || len(ingress) != 1 {
-		t.Fatalf("expected 1 ingress rule (8443), got %d", len(ingress))
-	}
-	rule0 := ingress[0].(map[string]any)
-	if rule0["FromPort"].(float64) != 8443 {
-		t.Errorf("expected port 8443, got %v", rule0["FromPort"])
+	rules := sgIngressRules(t, m)
+	if len(rules) != 1 || rules[0]["FromPort"].(float64) != 8443 {
+		t.Fatalf("expected 1 ingress rule (8443), got %v", m["SecurityGroupIngress"])
 	}
 }
 
-func TestRebuildSGDesiredState_NoCIDR(t *testing.T) {
+func TestRebuildSGDesiredState_CISG(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.CI.VPCId = "vpc-ci"
+
+	m := rebuildSGDoc(t, &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}, &state.ModuleState{Name: "ci"}, cfg)
+	if m["GroupName"] != "fabrica-ci-sg" {
+		t.Errorf("expected CI group name, got %v", m["GroupName"])
+	}
+	if m["VpcId"] != "vpc-ci" {
+		t.Errorf("expected VpcId vpc-ci, got %v", m["VpcId"])
+	}
+	rules := sgIngressRules(t, m)
+	if len(rules) != 0 {
+		t.Errorf("CI SG has no inbound rules, got %v", rules)
+	}
+}
+
+// TestRebuildSGDesiredState_DefaultCIDRFallback covers the behavior change
+// from the old rebuild: an empty config CIDR falls back to the module
+// default (what create would have used) instead of omitting ingress.
+func TestRebuildSGDesiredState_DefaultCIDRFallback(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Perforce.VPCId = "vpc-123"
 	// AllowedCIDR left empty
 
-	mod := &state.ModuleState{Name: "perforce"}
-	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}
-
-	ds := rebuildSGDesiredState(rec, mod, cfg)
-	var m map[string]any
-	if err := json.Unmarshal(ds, &m); err != nil {
-		t.Fatalf("invalid json: %v", err)
+	m := rebuildSGDoc(t, &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}, &state.ModuleState{Name: "perforce"}, cfg)
+	rules := sgIngressRules(t, m)
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 ingress rule, got %v", m["SecurityGroupIngress"])
 	}
-	// No ingress when CIDR is empty.
-	if _, has := m["SecurityGroupIngress"]; has {
-		t.Error("expected no SecurityGroupIngress when CIDR is empty")
+	if rules[0]["CidrIp"] != "10.0.0.0/8" {
+		t.Errorf("expected module default CIDR fallback, got %v", rules[0]["CidrIp"])
 	}
 }
 
 func TestRebuildSGDesiredState_UnknownModule(t *testing.T) {
 	cfg := config.Defaults()
-	mod := &state.ModuleState{Name: "unknown"}
-	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}
-
-	ds := rebuildSGDesiredState(rec, mod, cfg)
-	var m map[string]any
-	if err := json.Unmarshal(ds, &m); err != nil {
-		t.Fatalf("invalid json: %v", err)
-	}
+	m := rebuildSGDoc(t, &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}, &state.ModuleState{Name: "unknown"}, cfg)
 	if m["GroupDescription"] != "Fabrica-managed security group" {
 		t.Error("expected default description")
 	}
@@ -682,11 +809,22 @@ func TestRebuildSGDesiredState_UnknownModule(t *testing.T) {
 	}
 }
 
+func TestRebuildSGDesiredState_UnknownModuleRecordedVPC(t *testing.T) {
+	cfg := config.Defaults()
+	rec := &state.ModuleResource{
+		TypeName:   cloud.TypeAWSEC2SecurityGroup,
+		Properties: map[string]string{"vpcId": "vpc-recorded"},
+	}
+	m := rebuildSGDoc(t, rec, &state.ModuleState{Name: "unknown"}, cfg)
+	if m["VpcId"] != "vpc-recorded" {
+		t.Errorf("expected recorded vpcId, got %v", m["VpcId"])
+	}
+}
+
 func TestRebuildSGDesiredState_PropertiesOverride(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Horde.VPCId = "vpc-config"
 
-	mod := &state.ModuleState{Name: "horde"}
 	rec := &state.ModuleResource{
 		TypeName: cloud.TypeAWSEC2SecurityGroup,
 		Properties: map[string]string{
@@ -694,13 +832,18 @@ func TestRebuildSGDesiredState_PropertiesOverride(t *testing.T) {
 		},
 	}
 
-	ds := rebuildSGDesiredState(rec, mod, cfg)
-	var m map[string]any
-	if err := json.Unmarshal(ds, &m); err != nil {
-		t.Fatalf("invalid json: %v", err)
-	}
+	m := rebuildSGDoc(t, rec, &state.ModuleState{Name: "horde"}, cfg)
 	if m["VpcId"] != "vpc-recorded" {
 		t.Errorf("expected recorded vpcId override, got %v", m["VpcId"])
+	}
+}
+
+func TestRebuildSGDesiredState_NoVPCKnown(t *testing.T) {
+	cfg := config.Defaults()
+	// No VPC in config or recorded properties.
+	m := rebuildSGDoc(t, &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}, &state.ModuleState{Name: "horde"}, cfg)
+	if _, has := m["VpcId"]; has {
+		t.Errorf("expected VpcId omitted when unresolved, got %v", m["VpcId"])
 	}
 }
 
@@ -855,7 +998,10 @@ func TestRebuildResource_ModuleNotFound(t *testing.T) {
 		Identifier: "i-123",
 	}
 
-	res := rebuildResource(dr, st, cfg)
+	res, err := rebuildResource(dr, st, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if res.TypeName != cloud.TypeAWSEC2Instance {
 		t.Errorf("expected typeName, got %s", res.TypeName)
 	}
@@ -880,7 +1026,10 @@ func TestRebuildResource_ResourceNotFoundInModule(t *testing.T) {
 		Identifier: "i-missing",
 	}
 
-	res := rebuildResource(dr, st, cfg)
+	res, err := rebuildResource(dr, st, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if res.DesiredState != nil {
 		t.Error("expected nil desired state when resource not found in module")
 	}
@@ -902,7 +1051,10 @@ func TestRebuildResource_InstanceWithDesiredState(t *testing.T) {
 		Identifier: "i-123",
 	}
 
-	res := rebuildResource(dr, st, cfg)
+	res, err := rebuildResource(dr, st, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if res.DesiredState == nil {
 		t.Fatal("expected non-nil desired state for instance")
 	}
@@ -929,7 +1081,10 @@ func TestRebuildResource_SGWithDesiredState(t *testing.T) {
 		Identifier: "sg-123",
 	}
 
-	res := rebuildResource(dr, st, cfg)
+	res, err := rebuildResource(dr, st, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if res.DesiredState == nil {
 		t.Fatal("expected non-nil desired state for SG")
 	}
@@ -937,8 +1092,17 @@ func TestRebuildResource_SGWithDesiredState(t *testing.T) {
 	if err := json.Unmarshal(res.DesiredState, &m); err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
-	if m["GroupDescription"] != "Fabrica-managed security group" {
-		t.Errorf("unexpected description: %v", m["GroupDescription"])
+	// Canonical perforce builder: group name + the p4d rule on the config CIDR.
+	if m["GroupName"] != "fabrica-perforce-sg" {
+		t.Errorf("unexpected group name: %v", m["GroupName"])
+	}
+	ingress, ok := m["SecurityGroupIngress"].([]any)
+	if !ok || len(ingress) != 1 {
+		t.Fatalf("expected 1 ingress rule, got %v", m["SecurityGroupIngress"])
+	}
+	rule := ingress[0].(map[string]any)
+	if rule["FromPort"].(float64) != 1666 || rule["CidrIp"] != "10.0.0.0/16" {
+		t.Errorf("unexpected rule: %v", rule)
 	}
 }
 

@@ -39,7 +39,7 @@ func ResolveRF(cfg config.DDCScyllaConfig, nodes int) int {
 
 // ValidateProductionTopology rejects impossible Scylla/replication shapes.
 func ValidateProductionTopology(cfg config.DDCConfig) error {
-	if normalizeBackend(cfg.Backend) != BackendScylla && cfg.Scylla.Nodes == 0 && !cfg.Replication.Enabled {
+	if NormalizeBackend(cfg.Backend) != BackendScylla && cfg.Scylla.Nodes == 0 && !cfg.Replication.Enabled {
 		return nil
 	}
 	nodes := ResolveScyllaNodes(cfg.Scylla)
@@ -65,7 +65,7 @@ func BuildTopologyPlan(cfg config.DDCConfig) (TopologyPlan, error) {
 	if err := ValidateProductionTopology(cfg); err != nil {
 		return TopologyPlan{}, err
 	}
-	backend := normalizeBackend(cfg.Backend)
+	backend := NormalizeBackend(cfg.Backend)
 	nodes := ResolveScyllaNodes(cfg.Scylla)
 	rf := ResolveRF(cfg.Scylla, nodes)
 	prod := backend == BackendScylla && nodes >= 3

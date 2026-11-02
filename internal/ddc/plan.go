@@ -35,6 +35,9 @@ const (
 	DefaultInternalPort       = 8080
 	DefaultNamespace          = "deriveddatacache"
 	DefaultStorePath          = "/opt/unreal-cloud-ddc/store"
+
+	// DefaultSGName is the home-region security group name.
+	DefaultSGName = "fabrica-ddc-sg"
 )
 
 // Resource role property values (state Properties.role).
@@ -89,7 +92,7 @@ func NewSetupPlan(ctx context.Context, cfg config.DDCConfig, account, region str
 		return nil, err
 	}
 
-	backend := normalizeBackend(cfg.Backend)
+	backend := NormalizeBackend(cfg.Backend)
 	def := resolveDefaults(cfg, account, region)
 	vpcID, subnetID, defaultVPC, err := topology.ResolveVPC(ctx, cfg.VPCId, cfg.SubnetId, resolver)
 	if err != nil {
@@ -124,7 +127,7 @@ func NewSetupPlan(ctx context.Context, cfg config.DDCConfig, account, region str
 		DefaultVPC:          defaultVPC,
 		Bucket:              def.bucket,
 		Namespace:           def.namespace,
-		SGName:              "fabrica-ddc-sg",
+		SGName:              DefaultSGName,
 		InstanceName:        "fabrica-ddc",
 		ScyllaInstanceName:  "fabrica-ddc-scylla",
 		RoleName:            "fabrica-ddc-role",
@@ -151,7 +154,7 @@ func validateConfig(cfg config.DDCConfig) error {
 		return fmt.Errorf("ddc.amiId is required. Provide an AMI ID that contains Unreal Cloud DDC (Jupiter).\nSee: docs/ddc-ami.md")
 	}
 
-	backend := normalizeBackend(cfg.Backend)
+	backend := NormalizeBackend(cfg.Backend)
 	if backend != BackendZen && backend != BackendScylla {
 		return fmt.Errorf("ddc.backend must be %q or %q, got %q", BackendZen, BackendScylla, cfg.Backend)
 	}
@@ -179,7 +182,9 @@ func validateOIDC(oidc config.DDCOIDCConfig) error {
 	return nil
 }
 
-func normalizeBackend(raw string) string {
+// NormalizeBackend lowercases and trims the configured backend, mapping an
+// empty value to the zen default.
+func NormalizeBackend(raw string) string {
 	b := strings.ToLower(strings.TrimSpace(raw))
 	if b == "" {
 		return BackendZen

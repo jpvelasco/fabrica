@@ -13,9 +13,19 @@ import (
 // DefaultInstanceType is the EC2 shape used when config omits instanceType.
 const DefaultInstanceType = "m7i.2xlarge"
 
+// DefaultPort and DefaultGRPCPort are the coordinator ports used when the
+// config omits them (HTTP/web UI and gRPC for agent connections).
+const (
+	DefaultPort     = 5000
+	DefaultGRPCPort = 5002
+)
+
 // DefaultAllowedCIDR is the security-group fallback when no explicit CIDR is
 // configured and the VPC CIDR cannot be resolved.
 const DefaultAllowedCIDR = "10.0.0.0/8"
+
+// DefaultSGName is the coordinator security group name.
+const DefaultSGName = "fabrica-horde-sg"
 
 type CreatePlan struct {
 	Account      string
@@ -59,11 +69,11 @@ func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region 
 	}
 	port := cfg.Port
 	if port <= 0 {
-		port = 5000
+		port = DefaultPort
 	}
 	grpcPort := cfg.GRPCPort
 	if grpcPort <= 0 {
-		grpcPort = 5002
+		grpcPort = DefaultGRPCPort
 	}
 
 	vpcID, subnetID, defaultVPC, err := topology.ResolveVPC(ctx, cfg.VPCId, cfg.SubnetId, resolver)
@@ -84,7 +94,7 @@ func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region 
 		VPCID:               vpcID,
 		SubnetID:            subnetID,
 		DefaultVPC:          defaultVPC,
-		SGName:              "fabrica-horde-sg",
+		SGName:              DefaultSGName,
 		InstanceName:        "fabrica-horde",
 		RoleName:            "fabrica-horde-role",
 		InstanceProfileName: "fabrica-horde-profile",

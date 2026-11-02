@@ -26,6 +26,9 @@ const (
 	// Programmer template defaults (c7i.xlarge — Intel Sapphire Rapids).
 	ProgrammerInstanceType = "c7i.xlarge"
 	ProgrammerVolumeSize   = 100
+
+	// DefaultSGName is the workstation security group name.
+	DefaultSGName = "fabrica-workstation-sg"
 )
 
 // CreatePlan holds everything needed to provision a workstation. No AWS SDK
@@ -157,7 +160,7 @@ func NewCreatePlan(ctx context.Context, cfg config.WorkstationConfig, account, r
 		DefaultVPC:          defaultVPC,
 		MountPerforce:       perforceAddr != "",
 		PerforceServerAddr:  perforceAddr,
-		SGName:              "fabrica-workstation-sg",
+		SGName:              DefaultSGName,
 		InstanceName:        "fabrica-workstation",
 		RoleName:            "fabrica-workstation-role",
 		InstanceProfileName: "fabrica-workstation-profile",

@@ -26,8 +26,11 @@ const (
 	defaultComputeType  = "BUILD_GENERAL1_SMALL"
 	defaultImage        = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
 	defaultBuildTimeout = 60
-	defaultSGName       = "fabrica-ci-sg"
 )
+
+// DefaultSGName is the CI project security group name (no inbound rules;
+// CodeBuild egresses to the coordinator only).
+const DefaultSGName = "fabrica-ci-sg"
 
 // CreatePlan is the resolved CI provisioning plan for one account/region.
 type CreatePlan struct {
@@ -93,7 +96,7 @@ func NewCreatePlan(ctx context.Context, cfg config.CIConfig, account, region, ho
 		HordeURL:      hordeURL,
 		VPCID:         vpcID,
 		SubnetID:      subnetID,
-		SGName:        defaultSGName,
+		SGName:        DefaultSGName,
 		CostResources: CostResources(cfg),
 	}, nil
 }
