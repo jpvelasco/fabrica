@@ -17,7 +17,7 @@ func TestRestoreReadStateError(t *testing.T) {
 	c := command{
 		runtime:   globals.Runtime{Config: config.Defaults()},
 		force:     true,
-		backupID:  "id1",
+		backupID:  "20260715-143022",
 		out:       &bytes.Buffer{},
 		readState: func() (*fabricastate.State, error) { return nil, errors.New("io") },
 	}
@@ -32,7 +32,7 @@ func TestRestoreNoInstance(t *testing.T) {
 	c := command{
 		runtime:   globals.Runtime{Config: config.Defaults()},
 		force:     true,
-		backupID:  "id1",
+		backupID:  "20260715-143022",
 		out:       &bytes.Buffer{},
 		readState: func() (*fabricastate.State, error) { return st, nil },
 	}
@@ -48,7 +48,7 @@ func TestRestoreParseMetaError(t *testing.T) {
 		runtime:   globals.Runtime{Config: config.Defaults()},
 		assumeYes: true,
 		force:     true,
-		backupID:  "id1",
+		backupID:  "20260715-143022",
 		out:       &bytes.Buffer{},
 		readState: func() (*fabricastate.State, error) { return st, nil },
 		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
@@ -63,14 +63,14 @@ func TestRestoreParseMetaError(t *testing.T) {
 func TestRestoreWriteStateWarning(t *testing.T) {
 	st := readyState()
 	st.Modules[0].Status = "stopped"
-	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
+	meta := `{"id":"20260715-143022","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
 	var out bytes.Buffer
 	calls := 0
 	c := command{
 		runtime:    globals.Runtime{Config: config.Defaults()},
 		assumeYes:  true,
 		force:      true,
-		backupID:   "id1",
+		backupID:   "20260715-143022",
 		out:        &out,
 		readState:  func() (*fabricastate.State, error) { return st, nil },
 		writeState: func(*fabricastate.State) error { return errors.New("disk") },
@@ -97,12 +97,12 @@ func TestRestoreConfirmAcceptWithAccountFromState(t *testing.T) {
 	st.Account = "999"
 	cfg := config.Defaults()
 	cfg.Cloud.AWS.AccountID = ""
-	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
+	meta := `{"id":"20260715-143022","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
 	calls := 0
 	c := command{
 		runtime:    globals.Runtime{Config: cfg},
 		force:      true,
-		backupID:   "id1",
+		backupID:   "20260715-143022",
 		out:        &bytes.Buffer{},
 		confirm:    func(_, phrase string) bool { return phrase == "restore perforce 999" },
 		readState:  func() (*fabricastate.State, error) { return st, nil },
@@ -124,12 +124,12 @@ func TestRestoreConfirmAcceptWithAccountFromState(t *testing.T) {
 func TestRestoreEmptyAdminPasswordScriptError(t *testing.T) {
 	st := readyState()
 	st.Modules[0].Status = "stopped"
-	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
+	meta := `{"id":"20260715-143022","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
 	c := command{
 		runtime:   globals.Runtime{Config: config.Defaults()},
 		assumeYes: true,
 		force:     true,
-		backupID:  "id1",
+		backupID:  "20260715-143022",
 		out:       &bytes.Buffer{},
 		readState: func() (*fabricastate.State, error) { return st, nil },
 		readCreds: func() (string, error) { return "", nil },
@@ -165,14 +165,14 @@ func TestRestoreEmptyBackupIDMetaScript(t *testing.T) {
 func TestRestoreGetResourceErrorSkipsProbe(t *testing.T) {
 	st := readyState()
 	st.Modules[0].Status = "stopped"
-	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
+	meta := `{"id":"20260715-143022","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
 	var out bytes.Buffer
 	calls := 0
 	c := command{
 		runtime:    globals.Runtime{Config: config.Defaults()},
 		assumeYes:  true,
 		force:      true,
-		backupID:   "id1",
+		backupID:   "20260715-143022",
 		out:        &out,
 		readState:  func() (*fabricastate.State, error) { return st, nil },
 		writeState: func(*fabricastate.State) error { return nil },

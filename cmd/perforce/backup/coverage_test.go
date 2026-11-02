@@ -43,7 +43,7 @@ func TestDeleteReadStateError(t *testing.T) {
 	c := deleteCommand{
 		runtime:   globals.Runtime{Config: config.Defaults()},
 		assumeYes: true,
-		backupID:  "x",
+		backupID:  "20260715-143022",
 		out:       &bytes.Buffer{},
 		readState: func() (*fabricastate.State, error) { return nil, errors.New("io") },
 	}
@@ -58,7 +58,7 @@ func TestDeleteNoInstance(t *testing.T) {
 	c := deleteCommand{
 		runtime:   globals.Runtime{Config: config.Defaults()},
 		assumeYes: true,
-		backupID:  "x",
+		backupID:  "20260715-143022",
 		out:       &bytes.Buffer{},
 		readState: func() (*fabricastate.State, error) { return st, nil },
 	}
@@ -88,13 +88,13 @@ func TestDeleteRemoteCommandFails(t *testing.T) {
 	c := deleteCommand{
 		runtime:   globals.Runtime{Config: config.Defaults()},
 		assumeYes: true,
-		backupID:  "id1",
+		backupID:  "20260715-143022",
 		out:       &bytes.Buffer{},
 		readState: readyStateFn,
 		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
 			calls++
 			if calls == 1 {
-				return cloud.RemoteResult{Stdout: `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/x"}`}, nil
+				return cloud.RemoteResult{Stdout: `{"id":"20260715-143022","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/x"}`}, nil
 			}
 			return cloud.RemoteResult{}, errors.New("ssm delete failed")
 		},
@@ -109,7 +109,7 @@ func TestDeleteWriteStateWarning(t *testing.T) {
 	c := deleteCommand{
 		runtime:    globals.Runtime{Config: config.Defaults()},
 		assumeYes:  true,
-		backupID:   "id1",
+		backupID:   "20260715-143022",
 		out:        &out,
 		readState:  readyStateFn,
 		writeState: func(*fabricastate.State) error { return errors.New("disk") },
@@ -177,7 +177,7 @@ func TestDeleteLockHeldAborts(t *testing.T) {
 	c := deleteCommand{
 		runtime:   globals.Runtime{Config: config.Defaults(), Provider: &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}},
 		assumeYes: true,
-		backupID:  "b1",
+		backupID:  "20260715-143022",
 		out:       &bytes.Buffer{},
 		readState: readyStateFn,
 		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {

@@ -136,7 +136,10 @@ func (c createCommand) run(ctx context.Context) error {
 	}
 
 	id := perforce.NewBackupID(c.now(), c.name)
-	dest := perforce.BackupDir(backupRoot, id)
+	dest, err := perforce.BackupDir(backupRoot, id)
+	if err != nil {
+		return err
+	}
 
 	if c.dryRun {
 		return c.printDryRun(id, dest, s3Export, cfg)

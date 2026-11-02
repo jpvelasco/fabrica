@@ -61,6 +61,9 @@ type deleteCommand struct {
 }
 
 func (c deleteCommand) run(ctx context.Context) error {
+	if err := perforce.ValidateBackupID(c.backupID); err != nil {
+		return err
+	}
 	ctx, releaseLock, err := provision.AcquireStateLockUnlessDryRun(ctx, c.runtime, "perforce backup delete", c.dryRun)
 	if err != nil {
 		return err

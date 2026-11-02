@@ -46,11 +46,11 @@ func TestBackupVerifyCobra(t *testing.T) {
 	src := func() (globals.Runtime, error) {
 		return globals.Runtime{Config: config.Defaults()}, nil
 	}
-	got, err := runBackup(t, src, "verify", "ckpt-9")
+	got, err := runBackup(t, src, "verify", "20260715-143022")
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	testutil.AssertContains(t, got, "ckpt-9")
+	testutil.AssertContains(t, got, "20260715-143022")
 }
 
 func writeReadyState(t *testing.T) {
@@ -137,7 +137,7 @@ func TestCobraBackupDeleteDryRun(t *testing.T) {
 	rt := func() (globals.Runtime, error) {
 		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
 	}
-	got, err := runBackup(t, rt, "delete", "id1", "--dry-run")
+	got, err := runBackup(t, rt, "delete", "20260715-143022", "--dry-run")
 	if err != nil {
 		t.Fatalf("delete dry-run: %v\n%s", err, got)
 	}
@@ -188,7 +188,7 @@ func TestCobraBackupDeleteYes(t *testing.T) {
 	rt := func() (globals.Runtime, error) {
 		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
 	}
-	got, err := runBackup(t, rt, "delete", "id1", "--yes")
+	got, err := runBackup(t, rt, "delete", "20260715-143022", "--yes")
 	if err != nil {
 		t.Fatalf("delete: %v\n%s", err, got)
 	}
