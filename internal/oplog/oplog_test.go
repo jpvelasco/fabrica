@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -250,4 +251,35 @@ func TestWithResourceAndRegion(t *testing.T) {
 	if !strings.Contains(output, "region=us-east-1") {
 		t.Errorf("expected region in output, got: %s", output)
 	}
+}
+
+// TestResetForTestConcurrentWithLogging verifies that re-initialising the
+// globals does not race with a goroutine still logging through the With*
+// helpers — the shape of the failure a leftover lock heartbeat produced
+// under -race on CI.
+func TestResetForTestConcurrentWithLogging(t *testing.T) {
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_ = Logger()
+				_ = WithModule("perforce")
+				_ = WithRegion("us-east-1")
+				WithResource("AWS::EC2::Instance", "i-12345").Info("logging during reset")
+			}
+		}()
+	}
+	for i := 0; i < 200; i++ {
+		ResetForTest()
+	}
+	close(stop)
+	wg.Wait()
 }

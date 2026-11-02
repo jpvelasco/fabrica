@@ -19,14 +19,33 @@ import (
 	"sync"
 )
 
+// loggerMu guards defaultLogger and initDone: ResetForTest may re-initialise
+// the globals while a background goroutine (e.g. a lock heartbeat) is still
+// logging through the With* helpers, so every access is synchronized.
 var (
+	loggerMu      sync.RWMutex
 	defaultLogger *slog.Logger
-	initOnce      sync.Once
+	initDone      bool
 )
 
 func init() {
 	defaultLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
+	}))
+}
+
+// applyInit installs a fresh logger writing to w, taking effect only on the
+// first call until ResetForTest. Callers hold loggerMu.
+func applyInit(level slog.Level, verbose bool, w io.Writer) {
+	if initDone {
+		return
+	}
+	initDone = true
+	if verbose {
+		level = slog.LevelDebug
+	}
+	defaultLogger = slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{
+		Level: level,
 	}))
 }
 
@@ -37,33 +56,25 @@ func init() {
 //
 // Init is safe to call multiple times; only the first call takes effect.
 func Init(level slog.Level, verbose bool) {
-	initOnce.Do(func() {
-		if verbose {
-			level = slog.LevelDebug
-		}
-		defaultLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-			Level: level,
-		}))
-	})
+	loggerMu.Lock()
+	defer loggerMu.Unlock()
+	applyInit(level, verbose, os.Stderr)
 }
 
 // InitWithWriter is like Init but writes to the given writer instead of stderr.
 // It is exported for testing only.
 func InitWithWriter(level slog.Level, verbose bool, w io.Writer) {
-	initOnce.Do(func() {
-		if verbose {
-			level = slog.LevelDebug
-		}
-		defaultLogger = slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{
-			Level: level,
-		}))
-	})
+	loggerMu.Lock()
+	defer loggerMu.Unlock()
+	applyInit(level, verbose, w)
 }
 
-// ResetForTest resets the initOnce guard so tests can re-initialise.
+// ResetForTest resets the initDone guard so tests can re-initialise.
 // Exported for testing only — never call in production code.
 func ResetForTest() {
-	initOnce = sync.Once{}
+	loggerMu.Lock()
+	defer loggerMu.Unlock()
+	initDone = false
 	defaultLogger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
@@ -86,12 +97,20 @@ func ParseLevel(s string) slog.Level {
 	}
 }
 
+// baseLogger returns the current global logger; the returned logger is
+// immutable, so it stays usable after the lock is released.
+func baseLogger() *slog.Logger {
+	loggerMu.RLock()
+	defer loggerMu.RUnlock()
+	return defaultLogger
+}
+
 // Logger returns the global operational logger.
 //
 // This is safe to call before [Init] — it returns a default info-level
 // logger to stderr.
 func Logger() *slog.Logger {
-	return defaultLogger
+	return baseLogger()
 }
 
 // WithModule returns a logger pre-bound with the module name attribute.
@@ -99,12 +118,12 @@ func Logger() *slog.Logger {
 // Use this at the top of a command or operation so all subsequent log lines
 // carry the module context without repeating it.
 func WithModule(module string) *slog.Logger {
-	return defaultLogger.With(slog.String("module", module))
+	return baseLogger().With(slog.String("module", module))
 }
 
 // WithResource returns a logger pre-bound with resource type and identifier.
 func WithResource(typeName, id string) *slog.Logger {
-	return defaultLogger.With(
+	return baseLogger().With(
 		slog.String("resource_type", typeName),
 		slog.String("resource_id", id),
 	)
@@ -112,12 +131,12 @@ func WithResource(typeName, id string) *slog.Logger {
 
 // WithRegion returns a logger pre-bound with the AWS region.
 func WithRegion(region string) *slog.Logger {
-	return defaultLogger.With(slog.String("region", region))
+	return baseLogger().With(slog.String("region", region))
 }
 
 // WithResourceAndRegion returns a logger pre-bound with resource type, identifier, and region.
 func WithResourceAndRegion(typeName, id, region string) *slog.Logger {
-	return defaultLogger.With(
+	return baseLogger().With(
 		slog.String("resource_type", typeName),
 		slog.String("resource_id", id),
 		slog.String("region", region),

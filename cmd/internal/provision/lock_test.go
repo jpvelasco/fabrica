@@ -328,3 +328,37 @@ func TestAcquireStateLockHealthyHeartbeatKeepsContext(t *testing.T) {
 		t.Errorf("renews = %d, want at least 2", locker.renews.Load())
 	}
 }
+
+// TestAcquireStateLockReleaseJoinsHeartbeat verifies that release waits for
+// the heartbeat goroutine to exit, so no renewal (or lock logging) outlives
+// the release — the leftover goroutine that raced a later test's oplog
+// reset under -race.
+func TestAcquireStateLockReleaseJoinsHeartbeat(t *testing.T) {
+	withShortStateLockTTL(t, 200*time.Millisecond)
+	locker := &fakeLockManager{}
+	rt := testRuntimeWithLocker(locker)
+
+	_, release, err := AcquireStateLock(context.Background(), rt, "op")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+
+	// Heartbeat interval is ttl/3 (~67 ms); wait for at least one renewal,
+	// then release and pin the renewal count.
+	deadline := time.Now().Add(2 * time.Second)
+	for locker.renews.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	release()
+	settled := locker.renews.Load()
+
+	// Well past two heartbeat intervals: a heartbeat that outlived the
+	// release would have renewed again by now.
+	time.Sleep(150 * time.Millisecond)
+	if got := locker.renews.Load(); got != settled {
+		t.Errorf("renews after release = %d, want %d (heartbeat must not outlive release)", got, settled)
+	}
+	if locker.releases.Load() != 1 {
+		t.Errorf("releases = %d, want 1", locker.releases.Load())
+	}
+}
