@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/jpvelasco/fabrica/internal/ci"
 	"github.com/jpvelasco/fabrica/internal/cloud"
@@ -777,8 +778,6 @@ func recordedRegion(st *state.State, module, typeName, identifier string) string
 // recorded state is insufficient to rebuild the resource's desired state;
 // the caller then reports the resource as skip-with-reason instead of
 // creating it with a partial state.
-// and config so it can be recreated via the provider. It uses the module's
-// recorded properties and config defaults to build the desired state.
 func rebuildResource(dr *DriftResult, st *state.State, cfg *config.Config) (*cloud.Resource, error) {
 	mod := st.GetModule(dr.Module)
 	if mod == nil {
@@ -809,7 +808,7 @@ func rebuildResource(dr *DriftResult, st *state.State, cfg *config.Config) (*clo
 	// Build desired state from recorded properties and config defaults.
 	switch dr.TypeName {
 	case cloud.TypeAWSEC2Instance:
-		ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
+		ds, err := rebuildInstanceDesiredState(rec, mod, st, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("rebuild desired state for instance %s in module %s: %w", dr.Identifier, dr.Module, err)
 		}
@@ -825,80 +824,37 @@ func rebuildResource(dr *DriftResult, st *state.State, cfg *config.Config) (*clo
 	return res, nil
 }
 
-// rebuildInstanceDesiredState builds the desired state of a Missing EC2
-// instance. Perforce and horde are reconstructed through their full create
-// contract (rebuildPerforceInstance, rebuildHordeInstance): recorded sizing,
-// security group, IAM instance profile, and cloud-init. The other modules
-// get a minimal launch contract from the module version (the AMI) and the
-// instanceType from properties (falling back to module config). DDC edge
-// instances are region-specific and are rebuilt from their recorded inputs
-// only (rebuildEdgeInstanceDesiredState).
-func rebuildInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+// rebuildInstanceDesiredState rebuilds a Missing instance's desired state by
+// reconstructing the module's full create contract — image, sizing, IAM
+// instance profile, security group, and bootstrap script — through the
+// module's canonical plan and desired-state helpers, so a remediated instance
+// boots the way the original create would have launched it. Recorded
+// properties (instanceType, volumeSize, subnetId, imageId) win over config,
+// which wins over module defaults.
+//
+// The AMI source depends on the module: Perforce records its AMI in
+// Properties.imageId (its module version is a Helix Core software version,
+// which create also pins in cloud-init, so it must never stand in for an AMI
+// id); every other module records the AMI as the module version at create
+// time; the DDC Scylla node uses ddc.scyllaAmiId. If any required input is
+// missing — AMI, IAM profile, security group, or module credentials — the
+// error propagates and the caller reports the instance as unsupported for
+// automatic remediation instead of launching a broken replacement.
+func rebuildInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
 	if mod.Name == "ddc" && isEdgeResource(rec) {
-		return rebuildEdgeInstanceDesiredState(rec, mod, cfg)
+		return rebuildEdgeInstanceDesiredState(rec, mod, st, cfg)
 	}
-
 	switch mod.Name {
 	case "perforce":
 		return rebuildPerforceInstance(rec, mod, cfg)
 	case "horde":
 		return rebuildHordeInstance(rec, mod, cfg)
-	}
-
-	instanceType := ""
-	ami := mod.Version
-	subnetID := ""
-
-	// Resolve per-module config based on module name.
-	switch mod.Name {
 	case "lore":
-		instanceType = cfg.Lore.InstanceType
-		if ami == "" {
-			ami = cfg.Lore.AmiID
-		}
-		subnetID = cfg.Lore.SubnetId
+		return rebuildLoreInstance(rec, mod, st, cfg)
 	case "ddc":
-		instanceType = cfg.DDC.InstanceType
-		if ami == "" {
-			ami = cfg.DDC.AmiID
-		}
-		subnetID = cfg.DDC.SubnetId
-	case "workstation":
-		instanceType = cfg.Workstation.InstanceType
-		if ami == "" {
-			ami = cfg.Workstation.AmiID
-		}
-		subnetID = cfg.Workstation.SubnetId
+		return rebuildDDCInstance(rec, mod, st, cfg)
 	}
-
-	// Recorded properties override config defaults.
-	if v, ok := rec.Properties["instanceType"]; ok && v != "" {
-		instanceType = v
-	}
-	if v, ok := rec.Properties["subnetId"]; ok && v != "" {
-		subnetID = v
-	}
-
-	ds := map[string]any{
-		"InstanceType": instanceType,
-		"ImageId":      ami,
-	}
-
-	if subnetID != "" {
-		ds["SubnetId"] = subnetID
-	}
-
-	// Security group is linked by finding the SG resource in the same module;
-	// DDC edge instances pair with the edge group recorded in their own region.
-	// Note: if the SG is also Missing, its identifier in state may be updated
-	// by ApplyRemediation after the SG is recreated. The instance's DesiredState
-	// is baked at plan time, so ApplyRemediation must refresh it after SG create.
-	sgID := moduleSGIDFor(rec, mod)
-	if sgID != "" {
-		ds["SecurityGroupIds"] = []string{sgID}
-	}
-
-	return json.Marshal(ds)
+	return nil, fmt.Errorf("module %s has no canonical instance contract to rebuild from", mod.Name)
 }
 
 // instanceTypeFor resolves the launch instance type for one module: the
@@ -1059,6 +1015,180 @@ func rebuildHordeInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg
 	return stripEmptySubnetID(ds)
 }
 
+// rebuildLoreInstance rebuilds the Lore instance. The S3 store backend takes
+// its bucket from the bucket resource the lore module recorded in state (the
+// name create actually launched with), falling back to the same resolution
+// create uses; the local backend carries no store inputs.
+func rebuildLoreInstance(rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
+	ami := mod.Version
+	if ami == "" {
+		return nil, fmt.Errorf("no AMI recorded for the lore instance (module version); re-run 'fabrica lore create'")
+	}
+	sgID, profile, err := recordedSGAndProfile(rec, mod, "lore")
+	if err != nil {
+		return nil, err
+	}
+	// Same normalization create uses: trim + lowercase, anything that is
+	// not "s3" resolves to the local backend.
+	backend := strings.ToLower(strings.TrimSpace(cfg.Lore.StoreBackend))
+	if backend != lore.StoreBackendS3 {
+		backend = lore.StoreBackendLocal
+	}
+	// The bucket resource the module recorded wins; the config value and the
+	// deterministic default mirror create's resolution for s3 stores.
+	var bucket string
+	if backend == lore.StoreBackendS3 {
+		bucket = moduleS3BucketFor(mod)
+		if bucket == "" {
+			bucket = lore.ResolveStoreBucket(cfg.Lore.StoreBucket, st.Account, st.Region, backend)
+		}
+	}
+	var storeTables []string
+	if backend == lore.StoreBackendS3 {
+		storeTables = lore.StoreTableNames(bucket)
+	}
+	userData, err := lore.Generate(lore.UserDataConfig{
+		StorePath:    lore.DefaultStorePath,
+		ConfigDir:    lore.DefaultConfigDir,
+		GRPCPort:     lore.DefaultGRPCPort,
+		HTTPPort:     lore.DefaultHTTPPort,
+		StoreBackend: backend,
+		StoreBucket:  bucket,
+		StoreTables:  storeTables,
+		TLSEnabled:   cfg.Lore.TLSConfig.Enabled,
+		CertPath:     cfg.Lore.TLSConfig.CertPath,
+		KeyPath:      cfg.Lore.TLSConfig.KeyPath,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rendering lore cloud-init: %w", err)
+	}
+	plan := &lore.CreatePlan{
+		AmiID:               ami,
+		InstanceType:        instanceTypeFor(rec, cfg.Lore.InstanceType, lore.DefaultInstanceType),
+		VolumeSize:          volumeSizeFor(rec, cfg.Lore.VolumeSize, 500),
+		SubnetID:            subnetFor(rec, cfg.Lore.SubnetId),
+		InstanceName:        "fabrica-lore",
+		InstanceProfileName: profile,
+	}
+	ds, err := lore.InstanceDesiredState(plan, sgID, userData)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptySubnetID(ds)
+}
+
+// ddcPorts resolves the DDC public/internal ports from config, falling back
+// to the module defaults create uses.
+func ddcPorts(cfg *config.Config) (int, int) {
+	publicPort := cfg.DDC.PublicPort
+	if publicPort <= 0 {
+		publicPort = ddc.DefaultPublicPort
+	}
+	internalPort := cfg.DDC.InternalPort
+	if internalPort <= 0 {
+		internalPort = ddc.DefaultInternalPort
+	}
+	return publicPort, internalPort
+}
+
+// ddcBucket resolves the DDC blob bucket: the bucket resource the ddc module
+// recorded in state wins, then the same resolution create uses (config value
+// or the deterministic per-account default).
+func ddcBucket(mod *state.ModuleState, st *state.State, cfg *config.Config) string {
+	if bucket := moduleS3BucketFor(mod); bucket != "" {
+		return bucket
+	}
+	return ddc.BucketOrDefault(cfg.DDC.Bucket, st.Account, st.Region)
+}
+
+// rebuildDDCInstance rebuilds a Missing DDC home-region instance: the
+// coordinator (default) or the 1-node Scylla host (Properties.role =
+// ddc.RoleScylla). The coordinator AMI is the module version create recorded;
+// the Scylla AMI lives only in config (ddc.scyllaAmiId).
+func rebuildDDCInstance(rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
+	if rec.Properties["role"] == ddc.RoleScylla {
+		return rebuildScyllaInstance(rec, mod, st, cfg)
+	}
+	ami := mod.Version
+	if ami == "" {
+		return nil, fmt.Errorf("no AMI recorded for the ddc instance (module version); re-run 'fabrica ddc setup'")
+	}
+	sgID, profile, err := recordedSGAndProfile(rec, mod, "ddc")
+	if err != nil {
+		return nil, err
+	}
+	publicPort, internalPort := ddcPorts(cfg)
+	nodes := ddc.ResolveScyllaNodes(cfg.DDC.Scylla)
+	userData, err := ddc.Generate(ddc.UserDataConfig{
+		StorePath:        ddc.DefaultStorePath,
+		Bucket:           ddcBucket(mod, st, cfg),
+		Region:           st.Region,
+		Namespace:        ddc.NamespaceOrDefault(cfg.DDC.Namespace),
+		PublicPort:       publicPort,
+		InternalPort:     internalPort,
+		Backend:          ddc.NormalizeBackend(cfg.DDC.Backend),
+		OIDCEnabled:      cfg.DDC.OIDC.Enabled,
+		OIDCIssuer:       cfg.DDC.OIDC.Issuer,
+		OIDCClientID:     cfg.DDC.OIDC.ClientID,
+		OIDCAudience:     cfg.DDC.OIDC.Audience,
+		OIDCRedirect:     cfg.DDC.OIDC.RedirectPath,
+		ReplicationPeers: strings.Join(cfg.DDC.Replication.Peers, ","),
+		ScyllaNodes:      nodes,
+		ScyllaRF:         ddc.ResolveRF(cfg.DDC.Scylla, nodes),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rendering ddc cloud-init: %w", err)
+	}
+	plan := &ddc.SetupPlan{
+		Account:      st.Account,
+		Region:       st.Region,
+		AmiID:        ami,
+		InstanceType: instanceTypeFor(rec, cfg.DDC.InstanceType, ddc.DefaultInstanceType),
+		VolumeSize:   volumeSizeFor(rec, cfg.DDC.VolumeSize, ddc.DefaultVolumeSize),
+		SubnetID:     subnetFor(rec, cfg.DDC.SubnetId),
+		InstanceName: "fabrica-ddc",
+	}
+	ds, err := ddc.InstanceDesiredState(plan, sgID, userData, profile)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptySubnetID(ds)
+}
+
+// rebuildScyllaInstance rebuilds the DDC Scylla host. Its AMI is not recorded
+// in state — create read ddc.scyllaAmiId — so an empty config value reports
+// the instance unrebuildable.
+func rebuildScyllaInstance(rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
+	ami := cfg.DDC.ScyllaAmiID
+	if ami == "" {
+		return nil, fmt.Errorf("no Scylla AMI configured in ddc.scyllaAmiId; set it in fabrica.yaml to remediate the ddc scylla instance")
+	}
+	sgID, profile, err := recordedSGAndProfile(rec, mod, "ddc")
+	if err != nil {
+		return nil, err
+	}
+	userData, err := ddc.GenerateScylla(ddc.ScyllaUserDataConfig{
+		ClusterName: "fabrica-ddc",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rendering ddc scylla cloud-init: %w", err)
+	}
+	plan := &ddc.SetupPlan{
+		Account:            st.Account,
+		Region:             st.Region,
+		ScyllaAmiID:        ami,
+		ScyllaInstanceType: instanceTypeFor(rec, cfg.DDC.ScyllaInstanceType, ddc.DefaultScyllaInstanceType),
+		ScyllaVolumeSize:   volumeSizeFor(rec, cfg.DDC.ScyllaVolumeSize, ddc.DefaultScyllaVolumeSize),
+		SubnetID:           subnetFor(rec, cfg.DDC.SubnetId),
+		ScyllaInstanceName: "fabrica-ddc-scylla",
+	}
+	ds, err := ddc.ScyllaInstanceDesiredState(plan, sgID, userData, profile)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptySubnetID(ds)
+}
+
 // isEdgeResource reports whether a recorded resource is a DDC edge resource:
 // it carries the edge role plus an explicit region. Home resources record
 // neither, so they never match.
@@ -1073,8 +1203,10 @@ func isEdgeResource(rec *state.ModuleResource) bool {
 // desired state from its recorded region-specific inputs. Edge AMIs and
 // subnets are per-region, so the recorded imageId and subnetId are required;
 // resources recorded before those inputs were captured are reported
-// unrebuildable with a hint to re-run the edge provisioning command.
-func rebuildEdgeInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+// unrebuildable with a hint to re-run the edge provisioning command. The
+// canonical edge builder supplies the full create contract: IAM profile,
+// cloud-init with the home bucket, and the edge region's network wiring.
+func rebuildEdgeInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
 	region := rec.Properties["region"]
 	ami := rec.Properties["imageId"]
 	if ami == "" {
@@ -1084,24 +1216,47 @@ func rebuildEdgeInstanceDesiredState(rec *state.ModuleResource, mod *state.Modul
 	if subnetID == "" {
 		return nil, fmt.Errorf("no subnet recorded for DDC edge %s; re-run 'fabrica ddc region add %s'", region, region)
 	}
-
-	instanceType := rec.Properties["instanceType"]
-	if instanceType == "" {
-		instanceType = cfg.DDC.InstanceType
+	sgID := moduleSGIDFor(rec, mod)
+	if sgID == "" {
+		return nil, fmt.Errorf("no security group recorded for DDC edge %s; re-run 'fabrica ddc region add %s'", region, region)
 	}
-	if instanceType == "" {
-		instanceType = ddc.DefaultInstanceType
+	profile := moduleInstanceProfileFor(mod)
+	if profile == "" {
+		return nil, fmt.Errorf("no IAM instance profile recorded for the ddc module; re-run 'fabrica ddc setup'")
 	}
-
-	ds := map[string]any{
-		"InstanceType": instanceType,
-		"ImageId":      ami,
-		"SubnetId":     subnetID,
+	publicPort, internalPort := ddcPorts(cfg)
+	userData, err := ddc.Generate(ddc.UserDataConfig{
+		StorePath:    ddc.DefaultStorePath,
+		Bucket:       ddcBucket(mod, st, cfg),
+		Region:       region,
+		Namespace:    ddc.NamespaceOrDefault(cfg.DDC.Namespace),
+		PublicPort:   publicPort,
+		InternalPort: internalPort,
+		OIDCEnabled:  cfg.DDC.OIDC.Enabled,
+		OIDCIssuer:   cfg.DDC.OIDC.Issuer,
+		OIDCClientID: cfg.DDC.OIDC.ClientID,
+		OIDCAudience: cfg.DDC.OIDC.Audience,
+		OIDCRedirect: cfg.DDC.OIDC.RedirectPath,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rendering ddc edge cloud-init: %w", err)
 	}
-	if sgID := moduleSGIDFor(rec, mod); sgID != "" {
-		ds["SecurityGroupIds"] = []string{sgID}
+	plan := &ddc.EdgePlan{
+		Account:             st.Account,
+		Region:              region,
+		AmiID:               ami,
+		InstanceType:        instanceTypeFor(rec, cfg.DDC.InstanceType, ddc.DefaultInstanceType),
+		VolumeSize:          volumeSizeFor(rec, cfg.DDC.VolumeSize, ddc.DefaultVolumeSize),
+		SubnetID:            subnetID,
+		VPCID:               rec.Properties["vpcId"],
+		InstanceName:        fmt.Sprintf("fabrica-ddc-edge-%s", region),
+		InstanceProfileName: profile,
 	}
-	return json.Marshal(ds)
+	ds, err := ddc.EdgeInstanceDesiredState(plan, sgID, userData)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptySubnetID(ds)
 }
 
 // moduleSGIDFor returns the security group identifier an instance's desired
@@ -1148,6 +1303,19 @@ func moduleInstanceProfileFor(mod *state.ModuleState) string {
 	for i := range mod.Resources {
 		r := &mod.Resources[i]
 		if r.TypeName == cloud.TypeAWSIAMInstanceProfile {
+			return r.Identifier
+		}
+	}
+	return ""
+}
+
+// moduleS3BucketFor returns the identifier of the S3 bucket the module
+// recorded in state, or "" when none is recorded. The first bucket wins;
+// modules record exactly one.
+func moduleS3BucketFor(mod *state.ModuleState) string {
+	for i := range mod.Resources {
+		r := &mod.Resources[i]
+		if r.TypeName == cloud.TypeAWSS3Bucket {
 			return r.Identifier
 		}
 	}
