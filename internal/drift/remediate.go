@@ -60,7 +60,11 @@ func ApplyRemediation(ctx context.Context, plan *RemediationPlan, st *state.Stat
 			return result
 		}
 
-		// Update state: mark the module as ready after successful create.
+		// Update state after successful create. A recreated instance is not
+		// ready until its service is verified — it stays "provisioning"
+		// (the status create sets) so the next drift run reports the gap.
+		// An SG has no service readiness of its own; the module keeps the
+		// status it had before the rebuild.
 		// The provider's Create call sets Resource.Identifier to the new ID,
 		// so sync it back into state so subsequent drift sees it as inSync.
 		resources := resourcesForModule(st, a.Module)
@@ -71,7 +75,11 @@ func ApplyRemediation(ctx context.Context, plan *RemediationPlan, st *state.Stat
 			}
 		}
 		if mod := st.GetModule(a.Module); mod != nil {
-			st.UpsertModule(a.Module, mod.Version, "ready", resources)
+			status := mod.Status
+			if a.TypeName == cloud.TypeAWSEC2Instance {
+				status = "provisioning"
+			}
+			st.UpsertModule(a.Module, mod.Version, status, resources)
 		}
 
 		// If we just created an SG, refresh the SecurityGroupIds in any

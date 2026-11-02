@@ -19,10 +19,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/jpvelasco/fabrica/internal/ci"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/credentials"
 	"github.com/jpvelasco/fabrica/internal/ddc"
 	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/lore"
@@ -823,14 +825,21 @@ func rebuildResource(dr *DriftResult, st *state.State, cfg *config.Config) (*clo
 	return res, nil
 }
 
-// rebuildInstanceDesiredState builds a minimal EC2 instance desired state from
-// recorded properties. It uses the module version as the AMI and the
-// instanceType from properties (falling back to module config). DDC edge
-// instances are region-specific and are rebuilt from their recorded inputs
-// only (rebuildEdgeInstanceDesiredState).
+// rebuildInstanceDesiredState builds the desired state of a Missing EC2
+// instance. Perforce is reconstructed through its full create contract
+// (rebuildPerforceInstance): recorded sizing, security group, IAM instance
+// profile, and cloud-init. The other modules get a minimal launch contract
+// from the module version (the AMI) and the instanceType from properties
+// (falling back to module config). DDC edge instances are region-specific
+// and are rebuilt from their recorded inputs only
+// (rebuildEdgeInstanceDesiredState).
 func rebuildInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
 	if mod.Name == "ddc" && isEdgeResource(rec) {
 		return rebuildEdgeInstanceDesiredState(rec, mod, cfg)
+	}
+
+	if mod.Name == "perforce" {
+		return rebuildPerforceInstance(rec, mod, cfg)
 	}
 
 	instanceType := ""
@@ -845,9 +854,6 @@ func rebuildInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleSta
 			ami = cfg.Horde.AmiID
 		}
 		subnetID = cfg.Horde.SubnetId
-	case "perforce":
-		instanceType = cfg.Perforce.InstanceType
-		subnetID = cfg.Perforce.SubnetId
 	case "lore":
 		instanceType = cfg.Lore.InstanceType
 		if ami == "" {
@@ -896,6 +902,117 @@ func rebuildInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleSta
 	}
 
 	return json.Marshal(ds)
+}
+
+// instanceTypeFor resolves the launch instance type for one module: the
+// recorded property wins, then the module config, then the module default the
+// create command uses.
+func instanceTypeFor(rec *state.ModuleResource, cfgType, moduleDefault string) string {
+	if v := rec.Properties["instanceType"]; v != "" {
+		return v
+	}
+	if cfgType != "" {
+		return cfgType
+	}
+	return moduleDefault
+}
+
+// volumeSizeFor resolves the data volume size for one module: the recorded
+// property wins, then the module config, then the module default the create
+// command uses.
+func volumeSizeFor(rec *state.ModuleResource, cfgSize, moduleDefault int) int {
+	if v, ok := rec.Properties["volumeSize"]; ok {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	if cfgSize > 0 {
+		return cfgSize
+	}
+	return moduleDefault
+}
+
+// subnetFor resolves the launch subnet for one module: the recorded property
+// wins, then the module config. Empty means the account default VPC.
+func subnetFor(rec *state.ModuleResource, cfgSubnet string) string {
+	if v := rec.Properties["subnetId"]; v != "" {
+		return v
+	}
+	return cfgSubnet
+}
+
+// recordedSGAndProfile returns the security group and IAM instance profile
+// identifiers a rebuilt instance must carry: the module records one of each
+// at create, and an instance launched without either cannot register with
+// SSM or join its VPC.
+func recordedSGAndProfile(rec *state.ModuleResource, mod *state.ModuleState, module string) (string, string, error) {
+	sgID := moduleSGIDFor(rec, mod)
+	if sgID == "" {
+		return "", "", fmt.Errorf("no security group recorded for the %s module; re-run the %s create command", module, module)
+	}
+	profile := moduleInstanceProfileFor(mod)
+	if profile == "" {
+		return "", "", fmt.Errorf("no IAM instance profile recorded for the %s module; re-run the %s create command", module, module)
+	}
+	return sgID, profile, nil
+}
+
+// Credential file paths the create commands write, relative to the working
+// directory (the .fabrica/ directory that holds the state cache).
+const (
+	perforceCredFile = ".fabrica/perforce-credentials.yaml"
+)
+
+// readPerforcePassword is a seam over the create-time credentials file.
+// Tests swap it with a fake; the real reader comes from internal/credentials.
+var readPerforcePassword = credentials.ReadPerforceAdminPassword
+
+// rebuildPerforceInstance rebuilds the Perforce instance. The AMI is the
+// recorded Properties.imageId: Perforce's module version is the Helix Core
+// software version, so it is used as the pinned version in cloud-init
+// instead. The admin password comes from the create-time credentials file.
+func rebuildPerforceInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+	ami := rec.Properties["imageId"]
+	if ami == "" {
+		return nil, fmt.Errorf("no AMI recorded for the perforce instance (Properties.imageId); re-run 'fabrica perforce create'")
+	}
+	helixVersion := mod.Version
+	if helixVersion == "" {
+		helixVersion = cfg.Perforce.Version
+	}
+	if helixVersion == "" {
+		helixVersion = perforce.DefaultHelixVersion
+	}
+	// Structural inputs are checked before the credential file read: a
+	// state that cannot supply the full launch contract should say so
+	// without touching .fabrica.
+	sgID, profile, err := recordedSGAndProfile(rec, mod, "perforce")
+	if err != nil {
+		return nil, err
+	}
+	adminPass, err := readPerforcePassword(perforceCredFile)
+	if err != nil {
+		return nil, err
+	}
+	userData, err := perforce.Generate(perforce.UserDataConfig{
+		Version:   helixVersion,
+		ServerID:  "fabrica-perforce",
+		AdminPass: adminPass,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rendering perforce cloud-init: %w", err)
+	}
+	plan := &perforce.CreatePlan{
+		InstanceType: instanceTypeFor(rec, cfg.Perforce.InstanceType, perforce.DefaultInstanceType),
+		VolumeSize:   volumeSizeFor(rec, cfg.Perforce.VolumeSize, 500),
+		SubnetID:     subnetFor(rec, cfg.Perforce.SubnetId),
+		InstanceName: "fabrica-perforce",
+	}
+	ds, err := perforce.InstanceDesiredState(plan, sgID, userData, profile, ami)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptySubnetID(ds)
 }
 
 // isEdgeResource reports whether a recorded resource is a DDC edge resource:
@@ -978,6 +1095,19 @@ func moduleSGIDFor(rec *state.ModuleResource, mod *state.ModuleState) string {
 		}
 	}
 	return fallback
+}
+
+// moduleInstanceProfileFor returns the identifier of the IAM instance profile
+// the module recorded in state, or "" when none is recorded. The first
+// profile wins; modules record exactly one.
+func moduleInstanceProfileFor(mod *state.ModuleState) string {
+	for i := range mod.Resources {
+		r := &mod.Resources[i]
+		if r.TypeName == cloud.TypeAWSIAMInstanceProfile {
+			return r.Identifier
+		}
+	}
+	return ""
 }
 
 // rebuildSGDesiredState rebuilds a Missing security group's desired state by
@@ -1156,6 +1286,21 @@ func stripEmptyVPCID(ds json.RawMessage) (json.RawMessage, error) {
 	}
 	if m["VpcId"] == "" {
 		delete(m, "VpcId")
+	}
+	return json.Marshal(m)
+}
+
+// stripEmptySubnetID drops the SubnetId key when no subnet could be resolved.
+// The canonical instance builders emit the key unconditionally; an empty
+// string is an invalid Cloud Control property, while omitting it targets the
+// account default VPC.
+func stripEmptySubnetID(ds json.RawMessage) (json.RawMessage, error) {
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		return nil, err
+	}
+	if m["SubnetId"] == "" {
+		delete(m, "SubnetId")
 	}
 	return json.Marshal(m)
 }
