@@ -57,7 +57,7 @@ state-and-config estimate as cost report.`,
 				days:      days,
 				jsonOut:   opts.JSONOutput,
 				out:       out,
-				readState: func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				readState: func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
 			}
 			return c.run()
 		},

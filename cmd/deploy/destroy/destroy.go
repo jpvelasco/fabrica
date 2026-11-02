@@ -84,8 +84,8 @@ func NewTeardown(rt globals.Runtime, out io.Writer) teardown.Command {
 		AssumeYes:   true,
 		Out:         out,
 		Confirm:     prompt.ConfirmExact,
-		ReadState:   func(_ context.Context) (*fabricastate.State, error) { return provision.ReadState(rt) },
-		WriteState:  func(_ context.Context, st *fabricastate.State) error { return provision.StateWriter(rt)(st) },
+		ReadState:   func(ctx context.Context) (*fabricastate.State, error) { return provision.ReadState(ctx, rt) },
+		WriteState:  func(ctx context.Context, st *fabricastate.State) error { return provision.StateWriter(ctx, rt)(st) },
 	}
 	teardown.WireProvider(&tc, rt)
 	return tc
@@ -123,8 +123,8 @@ GameLift's error explains why — terminate sessions or wait, then retry.`,
 				JSONOut:    opts.JSONOutput,
 				Out:        out,
 				Confirm:    prompt.ConfirmExact,
-				ReadState:  func(_ context.Context) (*fabricastate.State, error) { return provision.ReadState(rt) },
-				WriteState: func(_ context.Context, st *fabricastate.State) error { return provision.StateWriter(rt)(st) },
+				ReadState:  func(ctx context.Context) (*fabricastate.State, error) { return provision.ReadState(ctx, rt) },
+				WriteState: func(ctx context.Context, st *fabricastate.State) error { return provision.StateWriter(ctx, rt)(st) },
 			}
 			if rt.Provider != nil {
 				if rc := rt.Provider.Resources(); rc != nil {

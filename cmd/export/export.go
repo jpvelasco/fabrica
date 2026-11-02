@@ -76,7 +76,7 @@ No live AWS calls are required — all data comes from local state.`,
 			dryRun:    opts.DryRun,
 			cfg:       rt.Config,
 			out:       out,
-			readState: func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+			readState: func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
 			statePath: provision.StatePath(rt),
 		}
 		c.stateFileExists = func() bool {

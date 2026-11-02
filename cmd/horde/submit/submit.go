@@ -65,7 +65,7 @@ Run 'fabrica horde status' to confirm the coordinator is ready.`,
 				buildGraphPath: args[0],
 				wait:           wait,
 				out:            out,
-				readState:      func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				readState:      func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
 				waitCtx:        provision.WaitInterval,
 				now:            time.Now,
 			}

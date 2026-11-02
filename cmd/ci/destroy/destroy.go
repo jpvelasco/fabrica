@@ -94,9 +94,9 @@ func (c command) buildTeardown() teardown.Command {
 		Out:         c.out,
 		SkipConfirm: c.skipConfirm,
 		Confirm:     prompt.ConfirmExact,
-		ReadState:   func(_ context.Context) (*fabricastate.State, error) { return provision.ReadState(c.runtime) },
-		WriteState: func(_ context.Context, st *fabricastate.State) error {
-			return provision.StateWriter(c.runtime)(st)
+		ReadState:   func(ctx context.Context) (*fabricastate.State, error) { return provision.ReadState(ctx, c.runtime) },
+		WriteState: func(ctx context.Context, st *fabricastate.State) error {
+			return provision.StateWriter(ctx, c.runtime)(st)
 		},
 		SDKDeleteFunc: func(ctx context.Context, typeName, identifier string) error {
 			if typeName == ci.TypeAWSCodeBuildProject {

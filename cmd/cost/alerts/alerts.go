@@ -219,7 +219,7 @@ func newCheck(runtimeSource globals.RuntimeSource, optionsSource globals.Options
 				costs:     fabricacost.Global,
 				jsonOut:   optionsSource().JSONOutput,
 				out:       out,
-				readState: func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				readState: func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
 			}
 			return c.run()
 		},

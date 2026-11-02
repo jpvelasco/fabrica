@@ -54,7 +54,7 @@ falling back to the current fabrica.yaml for cost inputs not recorded in state.`
 				costs:     fabricacost.Global,
 				jsonOut:   opts.JSONOutput,
 				out:       out,
-				readState: func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				readState: func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
 			}
 			return c.run()
 		},

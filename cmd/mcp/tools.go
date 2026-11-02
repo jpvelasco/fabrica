@@ -160,7 +160,7 @@ func handleOptions(src globals.OptionsSource) func(context.Context, *mcp.CallToo
 
 func handleCostForecast(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, CostForecastResult, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, CostForecastResult, error) {
-		st, err := provision.ReadState(rt)
+		st, err := provision.ReadState(ctx, rt)
 		if err != nil {
 			return nil, CostForecastResult{}, fmt.Errorf("reading state: %w", err)
 		}
@@ -218,7 +218,7 @@ func handleDoctor(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest
 
 func handleStatus(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, StatusResult, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, StatusResult, error) {
-		st, err := provision.ReadState(rt)
+		st, err := provision.ReadState(ctx, rt)
 		if err != nil {
 			return nil, StatusResult{}, fmt.Errorf("reading state: %w", err)
 		}
@@ -239,7 +239,7 @@ func handleDrift(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest,
 			return nil, DriftResult{}, fmt.Errorf("provider not available — check your AWS credentials")
 		}
 
-		st, err := provision.ReadState(rt)
+		st, err := provision.ReadState(ctx, rt)
 		if err != nil {
 			return nil, DriftResult{}, fmt.Errorf("reading state: %w", err)
 		}
@@ -271,7 +271,7 @@ func handleDrift(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest,
 
 func handleCostReport(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, CostReportResult, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, CostReportResult, error) {
-		st, err := provision.ReadState(rt)
+		st, err := provision.ReadState(ctx, rt)
 		if err != nil {
 			return nil, CostReportResult{}, fmt.Errorf("reading state: %w", err)
 		}

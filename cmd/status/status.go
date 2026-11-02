@@ -68,7 +68,7 @@ or in-VPC session — and is off by default.`,
 				jsonOut:   opts.JSONOutput,
 				probe:     probe,
 				out:       out,
-				readState: func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				readState: func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
 				probeTCP:  modstatus.DefaultProbeTCP,
 			}
 			return c.run(cmd.Context())

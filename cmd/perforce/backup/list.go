@@ -31,7 +31,7 @@ func newList(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsS
 				jsonOut: opts.JSONOutput,
 				out:     out,
 			}
-			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
+			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
 			if rt.Provider != nil {
 				if rr, ok := rt.Provider.(cloud.RemoteRunner); ok {
 					c.runRemote = rr.RunCommand

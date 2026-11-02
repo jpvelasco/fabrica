@@ -58,8 +58,8 @@ Confirmation phrase: restore perforce <account-id>`,
 				confirm:   prompt.ConfirmExact,
 				probeTCP:  modstatus.DefaultProbeTCP,
 			}
-			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = provision.StateWriter(rt)
+			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
+			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			c.readCreds = func() (string, error) {
 				return credentials.ReadPerforceAdminPassword(credFile)
 			}

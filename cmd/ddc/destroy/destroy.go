@@ -148,8 +148,8 @@ func NewTeardown(rt globals.Runtime, out io.Writer) teardown.Command {
 		AssumeYes:   true,
 		Out:         out,
 		Confirm:     prompt.ConfirmExact,
-		ReadState:   func(_ context.Context) (*fabricastate.State, error) { return provision.ReadState(rt) },
-		WriteState:  func(_ context.Context, st *fabricastate.State) error { return provision.StateWriter(rt)(st) },
+		ReadState:   func(ctx context.Context) (*fabricastate.State, error) { return provision.ReadState(ctx, rt) },
+		WriteState:  func(ctx context.Context, st *fabricastate.State) error { return provision.StateWriter(ctx, rt)(st) },
 	}
 	wire(&tc, rt)
 	return tc
@@ -245,8 +245,8 @@ With --dry-run, shows the plan without AWS calls.`,
 				JSONOut:    opts.JSONOutput,
 				Out:        out,
 				Confirm:    prompt.ConfirmExact,
-				ReadState:  func(_ context.Context) (*fabricastate.State, error) { return provision.ReadState(rt) },
-				WriteState: func(_ context.Context, st *fabricastate.State) error { return provision.StateWriter(rt)(st) },
+				ReadState:  func(ctx context.Context) (*fabricastate.State, error) { return provision.ReadState(ctx, rt) },
+				WriteState: func(ctx context.Context, st *fabricastate.State) error { return provision.StateWriter(ctx, rt)(st) },
 			}
 			wire(&c, rt)
 			return c.Run(cmd.Context())
