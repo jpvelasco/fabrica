@@ -81,7 +81,7 @@ and CodeBuild projects.`,
 				assumeYes:  opts.AssumeYes,
 				out:        out,
 				readState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-				writeState: fabricastate.WriteState,
+				writeState: provision.StateWriter(rt),
 				confirm:    prompt.Confirm,
 			}
 			if rt.Provider != nil {

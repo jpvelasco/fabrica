@@ -36,7 +36,7 @@ func newDelete(runtimeSource globals.RuntimeSource, optionsSource globals.Option
 				confirm:   prompt.Confirm,
 			}
 			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = fabricastate.WriteState
+			c.writeState = provision.StateWriter(rt)
 			if rt.Provider != nil {
 				if rr, ok := rt.Provider.(cloud.RemoteRunner); ok {
 					c.runRemote = rr.RunCommand

@@ -13,15 +13,33 @@ import (
 	"github.com/jpvelasco/fabrica/internal/stateutil"
 )
 
-// ReadState reads the local state cache, seeding a fresh state with the
-// configured account/region when the file does not exist yet.
+// ReadState reads the local state cache for the runtime's config file,
+// seeding a fresh state with the configured account/region when the file does
+// not exist yet. Existing state whose recorded account or home region does not
+// match the configured target is rejected.
 func ReadState(rt globals.Runtime) (*fabricastate.State, error) {
 	account, region := "", ""
 	if rt.Config != nil {
 		account = rt.Config.Cloud.AWS.AccountID
 		region = rt.Config.Cloud.AWS.Region
 	}
-	return fabricastate.ReadStateOrNew(account, region)
+	return fabricastate.ReadStateFile(StatePath(rt), account, region)
+}
+
+// StatePath returns the local state file for the runtime's config file, so
+// each profile keeps its own cache under .fabrica/.
+func StatePath(rt globals.Runtime) string {
+	return fabricastate.StateFileFor(rt.ConfigFile())
+}
+
+// StateWriter returns a write seam bound to the runtime's state file — the
+// same file ReadState loads, so a command can never write one profile's
+// records into another profile's cache.
+func StateWriter(rt globals.Runtime) func(*fabricastate.State) error {
+	path := StatePath(rt)
+	return func(st *fabricastate.State) error {
+		return fabricastate.WriteStateTo(st, path)
+	}
 }
 
 // ConfirmPhrase is the exact phrase a user must type to confirm a create:

@@ -90,7 +90,7 @@ making any AWS calls.`,
 				confirm:      prompt.ConfirmExact,
 			}
 			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = fabricastate.WriteState
+			c.writeState = provision.StateWriter(rt)
 			if rt.Provider != nil {
 				c.createResource = rt.Provider.Resources().Create
 			}

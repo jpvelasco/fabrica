@@ -230,7 +230,7 @@ Read-only aggregate overview of every provisioned module plus the state backend:
 
 #### `fabrica drift`
 
-Drift detection: compares recorded state (`.fabrica/state.json`) against live AWS resources and reports whether each resource is in sync, missing, extra (live but not in state), or has attribute mismatches. Checks the state backend (S3 bucket, DynamoDB table), EC2 instances (existence, state, instance type, AMI), security groups, IAM roles, and CodeBuild projects. Extra detection uses `ResourceClient.List` to enumerate live resources and diff against recorded state — CodeBuild projects are excluded since they have no List API. `--json` for machine-readable output.
+Drift detection: compares recorded state (the profile's local state cache under `.fabrica/`, `.fabrica/state.json` for the default config) against live AWS resources and reports whether each resource is in sync, missing, extra (live but not in state), or has attribute mismatches. Checks the state backend (S3 bucket, DynamoDB table), EC2 instances (existence, state, instance type, AMI), security groups, IAM roles, and CodeBuild projects. Extra detection uses `ResourceClient.List` to enumerate live resources and diff against recorded state — CodeBuild projects are excluded since they have no List API. `--json` for machine-readable output.
 
 By default `fabrica drift` is read-only. Add `--fix` to enable auto-remediation: missing managed resources (EC2 instances, security groups) are recreated from recorded state. `--fix --dry-run` shows the remediation plan without applying changes. Mismatch and Extra resources are report-only and skipped during remediation.
 
@@ -601,7 +601,7 @@ Prints version, commit hash, Go toolchain version, and platform.
 
 #### `fabrica export`
 
-Generates infrastructure-as-code templates from Fabrica's recorded local state and configuration. Reads `.fabrica/state.json` and `fabrica.yaml`, then produces CloudFormation YAML or Terraform HCL for the resources Fabrica manages. No live AWS calls — all data comes from local state.
+Generates infrastructure-as-code templates from Fabrica's recorded local state and configuration. Reads the profile's local state cache under `.fabrica/` (`.fabrica/state.json` for the default config) and the config file (`fabrica.yaml` or `fabrica-<profile>.yaml`), then produces CloudFormation YAML or Terraform HCL for the resources Fabrica manages. No live AWS calls — all data comes from local state.
 
 V2 covers all modules: state backend (S3 bucket, DynamoDB table), Horde, Perforce, Lore, DDC (home + edge regions), Workstation, CI, and Deploy.
 

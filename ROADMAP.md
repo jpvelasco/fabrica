@@ -76,7 +76,7 @@ Not every "Complete" ships AWS: `ci pipeline` prints a CodePipeline plan (no Cod
 - **Go version:** 1.26.10
 - **Config:** Viper + YAML, scoped inside `internal/config` only
 - **Output:** dual streams — human output via `fmt.Print*` to stdout; operational diagnostics via `internal/oplog` (stdlib `log/slog`) to stderr
-- **State:** S3 bucket (`fabrica-state-<account-id>`) + DynamoDB lock table (`fabrica-state-lock`); local `.fabrica/state.json` cache
+- **State:** S3 bucket (`fabrica-state-<account-id>`) + DynamoDB lock table (`fabrica-state-lock`); local cache under `.fabrica/` (one file per config file, account/home-region validated on read)
 - **Cost:** estimators registered by resource `TypeName`, provider-agnostic
 
 See [`CLAUDE.md`](CLAUDE.md) for the contributor-facing architecture detail and

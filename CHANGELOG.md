@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Local state is namespaced per config/profile and rejects state from a different target** — each config file now keeps its own local state cache: the default `fabrica.yaml` maps to `.fabrica/state.json`, every other config file (e.g. `fabrica-<profile>.yaml`) to `.fabrica/state-<name>.json` (base name without the `fabrica-` prefix and extension), so profiles and accounts in one working directory no longer share — or clobber — a single cache. Every command that reads local state rejects, before any mutation, existing state whose recorded account or home region disagrees with the configured target; empty sides are accepted (an unknown side cannot prove a mismatch), which keeps pre-`setup` state and cross-region DDC edges (they run with the home identity) valid. The mismatch error names both targets and the rebind remedies: run with the `--profile`/config that recorded the state, or delete the state file. E2E tests cover account and home-region switches in one working directory, plus concurrent different-account commands. (#523)
+
 ### Fixed
 
 - **State lock loss now aborts the running command** - `LockStore.Heartbeat` returned on its first failed renewal and the goroutine's result never reached the caller, so a process whose lease expired or was taken over kept mutating state while holding no lock. A confirmed takeover (another process holds the row) now cancels the command's context immediately; transient renewal failures are retried on the ticker but only while the lease has headroom, and once the lease margin lapses without a successful renewal the command's context is cancelled, so in-flight mutations abort before the lease expires. Commands run their mutations on the cancelled context, and the release path uses `context.WithoutCancel` so an interrupted or aborted command still frees the lock. A `stateLockTTL` variable seam lets tests exercise the loss paths in tens of milliseconds. (#547)

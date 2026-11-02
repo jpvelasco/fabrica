@@ -23,7 +23,7 @@ fabrica perforce destroy             # Delete instance/IAM/SG; retain EBS volume
 
 ## State
 
-Module state is stored in `.fabrica/state.json` (local cache) and mirrored to S3 after `fabrica setup`. State is written after each resource creation or deletion, so partial failures leave a recoverable record.
+Module state is stored in the local cache under `.fabrica/` (`.fabrica/state.json` for the default config; one namespaced file per profile) and mirrored to S3 after `fabrica setup`. State is written after each resource creation or deletion, so partial failures leave a recoverable record.
 
 ## Credentials
 
