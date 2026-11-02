@@ -49,14 +49,14 @@ func TestRunScheduleInvalid(t *testing.T) {
 
 func TestRunVerify(t *testing.T) {
 	var out bytes.Buffer
-	if err := runVerify(globals.Runtime{Config: config.Defaults()}, "ckpt-1", false, &out); err != nil {
+	if err := runVerify(globals.Runtime{Config: config.Defaults()}, "20260715-143022", false, &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "ckpt-1") || !strings.Contains(out.String(), "restore") {
+	if !strings.Contains(out.String(), "20260715-143022") || !strings.Contains(out.String(), "restore") {
 		t.Fatalf("verify = %s", out.String())
 	}
 	out.Reset()
-	if err := runVerify(globals.Runtime{Config: config.Defaults()}, "ckpt-1", true, &out); err != nil {
+	if err := runVerify(globals.Runtime{Config: config.Defaults()}, "20260715-143022", true, &out); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), `"backupId"`) {

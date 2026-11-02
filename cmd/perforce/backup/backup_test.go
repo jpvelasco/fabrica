@@ -286,7 +286,7 @@ func TestDeleteSuccess(t *testing.T) {
 	for i := range st.Modules[0].Resources {
 		if st.Modules[0].Resources[i].TypeName == "AWS::EC2::Instance" {
 			st.Modules[0].Resources[i].Properties = map[string]string{
-				"lastBackupId": "id1",
+				"lastBackupId": "20260715-143022",
 				"lastBackupAt": "t",
 			}
 		}
@@ -294,7 +294,7 @@ func TestDeleteSuccess(t *testing.T) {
 	c := deleteCommand{
 		runtime:   globals.Runtime{Config: config.Defaults()},
 		assumeYes: true,
-		backupID:  "id1",
+		backupID:  "20260715-143022",
 		out:       &bytes.Buffer{},
 		readState: func() (*fabricastate.State, error) { return st, nil },
 		writeState: func(s *fabricastate.State) error {
@@ -544,7 +544,7 @@ func TestDeleteDryRunAndConfirmReject(t *testing.T) {
 	c := deleteCommand{
 		runtime:   globals.Runtime{Config: config.Defaults()},
 		dryRun:    true,
-		backupID:  "x",
+		backupID:  "20260715-143022",
 		out:       &out,
 		readState: readyStateFn,
 	}
@@ -558,7 +558,7 @@ func TestDeleteDryRunAndConfirmReject(t *testing.T) {
 	var remote int
 	c2 := deleteCommand{
 		runtime:   globals.Runtime{Config: config.Defaults()},
-		backupID:  "x",
+		backupID:  "20260715-143022",
 		out:       &bytes.Buffer{},
 		confirm:   func(string) bool { return false },
 		readState: readyStateFn,
@@ -579,7 +579,7 @@ func TestDeleteNotProvisionedAndNoRemote(t *testing.T) {
 	c := deleteCommand{
 		runtime:   globals.Runtime{Config: config.Defaults()},
 		assumeYes: true,
-		backupID:  "x",
+		backupID:  "20260715-143022",
 		out:       &bytes.Buffer{},
 		readState: func() (*fabricastate.State, error) { return fabricastate.NewState("1", "r"), nil },
 	}
@@ -589,7 +589,7 @@ func TestDeleteNotProvisionedAndNoRemote(t *testing.T) {
 	c2 := deleteCommand{
 		runtime:   globals.Runtime{Config: config.Defaults()},
 		assumeYes: true,
-		backupID:  "x",
+		backupID:  "20260715-143022",
 		out:       &bytes.Buffer{},
 		readState: readyStateFn,
 	}
@@ -603,13 +603,13 @@ func TestDeleteRemoteFail(t *testing.T) {
 	c := deleteCommand{
 		runtime:   globals.Runtime{Config: config.Defaults()},
 		assumeYes: true,
-		backupID:  "id1",
+		backupID:  "20260715-143022",
 		out:       &bytes.Buffer{},
 		readState: readyStateFn,
 		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
 			calls++
 			if calls == 1 {
-				return cloud.RemoteResult{Stdout: `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/x"}`}, nil
+				return cloud.RemoteResult{Stdout: `{"id":"20260715-143022","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/x"}`}, nil
 			}
 			return cloud.RemoteResult{ExitCode: 3, Stderr: "rm fail"}, nil
 		},
@@ -621,11 +621,11 @@ func TestDeleteRemoteFail(t *testing.T) {
 
 func TestDeleteWithS3URI(t *testing.T) {
 	calls := 0
-	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots","s3Uri":"s3://b/p/id1"}`
+	meta := `{"id":"20260715-143022","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots","s3Uri":"s3://b/p/20260715-143022"}`
 	c := deleteCommand{
 		runtime:    globals.Runtime{Config: config.Defaults()},
 		assumeYes:  true,
-		backupID:   "id1",
+		backupID:   "20260715-143022",
 		out:        &bytes.Buffer{},
 		readState:  readyStateFn,
 		writeState: func(*fabricastate.State) error { return nil },

@@ -38,7 +38,7 @@ func TestCobraRestoreDryRun(t *testing.T) {
 	rt := func() (globals.Runtime, error) {
 		return globals.Runtime{Config: config.Defaults(), Provider: &testutil.RemoteCommandProvider{}}, nil
 	}
-	got, err := runRestore(t, rt, "id1", "--force", "--dry-run")
+	got, err := runRestore(t, rt, "20260715-143022", "--force", "--dry-run")
 	if err != nil {
 		t.Fatalf("dry-run: %v\n%s", err, got)
 	}
@@ -59,12 +59,12 @@ func TestCobraRestoreMissingCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	// no credentials file
-	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
+	meta := `{"id":"20260715-143022","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
 	p := &testutil.RemoteCommandProvider{RemoteResult: cloud.RemoteResult{Stdout: meta}}
 	rt := func() (globals.Runtime, error) {
 		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
 	}
-	if _, err := runRestore(t, rt, "id1", "--force", "--yes"); err == nil {
+	if _, err := runRestore(t, rt, "20260715-143022", "--force", "--yes"); err == nil {
 		t.Fatal("expected credentials error from New wiring")
 	}
 }
@@ -86,12 +86,12 @@ func TestCobraRestoreEmptyPasswordInCreds(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(".fabrica", "perforce-credentials.yaml"), []byte("admin_password: \"\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	meta := `{"id":"id1","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
+	meta := `{"id":"20260715-143022","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`
 	p := &testutil.RemoteCommandProvider{RemoteResult: cloud.RemoteResult{Stdout: meta}}
 	rt := func() (globals.Runtime, error) {
 		return globals.Runtime{Config: config.Defaults(), Provider: p}, nil
 	}
-	if _, err := runRestore(t, rt, "id1", "--force", "--yes"); err == nil {
+	if _, err := runRestore(t, rt, "20260715-143022", "--force", "--yes"); err == nil {
 		t.Fatal("expected empty password parse error")
 	}
 }
@@ -100,7 +100,7 @@ func TestCobraRestoreRuntimeError(t *testing.T) {
 	rt := func() (globals.Runtime, error) {
 		return globals.Runtime{}, errors.New("rt fail")
 	}
-	_, err := runRestore(t, rt, "id1", "--force")
+	_, err := runRestore(t, rt, "20260715-143022", "--force")
 	if err == nil {
 		t.Fatal("expected runtime error")
 	}
@@ -122,7 +122,7 @@ func TestCobraRestoreRequiresForce(t *testing.T) {
 	rt := func() (globals.Runtime, error) {
 		return globals.Runtime{Config: config.Defaults(), Provider: &testutil.RemoteCommandProvider{}}, nil
 	}
-	_, err := runRestore(t, rt, "id1")
+	_, err := runRestore(t, rt, "20260715-143022")
 	if err == nil {
 		t.Fatal("expected --force error when ready")
 	}

@@ -19,7 +19,10 @@ const (
 	BackupStatusComplete = "complete"
 )
 
-var reBackupName = regexp.MustCompile(`[^a-z0-9-]+`)
+var (
+	reBackupName = regexp.MustCompile(`[^a-z0-9-]+`)
+	reBackupID   = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}(-[a-z0-9-]+)?$`)
+)
 
 // BackupMeta is the metadata.json shape stored beside each backup on EBS.
 type BackupMeta struct {
@@ -97,6 +100,17 @@ func NewBackupID(now time.Time, name string) string {
 	return base
 }
 
+// ValidateBackupID accepts only ids that NewBackupID can produce
+// (YYYYMMDD-HHMMSS, with an optional -name suffix). A generated id is a
+// single safe path component — no separators, no dot components, no
+// root-equivalent path — so <root>/<id> cannot escape the backup root.
+func ValidateBackupID(id string) error {
+	if !reBackupID.MatchString(id) {
+		return fmt.Errorf("backup id %q is not a generated id (form YYYYMMDD-HHMMSS[-name]) — list current backups with 'fabrica perforce backup list'", id)
+	}
+	return nil
+}
+
 // unixJoin joins path elements with forward slashes for remote Linux paths
 // (SSM bash scripts on Helix EC2). Do not use path/filepath: that uses the
 // host OS separator and would embed backslashes when Fabrica runs on Windows.
@@ -112,9 +126,26 @@ func unixJoin(elem ...string) string {
 	return strings.Join(parts, "/")
 }
 
+// backupDirFor validates id and returns the resolved root and <root>/<id>.
+// The containment check keeps the result a strict descendant of the resolved
+// root even though the id regex already guarantees it.
+func backupDirFor(rootCfg, id string) (root, dest string, err error) {
+	if err = ValidateBackupID(id); err != nil {
+		return "", "", err
+	}
+	root = ResolveBackupPath(rootCfg)
+	dest = unixJoin(root, id)
+	if !strings.HasPrefix(dest, root+"/") {
+		err = fmt.Errorf("backup id %q escapes backup root %s", id, root)
+		return "", "", err
+	}
+	return root, dest, nil
+}
+
 // BackupDir returns root/id for a backup (Unix path for remote Linux instance).
-func BackupDir(root, id string) string {
-	return unixJoin(ResolveBackupPath(root), id)
+func BackupDir(root, id string) (string, error) {
+	_, dest, err := backupDirFor(root, id)
+	return dest, err
 }
 
 // MarshalBackupMeta encodes metadata.json.
@@ -154,18 +185,17 @@ func ParseBackupMetaList(stdout string) ([]BackupMeta, error) {
 
 // GenerateBackupScript returns a bash script that checkpoints Helix and packages a backup.
 func GenerateBackupScript(cfg BackupScriptConfig) (string, error) {
-	if cfg.BackupID == "" {
-		return "", fmt.Errorf("BackupID must not be empty")
-	}
 	if cfg.AdminPassword == "" {
 		return "", fmt.Errorf("AdminPassword must not be empty")
 	}
-	root := ResolveBackupPath(cfg.BackupRoot)
+	_, dest, err := backupDirFor(cfg.BackupRoot, cfg.BackupID)
+	if err != nil {
+		return "", err
+	}
 	serverRoot := cfg.ServerRoot
 	if serverRoot == "" {
 		serverRoot = DefaultServerRoot
 	}
-	dest := unixJoin(root, cfg.BackupID)
 	s3URI := ""
 	if cfg.S3Export {
 		if cfg.S3Bucket == "" {
@@ -206,25 +236,26 @@ func GenerateBackupScript(cfg BackupScriptConfig) (string, error) {
 	if s3URI != "" {
 		fmt.Fprintf(&b, "S3_URI=%s\n", shellSingleQuote(s3URI))
 	}
-	// metadata.json: static fields as JSON strings; SIZE/CREATED expanded by shell.
-	// Written BEFORE the S3 sync so uploaded backups carry their own manifest.
-	b.WriteString("cat > \"$DEST/metadata.json\" <<EOF\n")
+	// metadata.json: every static field is passed to printf as a single-quoted
+	// shell argument, so name/description and friends can never reach a shell
+	// expansion context (no heredoc, no eval). Only the trusted runtime values
+	// CREATED (date -u) and SIZE (du) expand. Written BEFORE the S3 sync so
+	// uploaded backups carry their own manifest.
 	b.WriteString("{\n")
-	fmt.Fprintf(&b, "  \"id\": %s,\n", jsonString(cfg.BackupID))
-	fmt.Fprintf(&b, "  \"name\": %s,\n", jsonString(cfg.Name))
-	fmt.Fprintf(&b, "  \"description\": %s,\n", jsonString(cfg.Description))
-	b.WriteString("  \"createdAt\": \"$CREATED\",\n")
-	b.WriteString("  \"sizeBytes\": $SIZE,\n")
-	fmt.Fprintf(&b, "  \"helixVersion\": %s,\n", jsonString(cfg.HelixVersion))
-	fmt.Fprintf(&b, "  \"serverRoot\": %s,\n", jsonString(serverRoot))
-	if s3URI != "" {
-		fmt.Fprintf(&b, "  \"s3Uri\": %s,\n", jsonString(s3URI))
-	} else {
-		b.WriteString("  \"s3Uri\": \"\",\n")
+	b.WriteString("  printf '{\\n'\n")
+	metaField := func(name, value, tail string) {
+		fmt.Fprintf(&b, "  printf '  \"%s\": %%s%s\\n' %s\n", name, tail, shellSingleQuote(jsonString(value)))
 	}
-	fmt.Fprintf(&b, "  \"status\": %s\n", jsonString(BackupStatusComplete))
-	b.WriteString("}\n")
-	b.WriteString("EOF\n")
+	metaField("id", cfg.BackupID, ",")
+	metaField("name", cfg.Name, ",")
+	metaField("description", cfg.Description, ",")
+	b.WriteString("  printf '  \"createdAt\": \"%%s\",\\n' \"$CREATED\"\n")
+	b.WriteString("  printf '  \"sizeBytes\": %%s,\\n' \"$SIZE\"\n")
+	metaField("helixVersion", cfg.HelixVersion, ",")
+	metaField("serverRoot", serverRoot, ",")
+	metaField("s3Uri", s3URI, ",")
+	metaField("status", BackupStatusComplete, "")
+	b.WriteString("} > \"$DEST/metadata.json\"\n")
 	if s3URI != "" {
 		// SSM sessions run a minimal environment that often lacks the AWS
 		// CLI; self-provision it (instance profile supplies credentials).
@@ -235,35 +266,66 @@ func GenerateBackupScript(cfg BackupScriptConfig) (string, error) {
 	return b.String(), nil
 }
 
-// GenerateRestoreScript stops p4d, restores checkpoint files, and restarts.
+// GenerateRestoreScript stops p4d, restores exactly the selected backup's
+// checkpoint and journal artifacts, and restarts. Artifact validation runs
+// before the service stop, so an incomplete backup fails first; copy or
+// replay failures abort the script under set -e instead of printing
+// RESTORE_OK.
 func GenerateRestoreScript(cfg RestoreScriptConfig) (string, error) {
-	if cfg.BackupID == "" {
-		return "", fmt.Errorf("BackupID must not be empty")
-	}
 	if cfg.AdminPassword == "" {
 		return "", fmt.Errorf("AdminPassword must not be empty")
 	}
-	root := ResolveBackupPath(cfg.BackupRoot)
+	_, src, err := backupDirFor(cfg.BackupRoot, cfg.BackupID)
+	if err != nil {
+		return "", err
+	}
 	serverRoot := cfg.ServerRoot
 	if serverRoot == "" {
 		serverRoot = DefaultServerRoot
 	}
-	src := unixJoin(root, cfg.BackupID)
 
 	var b strings.Builder
 	b.WriteString("#!/bin/bash\n")
 	b.WriteString("set -euo pipefail\n")
 	fmt.Fprintf(&b, "SRC=%s\n", shellSingleQuote(src))
 	fmt.Fprintf(&b, "SERVER_ROOT=%s\n", shellSingleQuote(serverRoot))
+	b.WriteString("P4D=/opt/perforce/sbin/p4d\n")
+	// Pre-flight: verify the selected backup's artifacts before touching the
+	// service, so an incomplete backup never takes the server down.
+	b.WriteString("test -d \"$SRC\"\n")
 	b.WriteString("test -f \"$SRC/metadata.json\"\n")
+	b.WriteString("CKP=\"\"\n")
+	b.WriteString("for f in \"$SRC\"/checkpoint*; do\n")
+	b.WriteString("  [ -f \"$f\" ] || continue\n")
+	b.WriteString("  CKP=\"$f\"\n")
+	b.WriteString("  break\n")
+	b.WriteString("done\n")
+	b.WriteString("if [ -z \"$CKP\" ]; then\n")
+	b.WriteString("  echo \"RESTORE_FAILED: no checkpoint artifact under $SRC\" >&2\n")
+	b.WriteString("  exit 1\n")
+	b.WriteString("fi\n")
+	// The journal this backup captured (absent means the server had no
+	// journal at backup time — nothing to replay beyond the checkpoint).
+	b.WriteString("JRN=\"\"\n")
+	b.WriteString("for f in \"$SRC\"/journal*; do\n")
+	b.WriteString("  [ -f \"$f\" ] || continue\n")
+	b.WriteString("  JRN=\"$f\"\n")
+	b.WriteString("  break\n")
+	b.WriteString("done\n")
 	b.WriteString("systemctl stop helix-p4d\n")
-	// Restore checkpoint artifacts into the server root (Helix expects checkpoint files there).
-	b.WriteString("cp -a \"$SRC\"/checkpoint* \"$SERVER_ROOT\"/ 2>/dev/null || true\n")
-	b.WriteString("cp -a \"$SRC\"/journal* \"$SERVER_ROOT\"/ 2>/dev/null || true\n")
-	// Replay via p4d offline restore if a compressed checkpoint exists.
-	b.WriteString("CKP=$(ls -1 \"$SERVER_ROOT\"/checkpoint*.gz \"$SERVER_ROOT\"/checkpoint.ckp.gz 2>/dev/null | head -n1 || true)\n")
-	b.WriteString("if [ -n \"$CKP\" ]; then\n")
-	b.WriteString("  /opt/perforce/sbin/p4d -r \"$SERVER_ROOT\" -jr \"$CKP\"\n")
+	// Clear checkpoint/journal artifacts already in the server root so the
+	// replay uses only this backup's files (a pre-existing checkpoint must
+	// not win).
+	b.WriteString("rm -f \"$SERVER_ROOT\"/checkpoint*.gz \"$SERVER_ROOT\"/checkpoint*.ckp \"$SERVER_ROOT\"/journal*.gz \"$SERVER_ROOT\"/journal*.ckp\n")
+	b.WriteString("cp -a \"$CKP\" \"$SERVER_ROOT\"/\n")
+	b.WriteString("if [ -n \"$JRN\" ]; then\n")
+	b.WriteString("  cp -a \"$JRN\" \"$SERVER_ROOT\"/\n")
+	b.WriteString("fi\n")
+	// Replay: restore from this backup's checkpoint, then play this backup's
+	// journal (if any). Any failure here aborts the script under set -e.
+	b.WriteString("\"$P4D\" -r \"$SERVER_ROOT\" -jr \"$CKP\"\n")
+	b.WriteString("if [ -n \"$JRN\" ]; then\n")
+	b.WriteString("  \"$P4D\" -r \"$SERVER_ROOT\" -j \"$JRN\"\n")
 	b.WriteString("fi\n")
 	b.WriteString("systemctl start helix-p4d\n")
 	b.WriteString("echo RESTORE_OK\n")
@@ -290,11 +352,10 @@ func GenerateListScript(backupRoot string) string {
 
 // GenerateDeleteScript removes a backup directory and optional S3 URI.
 func GenerateDeleteScript(backupRoot, backupID, s3URI string) (string, error) {
-	if backupID == "" {
-		return "", fmt.Errorf("backupID must not be empty")
+	_, dest, err := backupDirFor(backupRoot, backupID)
+	if err != nil {
+		return "", err
 	}
-	root := ResolveBackupPath(backupRoot)
-	dest := unixJoin(root, backupID)
 	var b strings.Builder
 	b.WriteString("#!/bin/bash\n")
 	b.WriteString("set -euo pipefail\n")
@@ -310,10 +371,11 @@ func GenerateDeleteScript(backupRoot, backupID, s3URI string) (string, error) {
 
 // GenerateReadMetaScript cats metadata for one backup id.
 func GenerateReadMetaScript(backupRoot, backupID string) (string, error) {
-	if backupID == "" {
-		return "", fmt.Errorf("backupID must not be empty")
+	_, dest, err := backupDirFor(backupRoot, backupID)
+	if err != nil {
+		return "", err
 	}
-	meta := unixJoin(ResolveBackupPath(backupRoot), backupID, "metadata.json")
+	meta := unixJoin(dest, "metadata.json")
 	var b strings.Builder
 	b.WriteString("#!/bin/bash\n")
 	b.WriteString("set -euo pipefail\n")

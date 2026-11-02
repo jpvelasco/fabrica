@@ -1,6 +1,7 @@
 package perforce
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -36,8 +37,11 @@ func TestBackupDirAndResolve(t *testing.T) {
 	if got := ResolveBackupPath(""); got != DefaultBackupPath {
 		t.Errorf("default path = %q", got)
 	}
-	if got := BackupDir("/hxdepots/fabrica-backups", "id1"); got != "/hxdepots/fabrica-backups/id1" {
-		t.Errorf("BackupDir = %q", got)
+	if got, err := BackupDir("/hxdepots/fabrica-backups", "20260715-143022"); err != nil || got != "/hxdepots/fabrica-backups/20260715-143022" {
+		t.Errorf("BackupDir = %q, err = %v", got, err)
+	}
+	if _, err := BackupDir("/hxdepots/fabrica-backups", "../outside"); err == nil {
+		t.Fatal("expected traversal rejection")
 	}
 	// Multi-segment join must stay Unix-style (not host filepath.Join).
 	if got := unixJoin(DefaultBackupPath, "id1", "metadata.json"); got != "/hxdepots/fabrica-backups/id1/metadata.json" {
@@ -124,7 +128,7 @@ func TestGenerateBackupScript(t *testing.T) {
 
 func TestGenerateBackupScript_S3(t *testing.T) {
 	script, err := GenerateBackupScript(BackupScriptConfig{
-		BackupID:      "id1",
+		BackupID:      "20260715-143022",
 		AdminPassword: "pw",
 		S3Export:      true,
 		S3Bucket:      "my-bucket",
@@ -136,7 +140,7 @@ func TestGenerateBackupScript_S3(t *testing.T) {
 	if !strings.Contains(script, "aws s3 sync") {
 		t.Error("expected s3 sync")
 	}
-	if !strings.Contains(script, "s3://my-bucket/p4/id1") {
+	if !strings.Contains(script, "s3://my-bucket/p4/20260715-143022") {
 		t.Error("expected s3 uri")
 	}
 }
@@ -145,7 +149,7 @@ func TestGenerateBackupScript_S3(t *testing.T) {
 // before the S3 upload, so every exported backup carries its own manifest.
 func TestGenerateBackupScript_ManifestBeforeSync(t *testing.T) {
 	script, err := GenerateBackupScript(BackupScriptConfig{
-		BackupID:      "id1",
+		BackupID:      "20260715-143022",
 		AdminPassword: "pw",
 		S3Export:      true,
 		S3Bucket:      "my-bucket",
@@ -153,7 +157,7 @@ func TestGenerateBackupScript_ManifestBeforeSync(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifestIdx := strings.Index(script, `cat > "$DEST/metadata.json"`)
+	manifestIdx := strings.Index(script, `} > "$DEST/metadata.json"`)
 	syncIdx := strings.Index(script, "aws s3 sync")
 	if manifestIdx < 0 || syncIdx < 0 {
 		t.Fatalf("script missing manifest or sync:\n%s", script)
@@ -171,7 +175,7 @@ func TestGenerateBackupScript_Errors(t *testing.T) {
 		t.Fatal("expected error for empty password")
 	}
 	if _, err := GenerateBackupScript(BackupScriptConfig{
-		BackupID: "x", AdminPassword: "p", S3Export: true,
+		BackupID: "20260715-143022", AdminPassword: "p", S3Export: true,
 	}); err == nil {
 		t.Fatal("expected error for missing bucket")
 	}
@@ -179,7 +183,7 @@ func TestGenerateBackupScript_Errors(t *testing.T) {
 
 func TestGenerateRestoreScript(t *testing.T) {
 	script, err := GenerateRestoreScript(RestoreScriptConfig{
-		BackupID:      "id1",
+		BackupID:      "20260715-143022",
 		AdminPassword: "pw",
 	})
 	if err != nil {
@@ -200,7 +204,7 @@ func TestGenerateListScript(t *testing.T) {
 }
 
 func TestGenerateDeleteScript(t *testing.T) {
-	s, err := GenerateDeleteScript("", "id1", "s3://b/p/id1")
+	s, err := GenerateDeleteScript("", "20260715-143022", "s3://b/p/20260715-143022")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,11 +217,129 @@ func TestGenerateDeleteScript(t *testing.T) {
 }
 
 func TestGenerateReadMetaScript(t *testing.T) {
-	s, err := GenerateReadMetaScript(DefaultBackupPath, "id1")
+	s, err := GenerateReadMetaScript(DefaultBackupPath, "20260715-143022")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(s, "metadata.json") {
 		t.Error("expected cat metadata")
+	}
+}
+
+// TestValidateBackupID pins the generated-id shape every boundary accepts
+// and the traversal shapes it must reject.
+func TestValidateBackupID(t *testing.T) {
+	for _, id := range []string{"20260715-143022", "20260715-143022-pre-ship", "20260715-143022-a-b-c"} {
+		if err := ValidateBackupID(id); err != nil {
+			t.Errorf("ValidateBackupID(%q) = %v, want nil", id, err)
+		}
+	}
+	for _, id := range []string{
+		"",
+		"id1",
+		".",
+		"..",
+		"/",
+		"../outside",
+		"20260715-143022/../x",
+		"20260715-143022/evil",
+		"20260715-143022.",
+		"20260715-143022-UPPER",
+		" 20260715-143022",
+	} {
+		if err := ValidateBackupID(id); err == nil {
+			t.Errorf("ValidateBackupID(%q) = nil, want error", id)
+		}
+	}
+}
+
+func TestGeneratorsRejectTraversalIDs(t *testing.T) {
+	id := "20260715-143022/../x"
+	if _, err := BackupDir(DefaultBackupPath, id); err == nil {
+		t.Error("BackupDir: expected traversal error")
+	}
+	if _, err := GenerateBackupScript(BackupScriptConfig{BackupID: id, AdminPassword: "pw"}); err == nil {
+		t.Error("GenerateBackupScript: expected traversal error")
+	}
+	if _, err := GenerateRestoreScript(RestoreScriptConfig{BackupID: id, AdminPassword: "pw"}); err == nil {
+		t.Error("GenerateRestoreScript: expected traversal error")
+	}
+	if _, err := GenerateDeleteScript(DefaultBackupPath, id, ""); err == nil {
+		t.Error("GenerateDeleteScript: expected traversal error")
+	}
+	if _, err := GenerateReadMetaScript(DefaultBackupPath, id); err == nil {
+		t.Error("GenerateReadMetaScript: expected traversal error")
+	}
+}
+
+// TestGenerateBackupScript_MetadataPayloadsStayLiteral verifies shell-active
+// payloads survive only as single-quoted printf arguments: no heredoc, no
+// expansion context, and each trusted runtime value expands exactly once.
+func TestGenerateBackupScript_MetadataPayloadsStayLiteral(t *testing.T) {
+	payload := "$(touch /tmp/fabrica-backup-pwn) `id` $HOME"
+	script, err := GenerateBackupScript(BackupScriptConfig{
+		BackupID:      "20260715-143022",
+		BackupRoot:    DefaultBackupPath,
+		Name:          payload,
+		Description:   payload,
+		AdminPassword: "s3cret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(script, "<<") {
+		t.Fatal("script must not contain a heredoc")
+	}
+	for _, field := range []string{"name", "description"} {
+		want := fmt.Sprintf("  printf '  \"%s\": %%s,\\n' %s", field, shellSingleQuote(jsonString(payload)))
+		if !strings.Contains(script, want) {
+			t.Errorf("script missing exact single-quoted printf line for %s:\n%s", field, script)
+		}
+	}
+	if got := strings.Count(script, payload); got != 2 {
+		t.Errorf("payload appears %d times, want exactly 2 (one per metadata field)", got)
+	}
+	for _, v := range []string{"$CREATED", "$SIZE"} {
+		if got := strings.Count(script, v); got != 1 {
+			t.Errorf("%s appears %d times, want 1 (trusted runtime expansion)", v, got)
+		}
+	}
+}
+
+// TestGenerateRestoreScript_FailClosed pins the fail-closed ordering: artifact
+// pre-flight before the service stop, explicit artifact selection, cleared
+// pre-existing server-root artifacts, and no swallowed failures.
+func TestGenerateRestoreScript_FailClosed(t *testing.T) {
+	script, err := GenerateRestoreScript(RestoreScriptConfig{
+		BackupID:      "20260715-143022",
+		AdminPassword: "pw",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopIdx := strings.Index(script, "systemctl stop helix-p4d")
+	if stopIdx < 0 {
+		t.Fatal("missing service stop")
+	}
+	for _, want := range []string{`test -f "$SRC/metadata.json"`, "RESTORE_FAILED", "exit 1"} {
+		if idx := strings.Index(script, want); idx < 0 || idx > stopIdx {
+			t.Errorf("expected %q before the service stop (stopIdx=%d)", want, stopIdx)
+		}
+	}
+	if strings.Contains(script, "|| true") {
+		t.Error("restore script must not swallow failures with '|| true'")
+	}
+	if strings.Contains(script, "head -n1") {
+		t.Error("restore script must select artifacts explicitly, not head -n1")
+	}
+	for _, want := range []string{
+		`rm -f "$SERVER_ROOT"/checkpoint*.gz`,
+		`cp -a "$CKP" "$SERVER_ROOT"/`,
+		`"$P4D" -r "$SERVER_ROOT" -jr "$CKP"`,
+		`"$P4D" -r "$SERVER_ROOT" -j "$JRN"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script missing %q:\n%s", want, script)
+		}
 	}
 }
