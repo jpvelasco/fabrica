@@ -41,8 +41,10 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 	return &cobra.Command{
 		Use:   "rollback",
 		Short: "Flip the alias back to the previous (retained) fleet",
-		Long: `Roll back the deployment by flipping the GameLift alias to the most-recent
-retained ("superseded") fleet. The target fleet must still be ACTIVE.
+		Long: `Roll back the deployment by flipping the GameLift alias to the fleet that
+served immediately before the current one. That predecessor is recorded when
+the current fleet is promoted, so rollback stays correct across repeated
+promote/rollback cycles. The target fleet must still be ACTIVE.
 
 Use this when a freshly-promoted build misbehaves: the previous fleet is kept
 running by 'deploy promote' precisely so rollback is instant.`,
@@ -109,9 +111,12 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("deploy alias not found in state. Run 'fabrica deploy setup' first")
 	}
 
-	active, target := findActiveAndSuperseded(m)
+	active, target, recorded := findRollbackTarget(m)
 	if target == "" {
 		return fmt.Errorf("no previous fleet to roll back to — only one fleet has been promoted. Nothing to do")
+	}
+	if !recorded {
+		fmt.Fprintln(c.out, "Note: fleet "+active+" has no recorded rollback target (state written by an older fabrica version); using the most recently superseded fleet. Confirm with 'fabrica deploy status' before proceeding.")
 	}
 
 	if c.fleetStatus == nil {
@@ -152,10 +157,17 @@ func (c command) run(ctx context.Context) error {
 	}
 
 	swapRoles(m, target, active)
+	// Point the module version at the build that actually serves after the
+	// flip; records without a buildVersion keep the current version.
+	version := m.Version
+	if v := fleetBuildVersion(m, target); v != "" {
+		version = v
+	}
+	st.UpsertModule(moduleName, version, "ready", m.Resources)
 	if err := c.writeState(st); err != nil {
 		return fmt.Errorf("writing state: %w", err)
 	}
-	fmt.Fprintf(c.out, "Rolled back — alias %s now points to fleet %s.\n", alias.Identifier, target)
+	fmt.Fprintf(c.out, "Rolled back — alias %s now points to fleet %s (version %s).\n", alias.Identifier, target, version)
 	fmt.Fprintln(c.out)
 	fmt.Fprintln(c.out, "Next steps:")
 	fmt.Fprintln(c.out, "  fabrica deploy status      Confirm the alias target and fleet health")
@@ -171,9 +183,13 @@ func (c command) printDryRun(active, target string) {
 	fmt.Fprintln(c.out, "Run without --dry-run to flip the alias to the previous fleet.")
 }
 
-// findActiveAndSuperseded returns the identifiers of the active fleet and the
-// most-recent superseded fleet (the last one in resource order).
-func findActiveAndSuperseded(m *fabricastate.ModuleState) (active, superseded string) {
+// findRollbackTarget returns the active fleet, its recorded rollback target
+// (the fleet that was active when it was promoted), and whether the target was
+// explicitly recorded. Records written by older fabrica versions lack the
+// rollbackTarget property; they fall back to the most-recent superseded fleet
+// in resource order, with recorded set to false.
+func findRollbackTarget(m *fabricastate.ModuleState) (active, target string, recorded bool) {
+	legacyTarget := ""
 	for _, r := range m.Resources {
 		if r.TypeName != deploy.TypeGameLiftFleet {
 			continue
@@ -181,11 +197,24 @@ func findActiveAndSuperseded(m *fabricastate.ModuleState) (active, superseded st
 		switch r.Properties["role"] {
 		case "active":
 			active = r.Identifier
+			if r.Properties["rollbackTarget"] != "" {
+				return active, r.Properties["rollbackTarget"], true
+			}
 		case "superseded":
-			superseded = r.Identifier // later entries win → most recent
+			legacyTarget = r.Identifier // later entries win → most recent
 		}
 	}
-	return active, superseded
+	return active, legacyTarget, false
+}
+
+// fleetBuildVersion returns the build version recorded on a fleet resource.
+func fleetBuildVersion(m *fabricastate.ModuleState, fleetID string) string {
+	for _, r := range m.Resources {
+		if r.TypeName == deploy.TypeGameLiftFleet && r.Identifier == fleetID && r.Properties != nil {
+			return r.Properties["buildVersion"]
+		}
+	}
+	return ""
 }
 
 // swapRoles makes target active and the former active superseded.

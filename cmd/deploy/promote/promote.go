@@ -326,9 +326,20 @@ func (c command) recordResource(m *fabricastate.ModuleState, r fabricastate.Modu
 	m.Resources = append(m.Resources, r)
 }
 
-// swapActiveFleet marks newFleetID active and demotes any other active fleet to
-// superseded (the rollback candidate).
+// swapActiveFleet marks newFleetID active, demotes the previously-active fleet
+// to superseded, and records the demoted fleet on the new fleet as its
+// explicit rollback target so rollback never infers activation history from
+// resource creation order.
 func (c command) swapActiveFleet(m *fabricastate.ModuleState, newFleetID string) {
+	previousActive := ""
+	for _, r := range m.Resources {
+		if r.TypeName != deploy.TypeGameLiftFleet || r.Identifier == newFleetID {
+			continue
+		}
+		if r.Properties != nil && r.Properties["role"] == "active" {
+			previousActive = r.Identifier
+		}
+	}
 	for i := range m.Resources {
 		r := &m.Resources[i]
 		if r.TypeName != deploy.TypeGameLiftFleet {
@@ -339,6 +350,9 @@ func (c command) swapActiveFleet(m *fabricastate.ModuleState, newFleetID string)
 		}
 		switch {
 		case r.Identifier == newFleetID:
+			if previousActive != "" {
+				r.Properties["rollbackTarget"] = previousActive
+			}
 			r.Properties["role"] = "active"
 		case r.Properties["role"] == "active":
 			r.Properties["role"] = "superseded"
