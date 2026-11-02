@@ -108,7 +108,7 @@ go list -deps ./internal/cloud/...
 | `internal/prompt` | `Confirm` (y/N) and `ConfirmExact` (typed phrase) for interactive confirmation dialogs |
 | `internal/version` | Version constant |
 | `internal/oplog` | Stdlib-only operational logging (`log/slog`): `Init` from level/verbose, `Logger()`, `WithModule`, `WithResource`, `Redact`. Logs to stderr; safe without Init |
-| `internal/credentials` | Shared helpers: `GeneratePassword`, `WriteCredentials` — write per-module credential YAML files to `.fabrica/` (mode 0600) |
+| `internal/credentials` | Shared helpers: `GeneratePassword`, `WriteCredentials` — write per-module credential YAML files to `.fabrica/` (mode 0600); `ReadPerforceAdminPassword`/`ReadHordeMongoPassword` read them back (shared `credentialValue` parser) for `drift --fix` instance rebuilds |
 | `internal/stateutil` | Shared helpers: `ResourceByType` — query module state without repeating the lookup loop |
 | `internal/ec2plan` | `Base` struct + `New` constructor for fields common to every single-instance EC2 module. Embed in a module's `CreatePlan` |
 | `internal/ec2state` | Shared Cloud Control desired-state builders: `InstanceDesiredState`, `SGDesiredState`/`SGIngressRule`, `InstanceProfileDesiredState` |
