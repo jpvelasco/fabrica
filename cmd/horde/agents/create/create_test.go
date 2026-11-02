@@ -49,7 +49,7 @@ func TestResolveCoordinator_MissingModule(t *testing.T) {
 	c := command{
 		readState: func() (*fabricastate.State, error) { return st, nil },
 	}
-	_, _, _, err := c.resolveCoordinator(context.Background())
+	_, _, _, _, err := c.resolveCoordinator(context.Background())
 	if err == nil {
 		t.Fatal("expected error when horde module not found")
 	}
@@ -63,7 +63,7 @@ func TestResolveCoordinator_MissingInstance(t *testing.T) {
 	c := command{
 		readState: func() (*fabricastate.State, error) { return st, nil },
 	}
-	_, _, _, err := c.resolveCoordinator(context.Background())
+	_, _, _, _, err := c.resolveCoordinator(context.Background())
 	if err == nil {
 		t.Fatal("expected error when coordinator instance not found")
 	}
@@ -78,7 +78,7 @@ func TestResolveCoordinator_NoProvider(t *testing.T) {
 		readState:   func() (*fabricastate.State, error) { return st, nil },
 		getResource: nil,
 	}
-	_, _, _, err := c.resolveCoordinator(context.Background())
+	_, _, _, _, err := c.resolveCoordinator(context.Background())
 	if err == nil {
 		t.Fatal("expected error when no provider")
 	}
@@ -98,7 +98,7 @@ func TestResolveCoordinator_DefaultPort(t *testing.T) {
 			return nil
 		},
 	}
-	_, port, _, err := c.resolveCoordinator(context.Background())
+	_, port, _, _, err := c.resolveCoordinator(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestResolveCoordinator_CustomPort(t *testing.T) {
 			return nil
 		},
 	}
-	_, port, _, err := c.resolveCoordinator(context.Background())
+	_, port, _, _, err := c.resolveCoordinator(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestResolveCoordinator_GetResourceError(t *testing.T) {
 			return fmt.Errorf("service unavailable")
 		},
 	}
-	_, _, _, err := c.resolveCoordinator(context.Background())
+	_, _, _, _, err := c.resolveCoordinator(context.Background())
 	if err == nil {
 		t.Fatal("expected error when getResource fails")
 	}
@@ -161,7 +161,7 @@ func TestResolveCoordinator_NoActualState(t *testing.T) {
 			return nil
 		},
 	}
-	_, _, _, err := c.resolveCoordinator(context.Background())
+	_, _, _, _, err := c.resolveCoordinator(context.Background())
 	if err == nil {
 		t.Fatal("expected error when ActualState is empty")
 	}
@@ -179,7 +179,7 @@ func TestResolveCoordinator_EmptyPrivateIP(t *testing.T) {
 			return nil
 		},
 	}
-	_, _, _, err := c.resolveCoordinator(context.Background())
+	_, _, _, _, err := c.resolveCoordinator(context.Background())
 	if err == nil {
 		t.Fatal("expected error when PrivateIpAddress is empty")
 	}
@@ -189,7 +189,7 @@ func TestResolveCoordinator_ReadStateError(t *testing.T) {
 	c := command{
 		readState: func() (*fabricastate.State, error) { return nil, fmt.Errorf("state error") },
 	}
-	_, _, _, err := c.resolveCoordinator(context.Background())
+	_, _, _, _, err := c.resolveCoordinator(context.Background())
 	if err == nil {
 		t.Fatal("expected error when readState fails")
 	}
@@ -208,7 +208,7 @@ func TestResolveCoordinator_NoSG(t *testing.T) {
 			return nil
 		},
 	}
-	ip, port, sgID, err := c.resolveCoordinator(context.Background())
+	ip, port, sgID, _, err := c.resolveCoordinator(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -237,12 +237,101 @@ func TestResolveCoordinator_WithSG(t *testing.T) {
 			return nil
 		},
 	}
-	_, _, sgID, err := c.resolveCoordinator(context.Background())
+	_, _, sgID, _, err := c.resolveCoordinator(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if sgID != "sg-coord-123" {
 		t.Errorf("sgID = %q, want sg-coord-123", sgID)
+	}
+}
+
+func TestResolveCoordinator_Placement(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-coord-123"},
+	})
+	c := command{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		readState: func() (*fabricastate.State, error) { return st, nil },
+		getResource: func(ctx context.Context, r *cloud.Resource) error {
+			switch r.TypeName {
+			case cloud.TypeAWSEC2Instance:
+				r.ActualState = json.RawMessage(`{"PrivateIpAddress":"10.0.1.50","SubnetId":"subnet-abc123"}`)
+			case cloud.TypeAWSEC2SecurityGroup:
+				r.ActualState = json.RawMessage(`{"VpcId":"vpc-abc123"}`)
+			}
+			return nil
+		},
+	}
+	_, _, _, placement, err := c.resolveCoordinator(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if placement.SubnetID != "subnet-abc123" {
+		t.Errorf("placement.SubnetID = %q, want subnet-abc123 (from the instance)", placement.SubnetID)
+	}
+	if placement.VPCID != "vpc-abc123" {
+		t.Errorf("placement.VPCID = %q, want vpc-abc123 (from the coordinator SG)", placement.VPCID)
+	}
+}
+
+func TestResolveCoordinator_SGGetError(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-coord-123"},
+	})
+	c := command{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		readState: func() (*fabricastate.State, error) { return st, nil },
+		getResource: func(ctx context.Context, r *cloud.Resource) error {
+			if r.TypeName == cloud.TypeAWSEC2SecurityGroup {
+				return fmt.Errorf("vpc call failed")
+			}
+			r.ActualState = json.RawMessage(`{"PrivateIpAddress":"10.0.1.50","SubnetId":"subnet-abc123"}`)
+			return nil
+		},
+	}
+	_, _, _, _, err := c.resolveCoordinator(context.Background())
+	if err == nil {
+		t.Fatal("expected error when the coordinator SG lookup fails")
+	}
+	if !strings.Contains(err.Error(), "querying coordinator security group") {
+		t.Errorf("error = %q, want 'querying coordinator security group'", err.Error())
+	}
+}
+
+func TestResolveCoordinator_SGStateUnparseable(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-coord-123"},
+	})
+	c := command{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		readState: func() (*fabricastate.State, error) { return st, nil },
+		getResource: func(ctx context.Context, r *cloud.Resource) error {
+			if r.TypeName == cloud.TypeAWSEC2SecurityGroup {
+				r.ActualState = json.RawMessage(`"not-a-map"`)
+				return nil
+			}
+			r.ActualState = json.RawMessage(`{"PrivateIpAddress":"10.0.1.50","SubnetId":"subnet-abc123"}`)
+			return nil
+		},
+	}
+	_, _, _, placement, err := c.resolveCoordinator(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// An unparseable SG state leaves the VPC unknown (best-effort): the
+	// placement stays half-known and the plan falls back to the default VPC.
+	if placement.VPCID != "" {
+		t.Errorf("placement.VPCID = %q, want empty (best-effort on unparseable SG state)", placement.VPCID)
+	}
+	if placement.SubnetID != "subnet-abc123" {
+		t.Errorf("placement.SubnetID = %q, want subnet-abc123", placement.SubnetID)
 	}
 }
 
@@ -525,6 +614,94 @@ func TestApplyCreate_WithoutScaling(t *testing.T) {
 	// Only 5 base resources when scaling is disabled
 	if callCount != 5 {
 		t.Errorf("want 5 create calls (base only), got %d", callCount)
+	}
+}
+
+func TestApplyCreate_GRPCIngressCreated(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+	})
+	plan := &horde.AgentsCreatePlan{
+		ASGName:              "asg-test",
+		LaunchTemplateName:   "lt-test",
+		InstanceProfileName:  "profile-test",
+		RoleName:             "role-test",
+		SGName:               "sg-test",
+		CoordinatorPrivateIP: "10.0.1.50",
+		CoordinatorPort:      5000,
+		CoordinatorGRPCPort:  5002,
+		CoordinatorSGID:      "sg-coord",
+		AmiID:                "ami-123",
+		InstanceType:         "c7i.xlarge",
+		MinSize:              0,
+		DesiredCapacity:      1,
+		MaxSize:              2,
+	}
+	var typeNames []string
+	c := command{
+		out: &out,
+		createResource: func(ctx context.Context, r *cloud.Resource) error {
+			typeNames = append(typeNames, r.TypeName)
+			r.Identifier = fmt.Sprintf("resource-%d", len(typeNames))
+			return nil
+		},
+		writeState: func(st *fabricastate.State) error { return nil },
+	}
+	err := c.applyCreate(context.Background(), st, plan)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 5 base + HTTP ingress + gRPC ingress = 7
+	if len(typeNames) != 7 {
+		t.Fatalf("want 7 create calls (5 base + 2 ingress), got %d: %v", len(typeNames), typeNames)
+	}
+	if typeNames[1] != cloud.TypeAWSEC2SecurityGroupIngress || typeNames[2] != cloud.TypeAWSEC2SecurityGroupIngress {
+		t.Errorf("calls 2-3 = %v, want both %s", typeNames[1:3], cloud.TypeAWSEC2SecurityGroupIngress)
+	}
+}
+
+func TestApplyCreate_GRPCIngressSkippedWhenSamePort(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+	})
+	plan := &horde.AgentsCreatePlan{
+		ASGName:              "asg-test",
+		LaunchTemplateName:   "lt-test",
+		InstanceProfileName:  "profile-test",
+		RoleName:             "role-test",
+		SGName:               "sg-test",
+		CoordinatorPrivateIP: "10.0.1.50",
+		CoordinatorPort:      5000,
+		CoordinatorGRPCPort:  5000, // same as the HTTP port: no second rule
+		CoordinatorSGID:      "sg-coord",
+		AmiID:                "ami-123",
+		InstanceType:         "c7i.xlarge",
+		MinSize:              0,
+		DesiredCapacity:      1,
+		MaxSize:              2,
+	}
+	callCount := 0
+	c := command{
+		out: &out,
+		createResource: func(ctx context.Context, r *cloud.Resource) error {
+			callCount++
+			r.Identifier = fmt.Sprintf("resource-%d", callCount)
+			return nil
+		},
+		writeState: func(st *fabricastate.State) error { return nil },
+	}
+	err := c.applyCreate(context.Background(), st, plan)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 5 base + HTTP ingress only (a duplicate rule for the same port would
+	// be rejected by AWS)
+	if callCount != 6 {
+		t.Errorf("want 6 create calls (gRPC skipped when ports match), got %d", callCount)
 	}
 }
 

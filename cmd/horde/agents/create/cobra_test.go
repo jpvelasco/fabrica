@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
 	"github.com/spf13/cobra"
@@ -231,9 +233,11 @@ func TestAgentsCreateYesFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("--yes run failed: %v", err)
 	}
-	// 6 resources: SG, agent-to-coordinator ingress, role, profile, LT, ASG.
-	if provider.CreateCalls != 6 {
-		t.Fatalf("--yes: expected 6 create calls, got %d", provider.CreateCalls)
+	// 7 resources: SG, HTTP ingress, gRPC ingress, role, profile, LT, ASG.
+	// The fixture state has the coordinator SG and the default ports differ
+	// (5000 HTTP / 5002 gRPC), so both ingress rules are created.
+	if provider.CreateCalls != 7 {
+		t.Fatalf("--yes: expected 7 create calls, got %d", provider.CreateCalls)
 	}
 }
 
@@ -301,6 +305,84 @@ func TestAgentsCreatePreservesCoordinator(t *testing.T) {
 	// Module Version must remain the coordinator AMI — not overwritten by agents.
 	if m.Version != "ami-test123" {
 		t.Errorf("module Version = %q, want ami-test123 (coordinator AMI preserved)", m.Version)
+	}
+}
+
+// TestAgentsCreatePlacementFollowsCoordinator verifies the pool placement
+// follows the coordinator's live VPC/subnet (subnet from the instance, VPC
+// from the coordinator SG) instead of the account default VPC.
+func TestAgentsCreatePlacementFollowsCoordinator(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, coordinatorStateJSON())
+
+	oplog.ResetForTest()
+	var logBuf bytes.Buffer
+	oplog.InitWithWriter(slog.LevelInfo, true, &logBuf)
+
+	provider := &testutil.TestProvider{
+		GetResources: map[string]cloud.Resource{
+			cloud.TypeAWSEC2Instance: {
+				Identifier: "i-coordinator",
+				ActualState: mustJSON(map[string]any{
+					"PrivateIpAddress": "10.0.1.50",
+					"SubnetId":         "subnet-coord",
+				}),
+			},
+			cloud.TypeAWSEC2SecurityGroup: {
+				Identifier: "sg-coordinator",
+				ActualState: mustJSON(map[string]any{
+					"VpcId": "vpc-coord",
+				}),
+			},
+		},
+	}
+	vpcProvider := &vpcTestProvider{TestProvider: provider, vpcID: "vpc-test", subnetID: "subnet-test"}
+
+	got, err := runAgentsCreate(t, newAgentsTestRuntime(vpcProvider), "--dry-run", "--ami-id", "ami-agent123")
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	// The plan shows the coordinator's placement, not the resolver's.
+	testutil.AssertContains(t, got, "vpc-coord / subnet-coord")
+	if strings.Contains(logBuf.String(), "account default VPC") {
+		t.Errorf("no fallback warning expected when the coordinator placement is fully known: %s", logBuf.String())
+	}
+}
+
+// TestAgentsCreatePlacementFallbackWarning verifies the operator-facing
+// warning goes to the log stream (stderr), keeping stdout pure for --json.
+func TestAgentsCreatePlacementFallbackWarning(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, coordinatorStateJSON())
+
+	oplog.ResetForTest()
+	var logBuf bytes.Buffer
+	oplog.InitWithWriter(slog.LevelInfo, true, &logBuf)
+
+	// Instance without SubnetId and no SG actual state: placement unknown.
+	provider := &testutil.TestProvider{
+		GetResources: map[string]cloud.Resource{
+			cloud.TypeAWSEC2Instance: {
+				Identifier: "i-coordinator",
+				ActualState: mustJSON(map[string]any{
+					"PrivateIpAddress": "10.0.1.50",
+				}),
+			},
+		},
+	}
+	vpcProvider := &vpcTestProvider{TestProvider: provider, vpcID: "vpc-test", subnetID: "subnet-test"}
+
+	got, err := runAgentsCreate(t, newAgentsTestRuntime(vpcProvider), "--dry-run", "--ami-id", "ami-agent123")
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	if !strings.Contains(logBuf.String(), "account default VPC") {
+		t.Errorf("expected the placement fallback warning in the log stream, got: %s", logBuf.String())
+	}
+	if strings.Contains(got, "account default VPC") {
+		t.Errorf("the warning must not leak into stdout: %s", got)
 	}
 }
 

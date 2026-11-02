@@ -212,6 +212,37 @@ func TestAgentUserDataReadinessSentinel(t *testing.T) {
 	}
 }
 
+func TestAgentUserDataGRPCPort(t *testing.T) {
+	cfg := AgentUserDataConfig{
+		CoordinatorIP:       "10.0.1.10",
+		CoordinatorPort:     5000,
+		CoordinatorGRPCPort: 5002,
+	}
+	raw, err := AgentUserDataRaw(cfg)
+	if err != nil {
+		t.Fatalf("AgentUserDataRaw: %v", err)
+	}
+	if !strings.Contains(raw, "HORDE_COORDINATOR_GRPC_PORT=5002") {
+		t.Error("user data should set HORDE_COORDINATOR_GRPC_PORT env var")
+	}
+	if !strings.Contains(raw, "grpc_port = 5002") {
+		t.Error("user data should write the grpc_port key to the INI config")
+	}
+
+	// A zero gRPC port omits both lines entirely.
+	cfg.CoordinatorGRPCPort = 0
+	raw, err = AgentUserDataRaw(cfg)
+	if err != nil {
+		t.Fatalf("AgentUserDataRaw: %v", err)
+	}
+	if strings.Contains(raw, "HORDE_COORDINATOR_GRPC_PORT") {
+		t.Error("user data should omit the gRPC env var when the port is zero")
+	}
+	if strings.Contains(raw, "grpc_port") {
+		t.Error("user data should omit the grpc_port key when the port is zero")
+	}
+}
+
 func TestAgentUserDataCustomPort(t *testing.T) {
 	cfg := AgentUserDataConfig{
 		CoordinatorIP:   "10.0.1.10",

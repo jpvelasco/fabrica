@@ -113,14 +113,19 @@ type HordeConfig struct {
 // Used by `fabrica horde agents create` to provision an Auto Scaling Group
 // of Horde build agents.
 type HordeAgentsConfig struct {
-	AmiID           string                   `mapstructure:"amiId"           yaml:"amiId"`
-	InstanceType    string                   `mapstructure:"instanceType"    yaml:"instanceType"`
-	MinSize         int                      `mapstructure:"minSize"         yaml:"minSize"`
-	DesiredCapacity int                      `mapstructure:"desiredCapacity" yaml:"desiredCapacity"`
-	MaxSize         int                      `mapstructure:"maxSize"         yaml:"maxSize"`
-	Spot            bool                     `mapstructure:"spot"            yaml:"spot"`
-	Schedule        CapacitySchedule         `mapstructure:"schedule"        yaml:"schedule"`
-	Scaling         HordeAgentsScalingConfig `mapstructure:"scaling"        yaml:"scaling"`
+	AmiID           string `mapstructure:"amiId"           yaml:"amiId"`
+	InstanceType    string `mapstructure:"instanceType"    yaml:"instanceType"`
+	MinSize         int    `mapstructure:"minSize"         yaml:"minSize"`
+	DesiredCapacity int    `mapstructure:"desiredCapacity" yaml:"desiredCapacity"`
+	MaxSize         int    `mapstructure:"maxSize"         yaml:"maxSize"`
+	// VPCID and SubnetID place the agent pool explicitly. They must be set
+	// together; when both are omitted the pool follows the coordinator's
+	// placement, falling back to the account default VPC.
+	VPCID    string                   `mapstructure:"vpcId"           yaml:"vpcId"`
+	SubnetID string                   `mapstructure:"subnetId"        yaml:"subnetId"`
+	Spot     bool                     `mapstructure:"spot"            yaml:"spot"`
+	Schedule CapacitySchedule         `mapstructure:"schedule"        yaml:"schedule"`
+	Scaling  HordeAgentsScalingConfig `mapstructure:"scaling"        yaml:"scaling"`
 }
 
 // HordeAgentsScalingConfig holds queue-based autoscaling settings for the
