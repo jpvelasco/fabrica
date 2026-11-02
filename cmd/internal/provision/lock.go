@@ -98,15 +98,23 @@ func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string)
 	// lapses.
 	renewCtx, stopRenew := context.WithCancel(context.WithoutCancel(ctx))
 	mutateCtx, stopMutate := context.WithCancel(ctx)
-	go store.Heartbeat(renewCtx, lockID, token, holder, func(err error) {
-		oplog.WithModule("state-lock").Error("state lock lost — aborting operation",
-			"operation", operation, "error", err)
-		stopMutate()
-	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		store.Heartbeat(renewCtx, lockID, token, holder, func(err error) {
+			oplog.WithModule("state-lock").Error("state lock lost — aborting operation",
+				"operation", operation, "error", err)
+			stopMutate()
+		})
+	}()
 
 	release := func() {
 		stopRenew()
 		stopMutate()
+		// Join the heartbeat so no lock machinery (renewals, logging)
+		// outlives the release; the wait is bounded by one in-flight
+		// renewal, cancelled before the wait starts.
+		<-done
 		// WithoutCancel: a cancelled command must still free the lock.
 		// state.Release swallows takeover races and logs storage failures.
 		_ = store.Release(context.WithoutCancel(ctx), lockID, token)
