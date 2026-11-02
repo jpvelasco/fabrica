@@ -36,6 +36,10 @@ type command struct {
 	backend        cloud.StateBackendChecker
 	codebuild      cloud.CodeBuildRunner
 	confirm        func(string) bool
+	// withRegion resolves a region-scoped resource client for resources
+	// recorded outside the home region (DDC edges). Nil when the provider
+	// does not support additional regions.
+	withRegion func(ctx context.Context, region string) (cloud.RegionView, error)
 }
 
 // New returns the "fabrica drift" command.
@@ -94,6 +98,9 @@ and CodeBuild projects.`,
 				if cb, ok := rt.Provider.(cloud.CodeBuildRunner); ok {
 					c.codebuild = cb
 				}
+				if rp, ok := rt.Provider.(cloud.RegionProvider); ok {
+					c.withRegion = rp.WithRegion
+				}
 			}
 			return c.run(cmd.Context(), opts.DryRun)
 		},
@@ -134,6 +141,10 @@ func (c *command) run(ctx context.Context, dryRun bool) error {
 		},
 	}
 
+	if c.withRegion != nil {
+		engine.RegionResource = c.regionResource
+	}
+
 	report := engine.Run(ctx)
 
 	// Fix mode: plan remediation and optionally apply.
@@ -147,6 +158,17 @@ func (c *command) run(ctx context.Context, dryRun bool) error {
 	}
 	c.printText(report)
 	return nil
+}
+
+// regionResource resolves a region-scoped resource client for the drift
+// engine's reads and enumeration of resources recorded outside the home
+// region.
+func (c *command) regionResource(ctx context.Context, region string) (cloud.ResourceClient, error) {
+	view, err := c.withRegion(ctx, region)
+	if err != nil {
+		return nil, err
+	}
+	return view.Resources, nil
 }
 
 func (c *command) runFix(ctx context.Context, dryRun bool, st *fabricastate.State, report *drift.DriftReport) error {

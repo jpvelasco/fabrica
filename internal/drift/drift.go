@@ -81,12 +81,19 @@ type ModuleDrift struct {
 
 // Engine is the drift detection engine. All fields are seams for testability.
 type Engine struct {
-	State           *state.State
-	ResourceGet     func(ctx context.Context, r *cloud.Resource) error
-	ResourceList    func(ctx context.Context, typeName string) ([]cloud.Resource, error)
+	State        *state.State
+	ResourceGet  func(ctx context.Context, r *cloud.Resource) error
+	ResourceList func(ctx context.Context, typeName string) ([]cloud.Resource, error)
+	// RegionResource resolves a region-scoped resource client for resources
+	// recorded in a non-home region (DDC edges). Nil when the provider does
+	// not support additional regions; such resources are reported as Error.
+	RegionResource  func(ctx context.Context, region string) (cloud.ResourceClient, error)
 	BackendChecker  cloud.StateBackendChecker
 	CodeBuildRunner cloud.CodeBuildRunner
 	Config          *DriftConfig
+
+	// regionClients caches region-scoped clients resolved during one Run.
+	regionClients map[string]cloud.ResourceClient
 }
 
 // DriftConfig holds configuration for the drift check.
@@ -101,6 +108,7 @@ type DriftConfig struct {
 // state backend, returning a DriftReport.
 func (e *Engine) Run(ctx context.Context) *DriftReport {
 	report := &DriftReport{}
+	e.regionClients = map[string]cloud.ResourceClient{}
 
 	// Check state backend health.
 	report.Backend = e.checkBackend(ctx)
@@ -221,6 +229,11 @@ func (e *Engine) checkModule(ctx context.Context, m *state.ModuleState) ModuleDr
 // modules to avoid false positives when multiple modules share the same
 // resource type (e.g., IAM roles). Extras are assigned to the first module
 // that records the matching type name.
+//
+// Home-region resources are listed through the home client; resources
+// recorded in an edge region (DDC edges) are additionally listed through
+// that region's client so edge resources are not reported as missing by the
+// home list and strays created in an edge region surface as Extra.
 func (e *Engine) checkExtraResources(ctx context.Context) []DriftResult {
 	if e.ResourceList == nil {
 		return nil
@@ -230,6 +243,8 @@ func (e *Engine) checkExtraResources(ctx context.Context) []DriftResult {
 	allRecorded := make(map[string]map[string]bool)
 	// Track which module owns each type (first module that has the type).
 	typeOwner := make(map[string]string)
+	// Track which resource types are recorded per region ("" = home).
+	regionTypes := make(map[string]map[string]bool)
 	for i := range e.State.Modules {
 		sm := &e.State.Modules[i]
 		for j := range sm.Resources {
@@ -242,6 +257,11 @@ func (e *Engine) checkExtraResources(ctx context.Context) []DriftResult {
 				typeOwner[r.TypeName] = sm.Name
 			}
 			allRecorded[r.TypeName][r.Identifier] = true
+			region := resourceRegion(r)
+			if regionTypes[region] == nil {
+				regionTypes[region] = make(map[string]bool)
+			}
+			regionTypes[region][r.TypeName] = true
 		}
 	}
 
@@ -251,25 +271,53 @@ func (e *Engine) checkExtraResources(ctx context.Context) []DriftResult {
 		if err != nil {
 			continue
 		}
+		results = append(results, e.extraResults(ctx, typeName, live, recordedIDs, typeOwner[typeName])...)
+	}
 
-		for _, res := range live {
-			if !recordedIDs[res.Identifier] {
-				// Skip ASG-managed instances: they carry FabricaRole=agent
-				// in their tags and are not tracked individually in state.
-				if isASGManagedInstance(res) {
-					continue
-				}
-				results = append(results, DriftResult{
-					Module:     typeOwner[typeName],
-					TypeName:   typeName,
-					Identifier: res.Identifier,
-					Status:     Extra,
-					Details:    "resource exists in live state but not in recorded state",
-				})
+	// Edge regions: enumerate the types recorded there through that
+	// region's client. Regions that cannot be resolved (no region seam)
+	// are skipped — the home list already covers the home side.
+	for region, types := range regionTypes {
+		if region == "" || region == e.homeRegion() {
+			continue
+		}
+		rc, err := e.regionClient(ctx, region)
+		if err != nil {
+			continue
+		}
+		for typeName := range types {
+			live, err := rc.List(ctx, typeName)
+			if err != nil {
+				continue
 			}
+			results = append(results, e.extraResults(ctx, typeName, live, allRecorded[typeName], typeOwner[typeName])...)
 		}
 	}
 
+	return results
+}
+
+// extraResults diffs one type's live list against the recorded identifiers
+// and returns the unrecorded (Extra) ones. ASG-managed instances carry
+// FabricaRole=agent in their tags and are not tracked individually in
+// state, so they are excluded.
+func (e *Engine) extraResults(_ context.Context, typeName string, live []cloud.Resource, recordedIDs map[string]bool, owner string) []DriftResult {
+	var results []DriftResult
+	for _, res := range live {
+		if recordedIDs[res.Identifier] {
+			continue
+		}
+		if isASGManagedInstance(res) {
+			continue
+		}
+		results = append(results, DriftResult{
+			Module:     owner,
+			TypeName:   typeName,
+			Identifier: res.Identifier,
+			Status:     Extra,
+			Details:    "resource exists in live state but not in recorded state",
+		})
+	}
 	return results
 }
 
@@ -301,6 +349,54 @@ func isASGManagedInstance(res cloud.Resource) bool {
 	return false
 }
 
+// homeRegion returns the region the home client is bound to.
+func (e *Engine) homeRegion() string {
+	if e.Config == nil {
+		return ""
+	}
+	return e.Config.Region
+}
+
+// resourceRegion returns the region a recorded resource belongs to; the
+// empty string means the home region.
+func resourceRegion(r *state.ModuleResource) string {
+	if r.Properties == nil {
+		return ""
+	}
+	return r.Properties["region"]
+}
+
+// regionClient resolves (and caches) the resource client for a non-home
+// region via the RegionResource seam.
+func (e *Engine) regionClient(ctx context.Context, region string) (cloud.ResourceClient, error) {
+	if e.RegionResource == nil {
+		return nil, fmt.Errorf("provider does not support additional regions")
+	}
+	if c, ok := e.regionClients[region]; ok {
+		return c, nil
+	}
+	c, err := e.RegionResource(ctx, region)
+	if err != nil {
+		return nil, err
+	}
+	e.regionClients[region] = c
+	return c, nil
+}
+
+// getFor routes a Get to the client bound to the resource's region: the
+// home seam for home-region resources, the region-scoped client otherwise.
+func (e *Engine) getFor(ctx context.Context, r *state.ModuleResource, cloudRes *cloud.Resource) error {
+	region := resourceRegion(r)
+	if region == "" || region == e.homeRegion() {
+		return e.ResourceGet(ctx, cloudRes)
+	}
+	rc, err := e.regionClient(ctx, region)
+	if err != nil {
+		return fmt.Errorf("routing to region %s: %w", region, err)
+	}
+	return rc.Get(ctx, cloudRes)
+}
+
 func (e *Engine) checkResource(ctx context.Context, m *state.ModuleState, r *state.ModuleResource) DriftResult {
 	res := DriftResult{
 		Module:     m.Name,
@@ -326,7 +422,7 @@ func (e *Engine) checkResource(ctx context.Context, m *state.ModuleState, r *sta
 		Identifier: r.Identifier,
 	}
 
-	err := e.ResourceGet(ctx, cloudRes)
+	err := e.getFor(ctx, r, cloudRes)
 	if err != nil {
 		if err == cloud.ErrResourceNotFound {
 			res.Status = Missing

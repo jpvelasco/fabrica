@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -1049,4 +1050,52 @@ func TestRunFix_SkippedActions_Oplog(t *testing.T) {
 	hasLog(t, buf, "applied")
 	hasLog(t, buf, "failed")
 	hasLog(t, buf, "skipped")
+}
+
+// --- createInRegion / regionResource tests ---
+
+// recordingRC is a minimal cloud.ResourceClient that records Create calls.
+type recordingRC struct {
+	created []string
+}
+
+func (r *recordingRC) Create(_ context.Context, res *cloud.Resource) error {
+	r.created = append(r.created, res.Identifier)
+	return nil
+}
+
+func (r *recordingRC) Get(_ context.Context, _ *cloud.Resource) error {
+	return cloud.ErrResourceNotFound
+}
+
+func (r *recordingRC) Update(_ context.Context, _ *cloud.Resource) error { return nil }
+
+func (r *recordingRC) Delete(_ context.Context, _ *cloud.Resource) error {
+	return nil
+}
+
+func (r *recordingRC) List(_ context.Context, _ string) ([]cloud.Resource, error) {
+	return nil, nil
+}
+
+func TestRegionResource_Seam(t *testing.T) {
+	c := newTestCommand(t)
+	edgeRC := &recordingRC{}
+	c.withRegion = func(_ context.Context, region string) (cloud.RegionView, error) {
+		return cloud.RegionView{Resources: edgeRC}, nil
+	}
+	rc, err := c.regionResource(context.Background(), "eu-west-1")
+	if err != nil {
+		t.Fatalf("regionResource: %v", err)
+	}
+	if rc == nil {
+		t.Fatal("expected non-nil region client")
+	}
+
+	c.withRegion = func(_ context.Context, region string) (cloud.RegionView, error) {
+		return cloud.RegionView{}, fmt.Errorf("no credentials in %s", region)
+	}
+	if _, err := c.regionResource(context.Background(), "eu-west-1"); err == nil {
+		t.Fatal("expected error when the region seam fails")
+	}
 }
