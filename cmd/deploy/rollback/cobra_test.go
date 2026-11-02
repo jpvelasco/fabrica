@@ -3,6 +3,8 @@ package rollback_test
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -124,18 +126,62 @@ func TestRollbackCobraYesFlagBypassesConfirm(t *testing.T) {
 	testutil.AssertContains(t, got, "Rolled back")
 }
 
-// TestRollbackCobraJSONDryRun verifies --json --dry-run work together.
+// assertDryRunNoMutation runs rollback with --dry-run --yes plus any extra
+// flags and asserts the alias was never updated and the state file is
+// byte-identical, returning the command output.
+func assertDryRunNoMutation(t *testing.T, dir string, provider *testutil.GameLiftProvider, extraArgs ...string) string {
+	t.Helper()
+	statePath := filepath.Join(dir, ".fabrica", "state.json")
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("reading state file: %v", err)
+	}
+
+	args := append([]string{"--dry-run", "--yes"}, extraArgs...)
+	got, err := runRollback(t, testutil.NewTestRuntime(provider), args...)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider.UpdateCalls != 0 {
+		t.Errorf("dry run must not flip the alias, got %d update calls", provider.UpdateCalls)
+	}
+	after, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("reading state file after run: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Error("dry run rewrote the state file")
+	}
+	return got
+}
+
+// TestRollbackCobraJSONDryRun verifies --json --dry-run work together and make
+// no changes.
 func TestRollbackCobraJSONDryRun(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
 
-	_, err := runRollback(t, testutil.NewTestRuntime(&testutil.GameLiftProvider{
+	provider := &testutil.GameLiftProvider{
 		FleetStatusByID: map[string]string{"fleet-old": "ACTIVE"},
-	}), "--json", "--dry-run", "--yes")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
 	}
+	got := assertDryRunNoMutation(t, dir, provider, "--json")
+	testutil.AssertContains(t, got, "fleet-old")
+}
+
+// TestRollbackCobraDryRunNoMutation verifies --dry-run prints the preview and
+// makes no changes (regression: the flag was previously ignored).
+func TestRollbackCobraDryRunNoMutation(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, deployStateWithFleets("fleet-new", "fleet-old"))
+
+	provider := &testutil.GameLiftProvider{
+		FleetStatusByID: map[string]string{"fleet-old": "ACTIVE"},
+	}
+	got := assertDryRunNoMutation(t, dir, provider)
+	testutil.AssertContains(t, got, "dry run")
+	testutil.AssertContains(t, got, "fleet-old")
 }
 
 // TestRollbackCobraRuntimeError verifies runtimeSource errors surface as command errors.
