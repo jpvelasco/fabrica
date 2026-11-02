@@ -22,7 +22,7 @@ import (
 // Only ActionCreate items are applied; ActionSkip items are collected as
 // skipped. Partial failure stops on the first error and returns what was
 // applied, skipped, and failed so far.
-func ApplyRemediation(ctx context.Context, plan *RemediationPlan, st *state.State, createResource func(ctx context.Context, r *cloud.Resource) error) *RemediationResult {
+func ApplyRemediation(ctx context.Context, plan *RemediationPlan, st *state.State, createResource func(ctx context.Context, a *RemediationAction) error) *RemediationResult {
 	result := &RemediationResult{}
 
 	for i := range plan.Actions {
@@ -46,7 +46,7 @@ func ApplyRemediation(ctx context.Context, plan *RemediationPlan, st *state.Stat
 			continue
 		}
 
-		err := createResource(ctx, a.Resource)
+		err := createResource(ctx, a)
 		if err != nil {
 			result.Failed = append(result.Failed, *a)
 			result.Errors = append(result.Errors, fmt.Sprintf("%s/%s: %v", a.Module, a.TypeName, err))
@@ -77,7 +77,7 @@ func ApplyRemediation(ctx context.Context, plan *RemediationPlan, st *state.Stat
 		// If we just created an SG, refresh the SecurityGroupIds in any
 		// pending instance actions so they reference the new SG identifier.
 		if a.TypeName == cloud.TypeAWSEC2SecurityGroup {
-			refreshSGIDs(plan, i, a.Module, a.Resource.Identifier)
+			refreshSGIDs(plan, i, a.Module, a.Region, a.Resource.Identifier)
 		}
 
 		result.Applied = append(result.Applied, *a)
@@ -97,12 +97,13 @@ func resourcesForModule(st *state.State, name string) []state.ModuleResource {
 
 // refreshSGIDs updates the SecurityGroupIds in the DesiredState of any
 // pending EC2 instance actions (after index idx) that belong to the same
-// module as the SG that was just created. This ensures the instance references
-// the new SG identifier instead of the old one.
-func refreshSGIDs(plan *RemediationPlan, idx int, module string, newSGID string) {
+// module and region as the SG that was just created. This ensures the
+// instance references the new SG identifier instead of the old one, while
+// home-region actions are not rewired by an edge SG (or vice versa).
+func refreshSGIDs(plan *RemediationPlan, idx int, module, region, newSGID string) {
 	for i := idx + 1; i < len(plan.Actions); i++ {
 		a := &plan.Actions[i]
-		if a.Module != module || a.TypeName != cloud.TypeAWSEC2Instance || a.Resource == nil || a.Resource.DesiredState == nil {
+		if a.Module != module || a.TypeName != cloud.TypeAWSEC2Instance || a.Resource == nil || a.Resource.DesiredState == nil || a.Region != region {
 			continue
 		}
 		var ds map[string]any

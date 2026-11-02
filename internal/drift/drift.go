@@ -607,12 +607,16 @@ const (
 
 // RemediationAction describes one remediation step for a drifted resource.
 type RemediationAction struct {
-	Module     string      `json:"module"`
-	TypeName   string      `json:"typeName"`
-	Identifier string      `json:"identifier"`
-	Drift      DriftStatus `json:"drift"`
-	Kind       ActionKind  `json:"kind"`
-	Reason     string      `json:"reason,omitempty"`
+	Module     string `json:"module"`
+	TypeName   string `json:"typeName"`
+	Identifier string `json:"identifier"`
+	// Region is the resource's region when it is recorded in a non-home
+	// region (DDC edges); empty for home-region resources. Remediation
+	// must create the resource through that region's client.
+	Region string      `json:"region,omitempty"`
+	Drift  DriftStatus `json:"drift"`
+	Kind   ActionKind  `json:"kind"`
+	Reason string      `json:"reason,omitempty"`
 	// Resource is the cloud.Resource to create (populated for ActionCreate).
 	Resource *cloud.Resource `json:"-"`
 }
@@ -646,6 +650,7 @@ func PlanRemediation(report *DriftReport, st *state.State, cfg *config.Config) *
 		md := &report.Modules[i]
 		for j := range md.Resources {
 			r := &md.Resources[j]
+			region := recordedRegion(st, r.Module, r.TypeName, r.Identifier)
 
 			var action RemediationAction
 			switch r.Status {
@@ -660,6 +665,7 @@ func PlanRemediation(report *DriftReport, st *state.State, cfg *config.Config) *
 							Drift:      r.Status,
 							Kind:       ActionSkip,
 							Reason:     fmt.Sprintf("cannot rebuild %s from recorded state: %v; recreate manually via fabrica", r.TypeName, err),
+							Region:     region,
 						}
 						plan.ToSkip++
 						plan.ReportOnly++
@@ -671,6 +677,7 @@ func PlanRemediation(report *DriftReport, st *state.State, cfg *config.Config) *
 							Drift:      r.Status,
 							Kind:       ActionCreate,
 							Resource:   res,
+							Region:     region,
 						}
 						plan.ToFix++
 					}
@@ -682,6 +689,7 @@ func PlanRemediation(report *DriftReport, st *state.State, cfg *config.Config) *
 						Drift:      r.Status,
 						Kind:       ActionSkip,
 						Reason:     fmt.Sprintf("auto-remediation unsupported for %s; recreate manually via fabrica", r.TypeName),
+						Region:     region,
 					}
 					plan.ToSkip++
 					plan.ReportOnly++
@@ -694,6 +702,7 @@ func PlanRemediation(report *DriftReport, st *state.State, cfg *config.Config) *
 					Drift:      r.Status,
 					Kind:       ActionSkip,
 					Reason:     "extra resources are report-only in V1; manually delete if needed",
+					Region:     region,
 				}
 				plan.ToSkip++
 				plan.ReportOnly++
@@ -705,6 +714,7 @@ func PlanRemediation(report *DriftReport, st *state.State, cfg *config.Config) *
 					Drift:      r.Status,
 					Kind:       ActionSkip,
 					Reason:     "mismatch remediation is report-only in V1; " + r.Details,
+					Region:     region,
 				}
 				plan.ToSkip++
 				plan.ReportOnly++
@@ -716,6 +726,7 @@ func PlanRemediation(report *DriftReport, st *state.State, cfg *config.Config) *
 					Drift:      r.Status,
 					Kind:       ActionSkip,
 					Reason:     "cannot remediate: " + r.Details,
+					Region:     region,
 				}
 				plan.ToSkip++
 			case InSync:
@@ -741,6 +752,22 @@ func canRecreate(typeName string) bool {
 	default:
 		return false
 	}
+}
+
+// recordedRegion returns the region recorded on the resource in state; the
+// empty string means the home region.
+func recordedRegion(st *state.State, module, typeName, identifier string) string {
+	mod := st.GetModule(module)
+	if mod == nil {
+		return ""
+	}
+	for i := range mod.Resources {
+		r := &mod.Resources[i]
+		if r.TypeName == typeName && r.Identifier == identifier {
+			return resourceRegion(r)
+		}
+	}
+	return ""
 }
 
 // rebuildResource reconstructs a cloud.Resource from the drift result, state,
@@ -780,7 +807,11 @@ func rebuildResource(dr *DriftResult, st *state.State, cfg *config.Config) (*clo
 	// Build desired state from recorded properties and config defaults.
 	switch dr.TypeName {
 	case cloud.TypeAWSEC2Instance:
-		res.DesiredState = rebuildInstanceDesiredState(rec, mod, cfg)
+		ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("rebuild desired state for instance %s in module %s: %w", dr.Identifier, dr.Module, err)
+		}
+		res.DesiredState = ds
 	case cloud.TypeAWSEC2SecurityGroup:
 		ds, err := rebuildSGDesiredState(rec, mod, cfg)
 		if err != nil {
@@ -794,8 +825,14 @@ func rebuildResource(dr *DriftResult, st *state.State, cfg *config.Config) (*clo
 
 // rebuildInstanceDesiredState builds a minimal EC2 instance desired state from
 // recorded properties. It uses the module version as the AMI and the
-// instanceType from properties (falling back to module config).
-func rebuildInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) json.RawMessage {
+// instanceType from properties (falling back to module config). DDC edge
+// instances are region-specific and are rebuilt from their recorded inputs
+// only (rebuildEdgeInstanceDesiredState).
+func rebuildInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+	if mod.Name == "ddc" && isEdgeResource(rec) {
+		return rebuildEdgeInstanceDesiredState(rec, mod, cfg)
+	}
+
 	instanceType := ""
 	ami := mod.Version
 	subnetID := ""
@@ -848,23 +885,84 @@ func rebuildInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleSta
 		ds["SubnetId"] = subnetID
 	}
 
-	// Security group is linked by finding the SG resource in the same module.
+	// Security group is linked by finding the SG resource in the same module;
+	// DDC edge instances pair with the edge group recorded in their own region.
 	// Note: if the SG is also Missing, its identifier in state may be updated
 	// by ApplyRemediation after the SG is recreated. The instance's DesiredState
 	// is baked at plan time, so ApplyRemediation must refresh it after SG create.
-	var sgID string
-	for _, r := range mod.Resources {
-		if r.TypeName == cloud.TypeAWSEC2SecurityGroup {
-			sgID = r.Identifier
-			break
-		}
-	}
+	sgID := moduleSGIDFor(rec, mod)
 	if sgID != "" {
 		ds["SecurityGroupIds"] = []string{sgID}
 	}
 
-	b, _ := json.Marshal(ds)
-	return b
+	return json.Marshal(ds)
+}
+
+// isEdgeResource reports whether a recorded resource is a DDC edge resource:
+// it carries the edge role plus an explicit region. Home resources record
+// neither, so they never match.
+func isEdgeResource(rec *state.ModuleResource) bool {
+	if rec.Properties == nil {
+		return false
+	}
+	return rec.Properties["role"] == ddc.RoleEdge && rec.Properties["region"] != ""
+}
+
+// rebuildEdgeInstanceDesiredState rebuilds a Missing DDC edge instance's
+// desired state from its recorded region-specific inputs. Edge AMIs and
+// subnets are per-region, so the recorded imageId and subnetId are required;
+// resources recorded before those inputs were captured are reported
+// unrebuildable with a hint to re-run the edge provisioning command.
+func rebuildEdgeInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+	region := rec.Properties["region"]
+	ami := rec.Properties["imageId"]
+	if ami == "" {
+		return nil, fmt.Errorf("no AMI recorded for DDC edge %s; re-run 'fabrica ddc region add %s'", region, region)
+	}
+	subnetID := rec.Properties["subnetId"]
+	if subnetID == "" {
+		return nil, fmt.Errorf("no subnet recorded for DDC edge %s; re-run 'fabrica ddc region add %s'", region, region)
+	}
+
+	instanceType := rec.Properties["instanceType"]
+	if instanceType == "" {
+		instanceType = cfg.DDC.InstanceType
+	}
+	if instanceType == "" {
+		instanceType = ddc.DefaultInstanceType
+	}
+
+	ds := map[string]any{
+		"InstanceType": instanceType,
+		"ImageId":      ami,
+		"SubnetId":     subnetID,
+	}
+	if sgID := moduleSGIDFor(rec, mod); sgID != "" {
+		ds["SecurityGroupIds"] = []string{sgID}
+	}
+	return json.Marshal(ds)
+}
+
+// moduleSGIDFor returns the security group identifier an instance's desired
+// state should reference. DDC edge instances pair with the edge group
+// recorded in their own region (the home group sits in another VPC); every
+// other instance uses the first security group in the module.
+func moduleSGIDFor(rec *state.ModuleResource, mod *state.ModuleState) string {
+	if isEdgeResource(rec) {
+		for i := range mod.Resources {
+			r := &mod.Resources[i]
+			if r.TypeName == cloud.TypeAWSEC2SecurityGroup && isEdgeResource(r) && r.Properties["region"] == rec.Properties["region"] {
+				return r.Identifier
+			}
+		}
+		return ""
+	}
+	for i := range mod.Resources {
+		if mod.Resources[i].TypeName == cloud.TypeAWSEC2SecurityGroup {
+			return mod.Resources[i].Identifier
+		}
+	}
+	return ""
 }
 
 // rebuildSGDesiredState rebuilds a Missing security group's desired state by
@@ -974,10 +1072,17 @@ func rebuildDDCSG(rec *state.ModuleResource, cfg *config.Config) (json.RawMessag
 		InternalCIDR: defaultCIDR(cfg.DDC.InternalCIDR, ddc.DefaultAllowedCIDR),
 		Backend:      ddc.NormalizeBackend(cfg.DDC.Backend),
 	}
-	if rec.Properties["role"] == ddc.RoleEdge && rec.Properties["region"] != "" {
+	if isEdgeResource(rec) {
+		region := rec.Properties["region"]
+		// Edge groups live in the edge region's VPC, so the recorded VPC is
+		// required; the home-config VPC fallback would point at the wrong one.
+		vpcID := rec.Properties["vpcId"]
+		if vpcID == "" {
+			return nil, fmt.Errorf("no VPC recorded for DDC edge %s; re-run 'fabrica ddc region add %s'", region, region)
+		}
 		return ddc.EdgeSGDesiredState(&ddc.EdgePlan{
-			SGName:       ddc.EdgeSGName(rec.Properties["region"]),
-			VPCID:        plan.VPCID,
+			SGName:       ddc.EdgeSGName(region),
+			VPCID:        vpcID,
 			PublicPort:   publicPort,
 			InternalPort: internalPort,
 			AllowedCIDR:  plan.AllowedCIDR,
