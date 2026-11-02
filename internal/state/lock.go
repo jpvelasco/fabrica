@@ -194,19 +194,21 @@ func leaseDelay(deadline time.Time, margin time.Duration) time.Duration {
 
 // rescheduleLease moves the lease timer to margin before the new deadline.
 // It reports false when the margin has already lapsed — a clock that jumped
-// past the deadline, or a fire the loop did not observe — in which case the
-// caller must abort.
+// past the deadline, or an already-expired timer — in which case the caller
+// must abort. Since Go 1.23 timer channels are unbuffered: an expired lease
+// timer hands its value only to a receiver already parked on it, which for
+// the heartbeat is its own leaseTimer.C case — and that case aborts before
+// any reschedule, so the expired branch below is defensive.
 func rescheduleLease(leaseTimer *time.Timer, deadline time.Time, margin time.Duration) bool {
 	d := leaseDelay(deadline, margin)
 	if d == 0 {
 		return false
 	}
 	if !leaseTimer.Stop() {
-		select {
-		case <-leaseTimer.C:
-			return false
-		default:
-		}
+		// The timer already expired or was stopped: re-arming would keep
+		// the caller mutating past a lease that may be gone, so report
+		// loss instead.
+		return false
 	}
 	leaseTimer.Reset(d)
 	return true

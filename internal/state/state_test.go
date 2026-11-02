@@ -331,6 +331,120 @@ func TestLockHeartbeatTransientRecoversWithinLease(t *testing.T) {
 	}
 }
 
+// TestLockHeartbeatZeroTTLFiresLeaseImmediately verifies the defensive
+// clamps: a non-positive ttl falls back to 1ms for both the tick interval
+// and the lease margin, the lease timer starts already lapsed, and the loop
+// reports loss with the "no successful renewal" error on the first lap.
+func TestLockHeartbeatZeroTTLFiresLeaseImmediately(t *testing.T) {
+	rec := &recordingLockStore{}
+	ls := NewFuncLockStore("t", time.Millisecond, rec.put, rec.del)
+	ls.ttl = 0
+	token, err := ls.Acquire(context.Background(), "res", "holder")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	lost := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		ls.Heartbeat(context.Background(), "res", token, "holder", func(err error) { lost <- err })
+		close(done)
+	}()
+	select {
+	case err := <-lost:
+		if !strings.Contains(err.Error(), "lock lease lapsed") {
+			t.Fatalf("onLost err = %v, want the lease-lapsed error", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("onLost did not fire for a zero-TTL lease")
+	}
+	<-done
+	if got := rec.puts(); got != 1 {
+		t.Errorf("putCalls = %d, want 1 (acquire only, no renewal)", got)
+	}
+}
+
+// TestLockHeartbeatNilOnLostIsSafe verifies a nil onLost callback is a no-op
+// guard, not a panic: the loop still stops on a confirmed takeover.
+func TestLockHeartbeatNilOnLostIsSafe(t *testing.T) {
+	rec := &recordingLockStore{}
+	ls := NewFuncLockStore("t", 30*time.Millisecond, rec.put, rec.del)
+	token, err := ls.Acquire(context.Background(), "res", "holder")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	rec.mu.Lock()
+	rec.putErr = fabricac.ErrLockHeld
+	rec.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		ls.Heartbeat(context.Background(), "res", token, "holder", nil)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat did not stop after confirmed takeover with nil onLost")
+	}
+}
+
+// TestLockHeartbeatBackwardClockJumpReportsLost verifies a clock that jumps
+// backward across the lease margin invalidates the next reschedule: the
+// deadline lands in the past, leaseDelay clamps to zero, and the heartbeat
+// reports loss instead of re-arming a lapsed lease.
+func TestLockHeartbeatBackwardClockJumpReportsLost(t *testing.T) {
+	rec := &recordingLockStore{}
+	ls := NewFuncLockStore("t", 100*time.Millisecond, rec.put, rec.del)
+	token, err := ls.Acquire(context.Background(), "res", "holder")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	// T0 serves Acquire and the heartbeat setup; every later read jumps 70ms
+	// backward, so the post-renewal deadline (now+ttl) has already lapsed.
+	t0 := time.Now()
+	var reads int
+	ls.SetClock(func() time.Time {
+		reads++
+		if reads > 2 {
+			return t0.Add(-70 * time.Millisecond)
+		}
+		return t0
+	})
+
+	lost := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		ls.Heartbeat(context.Background(), "res", token, "holder", func(err error) { lost <- err })
+		close(done)
+	}()
+	select {
+	case err := <-lost:
+		if !strings.Contains(err.Error(), "immediately after renewal") {
+			t.Fatalf("onLost err = %v, want the reschedule-abort error", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("onLost did not fire after the backward clock jump")
+	}
+	<-done
+	if got := rec.puts(); got != 2 {
+		t.Errorf("putCalls = %d, want 2 (acquire + one renewal)", got)
+	}
+}
+
+// TestRescheduleLeaseAlreadyExpiredAborts covers rescheduleLease's
+// defensive expired branch: once the timer has expired (its value was
+// observed on the channel), re-arming would push the lease past a lapsed
+// margin, so the reschedule reports loss instead.
+func TestRescheduleLeaseAlreadyExpiredAborts(t *testing.T) {
+	timer := time.NewTimer(10 * time.Millisecond)
+	<-timer.C // Observe the expiry; the timer stays expired (Stop reports false).
+	if rescheduleLease(timer, time.Now().Add(100*time.Millisecond), 10*time.Millisecond) {
+		t.Fatal("rescheduleLease = true, want false for an expired lease timer")
+	}
+}
+
 func TestLockRelease(t *testing.T) {
 	ls, _ := newRecordingLockStore()
 
