@@ -19,6 +19,13 @@ var (
 // DefaultInstanceType is the EC2 shape used when config omits instanceType.
 const DefaultInstanceType = "m5.xlarge"
 
+// DefaultAllowedCIDR is the security-group fallback when no explicit CIDR is
+// configured.
+const DefaultAllowedCIDR = "10.0.0.0/8"
+
+// DefaultSGName is the Perforce security group name.
+const DefaultSGName = "fabrica-perforce-sg"
+
 // CreatePlan holds everything needed to provision Perforce: resolved names,
 // resource specs, cost inputs. No AWS SDK types — callers execute the plan.
 type CreatePlan struct {
@@ -69,7 +76,7 @@ func NewCreatePlan(ctx context.Context, cfg config.PerforceConfig, account, regi
 	}
 	allowedCIDR := cfg.AllowedCIDR
 	if allowedCIDR == "" {
-		allowedCIDR = "10.0.0.0/8"
+		allowedCIDR = DefaultAllowedCIDR
 	}
 
 	vpcID, subnetID, defaultVPC, err := topology.ResolveVPC(ctx, cfg.VPCId, cfg.SubnetId, resolver)
@@ -88,7 +95,7 @@ func NewCreatePlan(ctx context.Context, cfg config.PerforceConfig, account, regi
 		VPCID:               vpcID,
 		SubnetID:            subnetID,
 		DefaultVPC:          defaultVPC,
-		SGName:              "fabrica-perforce-sg",
+		SGName:              DefaultSGName,
 		InstanceName:        "fabrica-perforce",
 		RoleName:            "fabrica-perforce-role",
 		InstanceProfileName: "fabrica-perforce-profile",

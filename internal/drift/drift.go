@@ -20,9 +20,15 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/jpvelasco/fabrica/internal/ci"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/ddc"
+	"github.com/jpvelasco/fabrica/internal/horde"
+	"github.com/jpvelasco/fabrica/internal/lore"
+	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/workstation"
 )
 
 // DriftStatus represents the drift state of a single resource.
@@ -549,15 +555,29 @@ func PlanRemediation(report *DriftReport, st *state.State, cfg *config.Config) *
 			switch r.Status {
 			case Missing:
 				if canRecreate(r.TypeName) {
-					action = RemediationAction{
-						Module:     r.Module,
-						TypeName:   r.TypeName,
-						Identifier: r.Identifier,
-						Drift:      r.Status,
-						Kind:       ActionCreate,
-						Resource:   rebuildResource(r, st, cfg),
+					res, err := rebuildResource(r, st, cfg)
+					if err != nil {
+						action = RemediationAction{
+							Module:     r.Module,
+							TypeName:   r.TypeName,
+							Identifier: r.Identifier,
+							Drift:      r.Status,
+							Kind:       ActionSkip,
+							Reason:     fmt.Sprintf("cannot rebuild %s from recorded state: %v; recreate manually via fabrica", r.TypeName, err),
+						}
+						plan.ToSkip++
+						plan.ReportOnly++
+					} else {
+						action = RemediationAction{
+							Module:     r.Module,
+							TypeName:   r.TypeName,
+							Identifier: r.Identifier,
+							Drift:      r.Status,
+							Kind:       ActionCreate,
+							Resource:   res,
+						}
+						plan.ToFix++
 					}
-					plan.ToFix++
 				} else {
 					action = RemediationAction{
 						Module:     r.Module,
@@ -628,15 +648,19 @@ func canRecreate(typeName string) bool {
 }
 
 // rebuildResource reconstructs a cloud.Resource from the drift result, state,
+// and module config so remediation can recreate it. Returns an error when the
+// recorded state is insufficient to rebuild the resource's desired state;
+// the caller then reports the resource as skip-with-reason instead of
+// creating it with a partial state.
 // and config so it can be recreated via the provider. It uses the module's
 // recorded properties and config defaults to build the desired state.
-func rebuildResource(dr *DriftResult, st *state.State, cfg *config.Config) *cloud.Resource {
+func rebuildResource(dr *DriftResult, st *state.State, cfg *config.Config) (*cloud.Resource, error) {
 	mod := st.GetModule(dr.Module)
 	if mod == nil {
 		return &cloud.Resource{
 			TypeName:   dr.TypeName,
 			Identifier: dr.Identifier,
-		}
+		}, nil
 	}
 
 	// Find the recorded resource in state.
@@ -654,7 +678,7 @@ func rebuildResource(dr *DriftResult, st *state.State, cfg *config.Config) *clou
 	}
 
 	if rec == nil {
-		return res
+		return res, nil
 	}
 
 	// Build desired state from recorded properties and config defaults.
@@ -662,10 +686,14 @@ func rebuildResource(dr *DriftResult, st *state.State, cfg *config.Config) *clou
 	case cloud.TypeAWSEC2Instance:
 		res.DesiredState = rebuildInstanceDesiredState(rec, mod, cfg)
 	case cloud.TypeAWSEC2SecurityGroup:
-		res.DesiredState = rebuildSGDesiredState(rec, mod, cfg)
+		ds, err := rebuildSGDesiredState(rec, mod, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("rebuild desired state for security group %s in module %s: %w", dr.Identifier, dr.Module, err)
+		}
+		res.DesiredState = ds
 	}
 
-	return res
+	return res, nil
 }
 
 // rebuildInstanceDesiredState builds a minimal EC2 instance desired state from
@@ -743,89 +771,175 @@ func rebuildInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleSta
 	return b
 }
 
-// rebuildSGDesiredState builds a minimal security group desired state from
-// recorded properties and module config defaults. Ingress rules are port-specific
-// per module — never IpProtocol -1 (all traffic).
-func rebuildSGDesiredState(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) json.RawMessage {
-	vpcID := ""
-	allowedCIDR := ""
-	var rules []sgIngressRule
+// rebuildSGDesiredState rebuilds a Missing security group's desired state by
+// reusing each module's canonical SG builder against the resolved config, so
+// the remediated group matches what the create command would have
+// provisioned: configured ports, distinct public/internal CIDRs, and
+// role-specific groups (horde agent pool, DDC edge nodes). Recorded state
+// properties (vpcId, role, region) override config where they exist.
+func rebuildSGDesiredState(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+	ds, err := moduleSGDispatch(rec, mod, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptyVPCID(ds)
+}
 
-	// Resolve per-module config and port-specific ingress rules.
+// moduleSGDispatch is the per-module SG dispatch. It is a var seam so tests
+// can force a builder failure through rebuildSGDesiredState's error path —
+// the canonical builders only fail on JSON marshaling, which is unreachable
+// in production.
+var moduleSGDispatch = dispatchModuleSG
+
+// dispatchModuleSG builds the canonical SG desired state for one module's
+// recorded resource against the resolved configuration.
+func dispatchModuleSG(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+	var ds json.RawMessage
+	var err error
+
 	switch mod.Name {
 	case "horde":
-		vpcID = cfg.Horde.VPCId
-		allowedCIDR = cfg.Horde.AllowedCIDR
-		rules = []sgIngressRule{
-			{IpProtocol: "tcp", FromPort: 5000, ToPort: 5000, Description: "Horde HTTP API + web UI"},
-			{IpProtocol: "tcp", FromPort: 5002, ToPort: 5002, Description: "Horde gRPC (agent connections)"},
+		if rec.Properties["role"] == "agent" {
+			// Agent-pool group: agents dial the coordinator, so no ingress.
+			ds, err = horde.AgentSGDesiredState(&horde.AgentsCreatePlan{
+				SGName: horde.DefaultAgentsSGName,
+				VPCID:  sgVPCID(rec, agentsVPC(cfg)),
+			})
+			break
 		}
+		port := cfg.Horde.Port
+		if port <= 0 {
+			port = horde.DefaultPort
+		}
+		grpcPort := cfg.Horde.GRPCPort
+		if grpcPort <= 0 {
+			grpcPort = horde.DefaultGRPCPort
+		}
+		ds, err = horde.SGDesiredState(&horde.CreatePlan{
+			SGName:      horde.DefaultSGName,
+			VPCID:       sgVPCID(rec, cfg.Horde.VPCId),
+			Port:        port,
+			GRPCPort:    grpcPort,
+			AllowedCIDR: defaultCIDR(cfg.Horde.AllowedCIDR, horde.DefaultAllowedCIDR),
+		})
 	case "perforce":
-		vpcID = cfg.Perforce.VPCId
-		allowedCIDR = cfg.Perforce.AllowedCIDR
-		rules = []sgIngressRule{
-			{IpProtocol: "tcp", FromPort: 1666, ToPort: 1666, Description: "Perforce p4d"},
-		}
+		ds, err = perforce.SGDesiredState(&perforce.CreatePlan{
+			SGName:      perforce.DefaultSGName,
+			VPCID:       sgVPCID(rec, cfg.Perforce.VPCId),
+			AllowedCIDR: defaultCIDR(cfg.Perforce.AllowedCIDR, perforce.DefaultAllowedCIDR),
+		})
 	case "lore":
-		vpcID = cfg.Lore.VPCId
-		allowedCIDR = cfg.Lore.AllowedCIDR
-		rules = []sgIngressRule{
-			{IpProtocol: "tcp", FromPort: 41337, ToPort: 41337, Description: "Lore gRPC"},
-			{IpProtocol: "udp", FromPort: 41337, ToPort: 41337, Description: "Lore QUIC"},
-			{IpProtocol: "tcp", FromPort: 41339, ToPort: 41339, Description: "Lore HTTP health"},
-		}
+		ds, err = lore.SGDesiredState(&lore.CreatePlan{
+			SGName:      lore.DefaultSGName,
+			VPCID:       sgVPCID(rec, cfg.Lore.VPCId),
+			GRPCPort:    lore.DefaultGRPCPort,
+			HTTPPort:    lore.DefaultHTTPPort,
+			AllowedCIDR: defaultCIDR(cfg.Lore.AllowedCIDR, lore.DefaultAllowedCIDR),
+		})
 	case "ddc":
-		vpcID = cfg.DDC.VPCId
-		allowedCIDR = cfg.DDC.AllowedCIDR
-		rules = []sgIngressRule{
-			{IpProtocol: "tcp", FromPort: 80, ToPort: 80, Description: "Unreal Cloud DDC public API"},
-			{IpProtocol: "tcp", FromPort: 8080, ToPort: 8080, Description: "Unreal Cloud DDC internal API"},
-		}
+		ds, err = rebuildDDCSG(rec, cfg)
 	case "workstation":
-		vpcID = cfg.Workstation.VPCId
-		allowedCIDR = cfg.Workstation.AllowedCIDR
-		rules = []sgIngressRule{
-			{IpProtocol: "tcp", FromPort: 8443, ToPort: 8443, Description: "NICE DCV HTTPS"},
-		}
+		ds, err = workstation.SGDesiredState(&workstation.CreatePlan{
+			SGName:      workstation.DefaultSGName,
+			VPCID:       sgVPCID(rec, cfg.Workstation.VPCId),
+			DCVPort:     workstation.DefaultDCVPort,
+			AllowedCIDR: defaultCIDR(cfg.Workstation.AllowedCIDR, workstation.DefaultAllowedCIDR),
+		})
+	case "ci":
+		ds, err = ci.SGDesiredState(&ci.CreatePlan{
+			SGName: ci.DefaultSGName,
+			VPCID:  sgVPCID(rec, cfg.CI.VPCId),
+		})
+	default:
+		ds, err = minimalSGDesiredState(rec)
 	}
+	return ds, err
+}
 
-	// Recorded properties override config defaults.
+// rebuildDDCSG rebuilds a DDC security group. Edge nodes (recorded
+// Properties.role = ddc.RoleEdge with a region) get the edge shape named per
+// region; everything else gets the home shape, including the Scylla CQL rule
+// when the configured backend is scylla.
+func rebuildDDCSG(rec *state.ModuleResource, cfg *config.Config) (json.RawMessage, error) {
+	publicPort := cfg.DDC.PublicPort
+	if publicPort <= 0 {
+		publicPort = ddc.DefaultPublicPort
+	}
+	internalPort := cfg.DDC.InternalPort
+	if internalPort <= 0 {
+		internalPort = ddc.DefaultInternalPort
+	}
+	plan := ddc.SetupPlan{
+		SGName:       ddc.DefaultSGName,
+		VPCID:        sgVPCID(rec, cfg.DDC.VPCId),
+		PublicPort:   publicPort,
+		InternalPort: internalPort,
+		AllowedCIDR:  defaultCIDR(cfg.DDC.AllowedCIDR, ddc.DefaultAllowedCIDR),
+		InternalCIDR: defaultCIDR(cfg.DDC.InternalCIDR, ddc.DefaultAllowedCIDR),
+		Backend:      ddc.NormalizeBackend(cfg.DDC.Backend),
+	}
+	if rec.Properties["role"] == ddc.RoleEdge && rec.Properties["region"] != "" {
+		return ddc.EdgeSGDesiredState(&ddc.EdgePlan{
+			SGName:       ddc.EdgeSGName(rec.Properties["region"]),
+			VPCID:        plan.VPCID,
+			PublicPort:   publicPort,
+			InternalPort: internalPort,
+			AllowedCIDR:  plan.AllowedCIDR,
+			InternalCIDR: plan.InternalCIDR,
+		})
+	}
+	return ddc.SGDesiredState(&plan)
+}
+
+// sgVPCID returns the VPC recorded on the SG's state properties, falling
+// back to the module-config VPC when nothing is recorded.
+func sgVPCID(rec *state.ModuleResource, cfgVPC string) string {
 	if v, ok := rec.Properties["vpcId"]; ok && v != "" {
-		vpcID = v
+		return v
 	}
+	return cfgVPC
+}
 
+// agentsVPC mirrors the agent placement resolution: an explicit
+// horde.agents.vpcId wins, otherwise the pool follows the coordinator's VPC.
+func agentsVPC(cfg *config.Config) string {
+	if cfg.Horde.Agents.VPCID != "" {
+		return cfg.Horde.Agents.VPCID
+	}
+	return cfg.Horde.VPCId
+}
+
+// defaultCIDR returns the configured CIDR, falling back to the module default
+// the create command uses when the config field is empty.
+func defaultCIDR(cfgCIDR, fallback string) string {
+	if cfgCIDR != "" {
+		return cfgCIDR
+	}
+	return fallback
+}
+
+// minimalSGDesiredState is the fallback for modules without a canonical SG
+// builder: a description plus the recorded VPC when known.
+func minimalSGDesiredState(rec *state.ModuleResource) (json.RawMessage, error) {
 	ds := map[string]any{
 		"GroupDescription": "Fabrica-managed security group",
 	}
-	if vpcID != "" {
-		ds["VpcId"] = vpcID
+	if v, ok := rec.Properties["vpcId"]; ok && v != "" {
+		ds["VpcId"] = v
 	}
-
-	// Build port-specific ingress rules. If no CIDR is configured, omit
-	// ingress entirely — the SG will have no inbound rules by default.
-	if allowedCIDR != "" && len(rules) > 0 {
-		ingress := make([]map[string]any, len(rules))
-		for i, r := range rules {
-			ingress[i] = map[string]any{
-				"IpProtocol":  r.IpProtocol,
-				"FromPort":    r.FromPort,
-				"ToPort":      r.ToPort,
-				"CidrIp":      allowedCIDR,
-				"Description": r.Description,
-			}
-		}
-		ds["SecurityGroupIngress"] = ingress
-	}
-
-	b, _ := json.Marshal(ds)
-	return b
+	return json.Marshal(ds)
 }
 
-// sgIngressRule is a local copy of ec2state.SGIngressRule to avoid importing
-// ec2state into the drift package (which would pull in ec2plan dependencies).
-type sgIngressRule struct {
-	IpProtocol  string
-	FromPort    int
-	ToPort      int
-	Description string
+// stripEmptyVPCID drops the VpcId key when no VPC could be resolved. An
+// empty-string VpcId would be an invalid Cloud Control property; omitting it
+// targets the account default VPC, matching the previous minimal rebuild.
+func stripEmptyVPCID(ds json.RawMessage) (json.RawMessage, error) {
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		return nil, err
+	}
+	if m["VpcId"] == "" {
+		delete(m, "VpcId")
+	}
+	return json.Marshal(m)
 }

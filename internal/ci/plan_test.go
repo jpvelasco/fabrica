@@ -73,8 +73,8 @@ func TestNewCreatePlanExplicitVPC(t *testing.T) {
 	if plan.VPCID != "vpc-abc" || plan.SubnetID != "subnet-xyz" {
 		t.Errorf("VPC = %q/%q, want vpc-abc/subnet-xyz", plan.VPCID, plan.SubnetID)
 	}
-	if plan.SGName != defaultSGName {
-		t.Errorf("SGName = %q, want %q", plan.SGName, defaultSGName)
+	if plan.SGName != DefaultSGName {
+		t.Errorf("SGName = %q, want %q", plan.SGName, DefaultSGName)
 	}
 }
 

@@ -110,8 +110,8 @@ func TestSGDesiredState(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if doc["GroupName"] != defaultSGName {
-		t.Errorf("GroupName = %v, want %q", doc["GroupName"], defaultSGName)
+	if doc["GroupName"] != DefaultSGName {
+		t.Errorf("GroupName = %v, want %q", doc["GroupName"], DefaultSGName)
 	}
 	if _, ok := doc["SecurityGroupIngress"]; !ok {
 		t.Errorf("SecurityGroupIngress missing from desired state: %s", raw)

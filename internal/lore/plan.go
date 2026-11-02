@@ -67,6 +67,9 @@ type CreatePlan struct {
 // configured and the VPC CIDR cannot be resolved.
 const DefaultAllowedCIDR = "10.0.0.0/8"
 
+// DefaultSGName is the Lore security group name.
+const DefaultSGName = "fabrica-lore-sg"
+
 // NewCreatePlan validates inputs and builds a CreatePlan. VPCResolver is called
 // only when VPCId/SubnetId are absent from cfg; pass nil to skip resolution
 // (dry-run with explicit VPC values, or tests). cidrResolver may be nil: the
@@ -113,7 +116,7 @@ func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region s
 		VPCID:               vpcID,
 		SubnetID:            subnetID,
 		DefaultVPC:          defaultVPC,
-		SGName:              "fabrica-lore-sg",
+		SGName:              DefaultSGName,
 		InstanceName:        "fabrica-lore",
 		StoreBackend:        storeBackend,
 		StoreBucket:         storeBucket,

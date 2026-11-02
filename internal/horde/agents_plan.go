@@ -17,6 +17,10 @@ import (
 // Fabrica does not scrape Horde. Printed by agents create, status, and metrics.
 const ScalingPublisherNote = "Alarms are ready only after agents (or operator tooling) publish the configured metric. Fabrica does not scrape Horde."
 
+// DefaultAgentsSGName is the agent-pool security group name. Agents dial the
+// coordinator, so the group has no inbound rules.
+const DefaultAgentsSGName = "fabrica-horde-agents-sg"
+
 // CoordinatorRef describes the live Horde coordinator the agent pool must
 // reach: the private IP agents enroll against, the coordinator's ports
 // (HTTP + gRPC), the coordinator security group the agent ingress rules
@@ -139,11 +143,11 @@ func NewAgentsCreatePlan(ctx context.Context, cfg config.HordeAgentsConfig, coor
 
 	port := coord.Port
 	if port <= 0 {
-		port = 5000
+		port = DefaultPort
 	}
 	grpcPort := coord.GRPCPort
 	if grpcPort <= 0 {
-		grpcPort = 5002
+		grpcPort = DefaultGRPCPort
 	}
 
 	vpcID, subnetID, defaultVPC, err := resolveAgentPlacement(ctx, cfg, coord, resolver)
@@ -191,7 +195,7 @@ func NewAgentsCreatePlan(ctx context.Context, cfg config.HordeAgentsConfig, coor
 		CoordinatorPort:      port,
 		CoordinatorGRPCPort:  grpcPort,
 		CoordinatorSGID:      coord.SGID,
-		SGName:               "fabrica-horde-agents-sg",
+		SGName:               DefaultAgentsSGName,
 		RoleName:             "fabrica-horde-agents-role",
 		InstanceProfileName:  "fabrica-horde-agents-profile",
 		LaunchTemplateName:   "fabrica-horde-agents-lt",

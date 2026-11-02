@@ -56,6 +56,11 @@ type EdgePlan struct {
 // at the API boundary, this just catches typos early.
 var regionPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
+// EdgeSGName is the security group name for one edge region's DDC host.
+func EdgeSGName(region string) string {
+	return fmt.Sprintf("%s-%s", DefaultSGName, region)
+}
+
 // NewEdgePlan validates config and builds the plan for one additional DDC
 // region. The resolver must be bound to the target region (see cloud.RegionProvider).
 func NewEdgePlan(ctx context.Context, cfg config.DDCConfig, account, homeRegion, region string, opts EdgeOptions, resolver cloud.VPCResolver) (*EdgePlan, error) {
@@ -109,7 +114,7 @@ func NewEdgePlan(ctx context.Context, cfg config.DDCConfig, account, homeRegion,
 		DefaultVPC:          defaultVPC,
 		Bucket:              def.bucket,
 		Namespace:           def.namespace,
-		SGName:              fmt.Sprintf("fabrica-ddc-sg-%s", region),
+		SGName:              EdgeSGName(region),
 		InstanceName:        fmt.Sprintf("fabrica-ddc-edge-%s", region),
 		InstanceProfileName: "fabrica-ddc-profile",
 		CostResources:       EdgeCostResources(cfg, opts),
