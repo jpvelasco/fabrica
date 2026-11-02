@@ -88,7 +88,8 @@ type credReadCase struct {
 
 // runCredentialReadTests runs the shared table for one credential reader:
 // each case's content is written to its own file under a temp dir and read
-// back; a final read of a missing file must error.
+// back; a final read of a file in a missing subdirectory (which no case can
+// create, so it cannot collide with a case named "missing") must error.
 func runCredentialReadTests(t *testing.T, read func(string) (string, error), cases []credReadCase) {
 	t.Helper()
 	dir := t.TempDir()
@@ -113,7 +114,7 @@ func runCredentialReadTests(t *testing.T, read func(string) (string, error), cas
 			}
 		})
 	}
-	if _, err := read(filepath.Join(dir, "missing.yaml")); err == nil {
+	if _, err := read(filepath.Join(dir, "no-such-dir", "missing.yaml")); err == nil {
 		t.Fatal("expected missing file error")
 	}
 }
