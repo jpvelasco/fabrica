@@ -65,6 +65,15 @@ type fakeStore struct {
 	projects   map[string]bool
 	parameters map[string]string
 
+	// stateDocs holds the canonical remote state document per "bucket/key".
+	// A document is only readable when the bucket exists, mirroring S3.
+	stateDocs map[string]string
+
+	// stateStoreGetErr / stateStorePutErr inject S3 storage failures on the
+	// StateStore seam.
+	stateStoreGetErr error
+	stateStorePutErr error
+
 	// failDeleteType, when non-empty, makes ResourceClient.Delete return an
 	// error for resources of that TypeName (drives the destroy-all failure case).
 	failDeleteType string
@@ -89,6 +98,7 @@ func newFakeStore() *fakeStore {
 		tables:     make(map[string]bool),
 		projects:   make(map[string]bool),
 		parameters: make(map[string]string),
+		stateDocs:  make(map[string]string),
 	}
 }
 
@@ -335,6 +345,36 @@ func (p *fakeProvider) DeleteStateLockTable(_ context.Context, table string) (cl
 	return cloud.StateBackendDeleteResult{Identifier: table, Deleted: existed, Missing: !existed}, nil
 }
 
+// --- StateStore ---
+
+func (p *fakeProvider) GetStateDocument(_ context.Context, bucket, key string) ([]byte, error) {
+	p.store.mu.Lock()
+	defer p.store.mu.Unlock()
+	if p.store.stateStoreGetErr != nil {
+		return nil, p.store.stateStoreGetErr
+	}
+	if !p.store.buckets[bucket] {
+		return nil, cloud.ErrStateDocumentMissing // missing bucket == missing document
+	}
+	if doc, ok := p.store.stateDocs[bucket+"/"+key]; ok {
+		return []byte(doc), nil
+	}
+	return nil, cloud.ErrStateDocumentMissing
+}
+
+func (p *fakeProvider) PutStateDocument(_ context.Context, bucket, key string, data []byte) error {
+	p.store.mu.Lock()
+	defer p.store.mu.Unlock()
+	if p.store.stateStorePutErr != nil {
+		return p.store.stateStorePutErr
+	}
+	if !p.store.buckets[bucket] {
+		return fmt.Errorf("s3://%s: %w", bucket, cloud.ErrStateBackendAbsent)
+	}
+	p.store.stateDocs[bucket+"/"+key] = string(data)
+	return nil
+}
+
 // --- CodeBuildRunner ---
 
 func (p *fakeProvider) EnsureProject(_ context.Context, spec cloud.CodeBuildProjectSpec) (bool, error) {
@@ -390,6 +430,7 @@ var (
 	_ cloud.StateBackendChecker      = (*fakeProvider)(nil)
 	_ cloud.StateBackendBootstrapper = (*fakeProvider)(nil)
 	_ cloud.StateBackendDestroyer    = (*fakeProvider)(nil)
+	_ cloud.StateStore               = (*fakeProvider)(nil)
 	_ cloud.CodeBuildRunner          = (*fakeProvider)(nil)
 	_ cloud.GameLiftManager          = (*fakeProvider)(nil)
 	_ cloud.RemoteRunner             = (*fakeProvider)(nil)

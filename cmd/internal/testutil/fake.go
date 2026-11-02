@@ -41,9 +41,20 @@ type TestProvider struct {
 	PutParameterErr    error
 	DeletedParameters  []string
 	DeleteParameterErr error
+
+	// Remote state document seam (cloud.StateStore). StateDocuments maps
+	// "bucket/key" to the stored document; a missing entry reports
+	// cloud.ErrStateDocumentMissing. StateStoreGetErr and StateStorePutErr
+	// inject failures on the respective calls.
+	StateDocuments   map[string]string
+	StateStoreGetErr error
+	StateStorePutErr error
 }
 
-var _ cloud.ParameterStore = (*TestProvider)(nil)
+var (
+	_ cloud.ParameterStore = (*TestProvider)(nil)
+	_ cloud.StateStore     = (*TestProvider)(nil)
+)
 
 func (f *TestProvider) Name() string { return "fake" }
 
@@ -83,6 +94,30 @@ func (f *TestProvider) DeleteParameter(_ context.Context, name string) error {
 		return f.DeleteParameterErr
 	}
 	f.DeletedParameters = append(f.DeletedParameters, name)
+	return nil
+}
+
+// GetStateDocument returns the stored document for bucket/key, or
+// cloud.ErrStateDocumentMissing when nothing was written.
+func (f *TestProvider) GetStateDocument(_ context.Context, bucket, key string) ([]byte, error) {
+	if f.StateStoreGetErr != nil {
+		return nil, f.StateStoreGetErr
+	}
+	if doc, ok := f.StateDocuments[bucket+"/"+key]; ok {
+		return []byte(doc), nil
+	}
+	return nil, cloud.ErrStateDocumentMissing
+}
+
+// PutStateDocument stores the document under bucket/key.
+func (f *TestProvider) PutStateDocument(_ context.Context, bucket, key string, data []byte) error {
+	if f.StateStorePutErr != nil {
+		return f.StateStorePutErr
+	}
+	if f.StateDocuments == nil {
+		f.StateDocuments = map[string]string{}
+	}
+	f.StateDocuments[bucket+"/"+key] = string(data)
 	return nil
 }
 
