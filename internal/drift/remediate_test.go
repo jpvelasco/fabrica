@@ -992,6 +992,40 @@ func TestRebuildInstanceDesiredState_Perforce(t *testing.T) {
 	}
 }
 
+// TestRebuildInstanceDesiredState_HordeAgentSGIndependence verifies the
+// coordinator instance rebuild pairs with the coordinator group, not the
+// agent-pool group, when the agent group is recorded first in the module.
+func TestRebuildInstanceDesiredState_HordeAgentSGIndependence(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Horde.InstanceType = "m7i.2xlarge"
+	cfg.Horde.AmiID = "ami-horde"
+	cfg.Horde.SubnetId = "subnet-horde"
+
+	mod := &state.ModuleState{
+		Name:    "horde",
+		Version: "ami-horde",
+		Resources: []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-agent", Properties: map[string]string{"role": "agent"}},
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-coord"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord"},
+		},
+	}
+	rec := &mod.Resources[2]
+
+	ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	sgIDs, ok := m["SecurityGroupIds"].([]any)
+	if !ok || len(sgIDs) != 1 || sgIDs[0].(string) != "sg-coord" {
+		t.Errorf("expected the coordinator group sg-coord, got %v", m["SecurityGroupIds"])
+	}
+}
+
 func TestRebuildInstanceDesiredState_Lore(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Lore.InstanceType = "m5.xlarge"
@@ -1243,14 +1277,16 @@ func TestRefreshSGIDs_UpdatesInstanceAfterSG(t *testing.T) {
 	sgDS := json.RawMessage(`{"GroupDescription":"test"}`)
 	instDS := json.RawMessage(`{"InstanceType":"m5.xlarge","SecurityGroupIds":["sg-old"]}`)
 
+	// The SG action's Identifier is the recorded (old) id; the created
+	// resource carries the new id the provider returned.
 	plan := &RemediationPlan{
 		Actions: []RemediationAction{
-			{Module: "horde", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", DesiredState: sgDS}},
+			{Module: "horde", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-old", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", DesiredState: sgDS}},
 			{Module: "horde", TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", DesiredState: instDS}},
 		},
 	}
 
-	refreshSGIDs(plan, 0, "horde", "", "sg-new")
+	refreshSGIDs(plan, 0, "horde", "", "sg-old", "sg-new")
 
 	var ds map[string]any
 	if err := json.Unmarshal(plan.Actions[1].Resource.DesiredState, &ds); err != nil {
@@ -1268,12 +1304,12 @@ func TestRefreshSGIDs_SkipsDifferentModule(t *testing.T) {
 
 	plan := &RemediationPlan{
 		Actions: []RemediationAction{
-			{Module: "horde", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", DesiredState: sgDS}},
+			{Module: "horde", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-old", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", DesiredState: sgDS}},
 			{Module: "perforce", TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-456", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-456", DesiredState: instDS}},
 		},
 	}
 
-	refreshSGIDs(plan, 0, "horde", "", "sg-new")
+	refreshSGIDs(plan, 0, "horde", "", "sg-old", "sg-new")
 
 	var ds map[string]any
 	if err := json.Unmarshal(plan.Actions[1].Resource.DesiredState, &ds); err != nil {
@@ -1290,13 +1326,63 @@ func TestRefreshSGIDs_SkipsNonInstance(t *testing.T) {
 
 	plan := &RemediationPlan{
 		Actions: []RemediationAction{
-			{Module: "horde", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", DesiredState: sgDS}},
+			{Module: "horde", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-old", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", DesiredState: sgDS}},
 			{Module: "horde", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-other", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-other", DesiredState: sgDS}},
 		},
 	}
 
 	// Should not panic when next action is not an instance.
-	refreshSGIDs(plan, 0, "horde", "", "sg-new")
+	refreshSGIDs(plan, 0, "horde", "", "sg-old", "sg-new")
+}
+
+// TestRefreshSGIDs_PreservesOtherGroupIDs verifies the refresh is surgical:
+// an instance attached to the recreated group AND another group keeps the
+// other membership — only the old reference is replaced.
+func TestRefreshSGIDs_PreservesOtherGroupIDs(t *testing.T) {
+	sgDS := json.RawMessage(`{"GroupDescription":"test"}`)
+	instDS := json.RawMessage(`{"InstanceType":"m5.xlarge","SecurityGroupIds":["sg-old","sg-other"]}`)
+
+	plan := &RemediationPlan{
+		Actions: []RemediationAction{
+			{Module: "ddc", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-old", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", DesiredState: sgDS}},
+			{Module: "ddc", TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", DesiredState: instDS}},
+		},
+	}
+
+	refreshSGIDs(plan, 0, "ddc", "", "sg-old", "sg-new")
+
+	var ds map[string]any
+	if err := json.Unmarshal(plan.Actions[1].Resource.DesiredState, &ds); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	sgIDs, ok := ds["SecurityGroupIds"].([]any)
+	if !ok || len(sgIDs) != 2 {
+		t.Fatalf("expected 2 SecurityGroupIds, got %v", ds["SecurityGroupIds"])
+	}
+	if sgIDs[0].(string) != "sg-new" || sgIDs[1].(string) != "sg-other" {
+		t.Errorf("expected [sg-new sg-other] (order preserved), got %v", sgIDs)
+	}
+}
+
+// TestRefreshSGIDs_UnreferencedListUntouched verifies an instance whose
+// group list does not reference the recreated group is left alone — the
+// refresh never adds memberships the recorded plan did not have.
+func TestRefreshSGIDs_UnreferencedListUntouched(t *testing.T) {
+	sgDS := json.RawMessage(`{"GroupDescription":"test"}`)
+	original := json.RawMessage(`{"InstanceType":"m5.xlarge","SecurityGroupIds":["sg-unrelated"]}`)
+
+	plan := &RemediationPlan{
+		Actions: []RemediationAction{
+			{Module: "ddc", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-old", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-new", DesiredState: sgDS}},
+			{Module: "ddc", TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", DesiredState: original}},
+		},
+	}
+
+	refreshSGIDs(plan, 0, "ddc", "", "sg-old", "sg-new")
+
+	if got := plan.Actions[1].Resource.DesiredState; string(got) != string(original) {
+		t.Errorf("expected the instance desired state untouched, got %s", got)
+	}
 }
 
 // --- canRecreate tests ---

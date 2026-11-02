@@ -1092,3 +1092,32 @@ func TestRun_ScalingResourcesInSync(t *testing.T) {
 		t.Errorf("expected 0 missing resources, got %d", report.Missing)
 	}
 }
+
+// TestModuleSGIDFor_RoleMatching verifies home-instance group pairing is
+// role-aware: a coordinator instance pairs with the coordinator group even
+// when the agent-pool group is recorded first, and a role-tagged instance
+// pairs with its own role's group.
+func TestModuleSGIDFor_RoleMatching(t *testing.T) {
+	mod := &state.ModuleState{
+		Name: "horde",
+		Resources: []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-agent", Properties: map[string]string{"role": "agent"}},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord"},
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-coord"},
+		},
+	}
+	coord := &mod.Resources[1]
+	if got := moduleSGIDFor(coord, mod); got != "sg-coord" {
+		t.Errorf("expected the coordinator group despite the agent group being recorded first, got %q", got)
+	}
+	agent := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-agent", Properties: map[string]string{"role": "agent"}}
+	if got := moduleSGIDFor(agent, mod); got != "sg-agent" {
+		t.Errorf("expected the agent group for a role=agent instance, got %q", got)
+	}
+	// A single-group module still resolves regardless of role.
+	single := &state.ModuleState{Name: "lore", Resources: []state.ModuleResource{{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-lore"}}}
+	inst := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-lore"}
+	if got := moduleSGIDFor(inst, single); got != "sg-lore" {
+		t.Errorf("expected the single group, got %q", got)
+	}
+}
