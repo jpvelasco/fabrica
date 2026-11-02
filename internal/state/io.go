@@ -99,7 +99,7 @@ func ReadStateFile(path, account, region string) (*State, error) {
 // WriteStateTo persists state to the local cache file at path, creating the
 // .fabrica directory when needed.
 func WriteStateTo(st *State, path string) error {
-	// #nosec G301 -- directory needs execute for traversal
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- directory requires execute bit for traversal
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		oplog.Logger().Error("failed to create .fabrica directory", "error", err)
 		return fmt.Errorf("creating state directory: %w", err)
