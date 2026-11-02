@@ -48,7 +48,7 @@ func TestReadStateFile_CorruptedJSON_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for corrupted JSON, got nil")
 	}
-	if !strings.Contains(err.Error(), "parsing state file") {
+	if !strings.Contains(err.Error(), "parsing state document") {
 		t.Errorf("expected parse error, got: %v", err)
 	}
 }
@@ -444,8 +444,8 @@ func TestReadStateFile_Mismatch_ErrorLog(t *testing.T) {
 	}
 
 	logOutput := buf.String()
-	if !strings.Contains(logOutput, "state file target mismatch") {
-		t.Errorf("expected error log 'state file target mismatch', got:\n%s", logOutput)
+	if !strings.Contains(logOutput, "failed to parse state file") || !strings.Contains(logOutput, "state target mismatch") {
+		t.Errorf("expected error log with 'state target mismatch', got:\n%s", logOutput)
 	}
 }
 

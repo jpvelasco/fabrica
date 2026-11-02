@@ -1,9 +1,11 @@
 package aws
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -627,6 +629,13 @@ type fakeS3StateBackendClient struct {
 	versioningErr      error
 	encryptionErr      error
 	pabErr             error
+
+	objectBody    string
+	getObjectKey  string
+	putObjectKey  string
+	putObjectBody string
+	getObjectErr  error
+	putObjectErr  error
 }
 
 func (f *fakeS3StateBackendClient) HeadBucket(ctx context.Context, in *s3.HeadBucketInput, optFns ...func(*s3.Options)) (*s3.HeadBucketOutput, error) {
@@ -639,6 +648,26 @@ func (f *fakeS3StateBackendClient) DeleteBucket(ctx context.Context, in *s3.Dele
 	f.deleteCalls++
 	f.deleteBucket = awssdk.ToString(in.Bucket)
 	return &s3.DeleteBucketOutput{}, f.deleteErr
+}
+
+func (f *fakeS3StateBackendClient) GetObject(ctx context.Context, in *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	f.getObjectKey = awssdk.ToString(in.Key)
+	if f.getObjectErr != nil {
+		return nil, f.getObjectErr
+	}
+	return &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader([]byte(f.objectBody)))}, nil
+}
+
+func (f *fakeS3StateBackendClient) PutObject(ctx context.Context, in *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	f.putObjectKey = awssdk.ToString(in.Key)
+	if f.putObjectErr != nil {
+		return nil, f.putObjectErr
+	}
+	if in.Body != nil {
+		data, _ := io.ReadAll(in.Body)
+		f.putObjectBody = string(data)
+	}
+	return &s3.PutObjectOutput{}, nil
 }
 
 func (f *fakeS3StateBackendClient) CreateBucket(ctx context.Context, in *s3.CreateBucketInput, optFns ...func(*s3.Options)) (*s3.CreateBucketOutput, error) {
