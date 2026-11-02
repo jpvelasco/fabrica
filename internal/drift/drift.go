@@ -778,6 +778,22 @@ func rebuildInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleSta
 // role-specific groups (horde agent pool, DDC edge nodes). Recorded state
 // properties (vpcId, role, region) override config where they exist.
 func rebuildSGDesiredState(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+	ds, err := moduleSGDispatch(rec, mod, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptyVPCID(ds)
+}
+
+// moduleSGDispatch is the per-module SG dispatch. It is a var seam so tests
+// can force a builder failure through rebuildSGDesiredState's error path —
+// the canonical builders only fail on JSON marshaling, which is unreachable
+// in production.
+var moduleSGDispatch = dispatchModuleSG
+
+// dispatchModuleSG builds the canonical SG desired state for one module's
+// recorded resource against the resolved configuration.
+func dispatchModuleSG(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
 	var ds json.RawMessage
 	var err error
 
@@ -837,10 +853,7 @@ func rebuildSGDesiredState(rec *state.ModuleResource, mod *state.ModuleState, cf
 	default:
 		ds, err = minimalSGDesiredState(rec)
 	}
-	if err != nil {
-		return nil, err
-	}
-	return stripEmptyVPCID(ds)
+	return ds, err
 }
 
 // rebuildDDCSG rebuilds a DDC security group. Edge nodes (recorded

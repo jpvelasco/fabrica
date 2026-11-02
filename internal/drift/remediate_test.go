@@ -642,6 +642,22 @@ func TestRebuildSGDesiredState_HordeAgentSG(t *testing.T) {
 	}
 }
 
+// Without an explicit agents VPC, the agent group follows the coordinator's
+// VPC placement.
+func TestRebuildSGDesiredState_HordeAgentSG_CoordinatorVPCFallback(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Horde.VPCId = "vpc-coord"
+
+	rec := &state.ModuleResource{
+		TypeName:   cloud.TypeAWSEC2SecurityGroup,
+		Properties: map[string]string{"role": "agent"},
+	}
+	m := rebuildSGDoc(t, rec, &state.ModuleState{Name: "horde"}, cfg)
+	if m["VpcId"] != "vpc-coord" {
+		t.Errorf("expected coordinator VPC fallback, got %v", m["VpcId"])
+	}
+}
+
 func TestRebuildSGDesiredState_Lore(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Lore.VPCId = "vpc-lore"
@@ -844,6 +860,98 @@ func TestRebuildSGDesiredState_NoVPCKnown(t *testing.T) {
 	m := rebuildSGDoc(t, &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}, &state.ModuleState{Name: "horde"}, cfg)
 	if _, has := m["VpcId"]; has {
 		t.Errorf("expected VpcId omitted when unresolved, got %v", m["VpcId"])
+	}
+}
+
+// withSGDispatch swaps the per-module SG dispatch seam for the duration of a
+// test, restoring it on cleanup.
+func withSGDispatch(t *testing.T, fn func(*state.ModuleResource, *state.ModuleState, *config.Config) (json.RawMessage, error)) {
+	t.Helper()
+	orig := moduleSGDispatch
+	moduleSGDispatch = fn
+	t.Cleanup(func() { moduleSGDispatch = orig })
+}
+
+func TestRebuildSGDesiredState_BuilderError(t *testing.T) {
+	withSGDispatch(t, func(*state.ModuleResource, *state.ModuleState, *config.Config) (json.RawMessage, error) {
+		return nil, errors.New("builder exploded")
+	})
+	_, err := rebuildSGDesiredState(
+		&state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup},
+		&state.ModuleState{Name: "horde"},
+		config.Defaults(),
+	)
+	if err == nil || !strings.Contains(err.Error(), "builder exploded") {
+		t.Fatalf("expected builder error to propagate, got %v", err)
+	}
+}
+
+func TestRebuildResource_SGRebuildError(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
+	})
+	withSGDispatch(t, func(*state.ModuleResource, *state.ModuleState, *config.Config) (json.RawMessage, error) {
+		return nil, errors.New("builder exploded")
+	})
+
+	dr := &DriftResult{
+		Module:     "horde",
+		TypeName:   cloud.TypeAWSEC2SecurityGroup,
+		Identifier: "sg-123",
+	}
+	_, err := rebuildResource(dr, st, config.Defaults())
+	if err == nil {
+		t.Fatal("expected rebuild error, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "rebuild desired state for security group sg-123 in module horde") {
+		t.Errorf("error should name the resource and module: %s", msg)
+	}
+}
+
+// A builder failure degrades the plan action to a report-only skip with an
+// operator-facing reason, instead of emitting a resource without state.
+func TestPlanRemediation_SGRebuildFailureSkips(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
+	})
+	report := &DriftReport{
+		Modules: []ModuleDrift{{
+			Name: "horde",
+			Resources: []DriftResult{
+				{Module: "horde", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123", Status: Missing},
+			},
+		}},
+		Missing: 1,
+	}
+	withSGDispatch(t, func(*state.ModuleResource, *state.ModuleState, *config.Config) (json.RawMessage, error) {
+		return nil, errors.New("builder exploded")
+	})
+
+	plan := PlanRemediation(report, st, config.Defaults())
+	if plan.ToFix != 0 || plan.ToSkip != 1 || plan.ReportOnly != 1 {
+		t.Fatalf("expected 0 to fix / 1 to skip / 1 report-only, got %+v", plan)
+	}
+	if len(plan.Actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(plan.Actions))
+	}
+	a := plan.Actions[0]
+	if a.Kind != ActionSkip {
+		t.Errorf("expected skip, got %s", a.Kind)
+	}
+	if a.Resource != nil {
+		t.Error("skipped action must not carry a resource")
+	}
+	if !strings.Contains(a.Reason, "cannot rebuild") || !strings.Contains(a.Reason, "recreate manually via fabrica") {
+		t.Errorf("skip reason should explain the failure and the remedy, got %q", a.Reason)
+	}
+}
+
+func TestStripEmptyVPCID_InvalidJSON(t *testing.T) {
+	if _, err := stripEmptyVPCID(json.RawMessage("{not-json")); err == nil {
+		t.Fatal("expected unmarshal error for invalid JSON")
 	}
 }
 
