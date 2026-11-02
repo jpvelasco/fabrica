@@ -519,7 +519,7 @@ Registers a packaged server build from S3 as a GameLift build, creates a new fle
 
 #### `fabrica deploy rollback`
 
-Flips the alias back to the most-recent retained ("superseded") fleet — an instant blue/green rollback with no re-provisioning. Verifies the target fleet is still `ACTIVE` first, shows current → target, and prompts before flipping (`--yes` to skip).
+Flips the alias back to the most-recent retained ("superseded") fleet — an instant blue/green rollback with no re-provisioning. Verifies the target fleet is still `ACTIVE` first, shows current → target, and prompts before flipping (`--yes` to skip, `--dry-run` to preview without changing anything).
 
 #### `fabrica deploy status`
 

@@ -252,3 +252,46 @@ func TestRollbackLockHeldAborts(t *testing.T) {
 		t.Fatalf("err = %v, want held-lock abort", err)
 	}
 }
+
+// TestRollbackDryRunNoWrites verifies dry run renders the preview and skips
+// the alias flip and the state write.
+func TestRollbackDryRunNoWrites(t *testing.T) {
+	var out bytes.Buffer
+	st := stateWith("fleet-new", "fleet-old")
+	c := newTestCmd(&out, st)
+	c.dryRun = true
+	updates, writes := 0, 0
+	c.updateResource = func(context.Context, *cloud.Resource) error { updates++; return nil }
+	c.writeState = func(*fabricastate.State) error { writes++; return nil }
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if updates != 0 || writes != 0 {
+		t.Errorf("dry run must not mutate: updates = %d, writes = %d", updates, writes)
+	}
+	if !strings.Contains(out.String(), "fleet-old") {
+		t.Errorf("expected preview naming the target fleet:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "dry run") {
+		t.Errorf("expected dry-run preview header:\n%s", out.String())
+	}
+}
+
+// TestRollbackDryRunDoesNotAcquireLock verifies dry run succeeds without
+// touching the state lock, even when another run holds it.
+func TestRollbackDryRunDoesNotAcquireLock(t *testing.T) {
+	var out bytes.Buffer
+	st := stateWith("fleet-new", "fleet-old")
+	c := newTestCmd(&out, st)
+	c.dryRun = true
+	locker := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}
+	c.runtime.Provider = locker
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("dry run must succeed without a lock (even when held): %v", err)
+	}
+	if locker.Acquires != 0 {
+		t.Errorf("expected 0 lock acquires in dry run, got %d", locker.Acquires)
+	}
+}

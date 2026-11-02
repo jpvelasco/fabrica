@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
@@ -17,10 +18,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const moduleName = "deploy"
+const (
+	moduleName = "deploy"
+	lineWidth  = 58 // match promote's header width
+)
 
 type command struct {
 	runtime   globals.Runtime
+	dryRun    bool
 	assumeYes bool
 	out       io.Writer
 
@@ -44,6 +49,9 @@ running by 'deploy promote' precisely so rollback is instant.`,
 		Example: `  # Inspect what you'd roll back to first:
   fabrica deploy status
 
+  # Preview the flip without changing anything:
+  fabrica deploy rollback --dry-run
+
   # Flip the alias back to the previous fleet (prompts for confirmation):
   fabrica deploy rollback
 
@@ -57,6 +65,7 @@ running by 'deploy promote' precisely so rollback is instant.`,
 			opts := optionsSource()
 			c := command{
 				runtime:    rt,
+				dryRun:     opts.DryRun,
 				assumeYes:  opts.AssumeYes,
 				out:        out,
 				readState:  func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
@@ -81,7 +90,7 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("no cloud provider configured — check your config and credentials")
 	}
 
-	ctx, releaseLock, err := provision.AcquireStateLock(ctx, c.runtime, "deploy rollback")
+	ctx, releaseLock, err := provision.AcquireStateLockUnlessDryRun(ctx, c.runtime, "deploy rollback", c.dryRun)
 	if err != nil {
 		return err
 	}
@@ -116,6 +125,11 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("rollback target fleet %s is %s, not ACTIVE — it may have been terminated; cannot roll back to it", target, info.Status)
 	}
 
+	if c.dryRun {
+		c.printDryRun(active, target)
+		return nil
+	}
+
 	fmt.Fprintf(c.out, "Rolling back the alias:\n")
 	fmt.Fprintf(c.out, "  current fleet: %s\n", active)
 	fmt.Fprintf(c.out, "  target fleet:  %s\n", target)
@@ -146,6 +160,15 @@ func (c command) run(ctx context.Context) error {
 	fmt.Fprintln(c.out, "Next steps:")
 	fmt.Fprintln(c.out, "  fabrica deploy status      Confirm the alias target and fleet health")
 	return nil
+}
+
+// printDryRun previews the alias flip without touching the alias or state.
+func (c command) printDryRun(active, target string) {
+	fmt.Fprintln(c.out, "Deploy rollback (dry run)")
+	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
+	fmt.Fprintf(c.out, "  current fleet: %s\n", active)
+	fmt.Fprintf(c.out, "  target fleet:  %s\n", target)
+	fmt.Fprintln(c.out, "Run without --dry-run to flip the alias to the previous fleet.")
 }
 
 // findActiveAndSuperseded returns the identifiers of the active fleet and the
