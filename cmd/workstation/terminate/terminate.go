@@ -23,7 +23,11 @@ var spec = teardown.Spec{
 	DryRunHeader:   "Cloud Workstation (terminate dry run)",
 	Irreversible:   "IRREVERSIBLE: This will permanently delete the workstation, IAM role/profile, the DCV session password parameter, and its data.",
 	SuccessMessage: "Cloud workstation terminated.",
-	// Instance → profile → role → SG (reverse of create: SG → role → profile → instance).
+	// Parameter → instance → profile → role → SG. The SecureString goes first:
+	// its name lives only on the instance resource, which is dropped from state
+	// as soon as the instance is deleted — deleting the parameter before the
+	// instance keeps the name referenceable until the delete succeeds, so a
+	// failed or interrupted terminate cannot orphan it (issue #524).
 	ResourceOrder: workstationResourceOrder,
 	WireCommand:   wireSessionPasswordDelete,
 }
@@ -59,14 +63,20 @@ func workstationResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 			out = append(out, cloud.Resource{TypeName: r.TypeName, Identifier: r.Identifier})
 		}
 	}
-	appendRecorded(cloud.TypeAWSEC2Instance)
+	// The DCV session-password SecureString is deleted before the EC2
+	// instance. Its per-create name is recorded in state on the instance
+	// (Properties "sessionPasswordParameter"), not as a state resource — a
+	// drift Get of AWS::SSM::Parameter would return the secret. The instance
+	// record is dropped from state as soon as the instance is deleted, so a
+	// parameter delete that runs after the instance would lose the only name
+	// reference and orphan the SecureString on a failed or interrupted run.
+	// Deleting it first is safe: cloud-init reads it at boot only, and the
+	// operator's copy stays in .fabrica/workstation-credentials.yaml.
+	// Deleting a shared name could remove another instance's password, so
+	// terminate deletes exactly the recorded name and skips when it is absent
+	// (nothing recorded means no secret to clean up). Delete is success when
+	// it is already gone.
 	instRes := byType[cloud.TypeAWSEC2Instance]
-	// The per-create name is recorded in state on the instance (Properties
-	// "sessionPasswordParameter"), not as a state resource — a drift Get of
-	// AWS::SSM::Parameter would return the secret. Deleting a shared name
-	// could remove another instance's password, so terminate deletes exactly
-	// the recorded name and skips when it is absent (nothing recorded means
-	// no secret to clean up). Delete is success when it is already gone.
 	if name := instRes.Properties["sessionPasswordParameter"]; name != "" {
 		// Validate before deleting: a malformed recorded name must not widen
 		// the delete target to an arbitrary SSM parameter.
@@ -76,6 +86,7 @@ func workstationResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 			out = append(out, cloud.Resource{TypeName: cloud.TypeAWSSSMParameter, Identifier: name})
 		}
 	}
+	appendRecorded(cloud.TypeAWSEC2Instance)
 	appendRecorded(cloud.TypeAWSIAMInstanceProfile)
 	appendRecorded(cloud.TypeAWSIAMRole)
 	appendRecorded(cloud.TypeAWSEC2SecurityGroup)
@@ -97,9 +108,10 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Short: "Permanently terminate the cloud workstation",
 		Long: `Permanently terminate the cloud workstation and all its AWS resources.
 
-Resources are deleted in reverse-creation order to respect dependencies:
-  1. EC2 Instance (terminated first)
-  2. SSM Parameter Store SecureString (the DCV session password)
+Resources are deleted in dependency order:
+  1. SSM Parameter Store SecureString (the DCV session password, first so a
+     failed or interrupted run cannot orphan it)
+  2. EC2 Instance (terminated second)
   3. IAM Instance Profile
   4. IAM Role
   5. EC2 Security Group

@@ -1184,7 +1184,8 @@ func TestAttemptDeleteSDKPath(t *testing.T) {
 }
 
 // TestAttemptDeleteSDKErrorPropagates verifies a non-ErrNotHandled SDK error
-// is returned as-is without falling back to Cloud Control.
+// propagates (wrapped with the resource context) without falling back to
+// Cloud Control.
 func TestAttemptDeleteSDKErrorPropagates(t *testing.T) {
 	wantErr := errors.New("project still in use")
 	c := Command{

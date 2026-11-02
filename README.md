@@ -456,7 +456,7 @@ Prints `workstation.spot` and the weekly on/off window. Cost report discounts co
 
 #### `fabrica workstation terminate`
 
-Permanently terminates the workstation EC2 instance, IAM instance profile, IAM role, and security group (in reverse-creation order). Idempotent — already-terminated instances are skipped. Supports `--dry-run`, `--yes`, `--json`.
+Permanently terminates the workstation EC2 instance, IAM instance profile, IAM role, and security group, deleting the per-create DCV session-password SecureString first so a failed run cannot orphan it. Idempotent — already-terminated instances are skipped. Supports `--dry-run`, `--yes`, `--json`.
 
 ### CI
 
