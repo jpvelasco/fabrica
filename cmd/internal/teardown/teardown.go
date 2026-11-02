@@ -83,8 +83,8 @@ type Command struct {
 	SkipConfirm bool
 
 	Confirm        func(string, string) bool
-	ReadState      func() (*fabricastate.State, error)
-	WriteState     func(*fabricastate.State) error
+	ReadState      func(ctx context.Context) (*fabricastate.State, error)
+	WriteState     func(ctx context.Context, st *fabricastate.State) error
 	DeleteResource func(ctx context.Context, r *cloud.Resource) error
 	GetResource    func(ctx context.Context, r *cloud.Resource) error
 
@@ -116,7 +116,7 @@ func (c Command) Run(ctx context.Context) error {
 	}
 	defer releaseLock()
 
-	st, err := c.ReadState()
+	st, err := c.ReadState(ctx)
 	if err != nil {
 		return fmt.Errorf("reading state: %w", err)
 	}
@@ -175,7 +175,7 @@ func (c Command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 
 	// All resources gone — remove the module from state entirely.
 	RemoveModule(st, c.Spec.ModuleName)
-	if err := c.WriteState(st); err != nil {
+	if err := c.WriteState(ctx, st); err != nil {
 		fmt.Fprintf(c.Out, "Warning: could not update local state: %v\n", err)
 	}
 
@@ -214,7 +214,7 @@ func (c Command) deleteResources(ctx context.Context, st *fabricastate.State, m 
 		if skip, err := c.shouldSkipBeforeDelete(ctx, res); err != nil {
 			return nil, err
 		} else if skip {
-			c.removeResourceAndPersist(st, m, res.TypeName, res.Identifier)
+			c.removeResourceAndPersist(ctx, st, m, res.TypeName, res.Identifier)
 			continue
 		}
 		if err := c.deleteOneResource(ctx, st, m, res); err != nil {
@@ -253,7 +253,7 @@ func (c Command) deleteOneResource(ctx context.Context, st *fabricastate.State, 
 	if !c.JSONOut {
 		fmt.Fprintf(c.Out, "  Deleted: %s\n", r.Identifier)
 	}
-	c.removeResourceAndPersist(st, m, r.TypeName, r.Identifier)
+	c.removeResourceAndPersist(ctx, st, m, r.TypeName, r.Identifier)
 	return nil
 }
 
@@ -289,10 +289,10 @@ func (c Command) deleteViaCloudControl(ctx context.Context, r *cloud.Resource) e
 
 // removeResourceAndPersist drops a resource from the module and writes state,
 // surfacing a write failure as a warning (state persistence is best-effort).
-func (c Command) removeResourceAndPersist(st *fabricastate.State, m *fabricastate.ModuleState, typeName, identifier string) {
+func (c Command) removeResourceAndPersist(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, typeName, identifier string) {
 	removeResource(m, typeName, identifier)
 	st.UpsertModule(c.Spec.ModuleName, m.Version, "destroying", m.Resources)
-	if err := c.WriteState(st); err != nil {
+	if err := c.WriteState(ctx, st); err != nil {
 		fmt.Fprintf(c.Out, "Warning: could not update local state: %v\n", err)
 	}
 }
@@ -469,8 +469,8 @@ func NewStandalone(spec Spec, rt globals.Runtime, out io.Writer, dryRun, assumeY
 		JSONOut:    jsonOut,
 		Out:        out,
 		Confirm:    prompt.ConfirmExact,
-		ReadState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-		WriteState: provision.StateWriter(rt),
+		ReadState:  func(_ context.Context) (*fabricastate.State, error) { return provision.ReadState(rt) },
+		WriteState: func(_ context.Context, st *fabricastate.State) error { return provision.StateWriter(rt)(st) },
 	}
 	WireProvider(&tc, rt)
 	if spec.WireCommand != nil {

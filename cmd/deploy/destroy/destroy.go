@@ -5,6 +5,7 @@
 package destroy
 
 import (
+	"context"
 	"io"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -83,8 +84,8 @@ func NewTeardown(rt globals.Runtime, out io.Writer) teardown.Command {
 		AssumeYes:   true,
 		Out:         out,
 		Confirm:     prompt.ConfirmExact,
-		ReadState:   func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-		WriteState:  provision.StateWriter(rt),
+		ReadState:   func(_ context.Context) (*fabricastate.State, error) { return provision.ReadState(rt) },
+		WriteState:  func(_ context.Context, st *fabricastate.State) error { return provision.StateWriter(rt)(st) },
 	}
 	teardown.WireProvider(&tc, rt)
 	return tc
@@ -122,8 +123,8 @@ GameLift's error explains why — terminate sessions or wait, then retry.`,
 				JSONOut:    opts.JSONOutput,
 				Out:        out,
 				Confirm:    prompt.ConfirmExact,
-				ReadState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-				WriteState: provision.StateWriter(rt),
+				ReadState:  func(_ context.Context) (*fabricastate.State, error) { return provision.ReadState(rt) },
+				WriteState: func(_ context.Context, st *fabricastate.State) error { return provision.StateWriter(rt)(st) },
 			}
 			if rt.Provider != nil {
 				if rc := rt.Provider.Resources(); rc != nil {

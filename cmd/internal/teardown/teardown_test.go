@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -43,8 +45,8 @@ func newTestCommand(out *bytes.Buffer, st *fabricastate.State, deleteErr map[str
 		Out:     out,
 		Confirm: func(_, _ string) bool { return true },
 	}
-	c.ReadState = func() (*fabricastate.State, error) { return st, nil }
-	c.WriteState = func(s *fabricastate.State) error { return nil }
+	c.ReadState = func(_ context.Context) (*fabricastate.State, error) { return st, nil }
+	c.WriteState = func(_ context.Context, s *fabricastate.State) error { return nil }
 	fake := &fakeResourceClient{deleteErr: deleteErr}
 	c.DeleteResource = fake.Delete
 	c.GetResource = fake.Get
@@ -149,7 +151,7 @@ func TestRunHappyPathModuleRemovedFromState(t *testing.T) {
 	var lastState *fabricastate.State
 	c := newTestCommand(&out, st, nil)
 	c.AssumeYes = true
-	c.WriteState = func(s *fabricastate.State) error {
+	c.WriteState = func(_ context.Context, s *fabricastate.State) error {
 		cp := *s
 		lastState = &cp
 		return nil
@@ -178,7 +180,7 @@ func TestRunPartialStateWrittenAfterEachDelete(t *testing.T) {
 	var snapshots []snapshot
 	c := newTestCommand(&out, st, nil)
 	c.AssumeYes = true
-	c.WriteState = func(s *fabricastate.State) error {
+	c.WriteState = func(_ context.Context, s *fabricastate.State) error {
 		m := s.GetModule("perforce")
 		snap := snapshot{moduleExists: m != nil}
 		if m != nil {
@@ -250,7 +252,7 @@ func TestRunSGFailureAfterInstanceSuccess(t *testing.T) {
 		"AWS::EC2::SecurityGroup": errors.New("sg in use"),
 	})
 	c.AssumeYes = true
-	c.WriteState = func(s *fabricastate.State) error {
+	c.WriteState = func(_ context.Context, s *fabricastate.State) error {
 		cp := *s
 		lastState = &cp
 		return nil
@@ -344,7 +346,7 @@ func TestRunConfirmationPhrase(t *testing.T) {
 func TestRunReadStateError(t *testing.T) {
 	var out bytes.Buffer
 	c := newTestCommand(&out, nil, nil)
-	c.ReadState = func() (*fabricastate.State, error) {
+	c.ReadState = func(_ context.Context) (*fabricastate.State, error) {
 		return nil, errors.New("disk read failure")
 	}
 	deleteCalled := false
@@ -382,7 +384,7 @@ func TestRunWriteStateErrorSurfacedAsWarning(t *testing.T) {
 	st := moduleState("provisioning", true)
 	c := newTestCommand(&out, st, nil)
 	c.AssumeYes = true
-	c.WriteState = func(_ *fabricastate.State) error {
+	c.WriteState = func(_ context.Context, _ *fabricastate.State) error {
 		return errors.New("disk full")
 	}
 
@@ -836,8 +838,8 @@ func TestRunSkipConfirmBypassesConfirmation(t *testing.T) {
 			t.Fatal("Confirm must not be called when SkipConfirm is true")
 			return false
 		},
-		ReadState:  func() (*fabricastate.State, error) { return st, nil },
-		WriteState: func(*fabricastate.State) error { written = true; return nil },
+		ReadState:  func(_ context.Context) (*fabricastate.State, error) { return st, nil },
+		WriteState: func(_ context.Context, _ *fabricastate.State) error { written = true; return nil },
 		DeleteResource: func(_ context.Context, r *cloud.Resource) error {
 			deleted = append(deleted, r.Identifier)
 			return nil
@@ -999,8 +1001,8 @@ func TestSDKDeleteFuncErrNotHandledFallsBackToCloudControl(t *testing.T) {
 		},
 		SkipConfirm: true,
 		Out:         &bytes.Buffer{},
-		ReadState:   func() (*fabricastate.State, error) { return st, nil },
-		WriteState:  func(*fabricastate.State) error { return nil },
+		ReadState:   func(_ context.Context) (*fabricastate.State, error) { return st, nil },
+		WriteState:  func(_ context.Context, _ *fabricastate.State) error { return nil },
 		SDKDeleteFunc: func(ctx context.Context, typeName, identifier string) error {
 			if typeName == "AWS::Custom::SDKResource" {
 				sdkDeleted = append(sdkDeleted, identifier)
@@ -1080,6 +1082,43 @@ func TestNewStandaloneWithProvider(t *testing.T) {
 	}
 	if tc.JSONOut {
 		t.Error("JSONOut should be false")
+	}
+}
+
+// TestNewStandaloneRunPersistsState drives a real (non-dry-run) Run through
+// NewStandalone's production seams: ReadState loads the seeded state file,
+// every delete succeeds, and WriteState persists the module removal.
+func TestNewStandaloneRunPersistsState(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, testutil.NewProvisionedStateJSON(testutil.StateModule{
+		Name:    "perforce",
+		Version: "2024.2",
+		Status:  "ready",
+		Resources: []testutil.StateResource{
+			{TypeName: "AWS::EC2::Instance", Identifier: "i-abc123"},
+			{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-abc123"},
+		},
+	}))
+	provider := &testutil.TestProvider{}
+	rt, err := testutil.NewTestRuntime(provider)()
+	if err != nil {
+		t.Fatalf("runtime: %v", err)
+	}
+	var out bytes.Buffer
+	tc := NewStandalone(testSpec, rt, &out, false, true, true)
+	if err := tc.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if provider.DeleteCalls != 2 {
+		t.Fatalf("DeleteCalls = %d, want 2", provider.DeleteCalls)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".fabrica", "state.json"))
+	if err != nil {
+		t.Fatalf("reading state file: %v", err)
+	}
+	if strings.Contains(string(data), "perforce") {
+		t.Fatalf("state file still contains the perforce module: %s", data)
 	}
 }
 
@@ -1310,7 +1349,7 @@ func TestCommandDeleteResourcesWrapper(t *testing.T) {
 	tc := Command{
 		Spec:           Spec{ModuleName: "perforce"},
 		DeleteResource: func(_ context.Context, r *cloud.Resource) error { deleted = append(deleted, r.Identifier); return nil },
-		WriteState:     func(*fabricastate.State) error { return nil },
+		WriteState:     func(_ context.Context, _ *fabricastate.State) error { return nil },
 		Out:            io.Discard,
 	}
 	st := fabricastate.NewState("123456789012", "us-east-1")

@@ -155,8 +155,8 @@ func NewCobraCommand(spec CobraSpec, runtimeSource globals.RuntimeSource, option
 				JSONOut:    optionsSource().JSONOutput,
 				Wait:       wait,
 				Out:        out,
-				ReadState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-				WriteState: provision.StateWriter(rt),
+				ReadState:  func(_ context.Context) (*fabricastate.State, error) { return provision.ReadState(rt) },
+				WriteState: func(_ context.Context, st *fabricastate.State) error { return provision.StateWriter(rt)(st) },
 				ProbeTCP:   probe,
 				SleepCtx:   provision.WaitInterval,
 				Now:        time.Now,
@@ -181,8 +181,8 @@ type Command struct {
 	Wait    bool
 	Out     io.Writer
 
-	ReadState   func() (*fabricastate.State, error)
-	WriteState  func(*fabricastate.State) error
+	ReadState   func(ctx context.Context) (*fabricastate.State, error)
+	WriteState  func(ctx context.Context, st *fabricastate.State) error
 	GetResource func(ctx context.Context, r *cloud.Resource) error
 	ProbeTCP    func(address string) bool
 	SleepCtx    func(context.Context, time.Duration) error
@@ -192,7 +192,7 @@ type Command struct {
 // Run reads state, builds the status snapshot, transitions provisioning→ready
 // when the probe first succeeds, and renders. With Wait set, it polls instead.
 func (c Command) Run(ctx context.Context) error {
-	st, err := c.ReadState()
+	st, err := c.ReadState(ctx)
 	if err != nil {
 		return fmt.Errorf("reading state: %w", err)
 	}
@@ -213,7 +213,7 @@ func (c Command) Run(ctx context.Context) error {
 	}
 
 	if info.ProbeAttempted && info.Reachable && m.Status != "ready" {
-		c.markReady(st, m, &info)
+		c.markReady(ctx, st, m, &info)
 	}
 
 	c.Renderer.Result(c.Out, info, c.JSONOut)
@@ -229,7 +229,7 @@ func (c Command) pollUntilReady(ctx context.Context, st *fabricastate.State, m *
 		}
 
 		if info.ProbeAttempted && info.Reachable {
-			c.markReady(st, m, &info)
+			c.markReady(ctx, st, m, &info)
 			c.Renderer.Result(c.Out, info, c.JSONOut)
 			return nil
 		}
@@ -258,11 +258,11 @@ func (c Command) pollUntilReady(ctx context.Context, st *fabricastate.State, m *
 
 // markReady transitions the module to "ready" in state and persists it,
 // surfacing a write failure as a warning.
-func (c Command) markReady(st *fabricastate.State, m *fabricastate.ModuleState, info *Info) {
+func (c Command) markReady(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, info *Info) {
 	m.Status = "ready"
 	info.ModuleStatus = "ready"
 	st.UpsertModule(c.Spec.ModuleName, m.Version, "ready", m.Resources)
-	if err := c.WriteState(st); err != nil {
+	if err := c.WriteState(ctx, st); err != nil {
 		fmt.Fprintf(c.Out, "Warning: could not update local state: %v\n", err)
 	}
 }

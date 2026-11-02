@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"path/filepath"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
 type cobraRenderer struct {
@@ -112,6 +114,53 @@ func TestNewCobraCommandWiresProviderAndResolvedProbe(t *testing.T) {
 	info := renderer.results[0]
 	if info.InstanceID != "i-example" || info.InstanceType != "m7i.large" || info.InstanceState != "running" {
 		t.Fatalf("info = %+v", info)
+	}
+}
+
+// TestNewCobraCommandMarkReadyPersistsStatus drives the production WriteState
+// seam: a provisioning module whose probe succeeds is transitioned to ready
+// and the transition is persisted to the state file.
+func TestNewCobraCommandMarkReadyPersistsStatus(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, `{"account":"123456789012","region":"us-east-1","modules":[{"name":"example","status":"provisioning","resources":[{"typeName":"AWS::EC2::Instance","identifier":"i-example"}]}]}`)
+
+	actual, err := json.Marshal(map[string]any{
+		"InstanceType":     "m7i.large",
+		"PrivateIpAddress": "10.0.0.7",
+		"State":            map[string]any{"Name": "running"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &testutil.TestProvider{GetResources: map[string]cloud.Resource{
+		cloud.TypeAWSEC2Instance: {Identifier: "i-example", ActualState: actual},
+	}}
+	renderer := &cobraRenderer{}
+	cmd := NewCobraCommand(CobraSpec{
+		ModuleName:  "example",
+		DisplayName: "Example",
+		Resolve: func(globals.Runtime, context.Context) RuntimeSpec {
+			return RuntimeSpec{
+				ProbePort: 4321,
+				Renderer:  renderer,
+				Probe:     func(string) bool { return true },
+			}
+		},
+	}, testutil.NewTestRuntime(provider), func() globals.Options { return globals.Options{} }, &bytes.Buffer{})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("ExecuteContext: %v", err)
+	}
+	if len(renderer.results) != 1 || renderer.results[0].ModuleStatus != "ready" {
+		t.Fatalf("renderer = %+v, want one ready result", renderer)
+	}
+	st, err := fabricastate.ReadStateFile(filepath.Join(dir, ".fabrica", "state.json"), "123456789012", "us-east-1")
+	if err != nil {
+		t.Fatalf("reading state file: %v", err)
+	}
+	if m := st.GetModule("example"); m == nil || m.Status != "ready" {
+		t.Fatalf("persisted module = %+v, want status ready", m)
 	}
 }
 
