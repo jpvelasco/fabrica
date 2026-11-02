@@ -56,6 +56,11 @@ perforce: {}
 #   allowedCidr: 172.31.0.0/16    # set to your VPC CIDR
 #   agents:
 #     spot: false                 # estimate-only discount; Fabrica does not request Spot capacity
+#     # Place the agent pool explicitly (set together). When both are empty
+#     # the pool follows the coordinator's placement, falling back to the
+#     # account default VPC.
+#     vpcId: ""
+#     subnetId: ""
 #     schedule:
 #       enabled: false
 #       timezone: UTC

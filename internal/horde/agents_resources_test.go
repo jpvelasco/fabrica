@@ -20,6 +20,7 @@ func newTestAgentsPlan() *AgentsCreatePlan {
 		SubnetID:             "subnet-test",
 		CoordinatorPrivateIP: "10.0.1.10",
 		CoordinatorPort:      5000,
+		CoordinatorGRPCPort:  5002,
 		CoordinatorSGID:      "sg-coord123",
 		SGName:               "fabrica-horde-agents-sg",
 		RoleName:             "fabrica-horde-agents-role",
@@ -99,6 +100,33 @@ func TestAgentToCoordinatorIngressDesiredState(t *testing.T) {
 	}
 	if _, has := doc["Tags"]; has {
 		t.Error("AWS::EC2::SecurityGroupIngress has no Tags property; none must be emitted")
+	}
+}
+
+// TestAgentToCoordinatorGRPCIngressDesiredState verifies the standalone gRPC
+// rule authorizes coordinator inbound from the agent SG on the gRPC port.
+func TestAgentToCoordinatorGRPCIngressDesiredState(t *testing.T) {
+	plan := newTestAgentsPlan()
+	ds, err := AgentToCoordinatorGRPCIngressDesiredState(plan, "sg-agent456")
+	if err != nil {
+		t.Fatalf("AgentToCoordinatorGRPCIngressDesiredState: %v", err)
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(ds, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if doc["GroupId"] != plan.CoordinatorSGID {
+		t.Errorf("GroupId = %v, want coordinator SG %s", doc["GroupId"], plan.CoordinatorSGID)
+	}
+	if doc["SourceSecurityGroupId"] != "sg-agent456" {
+		t.Errorf("SourceSecurityGroupId = %v, want agent SG sg-agent456", doc["SourceSecurityGroupId"])
+	}
+	if doc["FromPort"] != float64(plan.CoordinatorGRPCPort) || doc["ToPort"] != float64(plan.CoordinatorGRPCPort) {
+		t.Errorf("ports = %v/%v, want %d", doc["FromPort"], doc["ToPort"], plan.CoordinatorGRPCPort)
+	}
+	if doc["Description"] == "Horde agents to coordinator (Fabrica-managed)" {
+		t.Error("gRPC rule must carry its own description, not the HTTP one")
 	}
 }
 

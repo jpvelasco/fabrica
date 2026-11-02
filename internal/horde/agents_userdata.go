@@ -13,6 +13,9 @@ type AgentUserDataConfig struct {
 	CoordinatorIP string
 	// CoordinatorPort is the HTTP port of the Horde coordinator (default 5000).
 	CoordinatorPort int
+	// CoordinatorGRPCPort is the gRPC port of the Horde coordinator (default
+	// 5002). Zero omits the gRPC lines from the rendered script.
+	CoordinatorGRPCPort int
 }
 
 var agentUserDataRenderer = userdata.New(template.Must(template.New("horde-agent-userdata").Parse(`#!/bin/bash
@@ -24,6 +27,9 @@ echo "Configuring Horde agent to enroll against coordinator..."
 # Set the coordinator address for the Horde agent
 export HORDE_COORDINATOR_HOST={{ .CoordinatorIP }}
 export HORDE_COORDINATOR_PORT={{ .CoordinatorPort }}
+{{- if .CoordinatorGRPCPort }}
+export HORDE_COORDINATOR_GRPC_PORT={{ .CoordinatorGRPCPort }}
+{{- end }}
 
 # Write the coordinator configuration for the agent
 mkdir -p /etc/horde
@@ -31,6 +37,9 @@ cat > /etc/horde/coordinator.conf << EOF
 [coordinator]
 host = {{ .CoordinatorIP }}
 port = {{ .CoordinatorPort }}
+{{- if .CoordinatorGRPCPort }}
+grpc_port = {{ .CoordinatorGRPCPort }}
+{{- end }}
 EOF
 
 echo "Horde agent configured to connect to {{ .CoordinatorIP }}:{{ .CoordinatorPort }}"
