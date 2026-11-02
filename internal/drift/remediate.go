@@ -77,7 +77,7 @@ func ApplyRemediation(ctx context.Context, plan *RemediationPlan, st *state.Stat
 		// If we just created an SG, refresh the SecurityGroupIds in any
 		// pending instance actions so they reference the new SG identifier.
 		if a.TypeName == cloud.TypeAWSEC2SecurityGroup {
-			refreshSGIDs(plan, i, a.Module, a.Region, a.Resource.Identifier)
+			refreshSGIDs(plan, i, a.Module, a.Region, a.Identifier, a.Resource.Identifier)
 		}
 
 		result.Applied = append(result.Applied, *a)
@@ -97,10 +97,11 @@ func resourcesForModule(st *state.State, name string) []state.ModuleResource {
 
 // refreshSGIDs updates the SecurityGroupIds in the DesiredState of any
 // pending EC2 instance actions (after index idx) that belong to the same
-// module and region as the SG that was just created. This ensures the
-// instance references the new SG identifier instead of the old one, while
-// home-region actions are not rewired by an edge SG (or vice versa).
-func refreshSGIDs(plan *RemediationPlan, idx int, module, region, newSGID string) {
+// module and region as the SG that was just created. Only the reference to
+// the old group identifier is replaced; other group memberships are
+// preserved so an instance attached to several groups keeps them. Home-
+// region actions are not rewired by an edge SG (or vice versa).
+func refreshSGIDs(plan *RemediationPlan, idx int, module, region, oldSGID, newSGID string) {
 	for i := idx + 1; i < len(plan.Actions); i++ {
 		a := &plan.Actions[i]
 		if a.Module != module || a.TypeName != cloud.TypeAWSEC2Instance || a.Resource == nil || a.Resource.DesiredState == nil || a.Region != region {
@@ -110,9 +111,21 @@ func refreshSGIDs(plan *RemediationPlan, idx int, module, region, newSGID string
 		if err := json.Unmarshal(a.Resource.DesiredState, &ds); err != nil {
 			continue
 		}
-		ds["SecurityGroupIds"] = []string{newSGID}
-		if b, err := json.Marshal(ds); err == nil {
-			a.Resource.DesiredState = b
+		ids, ok := ds["SecurityGroupIds"].([]any)
+		if !ok {
+			continue
+		}
+		changed := false
+		for j, id := range ids {
+			if s, isStr := id.(string); isStr && s == oldSGID {
+				ids[j] = newSGID
+				changed = true
+			}
+		}
+		if changed {
+			if b, err := json.Marshal(ds); err == nil {
+				a.Resource.DesiredState = b
+			}
 		}
 	}
 }

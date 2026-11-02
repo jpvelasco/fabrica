@@ -945,8 +945,11 @@ func rebuildEdgeInstanceDesiredState(rec *state.ModuleResource, mod *state.Modul
 
 // moduleSGIDFor returns the security group identifier an instance's desired
 // state should reference. DDC edge instances pair with the edge group
-// recorded in their own region (the home group sits in another VPC); every
-// other instance uses the first security group in the module.
+// recorded in their own region (the home group sits in another VPC). Home
+// instances pair with the group whose recorded role matches their own (both
+// absent is the module's default group), so a coordinator instance is never
+// paired with an agent-pool group even when the agent group is recorded
+// first; the fallback is the first group in the module.
 func moduleSGIDFor(rec *state.ModuleResource, mod *state.ModuleState) string {
 	if isEdgeResource(rec) {
 		for i := range mod.Resources {
@@ -957,12 +960,24 @@ func moduleSGIDFor(rec *state.ModuleResource, mod *state.ModuleState) string {
 		}
 		return ""
 	}
+	role := ""
+	if rec.Properties != nil {
+		role = rec.Properties["role"]
+	}
+	var fallback string
 	for i := range mod.Resources {
-		if mod.Resources[i].TypeName == cloud.TypeAWSEC2SecurityGroup {
-			return mod.Resources[i].Identifier
+		r := &mod.Resources[i]
+		if r.TypeName != cloud.TypeAWSEC2SecurityGroup {
+			continue
+		}
+		if r.Properties["role"] == role {
+			return r.Identifier
+		}
+		if fallback == "" {
+			fallback = r.Identifier
 		}
 	}
-	return ""
+	return fallback
 }
 
 // rebuildSGDesiredState rebuilds a Missing security group's desired state by

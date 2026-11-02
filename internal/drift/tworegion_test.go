@@ -400,16 +400,16 @@ func TestRefreshSGIDs_RegionGuard(t *testing.T) {
 
 	plan := &RemediationPlan{
 		Actions: []RemediationAction{
-			{Module: "ddc", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-home", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, DesiredState: sgDS}},
+			{Module: "ddc", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-home-old", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-home-new", DesiredState: sgDS}},
 			{Module: "ddc", TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-home", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, DesiredState: homeInst}},
-			{Module: "ddc", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-edge", Region: edgeTestRegion, Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, DesiredState: sgDS}},
+			{Module: "ddc", TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-edge-old", Region: edgeTestRegion, Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-edge-new", DesiredState: sgDS}},
 			{Module: "ddc", TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-edge", Region: edgeTestRegion, Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, DesiredState: edgeInst}},
 			{Module: "ddc", TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-home-2", Kind: ActionCreate, Resource: &cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, DesiredState: homeInst}},
 		},
 	}
 
 	// Home SG refresh rewires only home-region instance actions.
-	refreshSGIDs(plan, 0, "ddc", "", "sg-home-new")
+	refreshSGIDs(plan, 0, "ddc", "", "sg-home-old", "sg-home-new")
 	if got := sgIDsIn(t, plan.Actions[1].Resource.DesiredState); got != "sg-home-new" {
 		t.Errorf("home instance = %s, want sg-home-new", got)
 	}
@@ -421,7 +421,7 @@ func TestRefreshSGIDs_RegionGuard(t *testing.T) {
 	}
 
 	// Edge SG refresh rewires only the edge instance.
-	refreshSGIDs(plan, 2, "ddc", edgeTestRegion, "sg-edge-new")
+	refreshSGIDs(plan, 2, "ddc", edgeTestRegion, "sg-edge-old", "sg-edge-new")
 	if got := sgIDsIn(t, plan.Actions[3].Resource.DesiredState); got != "sg-edge-new" {
 		t.Errorf("edge instance = %s, want sg-edge-new", got)
 	}
