@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -51,6 +53,91 @@ func TestRestoreDryRun(t *testing.T) {
 	}
 	if err := c.run(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "dry run") {
+		t.Fatalf("out: %s", out.String())
+	}
+}
+
+func TestRestoreHeldLockFailsBeforeStateRead(t *testing.T) {
+	lp := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}
+	readCalls := 0
+	remoteCalls := 0
+	c := command{
+		runtime:  globals.Runtime{Config: config.Defaults(), Provider: lp},
+		force:    true,
+		backupID: "20260715-143022",
+		out:      &bytes.Buffer{},
+		readState: func() (*fabricastate.State, error) {
+			readCalls++
+			return readyState(), nil
+		},
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			remoteCalls++
+			return cloud.RemoteResult{}, nil
+		},
+	}
+	err := c.run(context.Background())
+	if !errors.Is(err, provision.ErrStateLocked) {
+		t.Fatalf("err = %v, want ErrStateLocked", err)
+	}
+	if lp.Acquires != 1 {
+		t.Errorf("acquires = %d, want 1", lp.Acquires)
+	}
+	if readCalls != 0 {
+		t.Errorf("state reads = %d, want 0 (read must wait for the lock)", readCalls)
+	}
+	if remoteCalls != 0 {
+		t.Errorf("remote calls = %d, want 0", remoteCalls)
+	}
+}
+
+// TestRestoreLockAcquiredBeforeStateRead is the stale-snapshot guard: the
+// state read that resolves the restore target happens after the lock is
+// held. The run then stops at the SSM-support check before any mutation.
+func TestRestoreLockAcquiredBeforeStateRead(t *testing.T) {
+	lp := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}}
+	acquiresAtRead := -1
+	st := readyState()
+	st.Modules[0].Status = "stopped"
+	c := command{
+		runtime:  globals.Runtime{Config: config.Defaults(), Provider: lp},
+		force:    true,
+		backupID: "20260715-143022",
+		out:      &bytes.Buffer{},
+		readState: func() (*fabricastate.State, error) {
+			acquiresAtRead = lp.Acquires
+			return st, nil
+		},
+	}
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "does not support remote commands") {
+		t.Fatalf("err = %v, want the SSM-support error after lock + state read", err)
+	}
+	if lp.Acquires != 1 {
+		t.Errorf("acquires = %d, want 1", lp.Acquires)
+	}
+	if acquiresAtRead < 1 {
+		t.Errorf("acquires at state read = %d, want >= 1", acquiresAtRead)
+	}
+}
+
+func TestRestoreDryRunSkipsLock(t *testing.T) {
+	lp := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}}
+	var out bytes.Buffer
+	c := command{
+		runtime:   globals.Runtime{Config: config.Defaults(), Provider: lp},
+		dryRun:    true,
+		force:     true,
+		backupID:  "20260715-143022",
+		out:       &out,
+		readState: readyStateFn,
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if lp.Acquires != 0 {
+		t.Errorf("dry-run acquires = %d, want 0", lp.Acquires)
 	}
 	if !strings.Contains(out.String(), "dry run") {
 		t.Fatalf("out: %s", out.String())

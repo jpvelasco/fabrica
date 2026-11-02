@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/drift"
@@ -136,6 +138,86 @@ func TestRun_FixDryRun(t *testing.T) {
 	}
 	if !strings.Contains(got, "[FIX]") {
 		t.Errorf("expected [FIX] action; got:\n%s", got)
+	}
+}
+
+func TestRun_FixHeldLockFailsBeforeStateRead(t *testing.T) {
+	lp := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}
+	readCalls := 0
+	c := newTestCommand(t, func(c *command) {
+		c.fixMode = true
+		c.assumeYes = true
+		c.runtime.Provider = lp
+		c.readState = func() (*fabricastate.State, error) {
+			readCalls++
+			return fabricastate.NewState("123456789012", "us-east-1"), nil
+		}
+	})
+	err := c.run(context.Background(), false)
+	if !errors.Is(err, provision.ErrStateLocked) {
+		t.Fatalf("err = %v, want ErrStateLocked", err)
+	}
+	if lp.Acquires != 1 {
+		t.Errorf("acquires = %d, want 1", lp.Acquires)
+	}
+	if readCalls != 0 {
+		t.Errorf("state reads = %d, want 0 (read must wait for the lock)", readCalls)
+	}
+}
+
+// TestRun_FixLockAcquiredBeforeStateRead is the stale-snapshot guard: the
+// state read that --fix plans from happens after the lock is held, so the
+// plan cannot be built on a snapshot another run already mutated.
+func TestRun_FixLockAcquiredBeforeStateRead(t *testing.T) {
+	lp := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}}
+	acquiresAtRead := -1
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	c := newTestCommand(t, func(c *command) {
+		c.fixMode = true
+		c.assumeYes = true
+		c.runtime.Provider = lp
+		c.readState = func() (*fabricastate.State, error) {
+			acquiresAtRead = lp.Acquires
+			return st, nil
+		}
+	})
+	if err := c.run(context.Background(), false); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if lp.Acquires != 1 {
+		t.Fatalf("acquires = %d, want 1", lp.Acquires)
+	}
+	if acquiresAtRead < 1 {
+		t.Errorf("acquires at state read = %d, want >= 1", acquiresAtRead)
+	}
+}
+
+func TestRun_FixDryRunSkipsLock(t *testing.T) {
+	lp := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}}
+	c := newTestCommand(t, func(c *command) {
+		c.fixMode = true
+		c.assumeYes = true
+		c.runtime.Provider = lp
+	})
+	if err := c.run(context.Background(), true); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if lp.Acquires != 0 {
+		t.Errorf("dry-run acquires = %d, want 0", lp.Acquires)
+	}
+}
+
+func TestRun_ReadOnlySkipsLock(t *testing.T) {
+	lp := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}}
+	c := newTestCommand(t, func(c *command) { c.runtime.Provider = lp })
+	c.getResource = func(_ context.Context, _ *cloud.Resource) error {
+		return cloud.ErrResourceNotFound
+	}
+	if err := c.run(context.Background(), false); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if lp.Acquires != 0 {
+		t.Errorf("read-only acquires = %d, want 0", lp.Acquires)
 	}
 }
 
