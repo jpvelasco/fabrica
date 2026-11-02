@@ -68,6 +68,43 @@ func TestSubmitCobraWaitFlagAccepted(t *testing.T) {
 	}
 }
 
+func submitProvisionedStateJSON() string {
+	return testutil.NewProvisionedStateJSON(
+		testutil.StateModule{
+			Name: "horde", Version: "", Status: "ready",
+			Resources: []testutil.StateResource{
+				{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-horde123"},
+				{TypeName: "AWS::EC2::Instance", Identifier: "i-horde123"},
+			},
+		},
+	)
+}
+
+// TestSubmitCobraDryRunNoSubmit verifies --dry-run resolves the coordinator
+// and prints the preview without contacting it (regression: the flag was
+// previously ignored).
+func TestSubmitCobraDryRunNoSubmit(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, submitProvisionedStateJSON())
+	bg := writeTempBuildGraph(t)
+
+	provider := &testutil.TestProvider{
+		GetResources: map[string]cloud.Resource{
+			cloud.TypeAWSEC2Instance: {
+				ActualState: []byte(`{"PrivateIpAddress":"10.0.1.42"}`),
+			},
+		},
+	}
+	got, err := runSubmit(t, newCobraRuntime(provider), "--dry-run", bg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	testutil.AssertContains(t, got, "dry run")
+	testutil.AssertContains(t, got, "Compile")
+	testutil.AssertContains(t, got, "http://10.0.1.42:5000")
+}
+
 // TestSubmitCobraNotProvisioned verifies error message when no state exists.
 func TestSubmitCobraNotProvisioned(t *testing.T) {
 	t.Chdir(t.TempDir())

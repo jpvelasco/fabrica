@@ -140,6 +140,60 @@ func TestSubmitFireAndForget(t *testing.T) {
 	assert.Contains(t, out.String(), "job-abc-001")
 }
 
+// TestSubmitDryRunNoSubmit verifies dry run prints the preview without
+// submitting the job or polling.
+func TestSubmitDryRunNoSubmit(t *testing.T) {
+	var out bytes.Buffer
+	st := hordeProvisionedState()
+	client := &fakeHordeClient{}
+	c := newTestCommand(&out, client, st)
+	c.buildGraphPath = writeTempBuildGraph(t)
+	c.dryRun = true
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if client.submitCalls != 0 {
+		t.Errorf("submitCalls = %d, want 0 in dry run", client.submitCalls)
+	}
+	if client.statusCalls != 0 {
+		t.Errorf("statusCalls = %d, want 0 in dry run (no polling)", client.statusCalls)
+	}
+	assert.Contains(t, out.String(), "dry run")
+	assert.Contains(t, out.String(), "Compile")
+}
+
+// TestSubmitDryRunResolvesCoordinator verifies the provider-resolution path
+// under dry run: the coordinator address is resolved via Cloud Control Get
+// and shown, with no HTTP connection opened.
+func TestSubmitDryRunResolvesCoordinator(t *testing.T) {
+	var out bytes.Buffer
+	st := hordeProvisionedState()
+	fakeRC := &fakeResourceClient{
+		getFn: func(_ context.Context, r *cloud.Resource) error {
+			r.ActualState = json.RawMessage(`{"PrivateIpAddress":"10.0.1.42"}`)
+			return nil
+		},
+	}
+	fakeProv := &fakeSubmitProvider{rc: fakeRC}
+	cfg := config.Defaults()
+	c := command{
+		runtime: globals.Runtime{Config: cfg, Provider: fakeProv},
+		out:     &out,
+		dryRun:  true,
+		waitCtx: func(context.Context, time.Duration) error { return nil },
+		now:     time.Now,
+	}
+	c.readState = func() (*fabricastate.State, error) { return st, nil }
+	c.buildGraphPath = writeTempBuildGraph(t)
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	assert.Contains(t, out.String(), "dry run")
+	assert.Contains(t, out.String(), "http://10.0.1.42:5000")
+}
+
 // TestSubmitWaitPollsUntilComplete verifies --wait polls until job is complete.
 func TestSubmitWaitPollsUntilComplete(t *testing.T) {
 	var out bytes.Buffer
