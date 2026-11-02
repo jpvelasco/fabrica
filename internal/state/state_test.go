@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -10,20 +11,22 @@ import (
 	"testing"
 	"time"
 
+	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/oplog"
 )
 
 // recordingLockStore builds a LockStore over captured storage functions.
 type recordingLockStore struct {
-	mu          sync.Mutex
-	putCalls    int
-	delCalls    int
-	putErr      error
-	delErr      error
-	lastItem    map[string]string
-	lastCond    string
-	lastCondVal map[string]string
+	mu            sync.Mutex
+	putCalls      int
+	delCalls      int
+	putErr        error
+	delErr        error
+	renewFailures int // the next N put calls fail with a transient error
+	lastItem      map[string]string
+	lastCond      string
+	lastCondVal   map[string]string
 }
 
 func (r *recordingLockStore) put(_ context.Context, item map[string]string, condition string, condValues map[string]string) error {
@@ -32,6 +35,10 @@ func (r *recordingLockStore) put(_ context.Context, item map[string]string, cond
 	r.putCalls++
 	if r.putErr != nil {
 		return r.putErr
+	}
+	if r.renewFailures > 0 {
+		r.renewFailures--
+		return errors.New("transient throttled")
 	}
 	r.lastItem = item
 	r.lastCond = condition
@@ -181,10 +188,11 @@ func TestLockHeartbeatRenewsUntilCancelled(t *testing.T) {
 		t.Fatalf("Acquire: %v", err)
 	}
 
+	lost := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		ls.Heartbeat(ctx, "res", token, "holder")
+		ls.Heartbeat(ctx, "res", token, "holder", func(err error) { lost <- err })
 		close(done)
 	}()
 
@@ -201,9 +209,17 @@ func TestLockHeartbeatRenewsUntilCancelled(t *testing.T) {
 	if got := rec.puts(); got < 3 {
 		t.Fatalf("putCalls = %d, want at least 3 (acquire + renewals)", got)
 	}
+	select {
+	case err := <-lost:
+		t.Fatalf("onLost fired while renewals succeed: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
 }
 
-func TestLockHeartbeatStopsOnRenewError(t *testing.T) {
+// TestLockHeartbeatTakeoverFiresOnLostAndStops verifies a confirmed takeover
+// (ErrLockHeld) fires onLost immediately and stops the loop — the row
+// belongs to someone else, so further renewals are pointless.
+func TestLockHeartbeatTakeoverFiresOnLostAndStops(t *testing.T) {
 	rec := &recordingLockStore{}
 	ls := NewFuncLockStore("t", 20*time.Millisecond, rec.put, rec.del)
 	token, err := ls.Acquire(context.Background(), "res", "holder")
@@ -211,18 +227,107 @@ func TestLockHeartbeatStopsOnRenewError(t *testing.T) {
 		t.Fatalf("Acquire: %v", err)
 	}
 	rec.mu.Lock()
-	rec.putErr = fmt.Errorf("taken over")
+	rec.putErr = fabricac.ErrLockHeld
 	rec.mu.Unlock()
 
+	lost := make(chan error, 1)
 	done := make(chan struct{})
 	go func() {
-		ls.Heartbeat(context.Background(), "res", token, "holder")
+		ls.Heartbeat(context.Background(), "res", token, "holder", func(err error) { lost <- err })
 		close(done)
 	}()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("heartbeat did not stop after renew error")
+		t.Fatal("heartbeat did not stop after confirmed takeover")
+	}
+	select {
+	case err := <-lost:
+		if !errors.Is(err, fabricac.ErrLockHeld) {
+			t.Fatalf("onLost err = %v, want ErrLockHeld", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("onLost did not fire after confirmed takeover")
+	}
+}
+
+// TestLockHeartbeatTransientRetriesUntilLeaseLapse verifies transient renew
+// failures are retried, but the loop still aborts when the lease margin
+// lapses without a successful renewal.
+func TestLockHeartbeatTransientRetriesUntilLeaseLapse(t *testing.T) {
+	rec := &recordingLockStore{}
+	ls := NewFuncLockStore("t", 300*time.Millisecond, rec.put, rec.del)
+	token, err := ls.Acquire(context.Background(), "res", "holder")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	rec.mu.Lock()
+	rec.putErr = errors.New("throttled")
+	rec.mu.Unlock()
+
+	lost := make(chan error, 1)
+	done := make(chan struct{})
+	start := time.Now()
+	go func() {
+		ls.Heartbeat(context.Background(), "res", token, "holder", func(err error) { lost <- err })
+		close(done)
+	}()
+	select {
+	case err := <-lost:
+		if !strings.Contains(err.Error(), "throttled") {
+			t.Fatalf("onLost err = %v, want the last transient error", err)
+		}
+		// The abort must land inside the lease (ttl=300ms), not after it.
+		if elapsed := time.Since(start); elapsed > 300*time.Millisecond {
+			t.Errorf("abort took %v, lease was 300ms", elapsed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("onLost did not fire after the lease lapsed")
+	}
+	<-done
+}
+
+// TestLockHeartbeatTransientRecoversWithinLease verifies a transient failure
+// followed by a successful renewal keeps the heartbeat alive — the lease
+// timer is only extended by successes, but a success before the margin
+// lapses resets it.
+func TestLockHeartbeatTransientRecoversWithinLease(t *testing.T) {
+	rec := &recordingLockStore{}
+	ls := NewFuncLockStore("t", 300*time.Millisecond, rec.put, rec.del)
+	token, err := ls.Acquire(context.Background(), "res", "holder")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	rec.mu.Lock()
+	rec.renewFailures = 1 // first renewal fails, the rest succeed
+	rec.mu.Unlock()
+
+	lost := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		ls.Heartbeat(ctx, "res", token, "holder", func(err error) { lost <- err })
+		close(done)
+	}()
+
+	// The first tick (ttl/3 = 100ms) fails, the next succeeds and re-arms
+	// the lease (margin at ~270ms, reset to ~470ms). Sleep past both ticks,
+	// then cancel and assert the heartbeat survived the transient error.
+	time.Sleep(350 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat did not stop after cancel")
+	}
+	if got := rec.puts(); got < 3 {
+		t.Fatalf("putCalls = %d, want at least 3 (acquire + 2 renewals)", got)
+	}
+	select {
+	case err := <-lost:
+		t.Fatalf("onLost fired despite recovery: %v", err)
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 

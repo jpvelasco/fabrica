@@ -5,23 +5,32 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
-// fakeLockManager records lock calls for bridge tests.
+// fakeLockManager records lock calls for bridge tests. Renewals are
+// recognized by the RenewCondition expression and routed to renewErr.
 type fakeLockManager struct {
 	acquires   int
+	renews     int
 	releases   int
 	held       bool
 	releaseErr error
 	acquireErr error
+	renewErr   error
 }
 
-func (f *fakeLockManager) AcquireStateLockRow(_ context.Context, _ string, _ map[string]string, _ string, _ map[string]string) error {
+func (f *fakeLockManager) AcquireStateLockRow(_ context.Context, _ string, _ map[string]string, condition string, _ map[string]string) error {
+	if condition == fabricastate.RenewCondition {
+		f.renews++
+		return f.renewErr
+	}
 	f.acquires++
 	if f.acquireErr != nil {
 		return f.acquireErr
@@ -223,5 +232,85 @@ func TestAcquireStateLockMissingTableProceedsUnlocked(t *testing.T) {
 	release()
 	if ctx.Value(lockHeldKey) != nil {
 		t.Error("sentinel must not be set when running unlocked")
+	}
+}
+
+// withShortStateLockTTL shortens the lease so the heartbeat lapses inside
+// the test window. It restores the default on return.
+func withShortStateLockTTL(t *testing.T, ttl time.Duration) {
+	t.Helper()
+	old := stateLockTTL
+	stateLockTTL = ttl
+	t.Cleanup(func() { stateLockTTL = old })
+}
+
+// TestAcquireStateLockTakeoverCancelsCommandContext verifies that a
+// confirmed takeover (renew -> ErrLockHeld) cancels the context the command
+// runs its mutations on, aborting in-flight work.
+func TestAcquireStateLockTakeoverCancelsCommandContext(t *testing.T) {
+	withShortStateLockTTL(t, 30*time.Millisecond)
+	locker := &fakeLockManager{renewErr: cloud.ErrLockHeld}
+	rt := testRuntimeWithLocker(locker)
+
+	ctx, release, err := AcquireStateLock(context.Background(), rt, "op")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer release()
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("command context was not cancelled after confirmed takeover")
+	}
+}
+
+// TestAcquireStateLockTransientRenewLossCancelsAtLeaseLapse verifies that a
+// run of transient renew failures cancels the command context once the lease
+// margin lapses — the loss is bounded by the lease, not by the failure count.
+func TestAcquireStateLockTransientRenewLossCancelsAtLeaseLapse(t *testing.T) {
+	withShortStateLockTTL(t, 90*time.Millisecond)
+	locker := &fakeLockManager{renewErr: errors.New("dynamo throttled")}
+	rt := testRuntimeWithLocker(locker)
+
+	ctx, release, err := AcquireStateLock(context.Background(), rt, "op")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer release()
+
+	start := time.Now()
+	select {
+	case <-ctx.Done():
+		// Lease margin is ttl - ttl/10 = 81ms; allow generous slack but
+		// still bound the wait so a missing abort fails the test.
+		if elapsed := time.Since(start); elapsed > 2*time.Second {
+			t.Errorf("abort took %v, want well under a second", elapsed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("command context was not cancelled after the lease lapsed")
+	}
+}
+
+// TestAcquireStateLockHealthyHeartbeatKeepsContext verifies that a healthy
+// heartbeat (succeeding renewals) keeps the command context alive and the
+// renew calls flow through the lock manager.
+func TestAcquireStateLockHealthyHeartbeatKeepsContext(t *testing.T) {
+	withShortStateLockTTL(t, 20*time.Millisecond)
+	locker := &fakeLockManager{}
+	rt := testRuntimeWithLocker(locker)
+
+	ctx, release, err := AcquireStateLock(context.Background(), rt, "op")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer release()
+
+	time.Sleep(80 * time.Millisecond)
+	if ctx.Err() != nil {
+		t.Fatalf("command context cancelled by healthy heartbeat: %v", ctx.Err())
+	}
+	if locker.renews < 2 {
+		t.Errorf("renews = %d, want at least 2", locker.renews)
 	}
 }
