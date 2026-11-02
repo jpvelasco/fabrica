@@ -81,6 +81,23 @@ func TestRestoreConfirmReject(t *testing.T) {
 	}
 }
 
+func TestRestoreMetadataIDMismatch(t *testing.T) {
+	c := command{
+		runtime:   globals.Runtime{Config: config.Defaults()},
+		force:     true,
+		backupID:  "20260715-143022",
+		out:       &bytes.Buffer{},
+		readState: readyStateFn,
+		runRemote: func(context.Context, string, []string) (cloud.RemoteResult, error) {
+			return cloud.RemoteResult{Stdout: `{"id":"20260715-143022-other","status":"complete","createdAt":"t","sizeBytes":1,"helixVersion":"2024.2","serverRoot":"/hxdepots"}`}, nil
+		},
+	}
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "does not match backup id") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestRestoreSuccess(t *testing.T) {
 	var out bytes.Buffer
 	st := readyState()
