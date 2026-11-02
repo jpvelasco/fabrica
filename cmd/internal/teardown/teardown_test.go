@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1080,6 +1082,43 @@ func TestNewStandaloneWithProvider(t *testing.T) {
 	}
 	if tc.JSONOut {
 		t.Error("JSONOut should be false")
+	}
+}
+
+// TestNewStandaloneRunPersistsState drives a real (non-dry-run) Run through
+// NewStandalone's production seams: ReadState loads the seeded state file,
+// every delete succeeds, and WriteState persists the module removal.
+func TestNewStandaloneRunPersistsState(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, testutil.NewProvisionedStateJSON(testutil.StateModule{
+		Name:    "perforce",
+		Version: "2024.2",
+		Status:  "ready",
+		Resources: []testutil.StateResource{
+			{TypeName: "AWS::EC2::Instance", Identifier: "i-abc123"},
+			{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-abc123"},
+		},
+	}))
+	provider := &testutil.TestProvider{}
+	rt, err := testutil.NewTestRuntime(provider)()
+	if err != nil {
+		t.Fatalf("runtime: %v", err)
+	}
+	var out bytes.Buffer
+	tc := NewStandalone(testSpec, rt, &out, false, true, true)
+	if err := tc.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if provider.DeleteCalls != 2 {
+		t.Fatalf("DeleteCalls = %d, want 2", provider.DeleteCalls)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".fabrica", "state.json"))
+	if err != nil {
+		t.Fatalf("reading state file: %v", err)
+	}
+	if strings.Contains(string(data), "perforce") {
+		t.Fatalf("state file still contains the perforce module: %s", data)
 	}
 }
 
