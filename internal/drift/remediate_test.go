@@ -34,6 +34,15 @@ func withHordePassword(t *testing.T, fn func(string) (string, error)) {
 	t.Cleanup(func() { readHordePassword = orig })
 }
 
+// fakeImageInspector is the AMI inspector seam: a fixed root device for the
+// AMI under test.
+func fakeImageInspector(t *testing.T, rootName, rootType string) func(ctx context.Context, imageID string) (cloud.ImageInfo, error) {
+	t.Helper()
+	return func(_ context.Context, imageID string) (cloud.ImageInfo, error) {
+		return cloud.ImageInfo{ID: imageID, RootDeviceName: rootName, RootDeviceType: rootType}, nil
+	}
+}
+
 func TestPlanRemediation_MissingEC2Instance(t *testing.T) {
 	st := state.NewState("123456789012", "us-east-1")
 	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{
@@ -60,7 +69,7 @@ func TestPlanRemediation_MissingEC2Instance(t *testing.T) {
 	cfg.Horde.AmiID = "ami-fake"
 
 	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
-	plan := PlanRemediation(report, st, cfg)
+	plan := PlanRemediation(context.Background(), report, st, cfg)
 
 	if plan.ToFix != 1 {
 		t.Errorf("expected 1 to fix, got %d", plan.ToFix)
@@ -122,7 +131,7 @@ func TestPlanRemediation_MissingSecurityGroup(t *testing.T) {
 	}
 
 	cfg := config.Defaults()
-	plan := PlanRemediation(report, st, cfg)
+	plan := PlanRemediation(context.Background(), report, st, cfg)
 
 	if plan.ToFix != 1 {
 		t.Errorf("expected 1 to fix, got %d", plan.ToFix)
@@ -165,7 +174,7 @@ func TestPlanRemediation_MissingIAMRole(t *testing.T) {
 	}
 
 	cfg := config.Defaults()
-	plan := PlanRemediation(report, st, cfg)
+	plan := PlanRemediation(context.Background(), report, st, cfg)
 
 	// IAM roles are not supported for auto-remediation (canRecreate returns false).
 	if plan.ToFix != 0 {
@@ -200,7 +209,7 @@ func TestPlanRemediation_MismatchSkipped(t *testing.T) {
 	}
 
 	cfg := config.Defaults()
-	plan := PlanRemediation(report, st, cfg)
+	plan := PlanRemediation(context.Background(), report, st, cfg)
 
 	if plan.ToFix != 0 {
 		t.Errorf("expected 0 to fix for mismatch, got %d", plan.ToFix)
@@ -240,7 +249,7 @@ func TestPlanRemediation_ExtraSkipped(t *testing.T) {
 	}
 
 	cfg := config.Defaults()
-	plan := PlanRemediation(report, st, cfg)
+	plan := PlanRemediation(context.Background(), report, st, cfg)
 
 	if plan.ToFix != 0 {
 		t.Errorf("expected 0 to fix for extra, got %d", plan.ToFix)
@@ -272,7 +281,7 @@ func TestPlanRemediation_ErrorSkipped(t *testing.T) {
 
 	st := state.NewState("123456789012", "us-east-1")
 	cfg := config.Defaults()
-	plan := PlanRemediation(report, st, cfg)
+	plan := PlanRemediation(context.Background(), report, st, cfg)
 
 	if plan.ToFix != 0 {
 		t.Errorf("expected 0 to fix for error, got %d", plan.ToFix)
@@ -301,7 +310,7 @@ func TestPlanRemediation_AllInSync(t *testing.T) {
 	}
 
 	cfg := config.Defaults()
-	plan := PlanRemediation(report, st, cfg)
+	plan := PlanRemediation(context.Background(), report, st, cfg)
 
 	// InSync resources should not produce any actions.
 	if len(plan.Actions) != 0 {
@@ -317,7 +326,7 @@ func TestPlanRemediation_EmptyReport(t *testing.T) {
 	report := &DriftReport{}
 	cfg := config.Defaults()
 
-	plan := PlanRemediation(report, st, cfg)
+	plan := PlanRemediation(context.Background(), report, st, cfg)
 
 	if plan.ToFix != 0 || plan.ToSkip != 0 || len(plan.Actions) != 0 {
 		t.Errorf("expected empty plan for empty report, got ToFix=%d ToSkip=%d Actions=%d", plan.ToFix, plan.ToSkip, len(plan.Actions))
@@ -341,7 +350,7 @@ func TestPlanRemediation_MissingCodeBuild(t *testing.T) {
 	}
 
 	cfg := config.Defaults()
-	plan := PlanRemediation(report, st, cfg)
+	plan := PlanRemediation(context.Background(), report, st, cfg)
 
 	// CodeBuild is Missing but unsupported for auto-remediation — it should
 	// be ActionSkip with a reason, not ActionCreate.
@@ -926,7 +935,7 @@ func TestRebuildResource_SGRebuildError(t *testing.T) {
 		TypeName:   cloud.TypeAWSEC2SecurityGroup,
 		Identifier: "sg-123",
 	}
-	_, err := rebuildResource(dr, st, config.Defaults())
+	_, err := rebuildResource(context.Background(), dr, st, config.Defaults(), nil)
 	if err == nil {
 		t.Fatal("expected rebuild error, got nil")
 	}
@@ -956,7 +965,7 @@ func TestPlanRemediation_SGRebuildFailureSkips(t *testing.T) {
 		return nil, errors.New("builder exploded")
 	})
 
-	plan := PlanRemediation(report, st, config.Defaults())
+	plan := PlanRemediation(context.Background(), report, st, config.Defaults())
 	if plan.ToFix != 0 || plan.ToSkip != 1 || plan.ReportOnly != 1 {
 		t.Fatalf("expected 0 to fix / 1 to skip / 1 report-only, got %+v", plan)
 	}
@@ -994,6 +1003,7 @@ func TestRebuildInstanceDesiredState_Perforce(t *testing.T) {
 	cfg.Perforce.InstanceType = "m5.xlarge"
 	cfg.Perforce.SubnetId = "subnet-pf"
 
+	st := state.NewState("123456789012", "us-east-1")
 	mod := &state.ModuleState{
 		Name:    "perforce",
 		Version: "2024.2", // Helix Core version — not an AMI
@@ -1010,7 +1020,7 @@ func TestRebuildInstanceDesiredState_Perforce(t *testing.T) {
 	rec := &mod.Resources[2]
 	withPerforcePassword(t, func(string) (string, error) { return "p4-admin", nil })
 
-	ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
+	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -1052,6 +1062,7 @@ func TestRebuildInstanceDesiredState_Perforce(t *testing.T) {
 
 // Perforce without a recorded AMI is unsupported for automatic remediation.
 func TestRebuildInstanceDesiredState_Perforce_MissingImageID(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
 	mod := &state.ModuleState{
 		Name:    "perforce",
 		Version: "2025.2",
@@ -1061,7 +1072,7 @@ func TestRebuildInstanceDesiredState_Perforce_MissingImageID(t *testing.T) {
 			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf"},
 		},
 	}
-	_, err := rebuildInstanceDesiredState(&mod.Resources[2], mod, config.Defaults())
+	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, st, config.Defaults(), nil)
 	if err == nil || !strings.Contains(err.Error(), "Properties.imageId") {
 		t.Fatalf("expected a Properties.imageId error, got %v", err)
 	}
@@ -1070,6 +1081,7 @@ func TestRebuildInstanceDesiredState_Perforce_MissingImageID(t *testing.T) {
 // A missing or unreadable credentials file reports the instance
 // unsupported instead of rebuilding it with a guessed password.
 func TestRebuildInstanceDesiredState_Perforce_MissingCredentials(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
 	mod := &state.ModuleState{
 		Name:    "perforce",
 		Version: "2025.2",
@@ -1080,7 +1092,7 @@ func TestRebuildInstanceDesiredState_Perforce_MissingCredentials(t *testing.T) {
 		},
 	}
 	withPerforcePassword(t, func(string) (string, error) { return "", errors.New("no such file") })
-	_, err := rebuildInstanceDesiredState(&mod.Resources[2], mod, config.Defaults())
+	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, st, config.Defaults(), nil)
 	if err == nil {
 		t.Fatal("expected an error when the credentials file is unreadable")
 	}
@@ -1088,6 +1100,7 @@ func TestRebuildInstanceDesiredState_Perforce_MissingCredentials(t *testing.T) {
 
 // A recorded Perforce instance without its IAM profile is unsupported.
 func TestRebuildInstanceDesiredState_Perforce_MissingProfile(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
 	mod := &state.ModuleState{
 		Name:    "perforce",
 		Version: "2025.2",
@@ -1096,7 +1109,7 @@ func TestRebuildInstanceDesiredState_Perforce_MissingProfile(t *testing.T) {
 			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf"}},
 		},
 	}
-	_, err := rebuildInstanceDesiredState(&mod.Resources[1], mod, config.Defaults())
+	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[1], mod, st, config.Defaults(), nil)
 	if err == nil || !strings.Contains(err.Error(), "IAM instance profile") {
 		t.Fatalf("expected an IAM profile error, got %v", err)
 	}
@@ -1110,6 +1123,7 @@ func TestRebuildInstanceDesiredState_HordeAgentSGIndependence(t *testing.T) {
 	cfg.Horde.InstanceType = "m7i.2xlarge"
 	cfg.Horde.SubnetId = "subnet-horde"
 
+	st := state.NewState("123456789012", "us-east-1")
 	mod := &state.ModuleState{
 		Name:    "horde",
 		Version: "ami-horde",
@@ -1123,7 +1137,7 @@ func TestRebuildInstanceDesiredState_HordeAgentSGIndependence(t *testing.T) {
 	rec := &mod.Resources[3]
 	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
 
-	ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
+	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -1137,10 +1151,74 @@ func TestRebuildInstanceDesiredState_HordeAgentSGIndependence(t *testing.T) {
 	}
 }
 
+func TestRebuildInstanceDesiredState_Lore(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Lore.InstanceType = "m5.xlarge"
+	cfg.Lore.SubnetId = "subnet-lore"
+
+	st := state.NewState("123456789012", "us-east-1")
+	mod := &state.ModuleState{
+		Name:    "lore",
+		Version: "ami-lore",
+		Resources: []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-lore"},
+			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-lore-profile"},
+		},
+	}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance}
+
+	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if m["InstanceType"] != "m5.xlarge" {
+		t.Errorf("expected m5.xlarge, got %v", m["InstanceType"])
+	}
+	if m["ImageId"] != "ami-lore" {
+		t.Errorf("expected ImageId ami-lore from the module version, got %v", m["ImageId"])
+	}
+	if m["IamInstanceProfile"] != "fabrica-lore-profile" {
+		t.Errorf("expected the recorded IAM profile, got %v", m["IamInstanceProfile"])
+	}
+}
+
+func TestRebuildInstanceDesiredState_DDC(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.DDC.InstanceType = "m5.xlarge"
+
+	st := state.NewState("123456789012", "us-east-1")
+	mod := &state.ModuleState{
+		Name:    "ddc",
+		Version: "ami-ddc",
+		Resources: []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-ddc"},
+			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
+		},
+	}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance}
+
+	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if m["ImageId"] != "ami-ddc" {
+		t.Errorf("expected ImageId ami-ddc from the module version, got %v", m["ImageId"])
+	}
+}
+
 func TestRebuildInstanceDesiredState_SecurityGroupLink(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Horde.InstanceType = "m7i.2xlarge"
 
+	st := state.NewState("123456789012", "us-east-1")
 	mod := &state.ModuleState{Name: "horde", Version: "ami-fake"}
 	mod.Resources = []state.ModuleResource{
 		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-linked"},
@@ -1150,7 +1228,7 @@ func TestRebuildInstanceDesiredState_SecurityGroupLink(t *testing.T) {
 	rec := &mod.Resources[2]
 	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
 
-	ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
+	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -1171,6 +1249,7 @@ func TestRebuildInstanceDesiredState_PropertiesOverride(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Horde.InstanceType = "m7i.2xlarge"
 
+	st := state.NewState("123456789012", "us-east-1")
 	mod := &state.ModuleState{
 		Name:    "horde",
 		Version: "ami-fake",
@@ -1189,7 +1268,7 @@ func TestRebuildInstanceDesiredState_PropertiesOverride(t *testing.T) {
 	}
 	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
 
-	ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
+	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -1225,7 +1304,7 @@ func TestRebuildResource_ModuleNotFound(t *testing.T) {
 		Identifier: "i-123",
 	}
 
-	res, err := rebuildResource(dr, st, cfg)
+	res, err := rebuildResource(context.Background(), dr, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1253,7 +1332,7 @@ func TestRebuildResource_ResourceNotFoundInModule(t *testing.T) {
 		Identifier: "i-missing",
 	}
 
-	res, err := rebuildResource(dr, st, cfg)
+	res, err := rebuildResource(context.Background(), dr, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1281,7 +1360,7 @@ func TestRebuildResource_InstanceWithDesiredState(t *testing.T) {
 		Identifier: "i-123",
 	}
 
-	res, err := rebuildResource(dr, st, cfg)
+	res, err := rebuildResource(context.Background(), dr, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1311,7 +1390,7 @@ func TestRebuildResource_SGWithDesiredState(t *testing.T) {
 		Identifier: "sg-123",
 	}
 
-	res, err := rebuildResource(dr, st, cfg)
+	res, err := rebuildResource(context.Background(), dr, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1510,7 +1589,7 @@ func TestPlanRemediation_MissingSGPerModule(t *testing.T) {
 
 			cfg := config.Defaults()
 			tc.setter(cfg)
-			plan := PlanRemediation(report, st, cfg)
+			plan := PlanRemediation(context.Background(), report, st, cfg)
 
 			if plan.ToFix != 1 {
 				t.Errorf("expected 1 to fix, got %d", plan.ToFix)
@@ -1535,6 +1614,7 @@ func TestPlanRemediation_MissingDDCInstance(t *testing.T) {
 	st := state.NewState("123456789012", "us-east-1")
 	st.UpsertModule("ddc", "ami-ddc", "ready", []state.ModuleResource{
 		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-ddc"},
+		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
 		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-ddc", Properties: map[string]string{
 			"instanceType": "m5.xlarge",
 		}},
@@ -1553,8 +1633,7 @@ func TestPlanRemediation_MissingDDCInstance(t *testing.T) {
 
 	cfg := config.Defaults()
 	cfg.DDC.InstanceType = "m5.xlarge"
-	cfg.DDC.AmiID = "ami-ddc"
-	plan := PlanRemediation(report, st, cfg)
+	plan := PlanRemediation(context.Background(), report, st, cfg)
 
 	if plan.ToFix != 1 {
 		t.Errorf("expected 1 to fix, got %d", plan.ToFix)
@@ -1567,6 +1646,10 @@ func TestPlanRemediation_MissingDDCInstance(t *testing.T) {
 			}
 			if ds["InstanceType"] != "m5.xlarge" {
 				t.Errorf("expected m5.xlarge, got %v", ds["InstanceType"])
+			}
+			// The AMI is the module version create recorded at launch.
+			if ds["ImageId"] != "ami-ddc" {
+				t.Errorf("expected ImageId ami-ddc from the module version, got %v", ds["ImageId"])
 			}
 			// Should have SG linked.
 			sgIDs, ok := ds["SecurityGroupIds"].([]any)
@@ -1581,8 +1664,11 @@ func TestPlanRemediation_MissingWorkstationInstance(t *testing.T) {
 	st := state.NewState("123456789012", "us-east-1")
 	st.UpsertModule("workstation", "ami-ws", "ready", []state.ModuleResource{
 		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-ws"},
+		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-workstation-profile"},
 		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-ws", Properties: map[string]string{
-			"instanceType": "g4dn.xlarge",
+			"instanceType":             "g4dn.xlarge",
+			"sessionPasswordParameter": "fabrica-workstation-password",
+			"mountPerforce":            "false",
 		}},
 	})
 
@@ -1599,8 +1685,7 @@ func TestPlanRemediation_MissingWorkstationInstance(t *testing.T) {
 
 	cfg := config.Defaults()
 	cfg.Workstation.InstanceType = "g4dn.xlarge"
-	cfg.Workstation.AmiID = "ami-ws"
-	plan := PlanRemediation(report, st, cfg)
+	plan := PlanRemediation(context.Background(), report, st, cfg, WithImageInspector(fakeImageInspector(t, "/dev/sda1", "ebs")))
 
 	if plan.ToFix != 1 {
 		t.Errorf("expected 1 to fix, got %d", plan.ToFix)
@@ -1614,6 +1699,10 @@ func TestPlanRemediation_MissingWorkstationInstance(t *testing.T) {
 			if ds["InstanceType"] != "g4dn.xlarge" {
 				t.Errorf("expected g4dn.xlarge, got %v", ds["InstanceType"])
 			}
+			// The AMI is the module version create recorded at launch.
+			if ds["ImageId"] != "ami-ws" {
+				t.Errorf("expected ImageId ami-ws from the module version, got %v", ds["ImageId"])
+			}
 		}
 	}
 }
@@ -1623,6 +1712,7 @@ func TestPlanRemediation_MissingWorkstationInstance(t *testing.T) {
 func TestRebuildInstanceDesiredState_Horde_FullContract(t *testing.T) {
 	cfg := config.Defaults()
 
+	st := state.NewState("123456789012", "us-east-1")
 	mod := &state.ModuleState{
 		Name:    "horde",
 		Version: "ami-horde",
@@ -1635,7 +1725,7 @@ func TestRebuildInstanceDesiredState_Horde_FullContract(t *testing.T) {
 	rec := &mod.Resources[2]
 	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
 
-	ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
+	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -1670,6 +1760,117 @@ func TestRebuildInstanceDesiredState_Horde_FullContract(t *testing.T) {
 	}
 	if ebs["DeleteOnTermination"] != false {
 		t.Errorf("expected the data volume to keep DeleteOnTermination=false, got %v", ebs["DeleteOnTermination"])
+	}
+}
+
+func TestRebuildInstanceDesiredState_Lore_S3Store(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Lore.StoreBackend = "s3"
+
+	st := state.NewState("123456789012", "us-east-1")
+	bucket := "fabrica-lore-store-123456789012-us-east-1"
+	mod := &state.ModuleState{
+		Name:    "lore",
+		Version: "ami-lore",
+		Resources: []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-lore"},
+			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-lore-profile"},
+			{TypeName: cloud.TypeAWSS3Bucket, Identifier: bucket},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-lore"},
+		},
+	}
+	rec := &mod.Resources[3]
+
+	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	raw, ok := m["UserData"].(string)
+	if !ok {
+		t.Fatalf("expected a UserData field, got %v", m["UserData"])
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		t.Fatalf("UserData is not base64: %v", err)
+	}
+	if !strings.Contains(string(decoded), bucket) {
+		t.Errorf("expected cloud-init to carry the recorded S3 store bucket %s, got:\n%s", bucket, decoded)
+	}
+}
+
+func TestRebuildInstanceDesiredState_DDScylla(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.DDC.ScyllaAmiID = "ami-scylla"
+
+	st := state.NewState("123456789012", "us-east-1")
+	mod := &state.ModuleState{
+		Name:    "ddc",
+		Version: "ami-ddc",
+		Resources: []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-ddc"},
+			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-scylla", Properties: map[string]string{"role": ddc.RoleScylla}},
+		},
+	}
+	rec := &mod.Resources[2]
+
+	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	// Scylla takes its AMI from ddc.scyllaAmiId, never from the module version.
+	if m["ImageId"] != "ami-scylla" {
+		t.Errorf("expected ImageId ami-scylla from ddc.scyllaAmiId, got %v", m["ImageId"])
+	}
+	if m["IamInstanceProfile"] != "fabrica-ddc-profile" {
+		t.Errorf("expected the recorded IAM profile, got %v", m["IamInstanceProfile"])
+	}
+}
+
+func TestRebuildInstanceDesiredState_ScyllaMissingAMISkips(t *testing.T) {
+	cfg := config.Defaults()
+
+	st := state.NewState("123456789012", "us-east-1")
+	mod := &state.ModuleState{
+		Name:    "ddc",
+		Version: "ami-ddc",
+		Resources: []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-ddc"},
+			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-scylla", Properties: map[string]string{"role": ddc.RoleScylla}},
+		},
+	}
+	rec := &mod.Resources[2]
+
+	_, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	if err == nil || !strings.Contains(err.Error(), "ddc.scyllaAmiId") {
+		t.Errorf("expected a missing-Scylla-AMI error, got %v", err)
+	}
+}
+
+func TestRebuildInstanceDesiredState_UnsupportedModule(t *testing.T) {
+	cfg := config.Defaults()
+	st := state.NewState("123456789012", "us-east-1")
+	mod := &state.ModuleState{
+		Name:    "unknown",
+		Version: "ami-x",
+		Resources: []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-x"},
+		},
+	}
+	rec := &mod.Resources[0]
+
+	_, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	if err == nil || !strings.Contains(err.Error(), "has no canonical instance contract") {
+		t.Errorf("expected an unsupported-module error, got %v", err)
 	}
 }
 
