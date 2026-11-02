@@ -25,10 +25,20 @@ func withPerforcePassword(t *testing.T, fn func(string) (string, error)) {
 	t.Cleanup(func() { readPerforcePassword = orig })
 }
 
+// withHordePassword swaps the horde credential-file seam for the test
+// duration and restores the real reader on cleanup.
+func withHordePassword(t *testing.T, fn func(string) (string, error)) {
+	t.Helper()
+	orig := readHordePassword
+	readHordePassword = fn
+	t.Cleanup(func() { readHordePassword = orig })
+}
+
 func TestPlanRemediation_MissingEC2Instance(t *testing.T) {
 	st := state.NewState("123456789012", "us-east-1")
 	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{
 		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
+		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
 		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
 			"instanceType": "m7i.2xlarge",
 		}},
@@ -49,6 +59,7 @@ func TestPlanRemediation_MissingEC2Instance(t *testing.T) {
 	cfg.Horde.InstanceType = "m7i.2xlarge"
 	cfg.Horde.AmiID = "ami-fake"
 
+	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
 	plan := PlanRemediation(report, st, cfg)
 
 	if plan.ToFix != 1 {
@@ -1097,7 +1108,6 @@ func TestRebuildInstanceDesiredState_Perforce_MissingProfile(t *testing.T) {
 func TestRebuildInstanceDesiredState_HordeAgentSGIndependence(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Horde.InstanceType = "m7i.2xlarge"
-	cfg.Horde.AmiID = "ami-horde"
 	cfg.Horde.SubnetId = "subnet-horde"
 
 	mod := &state.ModuleState{
@@ -1106,10 +1116,12 @@ func TestRebuildInstanceDesiredState_HordeAgentSGIndependence(t *testing.T) {
 		Resources: []state.ModuleResource{
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-agent", Properties: map[string]string{"role": "agent"}},
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-coord"},
+			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
 			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord"},
 		},
 	}
-	rec := &mod.Resources[2]
+	rec := &mod.Resources[3]
+	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
 
 	ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
 	if err != nil {
@@ -1128,14 +1140,15 @@ func TestRebuildInstanceDesiredState_HordeAgentSGIndependence(t *testing.T) {
 func TestRebuildInstanceDesiredState_SecurityGroupLink(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Horde.InstanceType = "m7i.2xlarge"
-	cfg.Horde.AmiID = "ami-fake"
 
 	mod := &state.ModuleState{Name: "horde", Version: "ami-fake"}
 	mod.Resources = []state.ModuleResource{
 		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-linked"},
+		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
 		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123"},
 	}
-	rec := &mod.Resources[1]
+	rec := &mod.Resources[2]
+	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
 
 	ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
 	if err != nil {
@@ -1158,14 +1171,23 @@ func TestRebuildInstanceDesiredState_PropertiesOverride(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Horde.InstanceType = "m7i.2xlarge"
 
-	mod := &state.ModuleState{Name: "horde", Version: "ami-fake"}
+	mod := &state.ModuleState{
+		Name:    "horde",
+		Version: "ami-fake",
+		Resources: []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-horde"},
+			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
+		},
+	}
 	rec := &state.ModuleResource{
 		TypeName: cloud.TypeAWSEC2Instance,
 		Properties: map[string]string{
 			"instanceType": "m7i.4xlarge",
 			"subnetId":     "subnet-recorded",
+			"volumeSize":   "512",
 		},
 	}
+	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
 
 	ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
 	if err != nil {
@@ -1180,6 +1202,14 @@ func TestRebuildInstanceDesiredState_PropertiesOverride(t *testing.T) {
 	}
 	if m["SubnetId"] != "subnet-recorded" {
 		t.Errorf("expected recorded subnetId override, got %v", m["SubnetId"])
+	}
+	bdm, ok := m["BlockDeviceMappings"].([]any)
+	if !ok || len(bdm) != 1 {
+		t.Fatalf("expected 1 block device mapping, got %v", m["BlockDeviceMappings"])
+	}
+	ebs := bdm[0].(map[string]any)["Ebs"].(map[string]any)
+	if ebs["VolumeSize"] != float64(512) {
+		t.Errorf("expected recorded volumeSize override 512, got %v", ebs["VolumeSize"])
 	}
 }
 
@@ -1235,12 +1265,15 @@ func TestRebuildResource_ResourceNotFoundInModule(t *testing.T) {
 func TestRebuildResource_InstanceWithDesiredState(t *testing.T) {
 	st := state.NewState("123456789012", "us-east-1")
 	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
+		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
 		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
 			"instanceType": "m7i.2xlarge",
 		}},
 	})
 	cfg := config.Defaults()
 	cfg.Horde.InstanceType = "m7i.2xlarge"
+	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
 
 	dr := &DriftResult{
 		Module:     "horde",
@@ -1582,6 +1615,61 @@ func TestPlanRemediation_MissingWorkstationInstance(t *testing.T) {
 				t.Errorf("expected g4dn.xlarge, got %v", ds["InstanceType"])
 			}
 		}
+	}
+}
+
+// --- full-contract rebuild tests ---
+
+func TestRebuildInstanceDesiredState_Horde_FullContract(t *testing.T) {
+	cfg := config.Defaults()
+
+	mod := &state.ModuleState{
+		Name:    "horde",
+		Version: "ami-horde",
+		Resources: []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-coord"},
+			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord"},
+		},
+	}
+	rec := &mod.Resources[2]
+	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
+
+	ds, err := rebuildInstanceDesiredState(rec, mod, cfg)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if m["ImageId"] != "ami-horde" {
+		t.Errorf("expected ImageId ami-horde from the module version, got %v", m["ImageId"])
+	}
+	if m["IamInstanceProfile"] != "fabrica-horde-profile" {
+		t.Errorf("expected the recorded IAM profile, got %v", m["IamInstanceProfile"])
+	}
+	raw, ok := m["UserData"].(string)
+	if !ok {
+		t.Fatalf("expected a UserData field, got %v", m["UserData"])
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		t.Fatalf("UserData is not base64: %v", err)
+	}
+	if !strings.Contains(string(decoded), "5000") {
+		t.Errorf("expected cloud-init to carry the default horde port 5000, got:\n%s", decoded)
+	}
+	bdms, ok := m["BlockDeviceMappings"].([]any)
+	if !ok || len(bdms) != 1 {
+		t.Fatalf("expected one block device mapping, got %v", m["BlockDeviceMappings"])
+	}
+	ebs, ok := bdms[0].(map[string]any)["Ebs"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected an Ebs block in the mapping, got %v", bdms[0])
+	}
+	if ebs["DeleteOnTermination"] != false {
+		t.Errorf("expected the data volume to keep DeleteOnTermination=false, got %v", ebs["DeleteOnTermination"])
 	}
 }
 

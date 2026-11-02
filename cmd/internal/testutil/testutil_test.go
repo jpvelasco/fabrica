@@ -531,3 +531,19 @@ func TestUbuntuAMIProviderError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+// TestWriteHordeCredentials verifies the file lands where the --fix credential
+// readers expect it, with the password rendered by FormatHorde.
+func TestWriteHordeCredentials(t *testing.T) {
+	dir := t.TempDir()
+	WriteHordeCredentials(t, dir, "test-pass")
+
+	path := filepath.Join(dir, ".fabrica", "horde-credentials.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading horde credentials: %v", err)
+	}
+	if got := string(data); !strings.Contains(got, `mongodb_password: "test-pass"`) {
+		t.Errorf("credentials file missing the mongodb password:\n%s", got)
+	}
+}

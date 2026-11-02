@@ -826,20 +826,23 @@ func rebuildResource(dr *DriftResult, st *state.State, cfg *config.Config) (*clo
 }
 
 // rebuildInstanceDesiredState builds the desired state of a Missing EC2
-// instance. Perforce is reconstructed through its full create contract
-// (rebuildPerforceInstance): recorded sizing, security group, IAM instance
-// profile, and cloud-init. The other modules get a minimal launch contract
-// from the module version (the AMI) and the instanceType from properties
-// (falling back to module config). DDC edge instances are region-specific
-// and are rebuilt from their recorded inputs only
-// (rebuildEdgeInstanceDesiredState).
+// instance. Perforce and horde are reconstructed through their full create
+// contract (rebuildPerforceInstance, rebuildHordeInstance): recorded sizing,
+// security group, IAM instance profile, and cloud-init. The other modules
+// get a minimal launch contract from the module version (the AMI) and the
+// instanceType from properties (falling back to module config). DDC edge
+// instances are region-specific and are rebuilt from their recorded inputs
+// only (rebuildEdgeInstanceDesiredState).
 func rebuildInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
 	if mod.Name == "ddc" && isEdgeResource(rec) {
 		return rebuildEdgeInstanceDesiredState(rec, mod, cfg)
 	}
 
-	if mod.Name == "perforce" {
+	switch mod.Name {
+	case "perforce":
 		return rebuildPerforceInstance(rec, mod, cfg)
+	case "horde":
+		return rebuildHordeInstance(rec, mod, cfg)
 	}
 
 	instanceType := ""
@@ -848,12 +851,6 @@ func rebuildInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleSta
 
 	// Resolve per-module config based on module name.
 	switch mod.Name {
-	case "horde":
-		instanceType = cfg.Horde.InstanceType
-		if ami == "" {
-			ami = cfg.Horde.AmiID
-		}
-		subnetID = cfg.Horde.SubnetId
 	case "lore":
 		instanceType = cfg.Lore.InstanceType
 		if ami == "" {
@@ -961,11 +958,17 @@ func recordedSGAndProfile(rec *state.ModuleResource, mod *state.ModuleState, mod
 // directory (the .fabrica/ directory that holds the state cache).
 const (
 	perforceCredFile = ".fabrica/perforce-credentials.yaml"
+	// #nosec G101 -- the value is a file path to a credentials file, not a credential.
+	hordeCredFile = ".fabrica/horde-credentials.yaml"
 )
 
-// readPerforcePassword is a seam over the create-time credentials file.
-// Tests swap it with a fake; the real reader comes from internal/credentials.
-var readPerforcePassword = credentials.ReadPerforceAdminPassword
+// readPerforcePassword and readHordePassword are seams over the create-time
+// credential files. Tests swap them with fakes; the real readers come from
+// internal/credentials.
+var (
+	readPerforcePassword = credentials.ReadPerforceAdminPassword
+	readHordePassword    = credentials.ReadHordeMongoPassword
+)
 
 // rebuildPerforceInstance rebuilds the Perforce instance. The AMI is the
 // recorded Properties.imageId: Perforce's module version is the Helix Core
@@ -1009,6 +1012,47 @@ func rebuildPerforceInstance(rec *state.ModuleResource, mod *state.ModuleState, 
 		InstanceName: "fabrica-perforce",
 	}
 	ds, err := perforce.InstanceDesiredState(plan, sgID, userData, profile, ami)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptySubnetID(ds)
+}
+
+// rebuildHordeInstance rebuilds the Horde coordinator instance. The MongoDB
+// password comes from the create-time credentials file and the AMI is the
+// module version create recorded at launch.
+func rebuildHordeInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+	ami := mod.Version
+	if ami == "" {
+		return nil, fmt.Errorf("no AMI recorded for the horde instance (module version); re-run 'fabrica horde create'")
+	}
+	// Structural inputs are checked before the credential file read: a
+	// state that cannot supply the full launch contract should say so
+	// without touching .fabrica.
+	sgID, profile, err := recordedSGAndProfile(rec, mod, "horde")
+	if err != nil {
+		return nil, err
+	}
+	mongoPass, err := readHordePassword(hordeCredFile)
+	if err != nil {
+		return nil, err
+	}
+	port := cfg.Horde.Port
+	if port <= 0 {
+		port = horde.DefaultPort
+	}
+	userData, err := horde.Generate(horde.UserDataConfig{MongoPassword: mongoPass, Port: port})
+	if err != nil {
+		return nil, fmt.Errorf("rendering horde cloud-init: %w", err)
+	}
+	plan := &horde.CreatePlan{
+		AmiID:        ami,
+		InstanceType: instanceTypeFor(rec, cfg.Horde.InstanceType, horde.DefaultInstanceType),
+		VolumeSize:   volumeSizeFor(rec, cfg.Horde.VolumeSize, 100),
+		SubnetID:     subnetFor(rec, cfg.Horde.SubnetId),
+		InstanceName: "fabrica-horde",
+	}
+	ds, err := horde.InstanceDesiredState(plan, sgID, userData, profile)
 	if err != nil {
 		return nil, err
 	}
