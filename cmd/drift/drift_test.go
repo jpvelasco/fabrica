@@ -38,6 +38,28 @@ func newTestCommand(t *testing.T, opts ...func(*command)) *command {
 	return c
 }
 
+// prepareHordeFixEnv isolates the test working directory and writes the
+// horde credentials file the --fix rebuild seam reads from .fabrica/.
+func prepareHordeFixEnv(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteHordeCredentials(t, dir, "test-pass")
+}
+
+// hordeFixResources is the full recorded resource set a horde --fix
+// instance rebuild requires: security group, instance, and IAM instance
+// profile.
+func hordeFixResources() []fabricastate.ModuleResource {
+	return []fabricastate.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
+			"instanceType": "m7i.2xlarge",
+		}},
+		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
+	}
+}
+
 func TestRun_ReadStateError(t *testing.T) {
 	c := newTestCommand(t, func(c *command) {
 		c.readState = func() (*fabricastate.State, error) {
@@ -108,13 +130,9 @@ func TestRun_FixNoDrift(t *testing.T) {
 }
 
 func TestRun_FixDryRun(t *testing.T) {
+	prepareHordeFixEnv(t)
 	st := fabricastate.NewState("123456789012", "us-east-1")
-	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
-		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
-		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
-			"instanceType": "m7i.2xlarge",
-		}},
-	})
+	st.UpsertModule("horde", "ami-fake", "ready", hordeFixResources())
 
 	c := newTestCommand(t, func(c *command) {
 		c.fixMode = true
@@ -223,13 +241,9 @@ func TestRun_ReadOnlySkipsLock(t *testing.T) {
 }
 
 func TestRun_FixApplySuccess(t *testing.T) {
+	prepareHordeFixEnv(t)
 	st := fabricastate.NewState("123456789012", "us-east-1")
-	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
-		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
-		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
-			"instanceType": "m7i.2xlarge",
-		}},
-	})
+	st.UpsertModule("horde", "ami-fake", "ready", hordeFixResources())
 
 	var created []*cloud.Resource
 	c := newTestCommand(t, func(c *command) {
@@ -264,12 +278,9 @@ func TestRun_FixApplySuccess(t *testing.T) {
 }
 
 func TestRun_FixApplyFailure(t *testing.T) {
+	prepareHordeFixEnv(t)
 	st := fabricastate.NewState("123456789012", "us-east-1")
-	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
-		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
-			"instanceType": "m7i.2xlarge",
-		}},
-	})
+	st.UpsertModule("horde", "ami-fake", "ready", hordeFixResources())
 
 	c := newTestCommand(t, func(c *command) {
 		c.fixMode = true
@@ -281,7 +292,10 @@ func TestRun_FixApplyFailure(t *testing.T) {
 		c.writeState = func(s *fabricastate.State) error { return nil }
 	})
 	c.getResource = func(_ context.Context, r *cloud.Resource) error {
-		return cloud.ErrResourceNotFound
+		if r.TypeName == cloud.TypeAWSEC2Instance {
+			return cloud.ErrResourceNotFound
+		}
+		return nil
 	}
 	c.listResources = func(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
 
@@ -393,12 +407,9 @@ func TestRun_FixJSONWithResult(t *testing.T) {
 }
 
 func TestRun_FixJSONFailure(t *testing.T) {
+	prepareHordeFixEnv(t)
 	st := fabricastate.NewState("123456789012", "us-east-1")
-	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
-		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
-			"instanceType": "m7i.2xlarge",
-		}},
-	})
+	st.UpsertModule("horde", "ami-fake", "ready", hordeFixResources())
 
 	c := newTestCommand(t, func(c *command) {
 		c.fixMode = true
@@ -411,7 +422,10 @@ func TestRun_FixJSONFailure(t *testing.T) {
 		c.writeState = func(s *fabricastate.State) error { return nil }
 	})
 	c.getResource = func(_ context.Context, r *cloud.Resource) error {
-		return cloud.ErrResourceNotFound
+		if r.TypeName == cloud.TypeAWSEC2Instance {
+			return cloud.ErrResourceNotFound
+		}
+		return nil
 	}
 	c.listResources = func(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
 
@@ -715,12 +729,9 @@ func TestPrintFixJSON_WithResult(t *testing.T) {
 // --- writeState error path ---
 
 func TestRun_WriteStateError(t *testing.T) {
+	prepareHordeFixEnv(t)
 	st := fabricastate.NewState("123456789012", "us-east-1")
-	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
-		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
-			"instanceType": "m7i.2xlarge",
-		}},
-	})
+	st.UpsertModule("horde", "ami-fake", "ready", hordeFixResources())
 
 	c := newTestCommand(t, func(c *command) {
 		c.fixMode = true
@@ -732,7 +743,10 @@ func TestRun_WriteStateError(t *testing.T) {
 		}
 	})
 	c.getResource = func(_ context.Context, r *cloud.Resource) error {
-		return cloud.ErrResourceNotFound
+		if r.TypeName == cloud.TypeAWSEC2Instance {
+			return cloud.ErrResourceNotFound
+		}
+		return nil
 	}
 	c.listResources = func(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
 
@@ -899,12 +913,9 @@ func TestRunFix_AssumeYes_Oplog(t *testing.T) {
 
 func TestRunFix_FixPathLogMessages_Oplog(t *testing.T) {
 	buf := logBuf(t)
+	prepareHordeFixEnv(t)
 	st := fabricastate.NewState("123456789012", "us-east-1")
-	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
-		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
-			"instanceType": "m7i.2xlarge",
-		}},
-	})
+	st.UpsertModule("horde", "ami-fake", "ready", hordeFixResources())
 
 	c := newTestCommand(t, func(c *command) {
 		c.fixMode = true
@@ -914,7 +925,10 @@ func TestRunFix_FixPathLogMessages_Oplog(t *testing.T) {
 		c.writeState = func(s *fabricastate.State) error { return nil }
 	})
 	c.getResource = func(_ context.Context, r *cloud.Resource) error {
-		return cloud.ErrResourceNotFound
+		if r.TypeName == cloud.TypeAWSEC2Instance {
+			return cloud.ErrResourceNotFound
+		}
+		return nil
 	}
 	c.listResources = func(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
 
@@ -931,13 +945,9 @@ func TestRunFix_FixPathLogMessages_Oplog(t *testing.T) {
 
 func TestRunFix_ResultMixed_Oplog(t *testing.T) {
 	buf := logBuf(t)
+	prepareHordeFixEnv(t)
 	st := fabricastate.NewState("123456789012", "us-east-1")
-	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
-		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
-		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
-			"instanceType": "m7i.2xlarge",
-		}},
-	})
+	st.UpsertModule("horde", "ami-fake", "ready", hordeFixResources())
 
 	var callCount int
 	c := newTestCommand(t, func(c *command) {
@@ -970,12 +980,9 @@ func TestRunFix_ResultMixed_Oplog(t *testing.T) {
 
 func TestRunFix_WriteStateSuccess_Oplog(t *testing.T) {
 	buf := logBuf(t)
+	prepareHordeFixEnv(t)
 	st := fabricastate.NewState("123456789012", "us-east-1")
-	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
-		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
-			"instanceType": "m7i.2xlarge",
-		}},
-	})
+	st.UpsertModule("horde", "ami-fake", "ready", hordeFixResources())
 
 	var writeCalled bool
 	c := newTestCommand(t, func(c *command) {
@@ -989,7 +996,10 @@ func TestRunFix_WriteStateSuccess_Oplog(t *testing.T) {
 		}
 	})
 	c.getResource = func(_ context.Context, r *cloud.Resource) error {
-		return cloud.ErrResourceNotFound
+		if r.TypeName == cloud.TypeAWSEC2Instance {
+			return cloud.ErrResourceNotFound
+		}
+		return nil
 	}
 	c.listResources = func(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
 
@@ -1005,12 +1015,9 @@ func TestRunFix_WriteStateSuccess_Oplog(t *testing.T) {
 
 func TestRunFix_WriteStateError_Oplog(t *testing.T) {
 	buf := logBuf(t)
+	prepareHordeFixEnv(t)
 	st := fabricastate.NewState("123456789012", "us-east-1")
-	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
-		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
-			"instanceType": "m7i.2xlarge",
-		}},
-	})
+	st.UpsertModule("horde", "ami-fake", "ready", hordeFixResources())
 
 	c := newTestCommand(t, func(c *command) {
 		c.fixMode = true
@@ -1022,7 +1029,10 @@ func TestRunFix_WriteStateError_Oplog(t *testing.T) {
 		}
 	})
 	c.getResource = func(_ context.Context, r *cloud.Resource) error {
-		return cloud.ErrResourceNotFound
+		if r.TypeName == cloud.TypeAWSEC2Instance {
+			return cloud.ErrResourceNotFound
+		}
+		return nil
 	}
 	c.listResources = func(_ context.Context, _ string) ([]cloud.Resource, error) { return nil, nil }
 
@@ -1035,14 +1045,12 @@ func TestRunFix_WriteStateError_Oplog(t *testing.T) {
 
 func TestRunFix_SkippedActions_Oplog(t *testing.T) {
 	buf := logBuf(t)
+	prepareHordeFixEnv(t)
 	st := fabricastate.NewState("123456789012", "us-east-1")
-	st.UpsertModule("horde", "ami-fake", "ready", []fabricastate.ModuleResource{
-		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
-		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
-			"instanceType": "m7i.2xlarge",
-		}},
-		{TypeName: cloud.TypeAWSEC2Volume, Identifier: "vol-123"},
-	})
+	st.UpsertModule("horde", "ami-fake", "ready", append(hordeFixResources(), fabricastate.ModuleResource{
+		TypeName:   cloud.TypeAWSEC2Volume,
+		Identifier: "vol-123",
+	}))
 
 	var callCount int
 	c := newTestCommand(t, func(c *command) {
