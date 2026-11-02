@@ -15,6 +15,11 @@ import (
 // profiles and accounts never share one cache.
 const DefaultStateFile = ".fabrica/state.json"
 
+// StateDocumentKey is the object key of the canonical state document in the
+// account's state bucket. The remote document is the record of truth; the
+// local cache file mirrors it.
+const StateDocumentKey = "state.json"
+
 // StateFileFor returns the local state cache path for the given config file.
 // The default config (fabrica.yaml, or an empty path) maps to
 // DefaultStateFile; every other config file maps to .fabrica/state-<name>.json
@@ -65,7 +70,31 @@ func ValidateIdentity(st *State, account, region string) error {
 	if len(problems) == 0 {
 		return nil
 	}
-	return fmt.Errorf("state target mismatch (%s); run with the --profile or config file that recorded this state, or delete the state file to rebind this working directory", strings.Join(problems, "; "))
+	return fmt.Errorf("state target mismatch (%s); run with the --profile or config file that recorded this state, or delete the local state file and the remote state document to rebind this working directory", strings.Join(problems, "; "))
+}
+
+// ParseState unmarshals a state document (remote object body or local cache
+// content) and validates it against the expected account and region.
+func ParseState(data []byte, account, region string) (*State, error) {
+	var st State
+	if err := json.Unmarshal(data, &st); err != nil {
+		return nil, fmt.Errorf("parsing state document: %w", err)
+	}
+	if err := ValidateIdentity(&st, account, region); err != nil {
+		return nil, err
+	}
+	return &st, nil
+}
+
+// EncodeState renders the canonical state document. The remote object body
+// and the local cache file share this encoding so a cache refresh is
+// byte-for-byte what the remote holds.
+//
+// MarshalIndent cannot fail for State — it has no unexported fields,
+// no circular references, and no custom Marshaler.
+func EncodeState(st *State) []byte {
+	data, _ := json.MarshalIndent(st, "", "  ")
+	return data
 }
 
 // ReadStateFile reads state from the local cache at path. If the file does not
@@ -84,16 +113,12 @@ func ReadStateFile(path, account, region string) (*State, error) {
 		oplog.Logger().Error("failed to read state file", "file", path, "error", err)
 		return nil, fmt.Errorf("reading state file: %w", err)
 	}
-	var st State
-	if err := json.Unmarshal(data, &st); err != nil {
+	st, err := ParseState(data, account, region)
+	if err != nil {
 		oplog.Logger().Error("failed to parse state file", "file", path, "error", err)
-		return nil, fmt.Errorf("parsing state file: %w", err)
-	}
-	if err := ValidateIdentity(&st, account, region); err != nil {
-		oplog.Logger().Error("state file target mismatch", "file", path, "error", err)
 		return nil, fmt.Errorf("reading state file: %w", err)
 	}
-	return &st, nil
+	return st, nil
 }
 
 // WriteStateTo persists state to the local cache file at path, creating the
@@ -104,10 +129,7 @@ func WriteStateTo(st *State, path string) error {
 		oplog.Logger().Error("failed to create .fabrica directory", "error", err)
 		return fmt.Errorf("creating state directory: %w", err)
 	}
-	// MarshalIndent cannot fail for State — it has no unexported fields,
-	// no circular references, and no custom Marshaler.
-	data, _ := json.MarshalIndent(st, "", "  ")
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := os.WriteFile(path, EncodeState(st), 0600); err != nil {
 		oplog.Logger().Error("failed to write state file", "file", path, "error", err)
 		return fmt.Errorf("writing state file: %w", err)
 	}
