@@ -332,9 +332,8 @@ func TestLockHeartbeatTransientRecoversWithinLease(t *testing.T) {
 }
 
 // TestLockHeartbeatZeroTTLFiresLeaseImmediately verifies the defensive
-// clamps: a non-positive ttl falls back to 1ms for both the tick interval
-// and the lease margin, the lease timer starts already lapsed, and the loop
-// reports loss with the "no successful renewal" error on the first lap.
+// clamps: a non-positive ttl falls back to 1ms for tick interval and lease
+// margin, so the lease timer starts already lapsed and the loop reports loss.
 func TestLockHeartbeatZeroTTLFiresLeaseImmediately(t *testing.T) {
 	rec := &recordingLockStore{}
 	ls := NewFuncLockStore("t", time.Millisecond, rec.put, rec.del)
@@ -390,9 +389,8 @@ func TestLockHeartbeatNilOnLostIsSafe(t *testing.T) {
 }
 
 // TestLockHeartbeatBackwardClockJumpReportsLost verifies a clock that jumps
-// backward across the lease margin invalidates the next reschedule: the
-// deadline lands in the past, leaseDelay clamps to zero, and the heartbeat
-// reports loss instead of re-arming a lapsed lease.
+// backward across the lease margin: the deadline lands in the past,
+// leaseDelay clamps to zero, and the heartbeat reports loss without re-arming.
 func TestLockHeartbeatBackwardClockJumpReportsLost(t *testing.T) {
 	rec := &recordingLockStore{}
 	ls := NewFuncLockStore("t", 100*time.Millisecond, rec.put, rec.del)
@@ -433,10 +431,9 @@ func TestLockHeartbeatBackwardClockJumpReportsLost(t *testing.T) {
 	}
 }
 
-// TestRescheduleLeaseAlreadyExpiredAborts covers rescheduleLease's
-// defensive expired branch: once the timer has expired (its value was
-// observed on the channel), re-arming would push the lease past a lapsed
-// margin, so the reschedule reports loss instead.
+// TestRescheduleLeaseAlreadyExpiredAborts covers the defensive expired
+// branch: once the timer has expired (its value was observed on the
+// channel), re-arming would push the lease past a lapsed margin.
 func TestRescheduleLeaseAlreadyExpiredAborts(t *testing.T) {
 	timer := time.NewTimer(10 * time.Millisecond)
 	<-timer.C // Observe the expiry; the timer stays expired (Stop reports false).

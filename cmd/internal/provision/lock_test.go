@@ -310,9 +310,8 @@ func TestAcquireStateLockHealthyHeartbeatKeepsContext(t *testing.T) {
 	defer release()
 
 	// Renewal evidence on a bounded deadline: a healthy heartbeat renews
-	// every ~67 ms, so CI scheduling jitter cannot look like a dead
-	// heartbeat. Each successful renewal extends the 180 ms lease margin,
-	// so the context must stay alive.
+	// every ~67 ms, so CI jitter cannot look like a dead heartbeat, and
+	// each successful renewal re-extends the 180 ms lease margin.
 	deadline := time.Now().Add(3 * time.Second)
 	for locker.renews.Load() < 2 {
 		if time.Now().After(deadline) {
