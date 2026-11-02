@@ -376,3 +376,42 @@ func TestTestProviderDescribeASG(t *testing.T) {
 		t.Errorf("got %+v, want %+v", got, want)
 	}
 }
+
+func TestTestProviderPutSecureParameter(t *testing.T) {
+	p := &TestProvider{}
+	param := cloud.SecureParameter{Name: "/fabrica/workstation/nonce/dcv-password", Value: "s3cr3t"}
+	if err := p.PutSecureParameter(context.Background(), param); err != nil {
+		t.Fatalf("PutSecureParameter = %v, want nil", err)
+	}
+	if len(p.PutParameters) != 1 || p.PutParameters[0].Name != param.Name || p.PutParameters[0].Value != param.Value {
+		t.Errorf("PutParameters = %+v, want one recorded entry", p.PutParameters)
+	}
+
+	wantErr := errors.New("ssm put failed")
+	failing := &TestProvider{PutParameterErr: wantErr}
+	if err := failing.PutSecureParameter(context.Background(), param); !errors.Is(err, wantErr) {
+		t.Errorf("PutSecureParameter error = %v, want %v", err, wantErr)
+	}
+	if len(failing.PutParameters) != 0 {
+		t.Errorf("failed put must not record, PutParameters = %+v", failing.PutParameters)
+	}
+}
+
+func TestTestProviderDeleteParameter(t *testing.T) {
+	p := &TestProvider{}
+	if err := p.DeleteParameter(context.Background(), "/fabrica/workstation/nonce/dcv-password"); err != nil {
+		t.Fatalf("DeleteParameter = %v, want nil", err)
+	}
+	if len(p.DeletedParameters) != 1 {
+		t.Errorf("DeletedParameters = %v, want one entry", p.DeletedParameters)
+	}
+
+	wantErr := errors.New("ssm delete failed")
+	failing := &TestProvider{DeleteParameterErr: wantErr}
+	if err := failing.DeleteParameter(context.Background(), "/fabrica/workstation/nonce/dcv-password"); !errors.Is(err, wantErr) {
+		t.Errorf("DeleteParameter error = %v, want %v", err, wantErr)
+	}
+	if len(failing.DeletedParameters) != 0 {
+		t.Errorf("failed delete must not record, DeletedParameters = %v", failing.DeletedParameters)
+	}
+}

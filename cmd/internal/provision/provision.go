@@ -6,25 +6,49 @@ package provision
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
 )
 
-// ReadState reads the local state cache for the runtime's config file,
-// seeding a fresh state with the configured account/region when the file does
-// not exist yet. Existing state whose recorded account or home region does not
-// match the configured target is rejected.
-func ReadState(_ context.Context, rt globals.Runtime) (*fabricastate.State, error) {
-	account, region := "", ""
-	if rt.Config != nil {
-		account = rt.Config.Cloud.AWS.AccountID
-		region = rt.Config.Cloud.AWS.Region
+// ReadState loads the canonical provisioning state for the runtime. When the
+// provider implements cloud.StateStore and the account is bootstrapped, the
+// remote snapshot wins: a missing document falls back to the local cache, and
+// a present one is validated against the configured account/region and
+// refreshed into the local cache before use. Storage failures surface to the
+// caller. Mutating flows call this while holding the account lock; read-only
+// flows may call it without the lock (S3 reads are atomic).
+func ReadState(ctx context.Context, rt globals.Runtime) (*fabricastate.State, error) {
+	account, region := identitySides(rt)
+	path := StatePath(rt)
+	store, bucket := stateStore(rt)
+	if store == nil {
+		return fabricastate.ReadStateFile(path, account, region)
 	}
-	return fabricastate.ReadStateFile(StatePath(rt), account, region)
+
+	doc, err := store.GetStateDocument(ctx, bucket, fabricastate.StateDocumentKey)
+	if err != nil {
+		if !errors.Is(err, fabricac.ErrStateDocumentMissing) {
+			return nil, fmt.Errorf("reading remote state: %w", err)
+		}
+		oplog.Logger().Warn("remote state document not found; using local state cache", "bucket", bucket)
+		return fabricastate.ReadStateFile(path, account, region)
+	}
+
+	st, err := fabricastate.ParseState(doc, account, region)
+	if err != nil {
+		return nil, fmt.Errorf("reading remote state: %w", err)
+	}
+	if err := fabricastate.WriteStateTo(st, path); err != nil {
+		oplog.Logger().Warn("remote state loaded; local cache refresh failed", "file", path, "error", err)
+	}
+	return st, nil
 }
 
 // StatePath returns the local state file for the runtime's config file, so
@@ -33,14 +57,67 @@ func StatePath(rt globals.Runtime) string {
 	return fabricastate.StateFileFor(rt.ConfigFile())
 }
 
-// StateWriter returns a write seam bound to the runtime's state file — the
-// same file ReadState loads, so a command can never write one profile's
-// records into another profile's cache.
-func StateWriter(_ context.Context, rt globals.Runtime) func(*fabricastate.State) error {
+// StateWriter returns a write seam bound to the runtime's state backend.
+// Every successful mutation is persisted to the canonical remote document
+// first (when the backend is available), then the local cache is refreshed.
+// A remote write failure fails the mutation and leaves the cache untouched so
+// a retry re-reads the last persisted state. A local cache failure after a
+// successful remote write is a warning — the remote document is the record
+// of truth and the next read refreshes the cache.
+func StateWriter(ctx context.Context, rt globals.Runtime) func(*fabricastate.State) error {
 	path := StatePath(rt)
+	store, bucket := stateStore(rt)
 	return func(st *fabricastate.State) error {
-		return fabricastate.WriteStateTo(st, path)
+		remote := false
+		if store != nil {
+			err := store.PutStateDocument(ctx, bucket, fabricastate.StateDocumentKey, fabricastate.EncodeState(st))
+			switch {
+			case err == nil:
+				remote = true
+			case errors.Is(err, fabricac.ErrStateBackendAbsent):
+				oplog.Logger().Warn("remote state bucket not found; keeping state in the local cache only", "bucket", bucket)
+			default:
+				return fmt.Errorf("persisting remote state: %w", err)
+			}
+		}
+		if err := fabricastate.WriteStateTo(st, path); err != nil {
+			if remote {
+				oplog.Logger().Warn("remote state persisted; local cache write failed", "file", path, "error", err)
+				return nil
+			}
+			return err
+		}
+		return nil
 	}
+}
+
+// identitySides extracts the configured account and home region used to
+// validate state documents. Empty values accept anything (an unknown side
+// cannot prove a mismatch).
+func identitySides(rt globals.Runtime) (string, string) {
+	if rt.Config == nil {
+		return "", ""
+	}
+	return rt.Config.Cloud.AWS.AccountID, rt.Config.Cloud.AWS.Region
+}
+
+// stateStore resolves the remote state backend for the runtime: the provider
+// capability plus the bucket from state.ResolveBackendNames. It returns
+// (nil, "") when the provider lacks the capability or when the account is not
+// bootstrapped (no account ID and no explicit bucket), where no remote
+// document can exist.
+func stateStore(rt globals.Runtime) (fabricac.StateStore, string) {
+	if rt.Config == nil {
+		return nil, ""
+	}
+	store, ok := rt.Provider.(fabricac.StateStore)
+	if !ok {
+		return nil, ""
+	}
+	if rt.Config.Cloud.AWS.AccountID == "" && rt.Config.State.Bucket == "" {
+		return nil, ""
+	}
+	return store, fabricastate.ResolveBackendNames(rt.Config, rt.Config.Cloud.AWS.AccountID).Bucket
 }
 
 // ConfirmPhrase is the exact phrase a user must type to confirm a create:
