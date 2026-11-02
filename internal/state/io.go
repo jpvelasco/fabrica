@@ -74,6 +74,7 @@ func ValidateIdentity(st *State, account, region string) error {
 // yet known. An existing file whose recorded account or home region conflicts
 // with the target is rejected before any caller can use it.
 func ReadStateFile(path, account, region string) (*State, error) {
+	// #nosec G304 -- local state cache path derived from the config file name (StateFileFor) and confined to .fabrica/
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		oplog.Logger().Debug("state file not found, creating new state", "file", path)
