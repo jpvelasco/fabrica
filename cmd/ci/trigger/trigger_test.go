@@ -110,6 +110,29 @@ func TestTriggerStartsBuildWithHordeEnv(t *testing.T) {
 	}
 }
 
+func TestTriggerDryRunNoStart(t *testing.T) {
+	var out bytes.Buffer
+	runner := &fakeRunner{startID: "build-1"}
+	c := newCmd(&out, runner, provisionedState())
+	c.buildGraphPath = writeTempBuildGraph(t)
+	c.dryRun = true
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if runner.startProject != "" {
+		t.Errorf("dry run must not start a build, got project %q", runner.startProject)
+	}
+	if !strings.Contains(out.String(), "dry run") {
+		t.Errorf("expected dry-run preview header:\n%s", out.String())
+	}
+	for _, want := range []string{"fabrica-ci", "Compile", "http://10.0.1.42:5000"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("preview missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
 func TestTriggerErrorsWhenCINotProvisioned(t *testing.T) {
 	var out bytes.Buffer
 	st := fabricastate.NewState("123456789012", "us-east-1") // no ci module

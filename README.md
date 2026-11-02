@@ -304,6 +304,7 @@ Parses a BuildGraph XML file and POSTs the job to the Horde REST API via the coo
 
 ```
 --wait         Poll until the job completes
+--dry-run      Preview the job and coordinator address without submitting
 ```
 
 Requires VPN or same-VPC access; no public IP is assigned in V1.
@@ -470,7 +471,7 @@ By default the CodeBuild project is placed inside the account's default VPC (or 
 
 #### `fabrica ci trigger <buildgraph.xml>`
 
-Starts a build run. Parses the BuildGraph XML for the job name and target (first `<Agent>`'s first `<Node>` name), resolves the Horde coordinator's address from local state, and starts the CodeBuild project with those values as environment overrides; the build submits the job to Horde. Requires `fabrica ci setup` and a provisioned, reachable Horde coordinator. Use `--wait` to poll until the build reaches a terminal state.
+Starts a build run. Parses the BuildGraph XML for the job name and target (first `<Agent>`'s first `<Node>` name), resolves the Horde coordinator's address from local state, and starts the CodeBuild project with those values as environment overrides; the build submits the job to Horde. Requires `fabrica ci setup` and a provisioned, reachable Horde coordinator. Use `--wait` to poll until the build reaches a terminal state, or `--dry-run` to preview the job, project, and Horde URL without starting a build.
 
 If the BuildGraph has no `<Agent>`/`<Node>` elements, the command fails fast with an actionable error pointing to `examples/BuildGraph.sample.xml`.
 
