@@ -186,10 +186,15 @@ the password. The script never enables `set -x`.
 in `/var/log/cloud-init-output.log`.
 
 `workstation terminate` deletes exactly the name recorded in state and
-skips the deletion when nothing is recorded. A create that fails before
-the instance exists deletes it too; once the instance exists the parameter
-stays until terminate so cloud-init can read it. A missing parameter is
-success. The local credentials file is not deleted.
+skips the deletion when nothing is recorded. The parameter delete runs
+before the EC2 instance delete: the name is recorded only on the instance
+state record, which is dropped as soon as the instance is gone, so a
+failed or interrupted run must be able to find the name again (issue
+#524); a missing parameter is a success, so a retry completes the
+teardown. A create that fails before the instance exists deletes the
+parameter too; once the instance exists the parameter stays until
+terminate so cloud-init can read it. The local credentials file is not
+deleted.
 
 HTTPS 200 on 8443 is **not** proof the session setup ran — `dcvserver` starts
 and serves even when cloud-init aborts. Verify the session over SSM (or

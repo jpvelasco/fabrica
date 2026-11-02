@@ -22,6 +22,7 @@ type TestProvider struct {
 	CreateErr    map[string]error // per-type error map for Create failures
 	CreateCalls  int
 	CreatedTypes []string
+	DeleteErr    map[string]error // per-type error map for Delete failures (mirrors CreateErr)
 	DeleteCalls  int
 	UpdateCalls  int
 	GetResources map[string]cloud.Resource
@@ -197,8 +198,13 @@ func (r *FakeResourceClient) Update(_ context.Context, _ *cloud.Resource) error 
 	return nil
 }
 
-func (r *FakeResourceClient) Delete(_ context.Context, _ *cloud.Resource) error {
+func (r *FakeResourceClient) Delete(_ context.Context, res *cloud.Resource) error {
 	r.provider.DeleteCalls++
+	if r.provider.DeleteErr != nil {
+		if err, ok := r.provider.DeleteErr[res.TypeName]; ok {
+			return err
+		}
+	}
 	return nil
 }
 

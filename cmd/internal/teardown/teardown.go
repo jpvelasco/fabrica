@@ -259,14 +259,16 @@ func (c Command) deleteOneResource(ctx context.Context, st *fabricastate.State, 
 
 // attemptDelete tries SDKDeleteFunc first (if wired), then falls back to
 // Cloud Control DeleteResource. ErrNotHandled from the SDK path is transparently
-// bridged to the Cloud Control fallback. Returns nil on success (either path).
+// bridged to the Cloud Control fallback. Both paths wrap failures with the
+// resource type and identifier so errors name what was being deleted.
+// Returns nil on success (either path).
 func (c Command) attemptDelete(ctx context.Context, r *cloud.Resource) error {
 	if c.SDKDeleteFunc != nil {
 		if err := c.SDKDeleteFunc(ctx, r.TypeName, r.Identifier); err != nil {
 			if errors.Is(err, cloud.ErrNotHandled) {
 				return c.deleteViaCloudControl(ctx, r)
 			}
-			return err
+			return fmt.Errorf("deleting %s %s: %w", r.TypeName, r.Identifier, err)
 		}
 		return nil
 	}
