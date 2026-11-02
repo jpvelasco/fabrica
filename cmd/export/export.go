@@ -1,7 +1,8 @@
 // Package export implements "fabrica export": generate infrastructure-as-code
-// templates from Fabrica's recorded state and configuration. It reads local
-// state (.fabrica/state.json) and config (fabrica.yaml), then produces
-// CloudFormation YAML or Terraform HCL for the resources Fabrica manages.
+// templates from Fabrica's recorded state and configuration. It reads the
+// local state cache under .fabrica/ (one file per config/profile) and config
+// (fabrica.yaml), then produces CloudFormation YAML or Terraform HCL for the
+// resources Fabrica manages.
 //
 // V2 covers all modules: state backend (S3 bucket, DynamoDB table), Horde,
 // Perforce, Lore, DDC (home + edge regions), Workstation, CI, and Deploy.
@@ -29,6 +30,7 @@ type command struct {
 	out             io.Writer
 	readState       func() (*fabricastate.State, error)
 	stateFileExists func() bool
+	statePath       string
 }
 
 // New returns the "fabrica export" command.
@@ -37,8 +39,9 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Use:   "export",
 		Short: "Generate infrastructure-as-code templates from Fabrica state",
 		Long: `Generate infrastructure-as-code templates from Fabrica's recorded state and
-configuration. Reads local state (.fabrica/state.json) and config (fabrica.yaml),
-then produces CloudFormation YAML or Terraform HCL for the resources Fabrica manages.
+configuration. Reads the profile's local state cache under .fabrica/ and config
+(fabrica.yaml), then produces CloudFormation YAML or Terraform HCL for the
+resources Fabrica manages.
 
 V2 covers all modules: state backend (S3 bucket, DynamoDB table), Horde, Perforce,
 Lore, DDC (home + edge regions), Workstation, CI, and Deploy.
@@ -74,10 +77,11 @@ No live AWS calls are required — all data comes from local state.`,
 			cfg:       rt.Config,
 			out:       out,
 			readState: func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-			stateFileExists: func() bool {
-				_, err := os.Stat(".fabrica/state.json")
-				return err == nil
-			},
+			statePath: provision.StatePath(rt),
+		}
+		c.stateFileExists = func() bool {
+			_, err := os.Stat(c.statePath)
+			return err == nil
 		}
 		return c.run()
 	}
@@ -93,7 +97,7 @@ func (c *command) run() error {
 
 	// Check state file exists — no state file means nothing to export.
 	if !c.stateFileExists() {
-		fmt.Fprintln(c.out, "Warning: no modules to export — no state file found (.fabrica/state.json).")
+		fmt.Fprintf(c.out, "Warning: no modules to export — no state file found (%s).\n", c.statePath)
 		return nil
 	}
 

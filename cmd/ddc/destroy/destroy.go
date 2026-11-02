@@ -149,7 +149,7 @@ func NewTeardown(rt globals.Runtime, out io.Writer) teardown.Command {
 		Out:         out,
 		Confirm:     prompt.ConfirmExact,
 		ReadState:   func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-		WriteState:  fabricastate.WriteState,
+		WriteState:  provision.StateWriter(rt),
 	}
 	wire(&tc, rt)
 	return tc
@@ -246,7 +246,7 @@ With --dry-run, shows the plan without AWS calls.`,
 				Out:        out,
 				Confirm:    prompt.ConfirmExact,
 				ReadState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-				WriteState: fabricastate.WriteState,
+				WriteState: provision.StateWriter(rt),
 			}
 			wire(&c, rt)
 			return c.Run(cmd.Context())

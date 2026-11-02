@@ -65,7 +65,7 @@ With no subcommand, creates a new backup.`,
 				now:         time.Now,
 			}
 			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = fabricastate.WriteState
+			c.writeState = provision.StateWriter(rt)
 			c.readCreds = func() (string, error) {
 				return credentials.ReadPerforceAdminPassword(credFile)
 			}

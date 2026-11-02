@@ -156,7 +156,7 @@ func NewCobraCommand(spec CobraSpec, runtimeSource globals.RuntimeSource, option
 				Wait:       wait,
 				Out:        out,
 				ReadState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-				WriteState: fabricastate.WriteState,
+				WriteState: provision.StateWriter(rt),
 				ProbeTCP:   probe,
 				SleepCtx:   provision.WaitInterval,
 				Now:        time.Now,

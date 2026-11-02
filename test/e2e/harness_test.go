@@ -78,18 +78,24 @@ deploy:
 	}
 }
 
-// readState loads .fabrica/state.json; fails the test if it is missing.
-func readState(t *testing.T) *state.State {
+// loadStateFile loads a local state cache file; fails the test if it is
+// missing or unparseable.
+func loadStateFile(t *testing.T, path string) *state.State {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Clean(filepath.Join(".fabrica", "state.json")))
+	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
-		t.Fatalf("readState: %v", err)
+		t.Fatalf("loadStateFile(%s): %v", path, err)
 	}
 	var st state.State
 	if err := json.Unmarshal(data, &st); err != nil {
-		t.Fatalf("readState unmarshal: %v", err)
+		t.Fatalf("loadStateFile(%s) unmarshal: %v", path, err)
 	}
 	return &st
+}
+
+// readState loads .fabrica/state.json; fails the test if it is missing.
+func readState(t *testing.T) *state.State {
+	return loadStateFile(t, filepath.Join(".fabrica", "state.json"))
 }
 
 func assertJSON(t *testing.T, out string, target any) {

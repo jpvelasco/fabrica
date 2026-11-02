@@ -470,7 +470,7 @@ func NewStandalone(spec Spec, rt globals.Runtime, out io.Writer, dryRun, assumeY
 		Out:        out,
 		Confirm:    prompt.ConfirmExact,
 		ReadState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-		WriteState: fabricastate.WriteState,
+		WriteState: provision.StateWriter(rt),
 	}
 	WireProvider(&tc, rt)
 	if spec.WireCommand != nil {

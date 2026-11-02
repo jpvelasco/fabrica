@@ -122,7 +122,7 @@ With --dry-run, shows the destroy plan without making any AWS calls.`,
 				confirm:   prompt.ConfirmExact,
 			}
 			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = fabricastate.WriteState
+			c.writeState = provision.StateWriter(rt)
 			if rt.Provider != nil {
 				c.deleteResource = rt.Provider.Resources().Delete
 				c.getResource = rt.Provider.Resources().Get
