@@ -430,9 +430,10 @@ func Load(path string) (*Config, error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
-	// Viper lowercases map keys. Request-tag conditions compare the key
-	// exactly, so re-read this map from YAML and keep the written case.
-	if err := restoreVolumeRequestTagCase(v.ConfigFileUsed(), cfg); err != nil {
+	// Viper lowercases map keys. Request-tag policies and tag conditions
+	// compare the key exactly, so re-read the AWS tag maps from YAML and
+	// keep the case the operator wrote.
+	if err := restoreAWSTagMaps(v.ConfigFileUsed(), cfg); err != nil {
 		return nil, err
 	}
 	cfg.normalize()
@@ -440,34 +441,44 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// restoreVolumeRequestTagCase copies cloud.aws.volumeRequestTags from the
-// config file with their original key case. A missing file or a missing key
-// leaves the unmarshaled value in place.
-func restoreVolumeRequestTagCase(path string, cfg *Config) error {
+// readConfigFile is the file reader restoreAWSTagMaps uses. It is a test
+// seam: Viper's successful first read makes a re-read failure unreachable
+// otherwise, so tests swap it to exercise that error path.
+var readConfigFile = os.ReadFile
+
+// restoreAWSTagMaps re-reads cloud.aws.tags and cloud.aws.volumeRequestTags
+// from the config file with their original key case. Viper lowercases map
+// keys on unmarshal, and case-sensitive tag keys (for example Project) would
+// otherwise fail request-tag policies and conditions. A missing file or a
+// missing key leaves the unmarshaled value in place.
+func restoreAWSTagMaps(path string, cfg *Config) error {
 	if path == "" || cfg == nil {
 		return nil
 	}
-	data, err := os.ReadFile(path)
+	data, err := readConfigFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("reading volume request tags: %w", err)
+		return fmt.Errorf("reading AWS tag maps: %w", err)
 	}
 	var raw struct {
 		Cloud struct {
 			AWS struct {
+				Tags              map[string]string `yaml:"tags"`
 				VolumeRequestTags map[string]string `yaml:"volumeRequestTags"`
 			} `yaml:"aws"`
 		} `yaml:"cloud"`
 	}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("parsing volume request tags: %w", err)
+		return fmt.Errorf("parsing AWS tag maps: %w", err)
 	}
-	if raw.Cloud.AWS.VolumeRequestTags == nil {
-		return nil
+	if raw.Cloud.AWS.Tags != nil {
+		cfg.Cloud.AWS.Tags = raw.Cloud.AWS.Tags
 	}
-	cfg.Cloud.AWS.VolumeRequestTags = raw.Cloud.AWS.VolumeRequestTags
+	if raw.Cloud.AWS.VolumeRequestTags != nil {
+		cfg.Cloud.AWS.VolumeRequestTags = raw.Cloud.AWS.VolumeRequestTags
+	}
 	return nil
 }
 
