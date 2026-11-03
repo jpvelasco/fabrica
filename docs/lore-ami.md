@@ -122,6 +122,8 @@ continuing.
 
 ## Image Builder (Preferred)
 
+Guardrailed accounts: the bake needs the request-tag-gated Image Builder grant in [guardrailed-accounts.md](guardrailed-accounts.md#operator-policy-minimal-example); pass `--tags`/`--resource-tags` with `ManagedBy=fabrica` on each create.
+
 The following PowerShell sequence is intentionally explicit. It creates only
 the resources needed for a manually started pipeline; no schedule is enabled.
 Set `$PayloadBucket`, `$SubnetID`, `$SecurityGroupID`, and `$InstanceProfile`

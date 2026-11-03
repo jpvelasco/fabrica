@@ -129,3 +129,221 @@ A boundary policy that blocks any of the actions below breaks the affected flow 
 
 - `ec2:RunInstances` (the direct launch that tags the volume on the create request)
 - `ec2:DescribeInstances` (the adoption lookup before the launch)
+
+## Operator policy (minimal example)
+
+Everything above is the boundary side. This section is the operator side: the identity that runs `fabrica`. Guardrailed accounts typically scope that identity tightly, and each module's first create then discovers missing actions one AccessDenied at a time, with each failure leaving partial state (#546). Start from this policy and tighten it to your account's conventions. Replace `ACCOUNT` with the account ID, `REGION` with the target region, and `/fabrica/` with the configured `cloud.aws.iam.path` value.
+
+Two statements look odd until you know why:
+
+- **The IAM read grant is unpathed.** Cloud Control's `AWS::IAM::Role` handler looks the role up by name before creating it, and IAM evaluates that lookup against the unpathed ARN (`role/fabrica-perforce-role`). A write grant scoped to `role/fabrica/*` does not cover the lookup. Grant the five read actions on `role/fabrica-*` and `instance-profile/fabrica-*` with no path — the lookup ARN omits the path, so the grant works with any configured `iam.path` — and keep every write on the path.
+- **The Image Builder grant is type-scoped, not name-scoped.** `imagebuilder:Create*` authorizes against `arn:aws:imagebuilder:REGION:ACCOUNT:<type>/*`, not the named resource; a grant on `component/fabrica-workstation-component` never matches a create. The create grant below is gated on `aws:RequestTag/ManagedBy`, so pass the tag on each create call (`--tags` / `--resource-tags`, as the AMI bake sections show).
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "FabricaIdentity",
+      "Effect": "Allow",
+      "Action": ["sts:GetCallerIdentity"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "FabricaCloudControl",
+      "Effect": "Allow",
+      "Action": [
+        "cloudcontrol:CreateResource",
+        "cloudcontrol:GetResource",
+        "cloudcontrol:UpdateResource",
+        "cloudcontrol:DeleteResource",
+        "cloudcontrol:ListResources",
+        "cloudcontrol:GetResourceRequestStatus"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "FabricaIAMNameLookups",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
+        "iam:GetInstanceProfile"
+      ],
+      "Resource": [
+        "arn:aws:iam::ACCOUNT:role/fabrica-*",
+        "arn:aws:iam::ACCOUNT:instance-profile/fabrica-*"
+      ]
+    },
+    {
+      "Sid": "FabricaIAMWritesOnPath",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:PutRolePolicy",
+        "iam:PutRolePermissionsBoundary",
+        "iam:AttachRolePolicy",
+        "iam:TagInstanceProfile",
+        "iam:CreateInstanceProfile",
+        "iam:AddRoleToInstanceProfile",
+        "iam:DeleteRole",
+        "iam:DeleteRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:RemoveRoleFromInstanceProfile",
+        "iam:DeleteInstanceProfile"
+      ],
+      "Resource": [
+        "arn:aws:iam::ACCOUNT:role/fabrica/*",
+        "arn:aws:iam::ACCOUNT:instance-profile/fabrica/*"
+      ]
+    },
+    {
+      "Sid": "FabricaPassRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::ACCOUNT:role/fabrica/*"
+    },
+    {
+      "Sid": "FabricaEC2",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:RunInstances",
+        "ec2:DescribeInstances",
+        "ec2:StopInstances",
+        "ec2:StartInstances",
+        "ec2:TerminateInstances",
+        "ec2:CreateTags",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeSecurityGroupRules",
+        "ec2:DescribeImages",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "FabricaStateBucket",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:PutBucketVersioning",
+        "s3:PutBucketEncryption",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutBucketTagging",
+        "s3:DeleteBucket"
+      ],
+      "Resource": "arn:aws:s3:::fabrica-*"
+    },
+    {
+      "Sid": "FabricaStateObjects",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion",
+        "s3:ListBucket",
+        "s3:ListObjectVersions"
+      ],
+      "Resource": [
+        "arn:aws:s3:::fabrica-*",
+        "arn:aws:s3:::fabrica-*/*"
+      ]
+    },
+    {
+      "Sid": "FabricaTables",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:CreateTable",
+        "dynamodb:DescribeTable",
+        "dynamodb:DeleteTable",
+        "dynamodb:PutItem",
+        "dynamodb:DeleteItem"
+      ],
+      "Resource": "arn:aws:dynamodb:REGION:ACCOUNT:table/fabrica-*"
+    },
+    {
+      "Sid": "FabricaWorkstationParameter",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:PutParameter",
+        "ssm:DeleteParameter",
+        "ssm:AddTagsToResource"
+      ],
+      "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/fabrica/workstation/*/dcv-password"
+    },
+    {
+      "Sid": "FabricaSSMRunner",
+      "Effect": "Allow",
+      "Action": ["ssm:SendCommand", "ssm:GetCommandInvocation"],
+      "Resource": "arn:aws:ssm:REGION:ACCOUNT:document/AWS-RunShellScript"
+    },
+    {
+      "Sid": "FabricaCodeBuild",
+      "Effect": "Allow",
+      "Action": [
+        "codebuild:CreateProject",
+        "codebuild:DeleteProject",
+        "codebuild:BatchGetProjects",
+        "codebuild:StartBuild",
+        "codebuild:LogsGetLogEvents"
+      ],
+      "Resource": "arn:aws:codebuild:REGION:ACCOUNT:project/fabrica-*"
+    },
+    {
+      "Sid": "FabricaGameLift",
+      "Effect": "Allow",
+      "Action": [
+        "gamelift:CreateBuild",
+        "gamelift:CreateFleet",
+        "gamelift:CreateAlias",
+        "gamelift:UpdateAlias",
+        "gamelift:DescribeFleetAttributes",
+        "gamelift:DescribeFleetCapacity",
+        "gamelift:DeleteBuild",
+        "gamelift:DeleteFleet",
+        "gamelift:DeleteAlias"
+      ],
+      "Resource": "arn:aws:gamelift:REGION:ACCOUNT:*"
+    },
+    {
+      "Sid": "FabricaImageBuilderCreates",
+      "Effect": "Allow",
+      "Action": [
+        "imagebuilder:CreateComponent",
+        "imagebuilder:CreateImageRecipe",
+        "imagebuilder:CreateInfrastructureConfiguration",
+        "imagebuilder:CreateImagePipeline",
+        "imagebuilder:CreateImage",
+        "imagebuilder:TagResource"
+      ],
+      "Resource": "arn:aws:imagebuilder:REGION:ACCOUNT:*",
+      "Condition": { "StringEquals": { "aws:RequestTag/ManagedBy": "fabrica" } }
+    },
+    {
+      "Sid": "FabricaImageBuilderRuns",
+      "Effect": "Allow",
+      "Action": [
+        "imagebuilder:GetComponent",
+        "imagebuilder:GetImage",
+        "imagebuilder:GetImageRecipe",
+        "imagebuilder:GetImagePipeline",
+        "imagebuilder:StartImagePipelineExecution"
+      ],
+      "Resource": "arn:aws:imagebuilder:REGION:ACCOUNT:*"
+    }
+  ]
+}
+```
+
+What each statement covers:
+
+- **Cloud Control** — every module resource flows through the Cloud Control API; the API itself authorizes on `*` and the downstream service calls run with this identity's credentials, which is why the service-level statements below exist.
+- **IAM name lookups + path writes** — the read grant covers the handler's by-name lookups (create, re-run detection, drift); the write grant covers role/profile lifecycle including the `iam:TagInstanceProfile` hook that tags the instance profile after create. `iam:PassRole` covers EC2 launches that attach the instance profile (Cloud Control instance create and the `volumeRequestTags` direct-launch path).
+- **EC2** — launches (Cloud Control instance handler and the `volumeRequestTags` direct-launch path), stop/start, terminate on destroy, tag writes, and the AMI/VPC resolution calls.
+- **S3 + DynamoDB** — `fabrica setup` bootstraps the state bucket (`fabrica-state-ACCOUNT`) and lock table (`fabrica-state-lock`) through the S3/DynamoDB SDK; Lore S3-store and DDC blob buckets and their DynamoDB tables go through Cloud Control. The purge path needs `s3:ListObjectVersions` plus `s3:DeleteObject`/`s3:DeleteObjectVersion`. Custom `lore.storeBucket` or `ddc.bucket` names outside the `fabrica-*` pattern need their own resource entries.
+- **SSM** — the workstation session-password SecureString (per-create `parameter/fabrica/workstation/*/dcv-password`) and the SSM command runner used to verify private instances (`SendCommand` on the `AWS-RunShellScript` document; if your account denies `GetCommandInvocation` on the document ARN, add the command ARN `command/*` to that statement's resources).
+- **CodeBuild + GameLift** — the `ci` and `deploy` modules; drop both statements if you do not run either.
+- **Image Builder** — the `ami build` bake flows (workstation, lore, horde, ddc). Fabrica generates the artifacts locally; the bake runs as the operator's identity, which is why the creates are request-tag-gated.
