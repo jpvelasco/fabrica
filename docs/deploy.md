@@ -42,6 +42,21 @@ teardown.
 - The deploy module reuses the shared `cmd/internal/teardown` engine via its
   `ResourceOrder` hook to delete GameLift resources in dependency order.
 
+## Fleet capacity
+
+`promote` requests the fleet's EC2 instance count through the location's
+`LocationCapacity`: `deploy.desiredInstances` goes as `DesiredEC2Instances`,
+bounded by `deploy.minimumInstances` (default `0`) and
+`deploy.maximumInstances` (default: `desiredInstances`). Once the fleet is
+`ACTIVE`, `promote` reconciles the reported capacity before flipping the
+alias — GameLift's recorded desired count must match the plan and the active
+instance count must have reached it. A fleet that is `ACTIVE` but not yet
+filled keeps polling (with a per-poll progress line); a fleet that never
+fills fails at the `deploy.activationTimeoutMinutes` deadline without
+flipping the alias, and the timeout error names the active/desired counts.
+A fleet that reports no capacity counts is accepted at `ACTIVE` (the
+previous behavior).
+
 ## Fleet inbound CIDR
 
 `promote` opens UDP `fromPort`..`toPort` (default 7777) on the fleet's

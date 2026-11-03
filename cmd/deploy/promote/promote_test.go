@@ -368,6 +368,85 @@ func TestPromotePollTimeout(t *testing.T) {
 	}
 }
 
+// TestPromoteActiveWaitsForCapacity verifies an ACTIVE fleet that has not yet
+// filled the requested instance count is re-polled (alias not flipped) until
+// the active count reaches the plan's desired count.
+func TestPromoteActiveWaitsForCapacity(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	c := newTestCmd(&out, st)
+	c.assumeYes = true
+	c.runtime.Config.Deploy.DesiredInstances = 3
+	polls := 0
+	c.fleetStatus = func(_ context.Context, id string) (cloud.FleetInfo, error) {
+		polls++
+		info := cloud.FleetInfo{FleetID: id, Status: "ACTIVE", CapacityDesired: 3}
+		// First two polls the fleet is ACTIVE but short of capacity.
+		if polls <= 2 {
+			info.CapacityCurrent = 1
+		} else {
+			info.CapacityCurrent = 3
+		}
+		return info, nil
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if polls != 3 {
+		t.Errorf("polls = %d, want 3 (ACTIVE under capacity must be re-polled)", polls)
+	}
+	s := out.String()
+	if !strings.Contains(s, "waiting for the requested capacity") {
+		t.Errorf("expected capacity-wait line:\n%s", s)
+	}
+	if !strings.Contains(s, "live on fleet") {
+		t.Errorf("expected promote completion after capacity filled:\n%s", s)
+	}
+	m := st.GetModule("deploy")
+	var active bool
+	for _, r := range m.Resources {
+		if r.TypeName == "AWS::GameLift::Fleet" && r.Identifier == "fleet-new" && r.Properties["role"] == "active" {
+			active = true
+		}
+	}
+	if !active {
+		t.Error("new fleet must be recorded active after capacity is met")
+	}
+}
+
+// TestPromoteActiveUnderCapacityTimesOut verifies a fleet that is ACTIVE but
+// never fills the requested capacity fails closed at the deadline instead of
+// flipping the alias to an under-provisioned fleet.
+func TestPromoteActiveUnderCapacityTimesOut(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	c := newTestCmd(&out, st)
+	c.assumeYes = true
+	c.fleetStatus = func(_ context.Context, id string) (cloud.FleetInfo, error) {
+		return cloud.FleetInfo{FleetID: id, Status: "ACTIVE", CapacityDesired: 1, CapacityCurrent: 0}, nil
+	}
+	baseTime := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	nowCalls := 0
+	c.now = func() time.Time {
+		nowCalls++
+		if nowCalls == 1 {
+			return baseTime
+		}
+		return baseTime.Add(46 * time.Minute)
+	}
+	c.waitCtx = func(context.Context, time.Duration) error { return nil }
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected timeout when fleet is ACTIVE but never reaches capacity")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("expected timeout message: %v", err)
+	}
+	if !strings.Contains(err.Error(), "0 active of 1 desired") {
+		t.Errorf("error should include the capacity detail: %v", err)
+	}
+}
+
 // ---- Uncovered paths: printFleetEvents ----
 
 func TestPromotePrintFleetEventsNil(t *testing.T) {

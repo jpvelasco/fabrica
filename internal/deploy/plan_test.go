@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/config"
@@ -89,6 +90,52 @@ func TestNewPromotePlanInvalidAllowedCIDR(t *testing.T) {
 			"v1", "arn:role", "alias-1", "", ""); err == nil {
 			t.Errorf("NewPromotePlan(%q): expected error, got nil", bad)
 		}
+	}
+}
+
+func TestNewPromotePlanCapacityBounds(t *testing.T) {
+	// Desired count only: minimum stays 0, maximum falls back to desired so
+	// the fleet comes up exactly at the planned size.
+	p, err := NewPromotePlan(config.DeployConfig{BuildBucket: "bkt", DesiredInstances: 3}, "123456789012", "us-east-1",
+		"v1", "arn:role", "alias-1", "", "")
+	if err != nil {
+		t.Fatalf("NewPromotePlan: %v", err)
+	}
+	if p.MinimumInstances != 0 || p.MaximumInstances != 3 {
+		t.Errorf("bounds = %d/%d, want 0/3", p.MinimumInstances, p.MaximumInstances)
+	}
+
+	p, err = NewPromotePlan(config.DeployConfig{BuildBucket: "bkt", DesiredInstances: 2, MinimumInstances: 1, MaximumInstances: 4}, "123456789012", "us-east-1",
+		"v1", "arn:role", "alias-1", "", "")
+	if err != nil {
+		t.Fatalf("NewPromotePlan: %v", err)
+	}
+	if p.MinimumInstances != 1 || p.MaximumInstances != 4 {
+		t.Errorf("bounds = %d/%d, want 1/4", p.MinimumInstances, p.MaximumInstances)
+	}
+}
+
+func TestNewPromotePlanInvalidCapacityBounds(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  config.DeployConfig
+		want string
+	}{
+		{"negative minimum", config.DeployConfig{DesiredInstances: 2, MinimumInstances: -1}, "minimumInstances must be >= 0"},
+		{"negative maximum", config.DeployConfig{DesiredInstances: 2, MaximumInstances: -1}, "maximumInstances must be > 0"},
+		{"minimum above desired", config.DeployConfig{DesiredInstances: 2, MinimumInstances: 5}, "exceeds deploy.desiredInstances"},
+		{"maximum below desired", config.DeployConfig{DesiredInstances: 2, MaximumInstances: 1}, "is below deploy.desiredInstances"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewPromotePlan(tc.cfg, "123456789012", "us-east-1", "v1", "arn:role", "alias-1", "", "")
+			if err == nil {
+				t.Fatalf("NewPromotePlan(%s): expected error, got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %q, want substring %q", err, tc.want)
+			}
+		})
 	}
 }
 

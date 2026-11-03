@@ -196,18 +196,25 @@ type CIConfig struct {
 // DeployConfig holds the deploy: section of fabrica.yaml. Defaults are applied
 // in the deploy plan layer (internal/deploy), matching the CI/Horde pattern.
 type DeployConfig struct {
-	AliasName                string `mapstructure:"aliasName"                yaml:"aliasName"`
-	RoleName                 string `mapstructure:"roleName"                 yaml:"roleName"`
-	FleetName                string `mapstructure:"fleetName"                yaml:"fleetName"`
-	InstanceType             string `mapstructure:"instanceType"             yaml:"instanceType"`
-	FleetType                string `mapstructure:"fleetType"                yaml:"fleetType"`
-	LaunchPath               string `mapstructure:"launchPath"               yaml:"launchPath"`
-	BuildBucket              string `mapstructure:"buildBucket"              yaml:"buildBucket"`
-	BuildOS                  string `mapstructure:"buildOs"                  yaml:"buildOs"`
-	FromPort                 int    `mapstructure:"fromPort"                 yaml:"fromPort"`
-	ToPort                   int    `mapstructure:"toPort"                   yaml:"toPort"`
-	DesiredInstances         int    `mapstructure:"desiredInstances"         yaml:"desiredInstances"`
-	ActivationTimeoutMinutes int    `mapstructure:"activationTimeoutMinutes" yaml:"activationTimeoutMinutes"`
+	AliasName        string `mapstructure:"aliasName"                yaml:"aliasName"`
+	RoleName         string `mapstructure:"roleName"                 yaml:"roleName"`
+	FleetName        string `mapstructure:"fleetName"                yaml:"fleetName"`
+	InstanceType     string `mapstructure:"instanceType"             yaml:"instanceType"`
+	FleetType        string `mapstructure:"fleetType"                yaml:"fleetType"`
+	LaunchPath       string `mapstructure:"launchPath"               yaml:"launchPath"`
+	BuildBucket      string `mapstructure:"buildBucket"              yaml:"buildBucket"`
+	BuildOS          string `mapstructure:"buildOs"                  yaml:"buildOs"`
+	FromPort         int    `mapstructure:"fromPort"                 yaml:"fromPort"`
+	ToPort           int    `mapstructure:"toPort"                   yaml:"toPort"`
+	DesiredInstances int    `mapstructure:"desiredInstances"         yaml:"desiredInstances"`
+	// MinimumInstances bounds the fleet's EC2 count from below
+	// (LocationCapacity.MinimumNumberOfInstances). Zero means no lower bound.
+	MinimumInstances int `mapstructure:"minimumInstances" yaml:"minimumInstances"`
+	// MaximumInstances bounds the fleet's EC2 count from above
+	// (LocationCapacity.MaximumNumberOfInstances). Zero defaults to
+	// DesiredInstances, so the fleet comes up exactly at the planned size.
+	MaximumInstances         int `mapstructure:"maximumInstances" yaml:"maximumInstances"`
+	ActivationTimeoutMinutes int `mapstructure:"activationTimeoutMinutes" yaml:"activationTimeoutMinutes"`
 	// AllowedCIDR is the inbound CIDR granted UDP access to the fleet's
 	// server port(s). Empty defaults to 0.0.0.0/0 (public UDP).
 	AllowedCIDR string `mapstructure:"allowedCidr" yaml:"allowedCidr"`

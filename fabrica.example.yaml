@@ -146,8 +146,13 @@ deploy:
   buildOs: AMAZON_LINUX_2   # build operating system
   fromPort: 7777            # inbound UDP port range start
   toPort: 7777              # inbound UDP port range end
-  desiredInstances: 1       # instances per fleet (cost estimate only in V1)
-  activationTimeoutMinutes: 45   # how long 'promote' waits for a fleet to become ACTIVE
+  desiredInstances: 1       # EC2 instances the fleet is requested to run (sent as LocationCapacity)
+  # minimumInstances / maximumInstances bound the fleet's instance count
+  # (GameLift LocationCapacity). minimumInstances defaults to 0;
+  # maximumInstances defaults to desiredInstances.
+  # minimumInstances: 0
+  # maximumInstances: 0
+  activationTimeoutMinutes: 45   # how long 'promote' waits for a fleet to become ACTIVE at the requested capacity
   # Inbound CIDR granted UDP access to fromPort..toPort on the fleet.
   # Defaults to 0.0.0.0/0 (public) — multiplayer clients connect over the
   # internet. Set a tighter CIDR for private or partner-only deployments;

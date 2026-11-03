@@ -27,6 +27,14 @@ type FleetInfo struct {
 	// Status is the GameLift fleet status: NEW, DOWNLOADING, VALIDATING,
 	// BUILDING, ACTIVATING, ACTIVE, ERROR, DELETING, TERMINATED.
 	Status string
+	// CapacityCurrent/Desired/Minimum/Maximum are the fleet's EC2 instance
+	// counts reported by GameLift (Current = ACTIVE instances). Zero when the
+	// provider does not expose them, the fleet is not ACTIVE yet, or the
+	// capacity lookup fails.
+	CapacityCurrent int
+	CapacityDesired int
+	CapacityMinimum int
+	CapacityMaximum int
 }
 
 // FleetEvent is a single GameLift fleet event.
