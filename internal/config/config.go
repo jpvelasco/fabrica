@@ -499,9 +499,10 @@ func (c *Config) normalize() {
 }
 
 // Validate checks a path and permissions boundary. An empty IAM is valid.
-// Path must start and end with "/" (for example "/fabrica/") and must not
-// contain an empty segment. The boundary must be a customer or AWS managed
-// policy ARN in the commercial, GovCloud, or China partition.
+// Path is the AWS root "/" or must start and end with "/" (for example
+// "/fabrica/") and must not contain an empty segment. The boundary must be
+// a customer or AWS managed policy ARN in the commercial, GovCloud, or
+// China partition.
 func (i IAM) Validate() error {
 	if err := validateIAMPath(i.Path); err != nil {
 		return err
@@ -510,10 +511,10 @@ func (i IAM) Validate() error {
 }
 
 func validateIAMPath(path string) error {
-	if path == "" {
+	if path == "" || path == "/" {
 		return nil
 	}
-	if len(path) < 2 || !strings.HasPrefix(path, "/") || !strings.HasSuffix(path, "/") || strings.Contains(path, "//") {
+	if !strings.HasPrefix(path, "/") || !strings.HasSuffix(path, "/") || strings.Contains(path, "//") {
 		return fmt.Errorf("iam.path %q must start and end with /", path)
 	}
 	return nil
