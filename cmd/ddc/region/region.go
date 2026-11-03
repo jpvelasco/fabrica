@@ -15,6 +15,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/ddc"
+	"github.com/jpvelasco/fabrica/internal/ec2state"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
@@ -136,6 +137,25 @@ func (c command) run(ctx context.Context, region string) error {
 		return fmt.Errorf("building edge plan: %w", err)
 	}
 
+	rootDevice := ""
+	if view.Images != nil {
+		info, err := view.Images.DescribeImage(ctx, plan.AmiID)
+		if err != nil {
+			return fmt.Errorf("inspecting the DDC edge AMI %s in %s: %w", plan.AmiID, region, err)
+		}
+		rootDevice, err = ec2state.RootDeviceFor("the DDC edge AMI", plan.AmiID, info.RootDeviceName, info.RootDeviceType)
+		if err != nil {
+			return err
+		}
+	}
+	if rootDevice == "" && !c.dryRun {
+		// Without the AMI's own root device there is no way to put the
+		// encrypted mapping on the real root; a guessed device would boot the
+		// root unencrypted from the snapshot (#507, #513). Fail before any write.
+		return fmt.Errorf("cannot read the root device of the DDC edge AMI %s in %s (the region view cannot inspect AMIs), so the root volume cannot be encrypted; refusing to launch", plan.AmiID, region)
+	}
+	plan.RootDeviceName = rootDevice
+
 	if c.dryRun {
 		c.printDryRun(plan)
 		return nil
@@ -242,9 +262,10 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 			// imageId/subnetId/vpcId are recorded so `fabrica drift --fix`
 			// can rebuild this instance in its own region: edge AMIs and
 			// subnets are region-specific and the home config cannot supply them.
-			"imageId":  plan.AmiID,
-			"subnetId": plan.SubnetID,
-			"vpcId":    plan.VPCID,
+			"imageId":    plan.AmiID,
+			"subnetId":   plan.SubnetID,
+			"vpcId":      plan.VPCID,
+			"rootDevice": plan.RootDeviceName,
 		},
 	})
 	st.UpsertModule(moduleName, m.Version, m.Status, resources)
@@ -286,6 +307,9 @@ func (c command) printPlanBody(plan *ddc.EdgePlan) {
 	fmt.Fprintf(c.out, "  AWS account:      %s\n", plan.Account)
 	fmt.Fprintf(c.out, "  New region:       %s\n", plan.Region)
 	fmt.Fprintf(c.out, "  AMI ID:           %s\n", plan.AmiID)
+	if plan.RootDeviceName != "" {
+		fmt.Fprintf(c.out, "  Root volume:      %s (encrypted)\n", plan.RootDeviceName)
+	}
 	fmt.Fprintf(c.out, "  Instance type:    %s\n", plan.InstanceType)
 	fmt.Fprintf(c.out, "  Hot volume:       %d GiB gp3\n", plan.VolumeSize)
 	fmt.Fprintf(c.out, "  Blob bucket:      %s (shared with home)\n", plan.Bucket)
