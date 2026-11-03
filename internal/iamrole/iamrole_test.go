@@ -115,6 +115,28 @@ func TestSSMParameterReadPolicyIsOneARN(t *testing.T) {
 	}
 }
 
+func TestS3ObjectReadPolicyIsOneObjectStatement(t *testing.T) {
+	const bucket = "dcv-license.us-east-1"
+	doc := S3ObjectReadPolicy("fabrica-workstation-dcv-license", bucket)
+	if doc["PolicyName"] != "fabrica-workstation-dcv-license" {
+		t.Fatalf("PolicyName = %v", doc["PolicyName"])
+	}
+	policy := doc["PolicyDocument"].(map[string]any)
+	stmts := policy["Statement"].([]map[string]any)
+	if len(stmts) != 1 {
+		t.Fatalf("statements = %d, want 1", len(stmts))
+	}
+	actions := stmts[0]["Action"].([]string)
+	if len(actions) != 1 || actions[0] != "s3:GetObject" {
+		t.Fatalf("actions = %v", actions)
+	}
+	resources := stmts[0]["Resource"].([]string)
+	want := "arn:aws:s3:::" + bucket + "/*"
+	if len(resources) != 1 || resources[0] != want {
+		t.Fatalf("resources = %v, want %v", resources, want)
+	}
+}
+
 func TestRoleTags_Basic(t *testing.T) {
 	tags := RoleTags("my-role", nil)
 	if len(tags) != 2 {

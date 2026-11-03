@@ -102,6 +102,17 @@ A boundary policy that blocks any of the actions below breaks the affected flow 
 }
 ```
 
+**Instance-side (workstation, `s3:GetObject`)** — the NICE DCV server validates its no-cost EC2 license by reading a license object from the regional `dcv-license.REGION` S3 bucket; a boundary that denies the read makes the server fail to serve sessions (it logs `ORIGIN_OBJECT_FORBIDDEN_ACCESS` to `/var/log/dcv/server.log`):
+
+```json
+{
+  "Sid": "FabricaWorkstationDCVLicense",
+  "Effect": "Allow",
+  "Action": "s3:GetObject",
+  "Resource": "arn:aws:s3:::dcv-license.REGION/*"
+}
+```
+
 **Instance-side (`iamrole.SSMOutputPolicy`)** — every Fabrica instance role that uses SSM (perforce, horde, horde agents, lore, ddc) writes SSM output to a `parameter/MDS-*` parameter and a `/fabrica/ssm/*` CloudWatch Logs group:
 
 - `ssm:PutParameter`, `ssm:GetParameter`, `ssm:DescribeParameters` on `arn:aws:ssm:REGION:ACCOUNT:parameter/MDS-*`

@@ -896,7 +896,9 @@ func managedPolicyARNsForModule(module string) []map[string]any {
 // name recorded on the workstation instance (Properties
 // "sessionPasswordParameter"). The workstation case scopes the inline
 // ssm:GetParameter policy to its exact ARN, matching what create attached; an
-// empty name (older/partial state) omits the parameter policy.
+// empty name (older/partial state) omits the parameter policy. The
+// workstation case also always carries the regional DCV license-bucket
+// s3:GetObject grant the create path attaches.
 func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, region, sessionPasswordParameter string) []map[string]any {
 	switch moduleName {
 	case "ci":
@@ -959,19 +961,19 @@ func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, regio
 			iamrole.SSMOutputPolicy(region, account),
 		}
 	case "workstation":
-		// The per-create name is recorded on the instance; without it (older
-		// or partial state) emit no parameter policy rather than a wildcard.
-		if sessionPasswordParameter == "" {
-			return []map[string]any{iamrole.SSMOutputPolicy(region, account)}
+		// Order matches the create path: the parameter policy is appended
+		// when the recorded per-create name resolves (older or partial state
+		// omits it rather than a wildcard), and the DCV license grant is
+		// unconditional — the server reads its no-cost EC2 license object
+		// from the regional dcv-license.<region> bucket.
+		policies := []map[string]any{iamrole.SSMOutputPolicy(region, account)}
+		if sessionPasswordParameter != "" {
+			if parameterARN, err := workstation.SessionPasswordParameterARN(region, account, sessionPasswordParameter); err == nil {
+				policies = append(policies, iamrole.SSMParameterReadPolicy(workstation.SessionPasswordPolicyName, parameterARN))
+			}
 		}
-		parameterARN, err := workstation.SessionPasswordParameterARN(region, account, sessionPasswordParameter)
-		if err != nil {
-			return []map[string]any{iamrole.SSMOutputPolicy(region, account)}
-		}
-		return []map[string]any{
-			iamrole.SSMOutputPolicy(region, account),
-			iamrole.SSMParameterReadPolicy(workstation.SessionPasswordPolicyName, parameterARN),
-		}
+		policies = append(policies, iamrole.S3ObjectReadPolicy(workstation.DCVLicensePolicyName, workstation.DCVLicenseBucket(region)))
+		return policies
 	}
 	return nil
 }

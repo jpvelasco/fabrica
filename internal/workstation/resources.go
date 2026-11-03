@@ -61,11 +61,23 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMess
 	)
 }
 
+// DCVLicensePolicyName is the inline policy that grants s3:GetObject on the
+// regional DCV license bucket (DCVLicenseBucket) and nothing else.
+const DCVLicensePolicyName = "fabrica-workstation-dcv-license"
+
+// DCVLicenseBucket is the regional S3 bucket the NICE DCV server reads its
+// no-cost EC2 license object from; without the grant the server fails to
+// serve sessions (server.log reports ORIGIN_OBJECT_FORBIDDEN_ACCESS).
+func DCVLicenseBucket(region string) string {
+	return "dcv-license." + region
+}
+
 // RoleDesiredState returns Cloud Control desired-state for the workstation EC2
-// instance role: SSM managed instance core, the shared SSM output policy, and
-// ssm:GetParameter on the per-create DCV session password parameter only. The
-// parameter name (plan.SessionPasswordParameter) is set by the create layer
-// before the role is built so the role reads exactly one instance's secret.
+// instance role: SSM managed instance core, the shared SSM output policy,
+// ssm:GetParameter on the per-create DCV session password parameter only, and
+// s3:GetObject on the regional DCV license bucket. The parameter name
+// (plan.SessionPasswordParameter) is set by the create layer before the role
+// is built so the role reads exactly one instance's secret.
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 	parameterARN, err := SessionPasswordParameterARN(plan.Region, plan.Account, plan.SessionPasswordParameter)
 	if err != nil {
@@ -76,6 +88,7 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 	}, []map[string]any{
 		iamrole.SSMOutputPolicy(plan.Region, plan.Account),
 		iamrole.SSMParameterReadPolicy(SessionPasswordPolicyName, parameterARN),
+		iamrole.S3ObjectReadPolicy(DCVLicensePolicyName, DCVLicenseBucket(plan.Region)),
 	}, map[string]string{"FabricaModule": "workstation"},
 		iamrole.Options(plan.IAM.Path, plan.IAM.PermissionsBoundary)...)
 }

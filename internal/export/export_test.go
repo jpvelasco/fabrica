@@ -4168,7 +4168,7 @@ func TestIAMRoleInlinePoliciesPerModule(t *testing.T) {
 			want: []map[string]any{iamrole.DeployS3ReadPolicy("fabrica-deploy-bucket")},
 		},
 		{
-			name:   "workstation: SSM output + DCV password parameter (per-create name from state)",
+			name:   "workstation: SSM output + DCV password parameter + DCV license (per-create name from state)",
 			module: "workstation",
 			state: state.ModuleState{
 				Name:   "workstation",
@@ -4187,6 +4187,7 @@ func TestIAMRoleInlinePoliciesPerModule(t *testing.T) {
 				return []map[string]any{
 					iamrole.SSMOutputPolicy(exportRegion, exportAccount),
 					iamrole.SSMParameterReadPolicy(workstation.SessionPasswordPolicyName, arn),
+					iamrole.S3ObjectReadPolicy(workstation.DCVLicensePolicyName, workstation.DCVLicenseBucket(exportRegion)),
 				}
 			}(),
 		},
@@ -4335,22 +4336,26 @@ func TestCloudFormationEmitsInlinePoliciesOnRole(t *testing.T) {
 
 func TestWorkstationInlinePoliciesSkipParameterWhenUnscoped(t *testing.T) {
 	got := inlinePoliciesForRole("workstation", config.Defaults(), exportAccount, exportRegion, "")
-	if len(got) != 1 {
-		t.Fatalf("policy count = %d, want the SSM output policy only", len(got))
+	if len(got) != 2 {
+		t.Fatalf("policy count = %d, want the SSM output + DCV license policies", len(got))
 	}
 	if got[0]["PolicyName"] != "fabrica-ssm-output" {
 		t.Fatalf("policy = %v", got[0]["PolicyName"])
+	}
+	if got[1]["PolicyName"] != workstation.DCVLicensePolicyName {
+		t.Fatalf("policy[1] = %v", got[1]["PolicyName"])
 	}
 }
 
 // TestWorkstationInlinePoliciesScopeToRecordedParameter pins the happy path:
 // a recorded per-create session-password name yields the SSM output policy plus
-// the exact-ARN ssm:GetParameter read policy, and a malformed recorded name
-// falls back to the output policy only (the ARN helper rejects it).
+// the exact-ARN ssm:GetParameter read policy (the DCV license grant rides along
+// in both paths), and a malformed recorded name drops the parameter policy
+// (the ARN helper rejects it) while keeping the license grant.
 func TestWorkstationInlinePoliciesScopeToRecordedParameter(t *testing.T) {
 	got := inlinePoliciesForRole("workstation", config.Defaults(), exportAccount, exportRegion, testWSParamName)
-	if len(got) != 2 {
-		t.Fatalf("policy count = %d, want the SSM output + parameter read policies", len(got))
+	if len(got) != 3 {
+		t.Fatalf("policy count = %d, want the SSM output + parameter read + DCV license policies", len(got))
 	}
 	if got[0]["PolicyName"] != "fabrica-ssm-output" {
 		t.Fatalf("policy[0] = %v", got[0]["PolicyName"])
@@ -4358,13 +4363,19 @@ func TestWorkstationInlinePoliciesScopeToRecordedParameter(t *testing.T) {
 	if got[1]["PolicyName"] != workstation.SessionPasswordPolicyName {
 		t.Fatalf("policy[1] = %v", got[1]["PolicyName"])
 	}
+	if got[2]["PolicyName"] != workstation.DCVLicensePolicyName {
+		t.Fatalf("policy[2] = %v", got[2]["PolicyName"])
+	}
 
 	fallback := inlinePoliciesForRole("workstation", config.Defaults(), exportAccount, exportRegion, "not-a-per-create-name")
-	if len(fallback) != 1 {
-		t.Fatalf("malformed recorded name: policy count = %d, want the SSM output policy only", len(fallback))
+	if len(fallback) != 2 {
+		t.Fatalf("malformed recorded name: policy count = %d, want the SSM output + DCV license policies", len(fallback))
 	}
 	if fallback[0]["PolicyName"] != "fabrica-ssm-output" {
 		t.Fatalf("fallback policy = %v", fallback[0]["PolicyName"])
+	}
+	if fallback[1]["PolicyName"] != workstation.DCVLicensePolicyName {
+		t.Fatalf("fallback policy[1] = %v", fallback[1]["PolicyName"])
 	}
 }
 
@@ -4417,7 +4428,7 @@ func TestTerraformEmitsInlinePolicyPerModule(t *testing.T) {
 				{TypeName: "AWS::EC2::Instance", Identifier: "i-ws0", Properties: map[string]string{"sessionPasswordParameter": testWSParamName}},
 			},
 		}, cfg: config.Defaults(),
-			polNames: []string{"fabrica-ssm-output", "fabrica-workstation-dcv-password"}},
+			polNames: []string{"fabrica-ssm-output", "fabrica-workstation-dcv-password", "fabrica-workstation-dcv-license"}},
 	}
 
 	ssmName := iamrole.SSMOutputPolicy(exportRegion, exportAccount)["PolicyName"].(string)
