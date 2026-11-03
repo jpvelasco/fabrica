@@ -398,3 +398,71 @@ func TestSaveKeysMissingFileWriteFailure(t *testing.T) {
 		t.Fatal("SaveKeys with a missing parent directory must fail")
 	}
 }
+
+// TestSaveKeysFailsClosedOnUnencodableValue verifies a value the encoder
+// cannot render surfaces as an error and leaves the file untouched, for both
+// the append path (missing leaf) and the replace path (non-scalar leaf).
+// &yaml.Node{Kind: 99} makes the yaml encoder fail with a returned error
+// rather than a panic.
+func TestSaveKeysFailsClosedOnUnencodableValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		original string
+		key      string
+	}{
+		{"missing leaf", "state:\n  table: my-locks\n", "state.bucket"},
+		{"non-scalar leaf", "cost:\n  budgets:\n    - scope: total\n", "cost.budgets"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "fabrica.yaml")
+			if err := os.WriteFile(path, []byte(tt.original), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg := Defaults()
+			err := cfg.SaveKeys(path, map[string]any{tt.key: &yaml.Node{Kind: 99}})
+			if err == nil || !strings.Contains(err.Error(), "encoding value") {
+				t.Fatalf("SaveKeys with an unencodable value must fail with the encoding error, got: %v", err)
+			}
+			out, _ := os.ReadFile(path)
+			if string(out) != tt.original {
+				t.Errorf("file modified despite encoding failure:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestNodeFromRejectsBadInput verifies the parse seam fails closed on bytes
+// the decoder cannot read and on empty input, which decodes cleanly but
+// carries no root node.
+func TestNodeFromRejectsBadInput(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []byte
+		want string
+	}{
+		{"invalid yaml", []byte("foo: [unclosed"), "decoding value"},
+		{"empty input", nil, "no YAML node"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := nodeFrom(tt.in); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("nodeFrom must fail with %q, got: %v", tt.want, err)
+			}
+		})
+	}
+}
+
+// TestEncodeDocumentRejectsUnencodableNode verifies the encoder seam fails
+// closed on a document containing a node the emitter cannot render.
+func TestEncodeDocumentRejectsUnencodableNode(t *testing.T) {
+	doc := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "k"},
+		{Kind: 99},
+	}}
+	if _, err := encodeDocument(doc, 2); err == nil {
+		t.Fatal("encodeDocument on an unencodable document must fail")
+	}
+}

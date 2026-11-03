@@ -48,17 +48,26 @@ func (c *Config) SaveKeys(path string, updates map[string]any) error {
 			return fmt.Errorf("updating %s in %s: %w", key, path, err)
 		}
 	}
+	out, err := encodeDocument(doc, detectIndent(data))
+	if err != nil {
+		return fmt.Errorf("encoding config %s: %w", path, err)
+	}
+	return writeConfigFile(path, out)
+}
+
+// encodeDocument renders the edited node tree, keeping the file's existing
+// indentation width.
+func encodeDocument(doc *yaml.Node, indent int) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(detectIndent(data))
+	enc.SetIndent(indent)
 	if err := enc.Encode(doc); err != nil {
-		enc.Close()
-		return fmt.Errorf("encoding config %s: %w", path, err)
+		return nil, err
 	}
 	if err := enc.Close(); err != nil {
-		return fmt.Errorf("encoding config %s: %w", path, err)
+		return nil, err
 	}
-	return writeConfigFile(path, buf.Bytes())
+	return buf.Bytes(), nil
 }
 
 // configFilePath applies the default fabrica.yaml location.
@@ -144,11 +153,17 @@ func setDotKey(doc *yaml.Node, dotted string, value any) error {
 func valueNode(v any) (*yaml.Node, error) {
 	data, err := yaml.Marshal(v)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling value: %w", err)
+		return nil, fmt.Errorf("encoding value: %w", err)
 	}
+	return nodeFrom(data)
+}
+
+// nodeFrom parses rendered YAML into its root node. Empty input decodes
+// cleanly but has no root node; callers must reject it rather than index it.
+func nodeFrom(data []byte) (*yaml.Node, error) {
 	var node yaml.Node
 	if err := yaml.Unmarshal(data, &node); err != nil {
-		return nil, fmt.Errorf("marshaling value: %w", err)
+		return nil, fmt.Errorf("decoding value: %w", err)
 	}
 	if len(node.Content) == 0 {
 		return nil, fmt.Errorf("value produced no YAML node")
