@@ -298,6 +298,43 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	}
 }
 
+// TestCreateForwardsOperatorTagsToSessionPasswordParameter covers the #562
+// command-side wiring: cloud.aws.tags is forwarded verbatim to the DCV
+// session password parameter. The AWS provider applies identity protection
+// on top (ManagedBy stays fabrica, operator identity shadows dropped) —
+// pinned in internal/cloud/aws/parameter_test.go.
+func TestCreateForwardsOperatorTagsToSessionPasswordParameter(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
+	c := newTestCommand(&out, provider, st)
+	c.runtime.Config.Cloud.AWS.Tags = map[string]string{
+		"env":     "staging",
+		"team":    "platform",
+		"Project": "fabrica",
+	}
+	c.assumeYes = true
+	c.writeState = testutil.StateWriteNever()
+	t.Chdir(t.TempDir())
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(provider.PutParameters) != 1 {
+		t.Fatalf("put calls = %d, want 1", len(provider.PutParameters))
+	}
+	got := provider.PutParameters[0].Tags
+	want := map[string]string{"env": "staging", "team": "platform", "Project": "fabrica"}
+	if len(got) != len(want) {
+		t.Fatalf("parameter tags = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("parameter tags[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
 // TestCreateApplyPlanIsTerser verifies workstation apply (non-dry-run) keeps the
 // pre-#162 layout: no Data volume line, compact labels, open-CIDR WARNING before
 // the resource list. Dry-run still shows volume via provision.DryRun.
@@ -854,8 +891,12 @@ func assertSessionPasswordNotInDesiredState(t *testing.T, provider *testutil.Tes
 	if got.Value == "" {
 		t.Fatal("stored password is empty")
 	}
-	if got.Tags["ManagedBy"] != "fabrica" {
-		t.Errorf("tags = %v, want ManagedBy=fabrica", got.Tags)
+	// The fake records exactly what the command forwards: the raw
+	// cloud.aws.tags map, empty under config defaults. The real provider
+	// (parameterTags, internal/cloud/aws/parameter_test.go) seeds
+	// ManagedBy=fabrica and drops operator identity shadows.
+	if len(got.Tags) != 0 {
+		t.Errorf("tags = %v, want the raw config map (empty under defaults)", got.Tags)
 	}
 	for _, res := range provider.Created {
 		if strings.Contains(string(res.DesiredState), got.Value) {

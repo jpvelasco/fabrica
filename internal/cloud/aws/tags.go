@@ -2,6 +2,9 @@ package aws
 
 import (
 	"encoding/json"
+	"sort"
+
+	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // tagUnsupportedTypes lists Cloud Control resource types that do not accept a
@@ -28,23 +31,11 @@ var tagUnsupportedTypes = map[string]struct{}{
 	"AWS::CloudWatch::Alarm": {},
 }
 
-// reservedTagKeys are Fabrica's identity tags. Teardown, drift, and cost
-// attribution key off them, so operator tags (cloud.aws.tags) may add to the
-// tag set but never shadow these — a resource that lost ManagedBy would leak
-// on `destroy --all` and skew drift/cost reporting.
-var reservedTagKeys = map[string]struct{}{
-	"ManagedBy":          {},
-	"FabricaModule":      {},
-	"FabricaVersion":     {},
-	"FabricaCreateNonce": {},
-}
-
-// isReservedTagKey reports whether k is a Fabrica-owned identity tag that
-// operator tags must not override.
-func isReservedTagKey(k string) bool {
-	_, ok := reservedTagKeys[k]
-	return ok
-}
+// Identity tag protection lives in internal/tags (fabricatags.IdentityKey,
+// fabricatags.MergeProtected) so the Cloud Control path and the post-create
+// SDK tagging paths (instance profiles, security group rules, SSM
+// parameters) share one rule: operator tags are additive, identity tags are
+// Fabrica-owned.
 
 // injectFabricaTags merges standard Fabrica tags into the desired state of a
 // resource. Cloud Control resource schemas (IAM, CodeBuild, EC2, DynamoDB, ...)
@@ -67,42 +58,43 @@ func injectFabricaTags(typeName string, state json.RawMessage, module, version s
 		return state
 	}
 
-	// Build the merged key→value set, seeded from any existing "Tags" array.
-	merged := map[string]string{}
-	order := []string{}
-	addKey := func(k string) {
-		if _, seen := merged[k]; !seen {
+	pairs := existingTagPairs(m["Tags"])
+	base := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		base[p.Key] = p.Value
+	}
+	merged := fabricatags.MergeProtected(module, version, base, extra)
+
+	// Rebuild the "Tags" array preserving first-seen key order for stable
+	// output: existing keys, then identity keys, then sorted operator keys.
+	// Plans stamp their own FabricaModule (e.g. "lore", "ddc", "horde") —
+	// the protected merge keeps that value instead of clobbering it with the
+	// provider-level default, so live tags support per-module attribution.
+	order := make([]string, 0, len(merged))
+	seen := make(map[string]bool, len(merged))
+	add := func(k string) {
+		if !seen[k] {
+			seen[k] = true
 			order = append(order, k)
 		}
 	}
-
-	for _, raw := range existingTagPairs(m["Tags"]) {
-		addKey(raw.Key)
-		merged[raw.Key] = raw.Value
+	for _, p := range pairs {
+		add(p.Key)
 	}
-
-	standard := []struct{ k, v string }{
-		{"ManagedBy", "fabrica"},
-		{"FabricaVersion", version},
+	add("ManagedBy")
+	add("FabricaVersion")
+	if _, ok := base["FabricaModule"]; !ok {
+		add("FabricaModule")
 	}
-	for _, s := range standard {
-		addKey(s.k)
-		merged[s.k] = s.v
-	}
-	// Plans stamp their own FabricaModule (e.g. "lore", "ddc", "horde") —
-	// respect that value instead of clobbering it with the provider-level
-	// default, so live tags support per-module attribution.
-	if _, exists := merged["FabricaModule"]; !exists {
-		addKey("FabricaModule")
-		merged["FabricaModule"] = module
-	}
-	for k, v := range extra {
-		if isReservedTagKey(k) {
-			// Operator tags are additive; identity tags are Fabrica-owned.
-			continue
+	extraKeys := make([]string, 0, len(extra))
+	for k := range extra {
+		if k != "" && !fabricatags.IdentityKey(k) {
+			extraKeys = append(extraKeys, k)
 		}
-		addKey(k)
-		merged[k] = v
+	}
+	sort.Strings(extraKeys)
+	for _, k := range extraKeys {
+		add(k)
 	}
 
 	tags := make([]map[string]string, 0, len(order))
@@ -116,6 +108,29 @@ func injectFabricaTags(typeName string, state json.RawMessage, module, version s
 		return state
 	}
 	return out
+}
+
+// postCreateTags returns the tag set to apply to a resource whose Cloud
+// Control create schema cannot carry tags. It prefers the final (post-
+// injectFabricaTags) desired-state "Tags" array — the exact set applied to
+// the resource — and falls back to the protected standard set for types
+// whose schemas carry no Tags (IAM instance profiles, standalone ingress
+// rules).
+func postCreateTags(desiredState json.RawMessage, version string, extra map[string]string) map[string]string {
+	if len(desiredState) > 0 {
+		var m map[string]any
+		if err := json.Unmarshal(desiredState, &m); err == nil {
+			pairs := existingTagPairs(m["Tags"])
+			if len(pairs) > 0 {
+				out := make(map[string]string, len(pairs))
+				for _, p := range pairs {
+					out[p.Key] = p.Value
+				}
+				return out
+			}
+		}
+	}
+	return fabricatags.MergeProtected("fabrica", version, nil, extra)
 }
 
 type tagPair struct {

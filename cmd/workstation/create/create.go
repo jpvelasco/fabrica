@@ -307,10 +307,13 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	// all agree on one per-create name. A shared name would let a concurrent
 	// create or a re-create clobber another instance's password.
 	paramName := plan.SessionPasswordParameter
+	// cloud.aws.tags rides the parameter too: the password parameter is
+	// Fabrica-managed, and sweeps should see the operator's attribution
+	// tags on it like on every other resource (ManagedBy stays Fabrica's).
 	if err := c.putSecureParameter(ctx, cloud.SecureParameter{
 		Name:  paramName,
 		Value: sessionPass,
-		Tags:  map[string]string{"ManagedBy": "fabrica"},
+		Tags:  c.runtime.Config.Cloud.AWS.Tags,
 	}); err != nil {
 		return fmt.Errorf("storing the DCV session password in SSM parameter %s: %w", paramName, err)
 	}

@@ -74,7 +74,28 @@ func (c *resourceClients) Create(ctx context.Context, r *fabricac.Resource) erro
 	}
 
 	r.Identifier = aws.ToString(result.ProgressEvent.Identifier)
+	if r.Identifier != "" {
+		if err := c.tagPostCreateResources(ctx, r); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// tagPostCreateResources tags resources whose Cloud Control create schema
+// cannot carry tags: IAM instance profiles (no Tags property). The tag set is
+// taken from the final desired state — the exact set stamped at create — so
+// profiles carry the same identity and operator tags as their parent
+// resources. Re-runs are safe: the AlreadyExists recovery path re-enters this
+// hook, and the tag API is additive.
+func (c *resourceClients) tagPostCreateResources(ctx context.Context, r *fabricac.Resource) error {
+	if r.TypeName != fabricac.TypeAWSIAMInstanceProfile {
+		return nil
+	}
+	if c.iam == nil {
+		return nil
+	}
+	return c.iam.TagInstanceProfile(ctx, r.Identifier, postCreateTags(r.DesiredState, c.version, c.operatorTags))
 }
 
 // createAsync fires CreateResource and returns once the resource Identifier is
