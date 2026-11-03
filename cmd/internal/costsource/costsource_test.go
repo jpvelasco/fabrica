@@ -11,7 +11,9 @@ import (
 	"github.com/jpvelasco/fabrica/internal/deploy"
 	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/jpvelasco/fabrica/internal/perforce"
+	"github.com/jpvelasco/fabrica/internal/schedule"
 	"github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/workstation"
 )
 
 func mod(name, status string, res ...state.ModuleResource) state.ModuleState {
@@ -560,5 +562,130 @@ func TestAggregateUnknownModule(t *testing.T) {
 	}
 	if b.Modules[0].Note == "" {
 		t.Errorf("unknown module should carry a 'no estimator wired' note")
+	}
+}
+
+func TestAggregateWorkstationRecordedKeepsDiscount(t *testing.T) {
+	// Issue reproduction: recording the provisioned shape must not drop the
+	// configured Spot discount from the estimate.
+	cfg := config.Defaults()
+	cfg.Workstation.Spot = true
+	cfg.Workstation.InstanceType = "g4dn.xlarge"
+	cfg.Workstation.VolumeSize = 100
+
+	st := state.NewState("acct", "us-east-1")
+	st.Modules = []state.ModuleState{
+		mod("workstation", "ready",
+			state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-ws",
+				Properties: map[string]string{"instanceType": "g4dn.xlarge", "volumeSize": "100"}},
+			state.ModuleResource{TypeName: cloud.TypeAWSEC2Volume, Identifier: "vol-ws"}),
+	}
+	b := Aggregate(cfg, st, cost.Global)
+	want := cost.Global.EstimateAll(workstation.CostResources(cfg.Workstation)).Total
+	if b.Modules[0].Subtotal != want {
+		t.Fatalf("recorded subtotal %v, want config-derived %v (discount lost by recording)", b.Modules[0].Subtotal, want)
+	}
+	onDemand := cost.Global.EstimateAll(workstation.CostResourcesFor("g4dn.xlarge", 100)).Total
+	if b.Modules[0].Subtotal >= onDemand {
+		t.Errorf("subtotal %v should be discounted below on-demand %v", b.Modules[0].Subtotal, onDemand)
+	}
+}
+
+func TestAggregateWorkstationRecordedDifferentShape(t *testing.T) {
+	// The recorded shape (g4dn.xlarge / 200 GiB) differs from the config
+	// shape (c7i.xlarge / 100 GiB): the report prices the recorded shape,
+	// still carrying the configured Spot discount.
+	cfg := config.Defaults()
+	cfg.Workstation.Spot = true
+	cfg.Workstation.InstanceType = "c7i.xlarge"
+	cfg.Workstation.VolumeSize = 100
+
+	st := state.NewState("acct", "us-east-1")
+	st.Modules = []state.ModuleState{
+		mod("workstation", "ready",
+			state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-ws",
+				Properties: map[string]string{"instanceType": "g4dn.xlarge", "volumeSize": "200"}},
+			state.ModuleResource{TypeName: cloud.TypeAWSEC2Volume, Identifier: "vol-ws"}),
+	}
+	b := Aggregate(cfg, st, cost.Global)
+	var instName, volName string
+	for _, r := range b.Modules[0].Report.Results {
+		switch r.Resource.TypeName {
+		case cloud.TypeAWSEC2Instance:
+			instName = r.Resource.Name
+		case cloud.TypeAWSEC2Volume:
+			volName = r.Resource.Name
+		}
+	}
+	if base, factor := schedule.DecodeFactor(instName); base != "g4dn.xlarge" || factor >= 0.999 {
+		t.Errorf("instance line %q: want recorded g4dn.xlarge with the spot factor", instName)
+	}
+	if volName != "gp3-200GiB" {
+		t.Errorf("volume line %q, want gp3-200GiB", volName)
+	}
+	want := cost.Global.EstimateAll(workstation.CostResourcesForShape(cfg.Workstation, "g4dn.xlarge", 200)).Total
+	if b.Modules[0].Subtotal != want {
+		t.Errorf("subtotal %v, want %v", b.Modules[0].Subtotal, want)
+	}
+}
+
+func TestAggregateWorkstationInvalidScheduleRecordedShape(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Workstation.Schedule = config.CapacitySchedule{Enabled: true, Days: "Mon-Fri", Start: "17:00", Stop: "09:00"}
+	cfg.Workstation.InstanceType = "g4dn.xlarge"
+	cfg.Workstation.VolumeSize = 100
+
+	st := state.NewState("acct", "us-east-1")
+	st.Modules = []state.ModuleState{
+		mod("workstation", "ready",
+			state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-ws",
+				Properties: map[string]string{"instanceType": "g4dn.xlarge", "volumeSize": "100"}},
+			state.ModuleResource{TypeName: cloud.TypeAWSEC2Volume, Identifier: "vol-ws"}),
+	}
+	b := Aggregate(cfg, st, cost.Global)
+	var instName string
+	for _, r := range b.Modules[0].Report.Results {
+		if r.Resource.TypeName == cloud.TypeAWSEC2Instance {
+			instName = r.Resource.Name
+		}
+	}
+	if !strings.HasSuffix(instName, " (schedule invalid — estimate not discounted)") {
+		t.Fatalf("invalid schedule should name the discount refusal: %s", instName)
+	}
+	want := cost.Global.EstimateAll(workstation.CostResourcesForShape(cfg.Workstation, "g4dn.xlarge", 100)).Total
+	if b.Modules[0].Subtotal != want {
+		t.Errorf("subtotal %v, want %v", b.Modules[0].Subtotal, want)
+	}
+}
+
+func TestAggregateWorkstationUnrecordedFallsBackToConfig(t *testing.T) {
+	// No usable recorded sizing: the config-derived estimate (with its
+	// discount) stands, as before.
+	cfg := config.Defaults()
+	cfg.Workstation.Spot = true
+	want := cost.Global.EstimateAll(workstation.CostResources(cfg.Workstation)).Total
+
+	cases := []struct {
+		name string
+		res  []state.ModuleResource
+	}{
+		{"no instance recorded", []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2Volume, Identifier: "vol-ws"},
+		}},
+		{"unparseable recorded volumeSize", []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-ws",
+				Properties: map[string]string{"instanceType": "g4dn.xlarge", "volumeSize": "large"}},
+			{TypeName: cloud.TypeAWSEC2Volume, Identifier: "vol-ws"},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := state.NewState("acct", "us-east-1")
+			st.Modules = []state.ModuleState{mod("workstation", "ready", tc.res...)}
+			b := Aggregate(cfg, st, cost.Global)
+			if b.Modules[0].Subtotal != want {
+				t.Fatalf("subtotal %v, want config-derived %v", b.Modules[0].Subtotal, want)
+			}
+		})
 	}
 }
