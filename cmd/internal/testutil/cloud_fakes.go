@@ -18,16 +18,24 @@ var _ cloud.Provider = (*NilResourceProvider)(nil)
 func (*NilResourceProvider) Resources() cloud.ResourceClient { return nil }
 
 // UbuntuAMIProvider extends TestProvider with configurable Ubuntu AMI
-// resolution. It is intentionally separate so TestProvider continues to
-// exercise providers that do not implement cloud.AMIResolver.
+// resolution and inspection. It is intentionally separate so TestProvider
+// continues to exercise providers that do not implement cloud.AMIResolver.
 type UbuntuAMIProvider struct {
 	TestProvider
 
 	AMIID  string
 	AMIErr error
+
+	RootDeviceName   string
+	RootDeviceType   string
+	ImageErr         error
+	DescribeImageIDs []string
 }
 
-var _ cloud.AMIResolver = (*UbuntuAMIProvider)(nil)
+var (
+	_ cloud.AMIResolver    = (*UbuntuAMIProvider)(nil)
+	_ cloud.ImageInspector = (*UbuntuAMIProvider)(nil)
+)
 
 func (p *UbuntuAMIProvider) ResolveUbuntuAMI(context.Context, string) (string, error) {
 	if p.AMIErr != nil {
@@ -37,6 +45,51 @@ func (p *UbuntuAMIProvider) ResolveUbuntuAMI(context.Context, string) (string, e
 		return "ami-fake-ubuntu", nil
 	}
 	return p.AMIID, nil
+}
+
+func (p *UbuntuAMIProvider) DescribeImage(_ context.Context, imageID string) (cloud.ImageInfo, error) {
+	p.DescribeImageIDs = append(p.DescribeImageIDs, imageID)
+	if p.ImageErr != nil {
+		return cloud.ImageInfo{}, p.ImageErr
+	}
+	return cannedImageInfo(imageID, p.RootDeviceName, p.RootDeviceType), nil
+}
+
+// InspectorProvider extends TestProvider with a canned AMI inspector so cobra
+// tests exercise the encrypted-root wiring (#513) through New(). TestProvider
+// itself stays without DescribeImage: the refuse-without-inspector tests pin
+// that boundary.
+type InspectorProvider struct {
+	TestProvider
+
+	RootDeviceName   string
+	RootDeviceType   string
+	ImageErr         error
+	LastImageID      string
+	DescribeImageIDs []string
+}
+
+var _ cloud.ImageInspector = (*InspectorProvider)(nil)
+
+func (p *InspectorProvider) DescribeImage(_ context.Context, imageID string) (cloud.ImageInfo, error) {
+	p.LastImageID = imageID
+	p.DescribeImageIDs = append(p.DescribeImageIDs, imageID)
+	if p.ImageErr != nil {
+		return cloud.ImageInfo{}, p.ImageErr
+	}
+	return cannedImageInfo(imageID, p.RootDeviceName, p.RootDeviceType), nil
+}
+
+// cannedImageInfo builds an ImageInfo with the defaults a current Ubuntu AMI
+// reports (/dev/sda1, ebs) so fakes mirror the production shape by default.
+func cannedImageInfo(imageID, rootDeviceName, rootDeviceType string) cloud.ImageInfo {
+	if rootDeviceName == "" {
+		rootDeviceName = "/dev/sda1"
+	}
+	if rootDeviceType == "" {
+		rootDeviceType = "ebs"
+	}
+	return cloud.ImageInfo{ID: imageID, RootDeviceName: rootDeviceName, RootDeviceType: rootDeviceType}
 }
 
 // EC2InstanceProvider extends TestProvider with configurable EC2 instance

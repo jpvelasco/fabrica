@@ -26,6 +26,12 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 // is attached to that IAM instance profile (required for SSM backup/restore).
 // When imageID is non-empty, it is injected as ImageId; otherwise the field
 // is omitted (useful for dry-runs where the AMI isn't resolved yet).
+//
+// The block device document carries two mappings: the data volume on the
+// default device (retained across termination, unencrypted-by-default flag
+// applied) and the encrypted root volume on the AMI's own root device
+// (plan.RootDeviceName), so the root is encrypted even when the AMI snapshot
+// is not and account EBS default encryption is off (#513).
 func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName, imageID string) (json.RawMessage, error) {
 	spec := ec2state.InstanceSpec{
 		ImageID:         imageID,
@@ -39,6 +45,8 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName,
 
 	dsOpts := []ec2state.DesiredStateOption{
 		ec2state.WithDeleteOnTermination(false),
+		ec2state.WithEncryptedVolume(),
+		ec2state.WithEncryptedRoot(plan.RootDeviceName),
 		ec2state.WithExtraTags("FabricaModule", "perforce"),
 	}
 	if instanceProfileName != "" {

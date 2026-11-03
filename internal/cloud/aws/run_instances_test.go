@@ -1177,3 +1177,46 @@ func TestRunInstancesInputCarriesEncrypted(t *testing.T) {
 		})
 	}
 }
+
+// TestRunInstancesInputCarriesEncryptedAcrossMappings pins the multi-mapping
+// launch shapes (#513): a data volume plus a root volume on one request must
+// each carry the encryption flag exactly as the desired state writes it — the
+// flag must not leak between mappings or be dropped after the first.
+func TestRunInstancesInputCarriesEncryptedAcrossMappings(t *testing.T) {
+	rootEBS := `{"VolumeSize":50,"VolumeType":"gp3","DeleteOnTermination":true,"Encrypted":true}`
+	dataEBS := `{"VolumeSize":500,"VolumeType":"gp3","DeleteOnTermination":false,"Encrypted":true}`
+	dataPlain := `{"VolumeSize":500,"VolumeType":"gp3","DeleteOnTermination":false}`
+	for _, tc := range []struct {
+		name    string
+		data    string
+		dataEnc *bool
+	}{
+		{name: "both mappings encrypted", data: dataEBS, dataEnc: awssdk.Bool(true)},
+		{name: "only the root mapping encrypted", data: dataPlain, dataEnc: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			desired := json.RawMessage(`{"ImageId":"test-image","InstanceType":"m5.large",` +
+				`"BlockDeviceMappings":[` +
+				`{"DeviceName":"/dev/sdf","Ebs":` + tc.data + `},` +
+				`{"DeviceName":"/dev/sda1","Ebs":` + rootEBS + `}]}`)
+			in, err := runInstancesInput(desired, nil, "")
+			if err != nil {
+				t.Fatalf("runInstancesInput: %v", err)
+			}
+			if len(in.BlockDeviceMappings) != 2 {
+				t.Fatalf("BlockDeviceMappings = %+v", in.BlockDeviceMappings)
+			}
+			data, root := in.BlockDeviceMappings[0], in.BlockDeviceMappings[1]
+			got := data.Ebs.Encrypted
+			switch {
+			case tc.dataEnc == nil && got != nil:
+				t.Fatalf("data volume Encrypted = %v, want absent", *got)
+			case tc.dataEnc != nil && (got == nil || *got != *tc.dataEnc):
+				t.Fatalf("data volume Encrypted = %v, want %v", got, *tc.dataEnc)
+			}
+			if root.Ebs.Encrypted == nil || !*root.Ebs.Encrypted {
+				t.Fatalf("root volume Encrypted = %v, want true", root.Ebs.Encrypted)
+			}
+		})
+	}
+}
