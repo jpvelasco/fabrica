@@ -555,7 +555,7 @@ fabrica deploy destroy
 
 #### `fabrica cost report`
 
-Shows the estimated monthly cost broken down by provisioned module and resource, with a grand total and confidence level. Reads the deployed shape from local state where recorded, falling back to `fabrica.yaml` for cost inputs not yet in state. `--json` for machine-readable output.
+Shows the estimated monthly cost broken down by provisioned module and resource, with a grand total and confidence level. Reads the deployed shape from local state where recorded, falling back to `fabrica.yaml` for cost inputs not yet in state. For deploy, every recorded GameLift fleet is priced by its own recorded shape — the active fleet, retained fleets kept for rollback, and pending fleets still acquiring capacity — so the total reflects the capacity actually running in the account. `--json` for machine-readable output.
 
 #### `fabrica cost forecast`
 

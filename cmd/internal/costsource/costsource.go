@@ -11,6 +11,7 @@ package costsource
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/jpvelasco/fabrica/internal/ci"
 	"github.com/jpvelasco/fabrica/internal/cloud"
@@ -121,7 +122,7 @@ func costInputs(cfg *config.Config, m *state.ModuleState) ([]cost.Resource, stri
 		if !hasResource(m, deploy.TypeGameLiftFleet) {
 			return nil, "setup only (no active fleet) — standing cost ~$0"
 		}
-		return deployCostResources(m, cfg.Deploy), ""
+		return deployCostResources(m, cfg.Deploy), deployFleetNote(m)
 	case "ddc":
 		// Prefer full CostResources (S3 + EC2 + EBS [+ Scylla]); do not collapse
 		// via ec2CostResources which would drop the blob bucket line.
@@ -154,17 +155,45 @@ func ec2CostResources(m *state.ModuleState, cfgResources []cost.Resource) []cost
 	return out
 }
 
-// deployCostResources prefers the fleet shape recorded in state (instance type +
-// desired count) over the config fallback, mirroring ec2CostResources.
+// deployCostResources prices every GameLift fleet recorded in state by its own
+// recorded shape (instance type + desired count): the active fleet serving
+// traffic, retained (superseded) fleets still running for rollback, and
+// pending (provisioning) fleets acquiring capacity. Pricing only the alias
+// target undercounted billable capacity after multiple promotions; summing
+// every recorded fleet keeps report, forecast, and alerts honest.
+//
+// Policy: a fleet prices itself when it has a recorded instanceType and a
+// positive desiredInstances. Fleets without a recorded shape (legacy state)
+// contribute no line; when no recorded fleet has a shape, the config-derived
+// line stands in for the fleet the state knows exists.
 func deployCostResources(m *state.ModuleState, cfg config.DeployConfig) []cost.Resource {
-	fleet := fleetProperties(m)
-	desired, err := strconv.Atoi(fleet["desiredInstances"])
-	if fleet["instanceType"] == "" || err != nil || desired <= 0 {
+	var out []cost.Resource
+	for _, r := range m.Resources {
+		if r.TypeName != deploy.TypeGameLiftFleet {
+			continue
+		}
+		if res, ok := fleetCostResource(r.Properties); ok {
+			out = append(out, res)
+		}
+	}
+	if len(out) == 0 {
 		return deploy.CostResources(cfg)
 	}
-	return []cost.Resource{
-		{TypeName: deploy.TypeGameLiftFleet, Name: deploy.FleetCostName(fleet["instanceType"], desired)},
+	return out
+}
+
+// fleetCostResource builds the cost line for one recorded fleet, or ok=false
+// when the recorded shape is missing or unparseable so the caller can fall
+// back to the config-derived estimate.
+func fleetCostResource(props map[string]string) (cost.Resource, bool) {
+	desired, err := strconv.Atoi(props["desiredInstances"])
+	if props["instanceType"] == "" || err != nil || desired <= 0 {
+		return cost.Resource{}, false
 	}
+	return cost.Resource{
+		TypeName: deploy.TypeGameLiftFleet,
+		Name:     deploy.FleetCostName(props["instanceType"], desired),
+	}, true
 }
 
 // instanceProperties returns the Properties of the module's EC2 instance record,
@@ -178,27 +207,33 @@ func instanceProperties(m *state.ModuleState) map[string]string {
 	return nil
 }
 
-// fleetProperties returns the Properties of the module's *active* GameLift fleet
-// — the live alias target whose cost the report should reflect. After multiple
-// promotes, m.Resources holds several fleets (the first is typically a
-// superseded one), so selecting by role="active" is required; otherwise the
-// estimate would price a retired fleet. Falls back to the first fleet when no
-// role is marked (e.g. a fleet that reached state but not yet ACTIVE), and to
-// nil when no fleet is tracked.
-func fleetProperties(m *state.ModuleState) map[string]string {
-	var first map[string]string
+// deployFleetNote explains billable capacity beyond the alias target: retained
+// (superseded) fleets kept running for rollback and pending (provisioning)
+// fleets still acquiring capacity. Empty when only the active fleet prices.
+func deployFleetNote(m *state.ModuleState) string {
+	var retained, pending int
 	for _, r := range m.Resources {
 		if r.TypeName != deploy.TypeGameLiftFleet {
 			continue
 		}
-		if r.Properties["role"] == "active" {
-			return r.Properties
-		}
-		if first == nil {
-			first = r.Properties
+		switch r.Properties["role"] {
+		case "superseded":
+			retained++
+		case "provisioning":
+			pending++
 		}
 	}
-	return first
+	var parts []string
+	if retained > 0 {
+		parts = append(parts, fmt.Sprintf("%d retained fleet(s) kept for rollback", retained))
+	}
+	if pending > 0 {
+		parts = append(parts, fmt.Sprintf("%d pending fleet(s) acquiring capacity", pending))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "includes " + strings.Join(parts, " + ")
 }
 
 // applyStopped drops the EC2 instance (compute) line when the module is stopped;

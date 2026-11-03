@@ -165,10 +165,11 @@ func TestAggregateDeployFleetPrefersState(t *testing.T) {
 	}
 }
 
-func TestAggregateDeployPricesActiveFleetNotSuperseded(t *testing.T) {
+func TestAggregateDeployPricesAllRecordedFleets(t *testing.T) {
 	// After a second promote, the superseded fleet comes first in resource
-	// order and the active fleet later. Cost must reflect the ACTIVE fleet (the
-	// live alias target), not the first/superseded one.
+	// order and the active fleet later. Both fleets keep running (the retained
+	// one stays up for rollback), so the estimate prices both by their own
+	// recorded shapes, not only the alias target.
 	cfg := config.Defaults()
 	st := state.NewState("acct", "us-east-1")
 	st.Modules = []state.ModuleState{
@@ -179,9 +180,84 @@ func TestAggregateDeployPricesActiveFleetNotSuperseded(t *testing.T) {
 				Properties: map[string]string{"role": "active", "instanceType": "c5.large", "desiredInstances": "5"}}),
 	}
 	got := deployCostResources(&st.Modules[0], cfg.Deploy)
-	want := deploy.FleetCostName("c5.large", 5)
-	if got[0].Name != want {
-		t.Errorf("priced fleet = %q, want the active fleet %q (not the superseded c5.largex1)", got[0].Name, want)
+	if len(got) != 2 {
+		t.Fatalf("priced fleets = %d, want 2 (active + retained): %+v", len(got), got)
+	}
+	want := map[string]bool{
+		deploy.FleetCostName("c5.large", 1): true,
+		deploy.FleetCostName("c5.large", 5): true,
+	}
+	for _, r := range got {
+		if !want[r.Name] {
+			t.Errorf("unexpected priced fleet %q", r.Name)
+		}
+	}
+	// The sum of both shapes exceeds the active fleet alone (the issue repro:
+	// one fleet and two retained running fleets must not estimate the same).
+	total := cost.Global.EstimateAll(got).Total
+	activeOnly := cost.Global.EstimateAll(got[1:]).Total
+	if total <= activeOnly {
+		t.Errorf("two-fleet total %v should exceed active-only %v", total, activeOnly)
+	}
+	// The report note names the retained capacity so the cost jump is explainable.
+	b := Aggregate(cfg, st, cost.Global)
+	if !strings.Contains(b.Modules[0].Note, "retained") {
+		t.Errorf("deploy note %q should mention the retained fleet", b.Modules[0].Note)
+	}
+}
+
+func TestAggregateDeployPricesPendingFleet(t *testing.T) {
+	// A --no-wait promote leaves the new fleet recorded as provisioning while
+	// it acquires capacity in AWS; the estimate includes it at its recorded
+	// shape instead of waiting for ACTIVE.
+	cfg := config.Defaults()
+	st := state.NewState("acct", "us-east-1")
+	st.Modules = []state.ModuleState{
+		mod("deploy", "provisioning",
+			state.ModuleResource{TypeName: "AWS::GameLift::Fleet", Identifier: "fleet-new",
+				Properties: map[string]string{"role": "provisioning", "instanceType": "c5.2xlarge", "desiredInstances": "4"}}),
+	}
+	got := deployCostResources(&st.Modules[0], cfg.Deploy)
+	if len(got) != 1 || got[0].Name != deploy.FleetCostName("c5.2xlarge", 4) {
+		t.Fatalf("priced fleets = %+v, want one pending c5.2xlarge x4", got)
+	}
+	b := Aggregate(cfg, st, cost.Global)
+	if !strings.Contains(b.Modules[0].Note, "pending") {
+		t.Errorf("deploy note %q should mention the pending fleet", b.Modules[0].Note)
+	}
+}
+
+func TestAggregateDeployLegacyFleetsFallBackToConfigOnce(t *testing.T) {
+	// Legacy state records fleets without a shape; the config-derived line
+	// stands in once, and the role-less fleets add no note.
+	cfg := config.Defaults()
+	m := &state.ModuleState{Resources: []state.ModuleResource{
+		{TypeName: deploy.TypeGameLiftFleet, Identifier: "fleet-1"},
+		{TypeName: deploy.TypeGameLiftFleet, Identifier: "fleet-2"},
+	}}
+	got := deployCostResources(m, cfg.Deploy)
+	want := deploy.CostResources(cfg.Deploy)
+	if len(got) != len(want) || got[0].Name != want[0].Name {
+		t.Errorf("fallback = %+v, want %+v", got, want)
+	}
+	if note := deployFleetNote(m); note != "" {
+		t.Errorf("legacy role-less fleets should add no note, got %q", note)
+	}
+}
+
+func TestFleetCostResourceRejectsUnpriceableShapes(t *testing.T) {
+	cases := []map[string]string{
+		{},
+		{"instanceType": "c5.large"},
+		{"desiredInstances": "2"},
+		{"instanceType": "c5.large", "desiredInstances": "0"},
+		{"instanceType": "c5.large", "desiredInstances": "-1"},
+		{"instanceType": "c5.large", "desiredInstances": "abc"},
+	}
+	for _, props := range cases {
+		if _, ok := fleetCostResource(props); ok {
+			t.Errorf("fleetCostResource(%v) should reject an unpriceable shape", props)
+		}
 	}
 }
 
@@ -190,18 +266,11 @@ func TestPropertyLookupsReturnNilWhenAbsent(t *testing.T) {
 	if instanceProperties(empty) != nil {
 		t.Error("instanceProperties should be nil when no instance is tracked")
 	}
-	if fleetProperties(empty) != nil {
-		t.Error("fleetProperties should be nil when no fleet is tracked")
+	if _, ok := fleetCostResource(nil); ok {
+		t.Error("fleetCostResource should not price a fleet without recorded properties")
 	}
-	// deployCostResources with a fleet that has no Properties falls back to config.
-	cfg := config.Defaults()
-	m := &state.ModuleState{Resources: []state.ModuleResource{
-		{TypeName: deploy.TypeGameLiftFleet, Identifier: "fleet-1"},
-	}}
-	got := deployCostResources(m, cfg.Deploy)
-	want := deploy.CostResources(cfg.Deploy)
-	if len(got) != len(want) || got[0].Name != want[0].Name {
-		t.Errorf("fallback = %+v, want %+v", got, want)
+	if note := deployFleetNote(empty); note != "" {
+		t.Errorf("no fleet tracked should add no note, got %q", note)
 	}
 }
 
