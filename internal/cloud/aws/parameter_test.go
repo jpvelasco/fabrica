@@ -95,6 +95,9 @@ func TestPutSecureParameterPutsThenTags(t *testing.T) {
 			if got["Project"] != "fabrica" {
 				t.Errorf("tags = %v, want Project kept", got)
 			}
+			if _, present := got["FabricaModule"]; present {
+				t.Errorf("tags = %v, want FabricaModule dropped (identity keys are Fabrica-owned)", got)
+			}
 			return &ssm.AddTagsToResourceOutput{}, nil
 		},
 	}
@@ -102,7 +105,7 @@ func TestPutSecureParameterPutsThenTags(t *testing.T) {
 	err := p.PutSecureParameter(context.Background(), fabricac.SecureParameter{
 		Name:  name,
 		Value: "secret-value",
-		Tags:  map[string]string{"ManagedBy": "someone-else", "Project": "fabrica"},
+		Tags:  map[string]string{"ManagedBy": "someone-else", "FabricaModule": "operator-module", "Project": "fabrica"},
 	})
 	if err != nil {
 		t.Fatal(err)
