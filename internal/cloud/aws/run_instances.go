@@ -297,9 +297,11 @@ func verifyAdoptedInstance(inst types.Instance, desired json.RawMessage) error {
 }
 
 // instanceProfileNameFromARN extracts the profile name from the instance's
-// profile ARN (arn:aws:iam::<account>:instance-profile/<name>). The EC2
+// profile ARN (arn:aws:iam::<account>:instance-profile/<path>/<name>). The EC2
 // response carries only the ARN and ID — no name — so the suffix is the
-// identity adoption compares against the desired state. Empty for an absent
+// identity adoption compares against the desired state. The IAM path is not
+// part of the profile name (entity names cannot contain "/"), so a
+// path-qualified ARN contributes its last segment only. Empty for an absent
 // profile or an ARN without the expected shape.
 func instanceProfileNameFromARN(p *types.IamInstanceProfile) string {
 	if p == nil {
@@ -308,7 +310,11 @@ func instanceProfileNameFromARN(p *types.IamInstanceProfile) string {
 	arn := aws.ToString(p.Arn)
 	const marker = "instance-profile/"
 	if i := strings.LastIndex(arn, marker); i >= 0 {
-		return arn[i+len(marker):]
+		name := arn[i+len(marker):]
+		if j := strings.LastIndex(name, "/"); j >= 0 {
+			name = name[j+1:]
+		}
+		return name
 	}
 	return ""
 }

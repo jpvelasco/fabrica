@@ -833,6 +833,51 @@ func TestAdoptRejectsWrongProfile(t *testing.T) {
 	}
 }
 
+// TestAdoptProfilePathMatchesByProfileName pins #544: a profile under a
+// non-root IAM path (arn:...instance-profile/<path>/<name>) is the same
+// profile the desired state names, so adoption compares the last path
+// segment, not the path-qualified suffix, and adopts the instance.
+func TestAdoptProfilePathMatchesByProfileName(t *testing.T) {
+	id := "i-path-profile"
+	rec := &recordingEC2{
+		describeOut: &ec2.DescribeInstancesOutput{
+			Reservations: []types.Reservation{{Instances: []types.Instance{
+				adoptedInstanceFixture(id, true, "fabrica/fabrica-workstation-profile"),
+			}}},
+		},
+	}
+	r := adoptedResource()
+	if err := adoptRC(rec).Create(context.Background(), r); err != nil {
+		t.Fatalf("err = %v, want the path-qualified profile adopted", err)
+	}
+	if r.Identifier != id {
+		t.Fatalf("identifier = %q, want the adopted %q", r.Identifier, id)
+	}
+	if rec.in != nil {
+		t.Fatal("RunInstances must not launch a second instance when a tagged one is already pending")
+	}
+}
+
+// TestAdoptProfilePathRejectsDifferentName pins the other side of #544: a
+// path-qualified profile whose last segment differs from the desired state's
+// name is a genuinely different profile and must be rejected.
+func TestAdoptProfilePathRejectsDifferentName(t *testing.T) {
+	rec := &recordingEC2{
+		describeOut: &ec2.DescribeInstancesOutput{
+			Reservations: []types.Reservation{{Instances: []types.Instance{
+				adoptedInstanceFixture("i-other-path-profile", true, "fabrica/other-profile"),
+			}}},
+		},
+	}
+	if err := adoptRC(rec).Create(context.Background(), adoptedResource()); err == nil ||
+		!strings.Contains(err.Error(), "instance profile = \"other-profile\", want \"fabrica-workstation-profile\"") {
+		t.Fatalf("err = %v, want the path-qualified profile adoption error", err)
+	}
+	if rec.in != nil {
+		t.Fatal("RunInstances must not launch a second instance after a rejected match")
+	}
+}
+
 // TestAdoptNoMatchFallsThroughToLaunch pins the 0-match path: the nonce-first
 // lookup finds nothing, the nonce-less leftover check finds nothing either,
 // and the launch proceeds.
@@ -1047,6 +1092,8 @@ func TestInstanceProfileNameFromARN(t *testing.T) {
 	}{
 		{arn: "arn:aws:iam::123456789012:instance-profile/fabrica-workstation-profile", want: "fabrica-workstation-profile"},
 		{arn: "arn:aws:iam::123456789012:instance-profile/a-b-c", want: "a-b-c"},
+		{arn: "arn:aws:iam::123456789012:instance-profile/fabrica/fabrica-workstation-profile", want: "fabrica-workstation-profile"},
+		{arn: "arn:aws:iam::123456789012:instance-profile/a/b/c-d-e", want: "c-d-e"},
 		{arn: "not-an-arn", want: ""},
 		{arn: "arn:aws:iam::123456789012:instance-profile/", want: ""},
 		{arn: "", want: ""},
