@@ -31,6 +31,21 @@ instant alias flip — no re-provisioning. `destroy` (without `--all`) leaves th
 alias and role in place so the alias your game backend references survives
 teardown.
 
+## Promote resume
+
+A `promote` that has registered its build and started the fleet records both
+(fleet role `provisioning`). Re-running the same `promote <build-version>` —
+the documented recovery after `--no-wait`, and the retry after a failure
+during polling or the alias flip — **resumes** that pending deployment: it
+polls the existing fleet to `ACTIVE` and flips the alias without registering
+another build or creating another fleet. Re-running under `--no-wait` reports
+the pending fleet and returns without polling or flipping. Recorded state
+that is ambiguous fails with a loud error instead of guessing: two or more
+pending fleets, a pending fleet recorded for a different build version, or a
+pending fleet with no (or with more than one) matching build record. Resolve
+those with `fabrica deploy status` and `.fabrica/state.json` before
+re-running.
+
 ## Architecture notes
 
 - GameLift `Build`, `Fleet`, and `Alias` are created through the Cloud Control

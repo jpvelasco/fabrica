@@ -77,8 +77,9 @@ server.zip"; override with --s3-bucket / --s3-key.`,
   # Point at a specific build artifact in S3:
   fabrica deploy promote v1.2.3 --s3-key builds/v1.2.3/LinuxServer.zip
 
-  # Start fleet creation and return immediately (no alias flip — track with
-  # 'fabrica deploy status', then re-run without --no-wait once ACTIVE):
+  # Start fleet creation and return immediately (no alias flip). Re-run the
+  # same promote without --no-wait to resume: it picks up the pending fleet,
+  # waits for ACTIVE, and flips the alias — no duplicate builds or fleets.
   fabrica deploy promote v1.2.3 --no-wait
 
   # Prereqs: 'fabrica deploy setup' has run and the build zip is uploaded to
@@ -123,7 +124,7 @@ server.zip"; override with --s3-bucket / --s3-key.`,
 	}
 	cmd.Flags().StringVar(&s3Bucket, "s3-bucket", "", "S3 bucket holding the build (default: deploy.buildBucket)")
 	cmd.Flags().StringVar(&s3Key, "s3-key", "", "S3 key of the build zip (default: builds/<version>/server.zip)")
-	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Return after starting fleet creation without waiting for ACTIVE (skips alias flip)")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Return after starting fleet creation without waiting for ACTIVE (skips the alias flip; re-run the same promote without --no-wait to resume)")
 	return cmd
 }
 
@@ -165,19 +166,26 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("building promote plan: %w", err)
 	}
 
+	pending, err := c.findPendingDeploy(m, plan)
+	if err != nil {
+		return err
+	}
+
 	if c.dryRun {
-		c.printDryRun(plan)
+		c.printDryRun(plan, pending)
 		return nil
 	}
 
-	c.printPlan(plan)
-	if !c.assumeYes {
-		if !c.confirm("Register this build and create a new fleet?") {
-			fmt.Fprintln(c.out, "Promote cancelled. No AWS resources were created.")
+	if pending.fleetID != "" {
+		if !c.confirmGate(fmt.Sprintf("Resume promote of %s and flip alias %s to the pending fleet %s once it is ACTIVE?", plan.BuildVersion, plan.AliasID, pending.fleetID)) {
 			return nil
 		}
-	} else {
-		fmt.Fprintln(c.out, "Proceeding without confirmation (--yes set).")
+		return c.resume(ctx, st, m, plan, pending)
+	}
+
+	c.printPlan(plan)
+	if !c.confirmGate("Register this build and create a new fleet?") {
+		return nil
 	}
 
 	return c.apply(ctx, st, m, plan)
@@ -235,35 +243,128 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 
 	if !c.wait {
 		fmt.Fprintf(c.out, "\nFleet creation started. Track it with: fabrica deploy status\n")
-		fmt.Fprintln(c.out, "Alias was NOT flipped (--no-wait). Re-run without --no-wait, or flip manually once ACTIVE.")
+		fmt.Fprintf(c.out, "Alias was NOT flipped (--no-wait). Resume with: fabrica deploy promote %s (without --no-wait) — it picks up this pending fleet and flips the alias once ACTIVE, or flip the alias manually.\n", plan.BuildVersion)
 		return nil
 	}
 
+	return c.completeActivation(ctx, st, m, plan, fleetRes.Identifier)
+}
+
+// pendingDeploy describes a recorded promote whose build and fleet exist in
+// AWS but which has not activated yet (fleet role "provisioning").
+type pendingDeploy struct {
+	buildID string
+	fleetID string
+}
+
+// findPendingDeploy locates the recorded pending deployment for
+// plan.BuildVersion so a re-run can resume it instead of creating a duplicate
+// build and fleet. It returns the zero value when nothing is pending (fresh
+// promote) and an error when the recorded state is ambiguous: two or more
+// pending fleets, a pending fleet recorded for another build, or a pending
+// fleet with no (or with more than one) matching build record.
+func (c command) findPendingDeploy(m *fabricastate.ModuleState, plan *deploy.PromotePlan) (pendingDeploy, error) {
+	var pending []fabricastate.ModuleResource
+	for _, r := range m.Resources {
+		if r.TypeName == deploy.TypeGameLiftFleet && r.Properties["role"] == "provisioning" {
+			pending = append(pending, r)
+		}
+	}
+	switch len(pending) {
+	case 0:
+		return pendingDeploy{}, nil
+	case 1:
+	default:
+		return pendingDeploy{}, fmt.Errorf("multiple pending deploys (fleets %s) — resolve them with 'fabrica deploy status' before promoting again", resourceIDs(pending))
+	}
+	f := pending[0]
+	if v := f.Properties["buildVersion"]; v != plan.BuildVersion {
+		return pendingDeploy{}, fmt.Errorf("a pending promote for build %s (fleet %s) is still in flight — wait for it to finish or resolve it with 'fabrica deploy status' before promoting %s", v, f.Identifier, plan.BuildVersion)
+	}
+	var builds []fabricastate.ModuleResource
+	for _, r := range m.Resources {
+		if r.TypeName == deploy.TypeGameLiftBuild && r.Properties["buildVersion"] == plan.BuildVersion {
+			builds = append(builds, r)
+		}
+	}
+	switch len(builds) {
+	case 1:
+		return pendingDeploy{buildID: builds[0].Identifier, fleetID: f.Identifier}, nil
+	case 0:
+		return pendingDeploy{}, fmt.Errorf("pending fleet %s has no recorded build for %s — inspect .fabrica/state.json before promoting again", f.Identifier, plan.BuildVersion)
+	default:
+		return pendingDeploy{}, fmt.Errorf("ambiguous pending deploy for %s (builds %s, fleet %s) — inspect .fabrica/state.json before promoting again", plan.BuildVersion, resourceIDs(builds), f.Identifier)
+	}
+}
+
+// resourceIDs joins resource identifiers for error messages.
+func resourceIDs(rs []fabricastate.ModuleResource) string {
+	ids := make([]string, len(rs))
+	for i, r := range rs {
+		ids[i] = r.Identifier
+	}
+	return strings.Join(ids, ", ")
+}
+
+// confirmGate prompts unless --yes is set and reports whether promote should
+// proceed, printing the proceed or cancellation line either way.
+func (c command) confirmGate(question string) bool {
+	if c.assumeYes {
+		fmt.Fprintln(c.out, "Proceeding without confirmation (--yes set).")
+		return true
+	}
+	if !c.confirm(question) {
+		fmt.Fprintln(c.out, "Promote cancelled. No AWS resources were created or changed.")
+		return false
+	}
+	return true
+}
+
+// resume continues a recorded pending deployment: the build and fleet already
+// exist in AWS, so it polls the existing fleet to ACTIVE and flips the alias
+// — never re-registering the build or re-creating the fleet.
+func (c command) resume(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, plan *deploy.PromotePlan, p pendingDeploy) error {
+	if c.updateResource == nil || c.fleetStatus == nil {
+		return fmt.Errorf("cloud provider does not support GameLift deployment — only AWS is supported in V1")
+	}
+	fmt.Fprintf(c.out, "Resuming pending promote of %s (build %s, fleet %s) — no new resources created.\n", plan.BuildVersion, p.buildID, p.fleetID)
+	if !c.wait {
+		fmt.Fprintln(c.out, "Alias was NOT flipped (--no-wait). Re-run without --no-wait to resume and flip the alias once the fleet is ACTIVE.")
+		return nil
+	}
+	return c.completeActivation(ctx, st, m, plan, p.fleetID)
+}
+
+// completeActivation polls the fleet to ACTIVE, flips the alias to it, records
+// the active-fleet swap, and marks the module ready. Shared by the fresh
+// create path and the resume path so a re-run never re-registers the build or
+// re-creates the fleet.
+func (c command) completeActivation(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, plan *deploy.PromotePlan, fleetID string) error {
 	// 3. Poll activation.
-	if err := c.pollUntilActive(ctx, fleetRes.Identifier, plan); err != nil {
+	if err := c.pollUntilActive(ctx, fleetID, plan); err != nil {
 		return err
 	}
 
 	// 4. Flip alias.
-	patch, err := deploy.AliasFlipPatch(fleetRes.Identifier)
+	patch, err := deploy.AliasFlipPatch(fleetID)
 	if err != nil {
 		return fmt.Errorf("building alias flip patch: %w", err)
 	}
 	aliasRes := &cloud.Resource{TypeName: deploy.TypeGameLiftAlias, Identifier: plan.AliasID, DesiredState: patch}
 	if err := c.updateResource(ctx, aliasRes); err != nil {
-		return fmt.Errorf("fleet %s is ACTIVE but flipping the alias failed: %w — the old fleet still serves traffic; re-run 'fabrica deploy promote %s' or flip the alias manually", fleetRes.Identifier, err, plan.BuildVersion)
+		return fmt.Errorf("fleet %s is ACTIVE but flipping the alias failed: %w — the old fleet still serves traffic; re-run 'fabrica deploy promote %s' to resume, or flip the alias manually", fleetID, err, plan.BuildVersion)
 	}
-	fmt.Fprintf(c.out, "Alias %s now points to fleet %s.\n", plan.AliasID, fleetRes.Identifier)
+	fmt.Fprintf(c.out, "Alias %s now points to fleet %s.\n", plan.AliasID, fleetID)
 
 	// 5. Record rollback target: demote previous active fleet, promote new one.
-	c.swapActiveFleet(m, fleetRes.Identifier)
+	c.swapActiveFleet(m, fleetID)
 	st.UpsertModule(moduleName, plan.BuildVersion, "ready", m.Resources)
 	if err := c.writeState(st); err != nil {
 		return fmt.Errorf("writing state: %w", err)
 	}
 
 	fmt.Fprintln(c.out)
-	fmt.Fprintf(c.out, "Promote complete — %s is live on fleet %s.\n", plan.BuildVersion, fleetRes.Identifier)
+	fmt.Fprintf(c.out, "Promote complete — %s is live on fleet %s.\n", plan.BuildVersion, fleetID)
 	fmt.Fprintln(c.out, "Roll back with: fabrica deploy rollback")
 	return nil
 }
@@ -292,7 +393,7 @@ func (c command) pollUntilActive(ctx context.Context, fleetID string, plan *depl
 			fmt.Fprintf(c.out, "  fleet %s: ACTIVE, %d active of %d desired — waiting for the requested capacity\n", fleetID, info.CapacityCurrent, plan.DesiredInstances)
 		case "ERROR", "DELETING", "TERMINATED":
 			c.printFleetEvents(ctx, fleetID)
-			return fmt.Errorf("fleet %s entered status %s before becoming ACTIVE — see events above and 'fabrica deploy status'; the alias was not changed", fleetID, info.Status)
+			return fmt.Errorf("fleet %s entered status %s before becoming ACTIVE — see events above; the alias was not changed. Re-run 'fabrica deploy promote %s' to resume, or check 'fabrica deploy status'", fleetID, info.Status, plan.BuildVersion)
 		}
 		if c.now().After(deadline) {
 			c.printFleetEvents(ctx, fleetID)
@@ -300,10 +401,10 @@ func (c command) pollUntilActive(ctx context.Context, fleetID string, plan *depl
 			if info.CapacityCurrent > 0 || info.CapacityDesired > 0 {
 				extra = fmt.Sprintf(", %d active of %d desired", info.CapacityCurrent, info.CapacityDesired)
 			}
-			return fmt.Errorf("timed out after %d minutes waiting for fleet %s to become ACTIVE (status %s%s) — check 'fabrica deploy status'; the alias was not changed", plan.ActivationTimeoutMinutes, fleetID, info.Status, extra)
+			return fmt.Errorf("timed out after %d minutes waiting for fleet %s to become ACTIVE (status %s%s) — the alias was not changed. Re-run 'fabrica deploy promote %s' to resume, or check 'fabrica deploy status'", plan.ActivationTimeoutMinutes, fleetID, info.Status, extra, plan.BuildVersion)
 		}
 		if err := c.waitCtx(ctx, pollInterval); err != nil {
-			return fmt.Errorf("waiting for fleet %s cancelled: %w — the alias was not changed; check 'fabrica deploy status'", fleetID, err)
+			return fmt.Errorf("waiting for fleet %s cancelled: %w — the alias was not changed; re-run 'fabrica deploy promote %s' to resume, or check 'fabrica deploy status'", fleetID, err, plan.BuildVersion)
 		}
 	}
 }
@@ -379,13 +480,17 @@ func (c command) swapActiveFleet(m *fabricastate.ModuleState, newFleetID string)
 	}
 }
 
-func (c command) printDryRun(plan *deploy.PromotePlan) {
+func (c command) printDryRun(plan *deploy.PromotePlan, p pendingDeploy) {
 	fmt.Fprintln(c.out, "Deploy promote (dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	c.printPlanDetails(plan)
 	c.printCidrWarning(plan)
 	c.costs.EstimateAll(plan.CostResources).Render(c.out, lineWidth)
-	fmt.Fprintln(c.out, "Run without --dry-run to register the build and create the fleet.")
+	if p.fleetID != "" {
+		fmt.Fprintf(c.out, "Pending promote detected (build %s, fleet %s): running without --dry-run resumes it — no new resources are created.\n", p.buildID, p.fleetID)
+	} else {
+		fmt.Fprintln(c.out, "Run without --dry-run to register the build and create the fleet.")
+	}
 }
 
 func (c command) printPlan(plan *deploy.PromotePlan) {
