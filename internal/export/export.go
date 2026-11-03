@@ -998,31 +998,49 @@ func loreStoreTableKeySchema(spec lore.StoreTableSpec) []map[string]any {
 	return schema
 }
 
-// loreStoreTableAttributeDefinitions renders the primary key attributes for
-// KeySchema in CloudFormations AttributeDefinitions format.
+// loreStoreTableAttributeDefinitions renders every key attribute the table
+// uses — primary key first, then GSI key attributes in spec order, deduped —
+// in the CloudControl AttributeDefinitions format. DynamoDB requires a
+// definition for every key attribute referenced by KeySchema or a GSI
+// KeySchema; a primary-key-only list rejects the locks table's GSIs.
 func loreStoreTableAttributeDefinitions(spec lore.StoreTableSpec) []map[string]any {
-	defs := []map[string]any{
-		{"AttributeName": spec.PK, "AttributeType": spec.PKType},
+	types := map[string]string{spec.PK: spec.PKType}
+	names := []string{spec.PK}
+	add := func(name, typ string) {
+		if name == "" {
+			return
+		}
+		if _, known := types[name]; !known {
+			types[name] = typ
+			names = append(names, name)
+		}
 	}
-	if spec.SK != "" {
-		defs = append(defs, map[string]any{"AttributeName": spec.SK, "AttributeType": spec.SKType})
+	add(spec.SK, spec.SKType)
+	for _, gsi := range spec.GSIs {
+		add(gsi.PK, gsi.PKType)
+		add(gsi.SK, gsi.SKType)
+	}
+	defs := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		defs = append(defs, map[string]any{"AttributeName": name, "AttributeType": types[name]})
 	}
 	return defs
 }
 
 // loreStoreTableGSIs renders the locks table's global secondary indexes in
-// CloudFormation format. All Lore store GSIs project all attributes.
+// the canonical CloudControl shape (nested Projection) that the create path
+// ships to Cloud Control, so the export and the live table agree. All Lore
+// store GSIs project all attributes.
 func loreStoreTableGSIs(spec lore.StoreTableSpec) []map[string]any {
 	gsis := make([]map[string]any, 0, len(spec.GSIs))
 	for _, gsi := range spec.GSIs {
-		keySchema := []map[string]any{
-			{"AttributeName": gsi.PK, "KeyType": "HASH"},
-			{"AttributeName": gsi.SK, "KeyType": "RANGE"},
-		}
 		gsis = append(gsis, map[string]any{
-			"IndexName":      gsi.Name,
-			"KeySchema":      keySchema,
-			"ProjectionType": "ALL",
+			"IndexName": gsi.Name,
+			"KeySchema": []map[string]any{
+				{"AttributeName": gsi.PK, "KeyType": "HASH"},
+				{"AttributeName": gsi.SK, "KeyType": "RANGE"},
+			},
+			"Projection": map[string]any{"ProjectionType": "ALL"},
 		})
 	}
 	return gsis

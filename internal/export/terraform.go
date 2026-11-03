@@ -87,6 +87,8 @@ func (g *terraformGenerator) resourceToHCL(res ExportResource) (string, error) {
 			sb.WriteString(g.hclKeySchema(v))
 		case "AttributeDefinitions":
 			sb.WriteString(g.hclAttrDefs(v))
+		case "GlobalSecondaryIndexes":
+			sb.WriteString(g.hclGSIs(v))
 		case "VersioningConfiguration":
 			sb.WriteString(g.hclVersioning(v))
 		case "BucketEncryption":
@@ -283,25 +285,28 @@ func (g *terraformGenerator) hclPolicyArns(v any) string {
 	return ""
 }
 
-// hclInlinePolicies converts inline IAM policies to HCL format. Each policy's
-// document is emitted as a JSON string so the raw policy text (from the
-// shared iamrole/lore helpers) appears verbatim in the block.
+// hclInlinePolicies converts inline IAM policies to HCL format, emitting one
+// repeatable inline_policy block per policy (the aws_iam_role argument is a
+// block, so an attribute map is invalid HCL). Each policy's document is
+// emitted as a JSON string so the raw policy text (from the shared
+// iamrole/lore helpers) appears verbatim in the block.
 func (g *terraformGenerator) hclInlinePolicies(v any) string {
 	policies, ok := v.([]map[string]any)
 	if !ok || len(policies) == 0 {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString("  inline_policy = {\n")
 	for _, p := range policies {
 		name, _ := p["PolicyName"].(string)
 		// Policy documents are built by the shared iamrole/lore helpers as
 		// JSON-serializable maps (the create path ships the same values to
 		// Cloud Control), so Marshal cannot fail here.
 		doc, _ := json.Marshal(p["PolicyDocument"])
-		fmt.Fprintf(&sb, "    %s = %q\n", name, string(doc))
+		sb.WriteString("  inline_policy {\n")
+		fmt.Fprintf(&sb, "    name   = %q\n", name)
+		fmt.Fprintf(&sb, "    policy = %q\n", string(doc))
+		sb.WriteString("  }\n")
 	}
-	sb.WriteString("  }\n")
 	return sb.String()
 }
 
@@ -340,30 +345,82 @@ func (g *terraformGenerator) hclBlockDevices(v any) string {
 	return sb.String()
 }
 
-// hclKeySchema converts DynamoDB key schema to HCL format.
+// hclKeySchema converts DynamoDB key schema to HCL format, emitting the
+// provider-native hash_key and range_key arguments (the table key is a
+// top-level argument pair, not a repeated block).
 func (g *terraformGenerator) hclKeySchema(v any) string {
 	ks, ok := v.([]map[string]any)
 	if !ok {
 		return ""
 	}
+	return keySchemaHCL(ks, "  ")
+}
+
+// keySchemaHCL renders a CloudFormation KeySchema as hash_key/range_key lines
+// at the given indent, so table-level and GSI-level key schemas share one
+// renderer. Unknown KeyType entries are skipped; the provider rejects them.
+func keySchemaHCL(ks []map[string]any, indent string) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "  hash_key = %q\n", ks[0]["AttributeName"])
+	for _, k := range ks {
+		name, _ := k["AttributeName"].(string)
+		switch k["KeyType"] {
+		case "HASH":
+			fmt.Fprintf(&sb, "%shash_key = %q\n", indent, name)
+		case "RANGE":
+			fmt.Fprintf(&sb, "%srange_key = %q\n", indent, name)
+		}
+	}
 	return sb.String()
 }
 
-// hclAttrDefs converts DynamoDB attribute definitions to HCL format.
+// hclAttrDefs converts DynamoDB attribute definitions to HCL format, emitting
+// one repeatable attribute block per definition.
 func (g *terraformGenerator) hclAttrDefs(v any) string {
 	ad, ok := v.([]map[string]any)
-	if !ok {
+	if !ok || len(ad) == 0 {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString("  attribute {\n")
 	for _, a := range ad {
+		sb.WriteString("  attribute {\n")
 		fmt.Fprintf(&sb, "    name = %q\n", a["AttributeName"])
 		fmt.Fprintf(&sb, "    type = %q\n", a["AttributeType"])
+		sb.WriteString("  }\n")
 	}
-	sb.WriteString("  }\n")
+	return sb.String()
+}
+
+// hclGSIs converts DynamoDB global secondary indexes to HCL format, emitting
+// one repeatable global_secondary_index block per index. The projection type
+// comes from the canonical nested Projection form the create path ships to
+// Cloud Control; a flat ProjectionType is accepted as a fallback.
+func (g *terraformGenerator) hclGSIs(v any) string {
+	gsis, ok := v.([]map[string]any)
+	if !ok || len(gsis) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for _, idx := range gsis {
+		name, _ := idx["IndexName"].(string)
+		sb.WriteString("  global_secondary_index {\n")
+		fmt.Fprintf(&sb, "    name = %q\n", name)
+		if ks, ok := idx["KeySchema"].([]map[string]any); ok {
+			sb.WriteString(keySchemaHCL(ks, "    "))
+		}
+		var projType string
+		var nonKey []string
+		if proj, ok := idx["Projection"].(map[string]any); ok {
+			projType, _ = proj["ProjectionType"].(string)
+			nonKey, _ = proj["NonKeyAttributes"].([]string)
+		} else if pt, ok := idx["ProjectionType"].(string); ok {
+			projType = pt
+		}
+		fmt.Fprintf(&sb, "    projection_type = %q\n", projType)
+		if len(nonKey) > 0 {
+			fmt.Fprintf(&sb, "    projection = %v\n", hclStringList(nonKey))
+		}
+		sb.WriteString("  }\n")
+	}
 	return sb.String()
 }
 
@@ -548,10 +605,6 @@ func (g *terraformGenerator) tfAttributeName(cfAttr string) string {
 		return "managed_policy_arns"
 	case "AssumeRolePolicyDocument":
 		return "assume_role_policy"
-	case "KeySchema":
-		return "hash_key"
-	case "AttributeDefinitions":
-		return "attribute"
 	case "VersioningConfiguration":
 		return "versioning"
 	case "BucketEncryption":
