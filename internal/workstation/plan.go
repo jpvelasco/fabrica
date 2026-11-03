@@ -85,6 +85,19 @@ type CreatePlan struct {
 	CostResources []cost.Resource
 }
 
+// RequiredResources lists the resource TypeNames a complete Workstation
+// module records in state. Create retries compare a module's recorded
+// inventory against this list to separate a fully provisioned module (in any
+// transitional status) from a partial one.
+func (p CreatePlan) RequiredResources() []string {
+	return []string{
+		cloud.TypeAWSEC2SecurityGroup,
+		cloud.TypeAWSIAMRole,
+		cloud.TypeAWSIAMInstanceProfile,
+		cloud.TypeAWSEC2Instance,
+	}
+}
+
 // resolveSizing applies the sizing precedence per field: explicit config
 // (which carries --instance-type/--volume-size flags merged by the cmd layer)
 // > template > default. A template only fills fields the operator left unset.

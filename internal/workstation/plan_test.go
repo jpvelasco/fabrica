@@ -3,6 +3,7 @@ package workstation
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strconv"
 	"testing"
 
@@ -253,5 +254,18 @@ func TestNewCreatePlanSSMRoleAndProfile(t *testing.T) {
 	}
 	if plan.InstanceProfileName != "fabrica-workstation-profile" {
 		t.Errorf("InstanceProfileName = %q, want fabrica-workstation-profile", plan.InstanceProfileName)
+	}
+}
+
+func TestCreatePlanRequiredResources(t *testing.T) {
+	p := CreatePlan{}
+	want := []string{
+		cloud.TypeAWSEC2SecurityGroup,
+		cloud.TypeAWSIAMRole,
+		cloud.TypeAWSIAMInstanceProfile,
+		cloud.TypeAWSEC2Instance,
+	}
+	if got := p.RequiredResources(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("RequiredResources() = %v, want %v", got, want)
 	}
 }

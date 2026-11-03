@@ -3,6 +3,7 @@ package perforce
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/assert"
@@ -249,5 +250,18 @@ func TestNewCreatePlan_CostResourceNamesReflectInputs(t *testing.T) {
 	}
 	if !foundVolume {
 		t.Error("CostResources missing AWS::EC2::Volume with name gp3-1000GiB")
+	}
+}
+
+func TestCreatePlanRequiredResources(t *testing.T) {
+	p := CreatePlan{}
+	want := []string{
+		cloud.TypeAWSEC2SecurityGroup,
+		cloud.TypeAWSIAMRole,
+		cloud.TypeAWSIAMInstanceProfile,
+		cloud.TypeAWSEC2Instance,
+	}
+	if got := p.RequiredResources(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("RequiredResources() = %v, want %v", got, want)
 	}
 }

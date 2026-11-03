@@ -59,8 +59,10 @@ Creates four resources in order:
   3. IAM Instance Profile — attaches the role to the EC2 instance
   4. EC2 Instance — runs the Horde coordinator using a user-provided AMI
 
-State is written after each resource so a partial failure is recoverable:
-re-running create will detect the already-provisioned module and exit cleanly.
+State is written after each resource, so an interrupted create leaves a
+recoverable record. Re-running create on a complete module exits cleanly; on
+a partial one it fails and names the missing resources plus the cleanup
+command to run first.
 
 A MongoDB password is generated and written to .fabrica/horde-credentials.yaml.
 With Docker compose AMIs, this password is validated but not applied by cloud-init
@@ -133,20 +135,23 @@ func (c command) run(ctx context.Context) error {
 	}
 
 	return provision.RunCreate(ctx, provision.CreateSpec[*horde.CreatePlan]{
-		ModuleName:      moduleName,
-		Account:         account,
-		Plan:            plan,
-		DryRun:          c.dryRun,
-		AssumeYes:       c.assumeYes,
-		Out:             c.out,
-		ExistingMessage: "Horde is already provisioned. Run 'fabrica horde status' to check health.\nUse 'fabrica horde destroy' to remove it first.\n",
-		Confirm:         c.confirm,
-		ReadState:       c.readState,
-		PrintDryRun:     c.printDryRun,
-		PrintApplyPlan:  c.printApplyPlan,
-		Apply:           c.applyCreate,
-		Runtime:         c.runtime,
-		Operation:       "horde create",
+		ModuleName:        moduleName,
+		Account:           account,
+		Plan:              plan,
+		DryRun:            c.dryRun,
+		AssumeYes:         c.assumeYes,
+		Out:               c.out,
+		ExistingMessage:   "Horde is already provisioned. Run 'fabrica horde status' to check health.\nUse 'fabrica horde destroy' to remove it first.\n",
+		ReadyStatuses:     []string{"ready"},
+		RequiredResources: plan.RequiredResources(),
+		CleanupCommand:    "fabrica horde destroy",
+		Confirm:           c.confirm,
+		ReadState:         c.readState,
+		PrintDryRun:       c.printDryRun,
+		PrintApplyPlan:    c.printApplyPlan,
+		Apply:             c.applyCreate,
+		Runtime:           c.runtime,
+		Operation:         "horde create",
 	})
 }
 

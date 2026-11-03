@@ -64,8 +64,10 @@ Store backend:
   - "s3": S3 + DynamoDB-backed store (versioned bucket, four DynamoDB tables,
     and an IAM role with matching S3 + DynamoDB permissions plus SSM)
 
-State is written after each resource so a partial failure is recoverable:
-re-running create will detect the already-provisioned module and exit cleanly.
+State is written after each resource, so an interrupted create leaves a
+recoverable record. Re-running create on a complete module exits cleanly; on
+a partial one it fails and names the missing resources plus the cleanup
+command to run first.
 
 Connection notes are written to .fabrica/lore-credentials.yaml.
 Set lore.tls.enabled and bake cert/key files into the AMI to enable TLS.
@@ -134,20 +136,23 @@ func (c command) run(ctx context.Context) error {
 	}
 
 	return provision.RunCreate(ctx, provision.CreateSpec[*lore.CreatePlan]{
-		ModuleName:      moduleName,
-		Account:         account,
-		Plan:            plan,
-		DryRun:          c.dryRun,
-		AssumeYes:       c.assumeYes,
-		Out:             c.out,
-		ExistingMessage: "Lore is already provisioned. Run 'fabrica lore status' to check health.\nUse 'fabrica lore destroy' to remove it first.\n",
-		Confirm:         c.confirm,
-		ReadState:       c.readState,
-		PrintDryRun:     c.printDryRun,
-		PrintApplyPlan:  c.printApplyPlan,
-		Apply:           c.applyCreate,
-		Runtime:         c.runtime,
-		Operation:       "lore create",
+		ModuleName:        moduleName,
+		Account:           account,
+		Plan:              plan,
+		DryRun:            c.dryRun,
+		AssumeYes:         c.assumeYes,
+		Out:               c.out,
+		ExistingMessage:   "Lore is already provisioned. Run 'fabrica lore status' to check health.\nUse 'fabrica lore destroy' to remove it first.\n",
+		ReadyStatuses:     []string{"ready"},
+		RequiredResources: plan.RequiredResources(),
+		CleanupCommand:    "fabrica lore destroy",
+		Confirm:           c.confirm,
+		ReadState:         c.readState,
+		PrintDryRun:       c.printDryRun,
+		PrintApplyPlan:    c.printApplyPlan,
+		Apply:             c.applyCreate,
+		Runtime:           c.runtime,
+		Operation:         "lore create",
 	})
 }
 

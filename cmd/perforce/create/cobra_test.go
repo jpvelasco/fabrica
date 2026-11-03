@@ -162,7 +162,8 @@ func TestCreateCobraDryRunVolumeSizeFlag(t *testing.T) {
 	testutil.AssertContains(t, got, "1000 GiB")
 }
 
-// TestCreateCobraAlreadyProvisioned verifies early exit when module is in state.
+// TestCreateCobraAlreadyProvisioned verifies early exit when a complete
+// module is in state, even while its status is still transitional.
 func TestCreateCobraAlreadyProvisioned(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -170,6 +171,8 @@ func TestCreateCobraAlreadyProvisioned(t *testing.T) {
 	stateJSON := `{"account":"123456789012","region":"us-east-1","modules":[
 		{"name":"perforce","version":"2025.2","status":"provisioning","resources":[
 			{"typeName":"AWS::EC2::SecurityGroup","identifier":"sg-existing"},
+			{"typeName":"AWS::IAM::Role","identifier":"fabrica-perforce-role"},
+			{"typeName":"AWS::IAM::InstanceProfile","identifier":"fabrica-perforce-profile"},
 			{"typeName":"AWS::EC2::Instance","identifier":"i-existing"}
 		]}]}`
 	// #nosec G301 -- directory needs execute for traversal

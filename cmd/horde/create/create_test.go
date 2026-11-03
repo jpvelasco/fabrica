@@ -78,13 +78,16 @@ func TestCreateDryRunOutputFields(t *testing.T) {
 	}
 }
 
-// TestCreateAlreadyProvisioned verifies clean exit when module is already in state.
+// TestCreateAlreadyProvisioned verifies clean exit when a complete module is
+// already in state, even while its status is still transitional.
 func TestCreateAlreadyProvisioned(t *testing.T) {
 	var out bytes.Buffer
 	provider := &testutil.TestProvider{}
 	st := testutil.NewTestState()
 	st.UpsertModule("horde", "ami-existing", "provisioning", []fabricastate.ModuleResource{
 		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-existing"},
+		{TypeName: "AWS::IAM::Role", Identifier: "fabrica-horde-role"},
+		{TypeName: "AWS::IAM::InstanceProfile", Identifier: "fabrica-horde-profile"},
 		{TypeName: "AWS::EC2::Instance", Identifier: "i-existing"},
 	})
 	c := newTestCommand(&out, provider, st)
@@ -96,6 +99,34 @@ func TestCreateAlreadyProvisioned(t *testing.T) {
 		t.Fatalf("already-exists: made %d create calls, want 0", provider.CreateCalls)
 	}
 	assert.Contains(t, out.String(), "already provisioned")
+}
+
+// TestCreatePartialModuleFails verifies a partially provisioned module (an
+// interrupted create) is refused with recovery guidance instead of reported
+// as already provisioned.
+func TestCreatePartialModuleFails(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
+	st.UpsertModule("horde", "ami-existing", "provisioning", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-existing"},
+	})
+	c := newTestCommand(&out, provider, st)
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("run: expected error for partial module, got nil")
+	}
+	for _, want := range []string{
+		`status "provisioning"`,
+		"AWS::EC2::Instance",
+		"fabrica horde destroy",
+	} {
+		assert.Contains(t, err.Error(), want)
+	}
+	if provider.CreateCalls != 0 {
+		t.Fatalf("partial module: made %d create calls, want 0", provider.CreateCalls)
+	}
 }
 
 // TestCreateMissingAmiID verifies error when AmiID is not configured.

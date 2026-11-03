@@ -61,8 +61,10 @@ Creates two resources in order:
   1. EC2 Security Group — allows TCP 1666 inbound (Perforce p4d port)
   2. EC2 Instance — runs Helix Core with a dedicated gp3 EBS data volume
 
-State is written after each resource so a partial failure is recoverable:
-re-running create will detect the already-provisioned module and exit cleanly.
+State is written after each resource, so an interrupted create leaves a
+recoverable record. Re-running create on a complete module exits cleanly; on
+a partial one it fails and names the missing resources plus the cleanup
+command to run first.
 
 A random admin password is generated and written to .fabrica/perforce-credentials.yaml.
 Rotate it after first login.
@@ -133,20 +135,23 @@ func (c command) run(ctx context.Context) error {
 	}
 
 	return provision.RunCreate(ctx, provision.CreateSpec[*perforce.CreatePlan]{
-		ModuleName:      moduleName,
-		Account:         account,
-		Plan:            plan,
-		DryRun:          c.dryRun,
-		AssumeYes:       c.assumeYes,
-		Out:             c.out,
-		ExistingMessage: "Perforce is already provisioned. Run 'fabrica perforce status' to check health.\nUse 'fabrica perforce destroy' to remove it first.\n",
-		Confirm:         c.confirm,
-		ReadState:       c.readState,
-		PrintDryRun:     c.printDryRun,
-		PrintApplyPlan:  c.printApplyPlan,
-		Apply:           c.applyCreate,
-		Runtime:         c.runtime,
-		Operation:       "perforce create",
+		ModuleName:        moduleName,
+		Account:           account,
+		Plan:              plan,
+		DryRun:            c.dryRun,
+		AssumeYes:         c.assumeYes,
+		Out:               c.out,
+		ExistingMessage:   "Perforce is already provisioned. Run 'fabrica perforce status' to check health.\nUse 'fabrica perforce destroy' to remove it first.\n",
+		ReadyStatuses:     []string{"ready"},
+		RequiredResources: plan.RequiredResources(),
+		CleanupCommand:    "fabrica perforce destroy",
+		Confirm:           c.confirm,
+		ReadState:         c.readState,
+		PrintDryRun:       c.printDryRun,
+		PrintApplyPlan:    c.printApplyPlan,
+		Apply:             c.applyCreate,
+		Runtime:           c.runtime,
+		Operation:         "perforce create",
 	})
 }
 
