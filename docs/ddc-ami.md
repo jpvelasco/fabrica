@@ -106,6 +106,8 @@ SSM-verified `ddc setup`/`status`/`destroy` before the AMI is trusted.
 
 ### Bake (Image Builder, preferred)
 
+Guardrailed accounts: the bake needs the request-tag-gated Image Builder grant in [guardrailed-accounts.md](guardrailed-accounts.md#operator-policy-minimal-example); pass `--tags`/`--resource-tags` with `ManagedBy=fabrica` on each create.
+
 `fabrica ddc ami build` is local-only (writes `build-guide.md` only). Drive
 Image Builder directly, using the same boto3-based flow proven by the Horde
 and Lore bakes in this account:

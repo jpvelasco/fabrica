@@ -82,6 +82,8 @@ instance. See [guardrailed-accounts.md](guardrailed-accounts.md#ebs-encryption-i
 
 ## Bake with Image Builder
 
+Guardrailed accounts: the bake needs the request-tag-gated Image Builder grant in [guardrailed-accounts.md](guardrailed-accounts.md#operator-policy-minimal-example); pass `--tags`/`--resource-tags` with `ManagedBy=fabrica` on each create.
+
 The generated `component.yaml` is larger than the 16,000-character limit of
 `create-component`'s `--data` parameter, so the component must be
 registered from an S3 URI (`--uri`) instead of inlined (`--data`). The
