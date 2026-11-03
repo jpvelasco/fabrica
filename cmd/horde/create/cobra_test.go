@@ -77,7 +77,7 @@ func TestCreateCobraDryRunOutputFields(t *testing.T) {
 // TestCreateCobraYesFlagSkipsConfirmation verifies --yes executes without prompt.
 func TestCreateCobraYesFlagSkipsConfirmation(t *testing.T) {
 	t.Chdir(t.TempDir())
-	provider := &testutil.TestProvider{}
+	provider := &testutil.InspectorProvider{}
 	_, err := runCreate(t, newCobraTestRuntime(provider), "--yes")
 	if err != nil {
 		t.Fatalf("--yes run failed: %v", err)
@@ -148,7 +148,7 @@ func TestCreateCobraAlreadyProvisioned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	provider := &testutil.TestProvider{}
+	provider := &testutil.InspectorProvider{}
 	got, err := runCreate(t, newCobraTestRuntime(provider))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

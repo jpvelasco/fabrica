@@ -71,11 +71,12 @@ func TestSGDesiredStateShape(t *testing.T) {
 
 func TestInstanceDesiredStateShape(t *testing.T) {
 	plan := &CreatePlan{
-		AmiID:        "ami-lore1",
-		InstanceType: "m5.xlarge",
-		SubnetID:     "subnet-1",
-		VolumeSize:   500,
-		InstanceName: "fabrica-lore",
+		AmiID:          "ami-lore1",
+		InstanceType:   "m5.xlarge",
+		SubnetID:       "subnet-1",
+		VolumeSize:     500,
+		InstanceName:   "fabrica-lore",
+		RootDeviceName: "/dev/sda1",
 	}
 	raw, err := InstanceDesiredState(plan, "sg-abc", "dXNlcmRhdGE=")
 	if err != nil {
@@ -97,6 +98,52 @@ func TestInstanceDesiredStateShape(t *testing.T) {
 	}
 }
 
+// TestInstanceDesiredStateEncryptedRoot pins #513: the lore root volume is
+// requested with Encrypted=true on the AMI's own root device, so it is
+// encrypted even when the AMI snapshot is not.
+func TestInstanceDesiredStateEncryptedRoot(t *testing.T) {
+	mk := func(root string) *CreatePlan {
+		return &CreatePlan{
+			AmiID:          "ami-lore1",
+			InstanceType:   "m5.xlarge",
+			SubnetID:       "subnet-1",
+			VolumeSize:     500,
+			InstanceName:   "fabrica-lore",
+			RootDeviceName: root,
+		}
+	}
+
+	for _, dev := range []string{"/dev/sda1", "/dev/xvda1"} {
+		t.Run(dev, func(t *testing.T) {
+			raw, err := InstanceDesiredState(mk(dev), "sg-abc", "dXNlcmRhdGE=")
+			if err != nil {
+				t.Fatalf("InstanceDesiredState: %v", err)
+			}
+			bdms := ec2state.UnmarshalDesiredState(t, raw)["BlockDeviceMappings"].([]any)
+			if len(bdms) != 1 {
+				t.Fatalf("BlockDeviceMappings = %v, want only the root", bdms)
+			}
+			m0 := bdms[0].(map[string]any)
+			if m0["DeviceName"] != dev {
+				t.Errorf("DeviceName = %v, want %s", m0["DeviceName"], dev)
+			}
+			if enc, ok := m0["Ebs"].(map[string]any)["Encrypted"].(bool); !ok || !enc {
+				t.Errorf("Ebs.Encrypted = %v, want true", m0["Ebs"])
+			}
+		})
+	}
+
+	t.Run("empty root device refuses", func(t *testing.T) {
+		_, err := InstanceDesiredState(mk(""), "sg-abc", "dXNlcmRhdGE=")
+		if err == nil {
+			t.Fatal("expected an error for an empty root device")
+		}
+		if !strings.Contains(err.Error(), "EC2 block device name is empty") {
+			t.Errorf("err = %v", err)
+		}
+	})
+}
+
 func TestInstanceDesiredStateWithS3Store(t *testing.T) {
 	plan := &CreatePlan{
 		AmiID:               "ami-lore1",
@@ -106,6 +153,7 @@ func TestInstanceDesiredStateWithS3Store(t *testing.T) {
 		InstanceName:        "fabrica-lore",
 		StoreBackend:        StoreBackendS3,
 		InstanceProfileName: "fabrica-lore-profile",
+		RootDeviceName:      "/dev/sda1",
 	}
 	raw, err := InstanceDesiredState(plan, "sg-abc", "dXNlcmRhdGE=")
 	if err != nil {
@@ -128,6 +176,7 @@ func TestInstanceDesiredStateWithoutS3Store(t *testing.T) {
 		InstanceName:        "fabrica-lore",
 		InstanceProfileName: "fabrica-lore-profile",
 		StoreBackend:        StoreBackendLocal,
+		RootDeviceName:      "/dev/sda1",
 	}
 	raw, err := InstanceDesiredState(plan, "sg-abc", "dXNlcmRhdGE=")
 	if err != nil {

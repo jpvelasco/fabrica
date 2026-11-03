@@ -862,13 +862,13 @@ func rebuildResource(ctx context.Context, dr *DriftResult, st *state.State, cfg 
 // Properties.imageId (its module version is a Helix Core software version,
 // which create also pins in cloud-init, so it must never stand in for an AMI
 // id); every other module records the AMI as the module version at create
-// time; the DDC Scylla node uses ddc.scyllaAmiId. The perforce root device —
-// where the encrypted root mapping lands — is recorded as
-// Properties.rootDevice at create time; state written before #513 has none.
-// If any required input is missing — AMI, root device, IAM profile,
-// security group, or module credentials — the error propagates and the
-// caller reports the instance as unsupported for automatic remediation
-// instead of launching a broken replacement.
+// time; the DDC Scylla node uses ddc.scyllaAmiId. The perforce, horde, and
+// lore root devices — where the encrypted root mappings land — are
+// recorded as Properties.rootDevice at create time; state written before
+// #513 has none. If any required input is missing — AMI, root device,
+// IAM profile, security group, or module credentials — the error
+// propagates and the caller reports the instance as unsupported for
+// automatic remediation instead of launching a broken replacement.
 func rebuildInstanceDesiredState(ctx context.Context, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config, inspector imageInspectorFunc) (json.RawMessage, error) {
 	if mod.Name == "ddc" && isEdgeResource(rec) {
 		return rebuildEdgeInstanceDesiredState(rec, mod, st, cfg)
@@ -1025,6 +1025,10 @@ func rebuildHordeInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg
 	if err != nil {
 		return nil, err
 	}
+	rootDevice := rec.Properties["rootDevice"]
+	if rootDevice == "" {
+		return nil, fmt.Errorf("no root device recorded for the horde instance (Properties.rootDevice); re-run 'fabrica horde create'")
+	}
 	mongoPass, err := readHordePassword(hordeCredFile)
 	if err != nil {
 		return nil, err
@@ -1038,11 +1042,12 @@ func rebuildHordeInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg
 		return nil, fmt.Errorf("rendering horde cloud-init: %w", err)
 	}
 	plan := &horde.CreatePlan{
-		AmiID:        ami,
-		InstanceType: instanceTypeFor(rec, cfg.Horde.InstanceType, horde.DefaultInstanceType),
-		VolumeSize:   volumeSizeFor(rec, cfg.Horde.VolumeSize, 100),
-		SubnetID:     subnetFor(rec, cfg.Horde.SubnetId),
-		InstanceName: "fabrica-horde",
+		AmiID:          ami,
+		InstanceType:   instanceTypeFor(rec, cfg.Horde.InstanceType, horde.DefaultInstanceType),
+		VolumeSize:     volumeSizeFor(rec, cfg.Horde.VolumeSize, 100),
+		SubnetID:       subnetFor(rec, cfg.Horde.SubnetId),
+		InstanceName:   "fabrica-horde",
+		RootDeviceName: rootDevice,
 	}
 	ds, err := horde.InstanceDesiredState(plan, sgID, userData, profile)
 	if err != nil {
@@ -1063,6 +1068,10 @@ func rebuildLoreInstance(rec *state.ModuleResource, mod *state.ModuleState, st *
 	sgID, profile, err := recordedSGAndProfile(rec, mod, "lore")
 	if err != nil {
 		return nil, err
+	}
+	rootDevice := rec.Properties["rootDevice"]
+	if rootDevice == "" {
+		return nil, fmt.Errorf("no root device recorded for the lore instance (Properties.rootDevice); re-run 'fabrica lore create'")
 	}
 	// Same normalization create uses: trim + lowercase, anything that is
 	// not "s3" resolves to the local backend.
@@ -1105,6 +1114,7 @@ func rebuildLoreInstance(rec *state.ModuleResource, mod *state.ModuleState, st *
 		SubnetID:            subnetFor(rec, cfg.Lore.SubnetId),
 		InstanceName:        "fabrica-lore",
 		InstanceProfileName: profile,
+		RootDeviceName:      rootDevice,
 	}
 	ds, err := lore.InstanceDesiredState(plan, sgID, userData)
 	if err != nil {
