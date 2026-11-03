@@ -216,7 +216,7 @@ func TestTwoRegion_EdgeInstanceMissingRemediation(t *testing.T) {
 	}
 
 	cfg := config.Defaults()
-	plan := PlanRemediation(report, st, cfg)
+	plan := PlanRemediation(context.Background(), report, st, cfg)
 	if plan.ToFix != 1 {
 		t.Fatalf("expected 1 fix action, got %d (skipped: %d)", plan.ToFix, plan.ToSkip)
 	}
@@ -282,7 +282,7 @@ func TestTwoRegion_PreRecordingEdgeInstanceSkips(t *testing.T) {
 	f.put(edgeTestRegion, cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-edge"})
 
 	report := twoRegionEngine(st, f).Run(context.Background())
-	plan := PlanRemediation(report, st, config.Defaults())
+	plan := PlanRemediation(context.Background(), report, st, config.Defaults())
 	if plan.ToFix != 0 || plan.ToSkip != 1 {
 		t.Fatalf("expected 0 fix / 1 skip, got %d fix / %d skip", plan.ToFix, plan.ToSkip)
 	}
@@ -308,7 +308,7 @@ func TestTwoRegion_PreRecordingEdgeSGSkips(t *testing.T) {
 	// The edge store is empty: the edge SG is missing.
 
 	report := twoRegionEngine(st, f).Run(context.Background())
-	plan := PlanRemediation(report, st, config.Defaults())
+	plan := PlanRemediation(context.Background(), report, st, config.Defaults())
 	// The edge instance is also missing but rebuildable; only the SG skips.
 	var sgAction *RemediationAction
 	for i := range plan.Actions {
@@ -350,7 +350,7 @@ func TestTwoRegion_NilRegionResourceReportsError(t *testing.T) {
 		t.Errorf("expected region-support error in details, got %q", edge.Details)
 	}
 
-	plan := PlanRemediation(report, st, config.Defaults())
+	plan := PlanRemediation(context.Background(), report, st, config.Defaults())
 	edgePlan := findAction(plan, "i-edge")
 	if edgePlan == nil || edgePlan.Kind != ActionSkip {
 		t.Fatalf("expected i-edge ActionSkip, got %+v", edgePlan)

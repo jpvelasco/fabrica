@@ -642,11 +642,37 @@ type RemediationResult struct {
 	Errors  []string            `json:"errors,omitempty"`
 }
 
+// imageInspectorFunc inspects an AMI so a rebuilt instance can derive launch
+// inputs only the AMI knows (workstation root device). nil means the provider
+// cannot inspect AMIs, and rebuilds that need it fail closed.
+type imageInspectorFunc func(ctx context.Context, imageID string) (cloud.ImageInfo, error)
+
+// planOptions carries provider capabilities into PlanRemediation.
+type planOptions struct {
+	inspector imageInspectorFunc
+}
+
+// PlanOption configures PlanRemediation.
+type PlanOption func(*planOptions)
+
+// WithImageInspector lets the plan layer inspect AMIs. The workstation
+// rebuild maps its encrypted root volume onto the AMI's own root device, which
+// only DescribeImage can supply; without it, workstation instances are
+// reported unsupported for automatic remediation.
+func WithImageInspector(inspector imageInspectorFunc) PlanOption {
+	return func(o *planOptions) { o.inspector = inspector }
+}
+
 // PlanRemediation takes a DriftReport and the state + config, and returns a
 // RemediationPlan describing what would be fixed. Missing EC2 instances and
 // security groups are marked for creation. Mismatch and Extra are report-only
 // in V1.
-func PlanRemediation(report *DriftReport, st *state.State, cfg *config.Config) *RemediationPlan {
+func PlanRemediation(ctx context.Context, report *DriftReport, st *state.State, cfg *config.Config, opts ...PlanOption) *RemediationPlan {
+	var po planOptions
+	for _, opt := range opts {
+		opt(&po)
+	}
+
 	plan := &RemediationPlan{}
 
 	for i := range report.Modules {
@@ -659,7 +685,7 @@ func PlanRemediation(report *DriftReport, st *state.State, cfg *config.Config) *
 			switch r.Status {
 			case Missing:
 				if canRecreate(r.TypeName) {
-					res, err := rebuildResource(r, st, cfg)
+					res, err := rebuildResource(ctx, r, st, cfg, po.inspector)
 					if err != nil {
 						action = RemediationAction{
 							Module:     r.Module,
@@ -778,7 +804,7 @@ func recordedRegion(st *state.State, module, typeName, identifier string) string
 // recorded state is insufficient to rebuild the resource's desired state;
 // the caller then reports the resource as skip-with-reason instead of
 // creating it with a partial state.
-func rebuildResource(dr *DriftResult, st *state.State, cfg *config.Config) (*cloud.Resource, error) {
+func rebuildResource(ctx context.Context, dr *DriftResult, st *state.State, cfg *config.Config, inspector imageInspectorFunc) (*cloud.Resource, error) {
 	mod := st.GetModule(dr.Module)
 	if mod == nil {
 		return &cloud.Resource{
@@ -808,7 +834,7 @@ func rebuildResource(dr *DriftResult, st *state.State, cfg *config.Config) (*clo
 	// Build desired state from recorded properties and config defaults.
 	switch dr.TypeName {
 	case cloud.TypeAWSEC2Instance:
-		ds, err := rebuildInstanceDesiredState(rec, mod, st, cfg)
+		ds, err := rebuildInstanceDesiredState(ctx, rec, mod, st, cfg, inspector)
 		if err != nil {
 			return nil, fmt.Errorf("rebuild desired state for instance %s in module %s: %w", dr.Identifier, dr.Module, err)
 		}
@@ -840,7 +866,7 @@ func rebuildResource(dr *DriftResult, st *state.State, cfg *config.Config) (*clo
 // missing — AMI, IAM profile, security group, or module credentials — the
 // error propagates and the caller reports the instance as unsupported for
 // automatic remediation instead of launching a broken replacement.
-func rebuildInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
+func rebuildInstanceDesiredState(ctx context.Context, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config, inspector imageInspectorFunc) (json.RawMessage, error) {
 	if mod.Name == "ddc" && isEdgeResource(rec) {
 		return rebuildEdgeInstanceDesiredState(rec, mod, st, cfg)
 	}
@@ -853,6 +879,8 @@ func rebuildInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleSta
 		return rebuildLoreInstance(rec, mod, st, cfg)
 	case "ddc":
 		return rebuildDDCInstance(rec, mod, st, cfg)
+	case "workstation":
+		return rebuildWorkstationInstance(ctx, rec, mod, st, cfg, inspector)
 	}
 	return nil, fmt.Errorf("module %s has no canonical instance contract to rebuild from", mod.Name)
 }
@@ -1183,6 +1211,73 @@ func rebuildScyllaInstance(rec *state.ModuleResource, mod *state.ModuleState, st
 		ScyllaInstanceName: "fabrica-ddc-scylla",
 	}
 	ds, err := ddc.ScyllaInstanceDesiredState(plan, sgID, userData, profile)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptySubnetID(ds)
+}
+
+// rebuildWorkstationInstance rebuilds the workstation instance. It fails
+// closed on every input it cannot reconstruct from recorded state: the AMI
+// (module version), the DCV session password parameter name (the value stays
+// in SSM and the credentials file), the mount-perforce flag (a true value
+// needs the Perforce server address, which state does not record), and the
+// AMI's root device (only an AMI inspector can supply it).
+func rebuildWorkstationInstance(ctx context.Context, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config, inspector imageInspectorFunc) (json.RawMessage, error) {
+	ami := mod.Version
+	if ami == "" {
+		return nil, fmt.Errorf("no AMI recorded for the workstation instance (module version); re-run 'fabrica workstation create'")
+	}
+	paramName := rec.Properties["sessionPasswordParameter"]
+	if paramName == "" {
+		return nil, fmt.Errorf("no DCV session password parameter recorded for the workstation instance; re-run 'fabrica workstation create'")
+	}
+	if mp := rec.Properties["mountPerforce"]; mp == "" {
+		return nil, fmt.Errorf("mountPerforce not recorded on the workstation instance (pre-#508 state); re-run 'fabrica workstation create'")
+	} else if mp != "false" {
+		return nil, fmt.Errorf("workstation was created with --mount-perforce and the Perforce server address is not recorded in state; re-run 'fabrica workstation create'")
+	}
+	if inspector == nil {
+		return nil, fmt.Errorf("provider cannot inspect AMIs, so the workstation root device cannot be resolved; re-run 'fabrica workstation create'")
+	}
+	info, err := inspector(ctx, ami)
+	if err != nil {
+		return nil, fmt.Errorf("inspecting AMI %s for the workstation root device: %w", ami, err)
+	}
+	rootDevice, err := workstation.RootDeviceFor(ami, info.RootDeviceName, info.RootDeviceType)
+	if err != nil {
+		return nil, err
+	}
+	sgID, profile, err := recordedSGAndProfile(rec, mod, "workstation")
+	if err != nil {
+		return nil, err
+	}
+	idle := cfg.Workstation.IdleTimeoutMinutes
+	if idle <= 0 {
+		idle = workstation.DefaultIdleTimeoutMinutes
+	}
+	userData, err := workstation.Generate(workstation.UserDataConfig{
+		SessionPasswordParameter: paramName,
+		Region:                   st.Region,
+		IdleTimeoutMinutes:       idle,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rendering workstation cloud-init: %w", err)
+	}
+	plan := &workstation.CreatePlan{
+		Account:             st.Account,
+		Region:              st.Region,
+		AmiID:               ami,
+		InstanceType:        instanceTypeFor(rec, cfg.Workstation.InstanceType, workstation.DefaultInstanceType),
+		VolumeSize:          volumeSizeFor(rec, cfg.Workstation.VolumeSize, workstation.DefaultVolumeSize),
+		DCVPort:             workstation.DefaultDCVPort,
+		IdleTimeoutMinutes:  idle,
+		SubnetID:            subnetFor(rec, cfg.Workstation.SubnetId),
+		RootDeviceName:      rootDevice,
+		InstanceName:        "fabrica-workstation",
+		InstanceProfileName: profile,
+	}
+	ds, err := workstation.InstanceDesiredState(plan, sgID, userData)
 	if err != nil {
 		return nil, err
 	}

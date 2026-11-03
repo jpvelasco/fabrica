@@ -388,6 +388,10 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 			"volumeSize":               strconv.Itoa(plan.VolumeSize),
 			"sessionPasswordParameter": paramName,
 			"createNonce":              plan.CreateNonce,
+			// Recorded so `fabrica drift --fix` can rebuild the instance:
+			// a "true" value needs the Perforce server address, which state
+			// does not record, so such instances are reported unsupported.
+			"mountPerforce": strconv.FormatBool(plan.MountPerforce),
 		},
 		PostCreate: provision.TagVolumesPostCreate(c.runtime.Provider, "workstation", plan.InstanceName),
 		// fail on writeState error (default)
