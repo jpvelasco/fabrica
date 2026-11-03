@@ -125,8 +125,11 @@ func costInputs(cfg *config.Config, m *state.ModuleState) ([]cost.Resource, stri
 		return deployCostResources(m, cfg.Deploy), deployFleetNote(m)
 	case "ddc":
 		// Prefer full CostResources (S3 + EC2 + EBS [+ Scylla]); do not collapse
-		// via ec2CostResources which would drop the blob bucket line.
-		return applyStopped(ddc.CostResources(cfg.DDC), m.Status)
+		// via ec2CostResources which would drop the blob bucket line. Edges
+		// reuse the home blob bucket, so each adds compute + volume lines only.
+		res := ddc.CostResources(cfg.DDC)
+		res = append(res, ddcEdgeCostResources(m)...)
+		return applyStopped(res, m.Status)
 	default:
 		return nil, "no estimator wired for this module"
 	}
@@ -194,6 +197,27 @@ func fleetCostResource(props map[string]string) (cost.Resource, bool) {
 		TypeName: deploy.TypeGameLiftFleet,
 		Name:     deploy.FleetCostName(props["instanceType"], desired),
 	}, true
+}
+
+// ddcEdgeCostResources adds compute + volume lines for every recorded DDC edge
+// instance at the edge's recorded shape (instance type + volume size). Edges
+// reuse the home blob bucket (priced once by ddc.CostResources), so no bucket
+// line is added per edge.
+func ddcEdgeCostResources(m *state.ModuleState) []cost.Resource {
+	var out []cost.Resource
+	for _, r := range m.Resources {
+		if r.TypeName != cloud.TypeAWSEC2Instance || r.Properties["role"] != ddc.RoleEdge {
+			continue
+		}
+		if r.Properties["instanceType"] == "" || r.Properties["volumeSize"] == "" {
+			continue
+		}
+		out = append(out,
+			cost.Resource{TypeName: cloud.TypeAWSEC2Instance, Name: r.Properties["instanceType"]},
+			cost.Resource{TypeName: cloud.TypeAWSEC2Volume, Name: "gp3-" + r.Properties["volumeSize"] + "GiB"},
+		)
+	}
+	return out
 }
 
 // instanceProperties returns the Properties of the module's EC2 instance record,

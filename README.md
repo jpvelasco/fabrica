@@ -551,7 +551,7 @@ fabrica deploy destroy
 
 ### Cost
 
-> **Offline cost visibility:** `fabrica cost` estimates monthly cost for the modules present in local state, preferring the deployed shape recorded in state (instance type, volume/fleet size) and falling back to your current `fabrica.yaml` for anything not recorded. Fully offline — a static **us-east-1** Linux on-demand price table (2024-Q4/2025), not live Pricing or Cost Explorer. Totals can differ by region and over time. Spot/schedule factors are planning discounts only. Run `<module> status` to reconcile if state and reality have drifted.
+> **Offline cost visibility:** `fabrica cost` estimates monthly cost for the modules present in local state, preferring the deployed shape recorded in state (instance type, volume/fleet size) and falling back to your current `fabrica.yaml` for anything not recorded. Recorded DDC edge nodes each add a compute and a volume line at their recorded shape; edges share the home blob bucket, so the S3 line is not duplicated. Fully offline — a static **us-east-1** Linux on-demand price table (2024-Q4/2025), not live Pricing or Cost Explorer. Totals can differ by region and over time. Spot/schedule factors are planning discounts only. Run `<module> status` to reconcile if state and reality have drifted.
 
 #### `fabrica cost report`
 
