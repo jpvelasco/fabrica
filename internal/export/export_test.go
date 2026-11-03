@@ -1696,17 +1696,86 @@ func TestCloudFormationBlockDevicesEdgeCases(t *testing.T) {
 	if out != nil {
 		t.Error("cfBlockDevices(nil) should return nil")
 	}
-	// Device without EBS — returns slice with nil entry
+	// Device without an Ebs block is skipped — emitting it would yield an
+	// invalid (nil) entry in the CloudFormation block device list.
 	devs := []map[string]any{{"DeviceName": "/dev/sda1"}}
 	out = cfBlockDevices(devs)
-	if out == nil || len(out) != 1 {
-		t.Error("cfBlockDevices should return slice for device without EBS")
+	if len(out) != 0 {
+		t.Errorf("cfBlockDevices should skip a device without Ebs, got %d entries", len(out))
 	}
 	// Device with EBS but no DeleteOnTermination
 	devs2 := []map[string]any{{"DeviceName": "/dev/sda1", "Ebs": map[string]any{"VolumeSize": float64(100)}}}
 	out = cfBlockDevices(devs2)
 	if out == nil || len(out) != 1 {
 		t.Error("cfBlockDevices should handle EBS without DeleteOnTermination")
+	}
+}
+
+// TestCloudFormationBlockDevicesEncryption covers cfBlockDevices carrying the
+// EBS encryption settings through to the generated template (#541).
+func TestCloudFormationBlockDevicesEncryption(t *testing.T) {
+	// Encrypted mapping with no KMS key: Encrypted present, KmsKeyId absent.
+	devs := []map[string]any{{
+		"DeviceName": "/dev/sda1",
+		"Ebs": map[string]any{
+			"VolumeSize":          float64(200),
+			"VolumeType":          "gp3",
+			"DeleteOnTermination": true,
+			"Encrypted":           true,
+		},
+	}}
+	out := cfBlockDevices(devs)
+	if len(out) != 1 {
+		t.Fatalf("cfBlockDevices should return one mapping, got %d", len(out))
+	}
+	ebs := out[0]["Ebs"].(map[string]any)
+	if enc, ok := ebs["Encrypted"].(bool); !ok || !enc {
+		t.Errorf("cfBlockDevices should carry Encrypted=true, got %v", ebs["Encrypted"])
+	}
+	if _, present := ebs["KmsKeyId"]; present {
+		t.Errorf("cfBlockDevices should omit KmsKeyId when no key is set, got %v", ebs["KmsKeyId"])
+	}
+
+	// Encrypted mapping with an explicit KMS key: both carried through.
+	devs = []map[string]any{{
+		"DeviceName": "/dev/sdf",
+		"Ebs": map[string]any{
+			"VolumeSize":          float64(500),
+			"VolumeType":          "gp3",
+			"DeleteOnTermination": false,
+			"Encrypted":           true,
+			"KmsKeyId":            "arn:aws:kms:us-east-1:123456789012:key/abc",
+		},
+	}}
+	out = cfBlockDevices(devs)
+	if len(out) != 1 {
+		t.Fatalf("cfBlockDevices should return one mapping, got %d", len(out))
+	}
+	ebs = out[0]["Ebs"].(map[string]any)
+	if enc, ok := ebs["Encrypted"].(bool); !ok || !enc {
+		t.Errorf("cfBlockDevices should carry Encrypted=true, got %v", ebs["Encrypted"])
+	}
+	if kms, ok := ebs["KmsKeyId"].(string); !ok || kms == "" {
+		t.Errorf("cfBlockDevices should carry KmsKeyId, got %v", ebs["KmsKeyId"])
+	}
+
+	// Unencrypted mapping: Encrypted carried as false, no KmsKeyId.
+	devs = []map[string]any{{
+		"DeviceName": "/dev/sda1",
+		"Ebs": map[string]any{
+			"VolumeSize":          float64(100),
+			"VolumeType":          "gp3",
+			"DeleteOnTermination": true,
+			"Encrypted":           false,
+		},
+	}}
+	out = cfBlockDevices(devs)
+	if len(out) != 1 {
+		t.Fatalf("cfBlockDevices should return one mapping, got %d", len(out))
+	}
+	ebs = out[0]["Ebs"].(map[string]any)
+	if enc, ok := ebs["Encrypted"].(bool); !ok || enc {
+		t.Errorf("cfBlockDevices should carry Encrypted=false, got %v", ebs["Encrypted"])
 	}
 }
 
@@ -1909,6 +1978,142 @@ func TestHclBlockDevicesWithValid(t *testing.T) {
 	}
 	if !strings.Contains(out, "gp3") {
 		t.Error("hclBlockDevices should output volume type")
+	}
+}
+
+// TestHclBlockDevicesEncryption covers hclBlockDevices carrying the EBS
+// encryption settings through to the generated module (#541): encrypted is
+// emitted when set, kms_key_id only when a non-empty key is present, and one
+// ebs_block_device block is emitted per mapping.
+func TestHclBlockDevicesEncryption(t *testing.T) {
+	gen := &terraformGenerator{}
+
+	// Two mappings (perforce data + root shape): both blocks emitted, each
+	// with its own encrypted flag and its own device.
+	devs := []map[string]any{
+		{
+			"DeviceName": "/dev/sdf",
+			"Ebs": map[string]any{
+				"VolumeSize":          float64(500),
+				"VolumeType":          "gp3",
+				"DeleteOnTermination": false,
+				"Encrypted":           true,
+			},
+		},
+		{
+			"DeviceName": "/dev/sda1",
+			"Ebs": map[string]any{
+				"VolumeSize":          float64(100),
+				"VolumeType":          "gp3",
+				"DeleteOnTermination": true,
+				"Encrypted":           true,
+				"KmsKeyId":            "arn:aws:kms:us-east-1:123456789012:key/abc",
+			},
+		},
+	}
+	out := gen.hclBlockDevices(devs)
+	if got := strings.Count(out, "ebs_block_device {"); got != 2 {
+		t.Errorf("hclBlockDevices should emit one ebs_block_device block per mapping, got %d", got)
+	}
+	if !strings.Contains(out, `device_name = "/dev/sdf"`) {
+		t.Error("hclBlockDevices should output the first device name")
+	}
+	if !strings.Contains(out, `device_name = "/dev/sda1"`) {
+		t.Error("hclBlockDevices should output the second device name")
+	}
+	if got := strings.Count(out, "encrypted = true"); got != 2 {
+		t.Errorf("hclBlockDevices should emit encrypted = true per encrypted mapping, got %d", got)
+	}
+	if !strings.Contains(out, `kms_key_id = "arn:aws:kms:us-east-1:123456789012:key/abc"`) {
+		t.Error("hclBlockDevices should carry kms_key_id when a non-empty key is set")
+	}
+	// The first mapping has no key, so exactly one kms_key_id line overall.
+	if got := strings.Count(out, "kms_key_id"); got != 1 {
+		t.Errorf("hclBlockDevices should emit kms_key_id once (only where a key is set), got %d", got)
+	}
+
+	// Explicitly unencrypted single mapping: encrypted carried as false, no
+	// kms_key_id (fidelity to the recorded flag).
+	devsPlain := []map[string]any{{
+		"DeviceName": "/dev/sda1",
+		"Ebs": map[string]any{
+			"VolumeSize":          float64(100),
+			"VolumeType":          "gp3",
+			"DeleteOnTermination": true,
+			"Encrypted":           false,
+		},
+	}}
+	outPlain := gen.hclBlockDevices(devsPlain)
+	if !strings.Contains(outPlain, "encrypted = false") {
+		t.Errorf("hclBlockDevices should carry encrypted = false for an explicit unencrypted mapping, got:\n%s", outPlain)
+	}
+	if strings.Contains(outPlain, "kms_key_id") {
+		t.Error("hclBlockDevices should not emit kms_key_id when no key is set")
+	}
+
+	// Absent Encrypted flag: no encrypted line at all (account default applies).
+	devsNoFlag := []map[string]any{{
+		"DeviceName": "/dev/sda1",
+		"Ebs": map[string]any{
+			"VolumeSize":          float64(100),
+			"VolumeType":          "gp3",
+			"DeleteOnTermination": true,
+		},
+	}}
+	outNoFlag := gen.hclBlockDevices(devsNoFlag)
+	if strings.Contains(outNoFlag, "encrypted") {
+		t.Errorf("hclBlockDevices should omit the encrypted attribute when the flag is absent, got:\n%s", outNoFlag)
+	}
+
+	// Non-EBS device is skipped (no invalid block emitted).
+	devsNoEbs := []map[string]any{{"DeviceName": "/dev/sda1"}}
+	if outNoEbs := gen.hclBlockDevices(devsNoEbs); outNoEbs != "" {
+		t.Errorf("hclBlockDevices should skip a device without Ebs, got %q", outNoEbs)
+	}
+}
+
+// TestExportWorkstationBlockDevicesEncrypted is an end-to-end check that a
+// workstation's root volume reaches both IaC formats with its encryption
+// requirement intact (#541). The volumeSize-only state triggers the default
+// block-mapping reconstruction, which must carry Encrypted=true.
+func TestExportWorkstationBlockDevicesEncrypted(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("workstation", "ami-0123456789", "ready", []state.ModuleResource{
+		{
+			TypeName:   "AWS::EC2::Instance",
+			Identifier: "i-ws",
+			Properties: map[string]string{
+				"instanceType": "g4dn.xlarge",
+				"imageId":      "ami-0123456789",
+				"volumeSize":   "200",
+			},
+		},
+	})
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = "123456789012"
+
+	cfnOut, err := GenerateOutput(CloudFormation, st, cfg)
+	if err != nil {
+		t.Fatalf("CloudFormation export: %v", err)
+	}
+	cfn := string(cfnOut)
+	if !strings.Contains(cfn, "Encrypted: true") {
+		t.Errorf("CloudFormation export should carry Encrypted: true for the workstation root volume, got:\n%s", cfn)
+	}
+	if !strings.Contains(cfn, "/dev/sda1") {
+		t.Errorf("CloudFormation export should carry the workstation root device /dev/sda1, got:\n%s", cfn)
+	}
+
+	tfOut, err := GenerateOutput(Terraform, st, cfg)
+	if err != nil {
+		t.Fatalf("Terraform export: %v", err)
+	}
+	tf := string(tfOut)
+	if !strings.Contains(tf, "encrypted = true") {
+		t.Errorf("Terraform export should carry encrypted = true for the workstation root volume, got:\n%s", tf)
+	}
+	if !strings.Contains(tf, `device_name = "/dev/sda1"`) {
+		t.Errorf("Terraform export should carry the workstation root device /dev/sda1, got:\n%s", tf)
 	}
 }
 

@@ -448,6 +448,9 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			props["ImageId"] = amiIDForModule(moduleName, cfg)
 		}
 		// Map volumeSize → BlockDeviceMappings (not a raw EC2 property).
+		// Every EC2 module launches its volumes encrypted (account default
+		// EBS key, #513), so the reconstructed mapping carries Encrypted=true
+		// to preserve that invariant in generated IaC (#541).
 		if vs, ok := props["__volumeSize"]; ok {
 			props["BlockDeviceMappings"] = []map[string]any{
 				{
@@ -456,6 +459,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 						"VolumeSize":          vs,
 						"VolumeType":          "gp3",
 						"DeleteOnTermination": true,
+						"Encrypted":           true,
 					},
 				},
 			}
