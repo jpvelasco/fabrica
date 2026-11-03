@@ -268,6 +268,44 @@ func TestSetupNoProvider(t *testing.T) {
 	}
 }
 
+// TestSetupDryRunPrintsIAMConstraints pins #557 wiring: the resolved
+// cloud.aws.iam constraints (with the ci.iam field-level override) surface in
+// the plan, which is what RoleDesiredState builds the role document from.
+func TestSetupDryRunPrintsIAMConstraints(t *testing.T) {
+	var out bytes.Buffer
+	c, created := newCmd(&out, nil, true)
+	c.dryRun = true
+	c.runtime.Config.Cloud.AWS.IAM = config.IAM{
+		Path:                "/fabrica/",
+		PermissionsBoundary: "arn:aws:iam::123456789012:policy/fabrica-boundary",
+	}
+	c.runtime.Config.CI.IAM.Path = "/ci/" // module override wins for the path
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(*created) != 0 {
+		t.Errorf("dry-run must not create resources, got %v", *created)
+	}
+	if !strings.Contains(out.String(), "IAM Path:         /ci/") ||
+		!strings.Contains(out.String(), "IAM Boundary:     arn:aws:iam::123456789012:policy/fabrica-boundary") {
+		t.Errorf("dry-run must print the resolved IAM constraints:\n%s", out.String())
+	}
+}
+
+// TestSetupRejectsBadIAMPath pins the fail-fast: an invalid path is rejected
+// before the plan is built, so no lock is taken and nothing is created.
+func TestSetupRejectsBadIAMPath(t *testing.T) {
+	var out bytes.Buffer
+	c, created := newCmd(&out, nil, true)
+	c.runtime.Config.Cloud.AWS.IAM.Path = "fabrica"
+	if err := c.run(context.Background()); err == nil || !strings.Contains(err.Error(), "must start and end") {
+		t.Fatalf("err = %v, want the bad iam.path error", err)
+	}
+	if len(*created) != 0 {
+		t.Errorf("nothing should be created when IAM validation fails, got %v", *created)
+	}
+}
+
 // TestSetupResolveHordeURL verifies that resolveHordeURL returns the Horde URL
 // when Horde is provisioned with an accessible instance.
 func TestSetupResolveHordeURL(t *testing.T) {

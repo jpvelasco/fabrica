@@ -3,6 +3,7 @@ package ci
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
@@ -97,5 +98,27 @@ func TestNewCreatePlanResolverError(t *testing.T) {
 	_, err := NewCreatePlan(context.Background(), config.CIConfig{}, "123456789012", "us-west-2", "", resolver)
 	if err == nil {
 		t.Fatal("expected resolver error to propagate")
+	}
+}
+
+func TestNewCreatePlanCarriesIAM(t *testing.T) {
+	cfg := config.CIConfig{IAM: config.IAM{
+		Path:                "/ci/",
+		PermissionsBoundary: "arn:aws:iam::123456789012:policy/fabrica-boundary",
+	}}
+	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-west-2", "", nil)
+	if err != nil {
+		t.Fatalf("NewCreatePlan: %v", err)
+	}
+	if plan.IAM.Path != "/ci/" || plan.IAM.PermissionsBoundary != "arn:aws:iam::123456789012:policy/fabrica-boundary" {
+		t.Errorf("IAM = %+v, want the path and boundary carried from config", plan.IAM)
+	}
+}
+
+func TestNewCreatePlanRejectsBadIAM(t *testing.T) {
+	cfg := config.CIConfig{IAM: config.IAM{Path: "fabrica"}}
+	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-west-2", "", nil)
+	if err == nil || !strings.Contains(err.Error(), "must start and end") {
+		t.Fatalf("err = %v, want the bad iam.path error", err)
 	}
 }
