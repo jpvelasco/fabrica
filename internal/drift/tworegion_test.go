@@ -122,6 +122,7 @@ func twoRegionEngine(st *state.State, f *twoRegionFake) *Engine {
 func ddcEdgeState() *state.State {
 	st := state.NewState("123456789012", homeTestRegion)
 	st.UpsertModule("ddc", "ami-home", "ready", []state.ModuleResource{
+		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
 		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-home"},
 		{
 			TypeName:   cloud.TypeAWSEC2Instance,
@@ -158,9 +159,11 @@ func ddcEdgeState() *state.State {
 	return st
 }
 
-// putLiveHome stores a live home-region SG and running home instance.
+// putLiveHome stores the live home-region SG, IAM profile, and running home
+// instance.
 func putLiveHome(f *twoRegionFake) {
 	f.put(homeTestRegion, cloud.Resource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-home"})
+	f.put(homeTestRegion, cloud.Resource{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"})
 	f.put(homeTestRegion, cloud.Resource{
 		TypeName:    cloud.TypeAWSEC2Instance,
 		Identifier:  "i-home",
@@ -182,12 +185,12 @@ func TestTwoRegion_EdgeResourcesInSync(t *testing.T) {
 	report := twoRegionEngine(st, f).Run(context.Background())
 
 	// A wrong-region Get would miss the other region's store and report
-	// Missing; all four resources must be in sync.
+	// Missing; all five resources must be in sync.
 	if report.Missing != 0 {
 		t.Errorf("expected 0 missing, got %d", report.Missing)
 	}
-	if report.InSync != 4 {
-		t.Errorf("expected 4 in-sync, got %d", report.InSync)
+	if report.InSync != 5 {
+		t.Errorf("expected 5 in-sync, got %d", report.InSync)
 	}
 	if report.Errors != 0 {
 		t.Errorf("expected 0 errors, got %d", report.Errors)
@@ -195,8 +198,8 @@ func TestTwoRegion_EdgeResourcesInSync(t *testing.T) {
 	if f.gets[edgeTestRegion] != 2 {
 		t.Errorf("expected 2 edge-region Gets (SG + instance), got %d", f.gets[edgeTestRegion])
 	}
-	if f.gets[homeTestRegion] != 2 {
-		t.Errorf("expected 2 home Gets, got %d", f.gets[homeTestRegion])
+	if f.gets[homeTestRegion] != 3 {
+		t.Errorf("expected 3 home Gets (SG + profile + instance), got %d", f.gets[homeTestRegion])
 	}
 }
 
@@ -434,6 +437,7 @@ func TestRefreshSGIDs_RegionGuard(t *testing.T) {
 
 func TestRebuildEdgeInstanceDesiredState_Full(t *testing.T) {
 	cfg := config.Defaults()
+	st := state.NewState("123456789012", homeTestRegion)
 	mod := &state.ModuleState{Name: "ddc"}
 	mod.Resources = []state.ModuleResource{
 		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-home"},
@@ -453,9 +457,10 @@ func TestRebuildEdgeInstanceDesiredState_Full(t *testing.T) {
 				"subnetId":     "subnet-edge",
 			},
 		},
+		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
 	}
 	rec := &mod.Resources[2]
-	ds, err := rebuildEdgeInstanceDesiredState(rec, mod, cfg)
+	ds, err := rebuildEdgeInstanceDesiredState(rec, mod, st, cfg)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -473,10 +478,17 @@ func TestRebuildEdgeInstanceDesiredState_Full(t *testing.T) {
 	if !ok || len(sgIDs) != 1 || sgIDs[0].(string) != "sg-edge" {
 		t.Errorf("expected the edge-region SG sg-edge, got %v", m["SecurityGroupIds"])
 	}
+	if m["IamInstanceProfile"] != "fabrica-ddc-profile" {
+		t.Errorf("expected the recorded IAM profile, got %v", m["IamInstanceProfile"])
+	}
 }
 
 func TestRebuildEdgeInstanceDesiredState_TypeFallback(t *testing.T) {
-	mod := &state.ModuleState{Name: "ddc"}
+	st := state.NewState("123456789012", homeTestRegion)
+	mod := &state.ModuleState{Name: "ddc", Resources: []state.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-edge", Properties: map[string]string{"region": edgeTestRegion, "role": ddc.RoleEdge}},
+		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
+	}}
 	rec := &state.ModuleResource{
 		TypeName:   cloud.TypeAWSEC2Instance,
 		Properties: map[string]string{"region": edgeTestRegion, "role": ddc.RoleEdge, "imageId": "ami-edge", "subnetId": "subnet-edge"},
@@ -484,7 +496,7 @@ func TestRebuildEdgeInstanceDesiredState_TypeFallback(t *testing.T) {
 
 	cfg := config.Defaults()
 	cfg.DDC.InstanceType = "m7i.2xlarge"
-	ds, err := rebuildEdgeInstanceDesiredState(rec, mod, cfg)
+	ds, err := rebuildEdgeInstanceDesiredState(rec, mod, st, cfg)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -497,7 +509,7 @@ func TestRebuildEdgeInstanceDesiredState_TypeFallback(t *testing.T) {
 	}
 
 	cfg2 := config.Defaults()
-	ds, err = rebuildEdgeInstanceDesiredState(rec, mod, cfg2)
+	ds, err = rebuildEdgeInstanceDesiredState(rec, mod, st, cfg2)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -511,13 +523,17 @@ func TestRebuildEdgeInstanceDesiredState_TypeFallback(t *testing.T) {
 
 func TestRebuildEdgeInstanceDesiredState_MissingInputs(t *testing.T) {
 	cfg := config.Defaults()
-	mod := &state.ModuleState{Name: "ddc"}
+	st := state.NewState("123456789012", homeTestRegion)
+	mod := &state.ModuleState{Name: "ddc", Resources: []state.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-edge", Properties: map[string]string{"region": edgeTestRegion, "role": ddc.RoleEdge}},
+		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
+	}}
 
 	noAMI := &state.ModuleResource{
 		TypeName:   cloud.TypeAWSEC2Instance,
 		Properties: map[string]string{"region": edgeTestRegion, "role": ddc.RoleEdge, "subnetId": "subnet-edge"},
 	}
-	if _, err := rebuildEdgeInstanceDesiredState(noAMI, mod, cfg); err == nil {
+	if _, err := rebuildEdgeInstanceDesiredState(noAMI, mod, st, cfg); err == nil {
 		t.Error("expected error without recorded AMI")
 	} else if !strings.Contains(err.Error(), "no AMI recorded") {
 		t.Errorf("unexpected error: %v", err)
@@ -527,9 +543,35 @@ func TestRebuildEdgeInstanceDesiredState_MissingInputs(t *testing.T) {
 		TypeName:   cloud.TypeAWSEC2Instance,
 		Properties: map[string]string{"region": edgeTestRegion, "role": ddc.RoleEdge, "imageId": "ami-edge"},
 	}
-	if _, err := rebuildEdgeInstanceDesiredState(noSubnet, mod, cfg); err == nil {
+	if _, err := rebuildEdgeInstanceDesiredState(noSubnet, mod, st, cfg); err == nil {
 		t.Error("expected error without recorded subnet")
 	} else if !strings.Contains(err.Error(), "no subnet recorded") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// The edge instance keeps its recorded inputs but the module recorded no
+	// edge security group in the edge region.
+	noSG := &state.ModuleResource{
+		TypeName:   cloud.TypeAWSEC2Instance,
+		Properties: map[string]string{"region": edgeTestRegion, "role": ddc.RoleEdge, "imageId": "ami-edge", "subnetId": "subnet-edge"},
+	}
+	noSGMod := &state.ModuleState{Name: "ddc", Resources: []state.ModuleResource{
+		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
+	}}
+	if _, err := rebuildEdgeInstanceDesiredState(noSG, noSGMod, st, cfg); err == nil {
+		t.Error("expected error without a recorded edge security group")
+	} else if !strings.Contains(err.Error(), "no security group recorded") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// A home security group alone does not satisfy an edge rebuild: the
+	// profile is the remaining required input.
+	edgeSGOnly := &state.ModuleState{Name: "ddc", Resources: []state.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-edge", Properties: map[string]string{"region": edgeTestRegion, "role": ddc.RoleEdge}},
+	}}
+	if _, err := rebuildEdgeInstanceDesiredState(noSG, edgeSGOnly, st, cfg); err == nil {
+		t.Error("expected error without a recorded IAM instance profile")
+	} else if !strings.Contains(err.Error(), "no IAM instance profile recorded") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

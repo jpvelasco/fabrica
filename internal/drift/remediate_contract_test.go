@@ -85,9 +85,10 @@ func TestRebuildInstanceDesiredState_Perforce_VersionFromConfig(t *testing.T) {
 
 	mod := perforceModuleFixture()
 	mod.Version = ""
+	st := state.NewState("123456789012", "us-east-1")
 	withPerforcePassword(t, func(string) (string, error) { return "p4-admin", nil })
 
-	ds, err := rebuildInstanceDesiredState(&mod.Resources[2], mod, cfg)
+	ds, err := rebuildInstanceDesiredState(&mod.Resources[2], mod, st, cfg)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -102,9 +103,10 @@ func TestRebuildInstanceDesiredState_Perforce_VersionFromConfig(t *testing.T) {
 func TestRebuildInstanceDesiredState_Perforce_VersionDefault(t *testing.T) {
 	mod := perforceModuleFixture()
 	mod.Version = ""
+	st := state.NewState("123456789012", "us-east-1")
 	withPerforcePassword(t, func(string) (string, error) { return "p4-admin", nil })
 
-	ds, err := rebuildInstanceDesiredState(&mod.Resources[2], mod, config.Defaults())
+	ds, err := rebuildInstanceDesiredState(&mod.Resources[2], mod, st, config.Defaults())
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -119,7 +121,8 @@ func TestRebuildInstanceDesiredState_Perforce_VersionDefault(t *testing.T) {
 func TestRebuildInstanceDesiredState_Perforce_MissingSecurityGroup(t *testing.T) {
 	mod := perforceModuleFixture()
 	mod.Resources = mod.Resources[1:] // drop the security group
-	_, err := rebuildInstanceDesiredState(&mod.Resources[1], mod, config.Defaults())
+	st := state.NewState("123456789012", "us-east-1")
+	_, err := rebuildInstanceDesiredState(&mod.Resources[1], mod, st, config.Defaults())
 	if err == nil || !strings.Contains(err.Error(), "security group") {
 		t.Fatalf("expected a security group error, got %v", err)
 	}
@@ -129,9 +132,10 @@ func TestRebuildInstanceDesiredState_Perforce_MissingSecurityGroup(t *testing.T)
 // launch an instance with an unusable password.
 func TestRebuildInstanceDesiredState_Perforce_EmptyAdminPassword(t *testing.T) {
 	mod := perforceModuleFixture()
+	st := state.NewState("123456789012", "us-east-1")
 	withPerforcePassword(t, func(string) (string, error) { return "", nil })
 
-	_, err := rebuildInstanceDesiredState(&mod.Resources[2], mod, config.Defaults())
+	_, err := rebuildInstanceDesiredState(&mod.Resources[2], mod, st, config.Defaults())
 	if err == nil || !strings.Contains(err.Error(), "rendering perforce cloud-init") {
 		t.Fatalf("expected a cloud-init render error, got %v", err)
 	}
@@ -141,7 +145,8 @@ func TestRebuildInstanceDesiredState_Perforce_EmptyAdminPassword(t *testing.T) {
 func TestRebuildInstanceDesiredState_Horde_MissingImageID(t *testing.T) {
 	mod := hordeModuleFixture()
 	mod.Version = ""
-	_, err := rebuildInstanceDesiredState(&mod.Resources[2], mod, config.Defaults())
+	st := state.NewState("123456789012", "us-east-1")
+	_, err := rebuildInstanceDesiredState(&mod.Resources[2], mod, st, config.Defaults())
 	if err == nil || !strings.Contains(err.Error(), "no AMI recorded") {
 		t.Fatalf("expected a no-AMI error, got %v", err)
 	}
@@ -151,7 +156,8 @@ func TestRebuildInstanceDesiredState_Horde_MissingImageID(t *testing.T) {
 func TestRebuildInstanceDesiredState_Horde_MissingSecurityGroup(t *testing.T) {
 	mod := hordeModuleFixture()
 	mod.Resources = mod.Resources[1:] // drop the security group
-	_, err := rebuildInstanceDesiredState(&mod.Resources[1], mod, config.Defaults())
+	st := state.NewState("123456789012", "us-east-1")
+	_, err := rebuildInstanceDesiredState(&mod.Resources[1], mod, st, config.Defaults())
 	if err == nil || !strings.Contains(err.Error(), "security group") {
 		t.Fatalf("expected a security group error, got %v", err)
 	}
@@ -161,8 +167,9 @@ func TestRebuildInstanceDesiredState_Horde_MissingSecurityGroup(t *testing.T) {
 // unsupported instead of rebuilding it with a guessed password.
 func TestRebuildInstanceDesiredState_Horde_MissingCredentials(t *testing.T) {
 	mod := hordeModuleFixture()
+	st := state.NewState("123456789012", "us-east-1")
 	withHordePassword(t, func(string) (string, error) { return "", errors.New("no such file") })
-	_, err := rebuildInstanceDesiredState(&mod.Resources[2], mod, config.Defaults())
+	_, err := rebuildInstanceDesiredState(&mod.Resources[2], mod, st, config.Defaults())
 	if err == nil {
 		t.Fatal("expected an error when the credentials file is unreadable")
 	}
@@ -172,9 +179,10 @@ func TestRebuildInstanceDesiredState_Horde_MissingCredentials(t *testing.T) {
 // launch an instance whose database rejects every connection.
 func TestRebuildInstanceDesiredState_Horde_EmptyMongoPassword(t *testing.T) {
 	mod := hordeModuleFixture()
+	st := state.NewState("123456789012", "us-east-1")
 	withHordePassword(t, func(string) (string, error) { return "", nil })
 
-	_, err := rebuildInstanceDesiredState(&mod.Resources[2], mod, config.Defaults())
+	_, err := rebuildInstanceDesiredState(&mod.Resources[2], mod, st, config.Defaults())
 	if err == nil || !strings.Contains(err.Error(), "rendering horde cloud-init") {
 		t.Fatalf("expected a cloud-init render error, got %v", err)
 	}

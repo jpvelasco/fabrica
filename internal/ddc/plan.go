@@ -201,7 +201,7 @@ func resolveDefaults(cfg config.DDCConfig, account, region string) ddcDefaults {
 		allowedCIDR:  cidrOrDefault(cfg.AllowedCIDR),
 		internalCIDR: internalCIDROrDefault(cfg.InternalCIDR),
 		bucket:       BucketOrDefault(cfg.Bucket, account, region),
-		namespace:    namespaceOrDefault(cfg.Namespace),
+		namespace:    NamespaceOrDefault(cfg.Namespace),
 	}
 }
 
@@ -261,7 +261,9 @@ func internalCIDROrDefault(v string) string {
 	return v
 }
 
-func namespaceOrDefault(v string) string {
+// NamespaceOrDefault returns the configured Jupiter namespace, or the
+// module default when unset.
+func NamespaceOrDefault(v string) string {
 	if v == "" {
 		return DefaultNamespace
 	}
