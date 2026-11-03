@@ -305,25 +305,38 @@ func (g *terraformGenerator) hclInlinePolicies(v any) string {
 	return sb.String()
 }
 
-// hclBlockDevices converts block device mappings to HCL format.
+// hclBlockDevices converts block device mappings to HCL format, emitting one
+// ebs_block_device block per mapping (the Terraform block is repeatable, so a
+// single block would be invalid HCL for multi-mapping instances such as
+// perforce's data + root pair). Encrypted and KmsKeyId are carried through so
+// the generated module preserves the EBS encryption requirement (#541);
+// kms_key_id is emitted only when a non-empty key is set.
 func (g *terraformGenerator) hclBlockDevices(v any) string {
 	devs, ok := v.([]map[string]any)
 	if !ok {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString("  ebs_block_device {\n")
 	for _, dev := range devs {
-		fmt.Fprintf(&sb, "    device_name = %q\n", dev["DeviceName"])
-		if ebs, ok := dev["Ebs"].(map[string]any); ok {
-			fmt.Fprintf(&sb, "    volume_size = %v\n", ebs["VolumeSize"])
-			fmt.Fprintf(&sb, "    volume_type = %q\n", ebs["VolumeType"])
-			if del, ok := ebs["DeleteOnTermination"].(bool); ok {
-				fmt.Fprintf(&sb, "    delete_on_termination = %t\n", del)
-			}
+		ebs, ok := dev["Ebs"].(map[string]any)
+		if !ok {
+			continue
 		}
+		sb.WriteString("  ebs_block_device {\n")
+		fmt.Fprintf(&sb, "    device_name = %q\n", dev["DeviceName"])
+		fmt.Fprintf(&sb, "    volume_size = %v\n", ebs["VolumeSize"])
+		fmt.Fprintf(&sb, "    volume_type = %q\n", ebs["VolumeType"])
+		if del, ok := ebs["DeleteOnTermination"].(bool); ok {
+			fmt.Fprintf(&sb, "    delete_on_termination = %t\n", del)
+		}
+		if enc, ok := ebs["Encrypted"].(bool); ok {
+			fmt.Fprintf(&sb, "    encrypted = %t\n", enc)
+		}
+		if kms, ok := ebs["KmsKeyId"].(string); ok && kms != "" {
+			fmt.Fprintf(&sb, "    kms_key_id = %q\n", kms)
+		}
+		sb.WriteString("  }\n")
 	}
-	sb.WriteString("  }\n")
 	return sb.String()
 }
 
