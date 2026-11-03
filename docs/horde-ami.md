@@ -279,12 +279,19 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/v1/jobs
 # Stop the stack so the AMI is clean
 sudo docker compose -f /etc/horde/docker-compose.yml down
 
+AMI_NAME="fabrica-horde-$(date +%Y%m%d)"
 aws ec2 create-image \
   --instance-id <instance-id> \
-  --name "fabrica-horde-$(date +%Y%m%d)" \
+  --name "$AMI_NAME" \
   --description "Horde Docker compose AMI — MongoDB, Redis, job-capable Horde server" \
-  --no-reboot
+  --no-reboot \
+  --tag-specifications \
+    "ResourceType=image,Tags=[{Key=ManagedBy,Value=fabrica},{Key=FabricaModule,Value=horde},{Key=Name,Value=$AMI_NAME}]" \
+    "ResourceType=snapshot,Tags=[{Key=ManagedBy,Value=fabrica},{Key=FabricaModule,Value=horde},{Key=Name,Value=$AMI_NAME}]"
 ```
+
+The `snapshot` tag specification is required: without it the root snapshot is
+created untagged and stays invisible to `ManagedBy`-based sweeps and teardown.
 
 Note the resulting AMI ID and add it to `fabrica.yaml`:
 

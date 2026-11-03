@@ -272,6 +272,11 @@ func TestRenderPackerTemplate_Docker(t *testing.T) {
 	if !strings.Contains(s, "snap install amazon-ssm-agent --classic") {
 		t.Error("packer template should fail-closed enable SSM agent")
 	}
+	// #509: the snapshots the bake takes must carry the AMI tag set so
+	// ManagedBy-based sweeps find them.
+	if !strings.Contains(s, "snapshot_tags = {") {
+		t.Error("packer template should declare snapshot_tags mirroring the AMI tag set")
+	}
 	// Bare # comments inside inline = [...] list literals are invalid HCL.
 	// Heredoc bodies (<<-EOF ... EOF) are strings, so # there is fine.
 	inInlineList := false
@@ -326,6 +331,10 @@ func TestRenderPackerTemplate_Native(t *testing.T) {
 	if strings.Contains(s, "GITHUB_PAT") {
 		t.Error("native packer template should not reference GITHUB_PAT")
 	}
+	// #509: snapshot_tags on the native path as well.
+	if !strings.Contains(s, "snapshot_tags = {") {
+		t.Error("native packer template should declare snapshot_tags mirroring the AMI tag set")
+	}
 }
 
 func TestRenderBuildGuideTemplate_Docker(t *testing.T) {
@@ -355,6 +364,22 @@ func TestRenderBuildGuideTemplate_Docker(t *testing.T) {
 	}
 	if !strings.Contains(s, "aws imagebuilder create-component") {
 		t.Error("build guide should include create-component command")
+	}
+	// #509: the Image Builder bake must tag the output AMI's snapshots so
+	// ManagedBy-based sweeps find them.
+	if !strings.Contains(s, "aws ec2 create-tags --region us-east-1") {
+		t.Error("build guide should include the snapshot create-tags loop")
+	}
+	if !strings.Contains(s, "Key=ManagedBy,Value=fabrica Key=FabricaModule,Value=horde Key=Name,Value=test-horde") {
+		t.Error("snapshot tag loop should carry the ManagedBy + horde identity tags and the image name")
+	}
+	if !strings.Contains(s, "Images[0].BlockDeviceMappings[?Ebs].Ebs.SnapshotId") {
+		t.Error("snapshot tag loop should resolve snapshot ids from describe-images")
+	}
+	// The Packer path tags snapshots through the template's snapshot_tags
+	// block, and the guide says so.
+	if !strings.Contains(s, "snapshot_tags") {
+		t.Error("build guide should note the Packer snapshot_tags block")
 	}
 }
 

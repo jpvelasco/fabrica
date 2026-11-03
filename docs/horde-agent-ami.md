@@ -188,12 +188,19 @@ cat /etc/horde/coordinator.conf
 #### Step 6: Create the AMI
 
 ```bash
+AMI_NAME="fabrica-horde-agent-$(date +%Y%m%d)"
 aws ec2 create-image \
   --instance-id <instance-id> \
-  --name "fabrica-horde-agent-$(date +%Y%m%d)" \
+  --name "$AMI_NAME" \
   --description "Dedicated Horde agent AMI — agent binary only, no coordinator stack" \
-  --no-reboot
+  --no-reboot \
+  --tag-specifications \
+    "ResourceType=image,Tags=[{Key=ManagedBy,Value=fabrica},{Key=FabricaModule,Value=horde},{Key=Name,Value=$AMI_NAME}]" \
+    "ResourceType=snapshot,Tags=[{Key=ManagedBy,Value=fabrica},{Key=FabricaModule,Value=horde},{Key=Name,Value=$AMI_NAME}]"
 ```
+
+The `snapshot` tag specification is required: without it the root snapshot is
+created untagged and stays invisible to `ManagedBy`-based sweeps and teardown.
 
 Note the resulting AMI ID.
 

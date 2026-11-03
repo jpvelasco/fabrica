@@ -71,6 +71,11 @@ func TestRenderTemplates(t *testing.T) {
 				"REPLACE_WITH_CUSTOM_COMPONENT_ARN",
 				"verify-lore-ami-runtime.sh",
 				"fails closed",
+				// #509: the Image Builder bake must tag the output AMI's
+				// snapshots so ManagedBy-based sweeps find them.
+				"aws ec2 create-tags --region us-west-2",
+				"Key=ManagedBy,Value=fabrica Key=FabricaModule,Value=lore Key=Name,Value=fabrica-lore-5.5.0",
+				"Images[0].BlockDeviceMappings[?Ebs].Ebs.SnapshotId",
 			},
 		},
 		{
@@ -84,6 +89,8 @@ func TestRenderTemplates(t *testing.T) {
 				"source_ami    = var.source_ami",
 				"install-lore.sh",
 				"verify-lore-ami-bake.sh",
+				// #509: snapshots the bake takes carry the AMI tag set.
+				"snapshot_tags = {",
 			},
 		},
 	}

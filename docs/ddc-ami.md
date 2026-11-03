@@ -126,8 +126,10 @@ and Lore bakes in this account:
    infrastructureConfigurationArn, tags)` — there is no `start_image_build`
    API. Track it with `get_image(imageBuildVersionArn=...)` and poll
    `state.status` to `AVAILABLE` (not `SUCCESS`); the AMI id is in
-   `outputResources.amis[0].image`. Tag the build
-   `ManagedBy=fabrica`/`FabricaModule=ddc` so it is visible to sweeps.
+   `outputResources.amis[0].image`. Tag the build, the AMI, and the AMI's
+   snapshots `ManagedBy=fabrica`/`FabricaModule=ddc` so all of them are
+   visible to sweeps — Image Builder tags the build and the AMI, but not the
+   snapshots it takes (`create-tags` each snapshot id from `describe-images`).
 5. Poll to a terminal state and clean up failed candidates — never reuse a
    failed bake as known-good.
 
