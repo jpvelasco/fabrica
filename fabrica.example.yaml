@@ -10,9 +10,9 @@ cloud:
     accountId: ""             # Auto-detected on first `fabrica setup`; leave empty initially
     tags: {}                  # Extra tags merged with standard Fabrica tags on every resource
     # iam applies to EC2-module roles (workstation, horde including agents,
-    # lore, perforce, ddc). CI and Deploy ignore these keys. path must start
-    # and end with /. permissionsBoundary is an IAM policy ARN. Leave both
-    # unset to omit the Cloud Control properties.
+    # lore, perforce, ddc) and the CI CodeBuild role. Deploy ignores these
+    # keys. path must start and end with /. permissionsBoundary is an IAM
+    # policy ARN. Leave both unset to omit the Cloud Control properties.
     # iam:
     #   path: /fabrica/
     #   permissionsBoundary: arn:aws:iam::123456789012:policy/fabrica-boundary
@@ -132,6 +132,10 @@ ci:
   image: ""                   # Build image (default "aws/codebuild/amazonlinux2-x86_64-standard:5.0")
   buildTimeout: 0             # Build timeout in minutes (default 60)
   pipeline: false             # standing CodePipeline cost line only; V1 does not provision a pipeline
+  # iam overrides cloud.aws.iam for the CodeBuild role when a field is set:
+  # iam:
+  #   path: /ci/
+  #   permissionsBoundary: arn:aws:iam::123456789012:policy/fabrica-boundary
 
 # Deploy module — GameLift fleet deployment of CI/Horde server builds.
 deploy:

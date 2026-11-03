@@ -189,6 +189,8 @@ type CIConfig struct {
 	VPCId        string `mapstructure:"vpcId"        yaml:"vpcId"`
 	SubnetId     string `mapstructure:"subnetId"     yaml:"subnetId"`
 	Pipeline     bool   `mapstructure:"pipeline"     yaml:"pipeline"`
+	// IAM overrides cloud.aws.iam for the CodeBuild role when a field is set.
+	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
 }
 
 // DeployConfig holds the deploy: section of fabrica.yaml. Defaults are applied
@@ -330,7 +332,7 @@ type AWS struct {
 	AccountID string            `mapstructure:"accountId" yaml:"accountId"`
 	Tags      map[string]string `mapstructure:"tags" yaml:"tags"`
 	// IAM applies to EC2-module roles (workstation, horde including agents,
-	// lore, perforce, ddc). CI and Deploy ignore it.
+	// lore, perforce, ddc) and the CI CodeBuild role. Deploy ignores it.
 	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
 	// VolumeRequestTags must be present on the RunInstances request for both
 	// the instance and the root volume. Cloud Control cannot tag the volume
@@ -548,7 +550,7 @@ func iamPolicyARN(arn string) bool {
 }
 
 // ResolveIAM returns the constraints to put on a role. A non-empty module
-// field replaces the global cloud.aws.iam value. CI and Deploy do not call this.
+// field replaces the global cloud.aws.iam value. Deploy does not call this.
 func ResolveIAM(global, module IAM) (IAM, error) {
 	out := global
 	if module.Path != "" {

@@ -59,7 +59,10 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 // RoleDesiredState returns the Cloud Control desired-state JSON for the IAM role
 // CodeBuild assumes. The trust policy allows codebuild.amazonaws.com; a single
 // inline policy grants CloudWatch Logs writes (scoped to this project's log
-// group) and ec2:DescribeInstances (to resolve coordinator addresses).
+// group) and ec2:DescribeInstances (to resolve coordinator addresses). The
+// resolved IAM path and permissions boundary (cloud.aws.iam, ci.iam override)
+// are applied to the role when set.
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
-	return iamrole.RoleDocument(plan.RoleName, iamrole.ServiceCodeBuild, nil, []map[string]any{iamrole.CICodeBuildInlinePolicy(plan.Region, plan.Account, plan.ProjectName)}, map[string]string{"FabricaModule": "ci"})
+	return iamrole.RoleDocument(plan.RoleName, iamrole.ServiceCodeBuild, nil, []map[string]any{iamrole.CICodeBuildInlinePolicy(plan.Region, plan.Account, plan.ProjectName)}, map[string]string{"FabricaModule": "ci"},
+		iamrole.Options(plan.IAM.Path, plan.IAM.PermissionsBoundary)...)
 }

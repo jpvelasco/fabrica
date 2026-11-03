@@ -17,7 +17,7 @@ workstation:
     path: /workstation/                            # this module only
 ```
 
-The same `iam` block is read for workstation, horde (the coordinator and the agent pool), lore, perforce, and ddc. CI and Deploy ignore it.
+The same `iam` block is read for workstation, horde (the coordinator and the agent pool), lore, perforce, ddc, and the CI CodeBuild role (`ci.iam`). Deploy ignores it.
 
 On `AWS::IAM::Role`, Fabrica sends `Path` and `PermissionsBoundary`. On `AWS::IAM::InstanceProfile`, it sends `Path` only. `export` writes the same properties. A path that does not start and end with `/`, or that contains an empty segment (`//`), fails before any create. `permissionsBoundary` must be a policy ARN in the commercial, GovCloud, or China partition (`arn:aws:iam::ACCOUNT:policy/name`, `arn:aws-us-gov:iam::...`, or `arn:aws-cn:iam::...`). A role ARN is rejected.
 
