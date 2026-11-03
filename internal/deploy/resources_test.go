@@ -78,6 +78,45 @@ func TestFleetDesiredState(t *testing.T) {
 	}
 }
 
+func TestFleetDesiredStateCapacity(t *testing.T) {
+	p := promotePlanFixture()
+	p.MinimumInstances = 1
+	p.MaximumInstances = 4
+	raw, err := FleetDesiredState(p, "build-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	locs, ok := doc["Locations"].([]any)
+	if !ok || len(locs) != 1 {
+		t.Fatalf("Locations = %v, want exactly one location", doc["Locations"])
+	}
+	loc, ok := locs[0].(map[string]any)
+	if !ok {
+		t.Fatalf("location entry is %T, want object", locs[0])
+	}
+	if loc["Location"] != p.Region {
+		t.Errorf("Location = %v, want %s", loc["Location"], p.Region)
+	}
+	capacity, ok := loc["LocationCapacity"].(map[string]any)
+	if !ok {
+		t.Fatalf("location missing LocationCapacity: %v", loc)
+	}
+	want := map[string]float64{
+		"DesiredEC2Instances":      float64(p.DesiredInstances),
+		"MinimumNumberOfInstances": float64(p.MinimumInstances),
+		"MaximumNumberOfInstances": float64(p.MaximumInstances),
+	}
+	for key, wantVal := range want {
+		if got := capacity[key]; got != wantVal {
+			t.Errorf("LocationCapacity[%s] = %v, want %v", key, got, wantVal)
+		}
+	}
+}
+
 func TestFleetDesiredStateCIDRDefault(t *testing.T) {
 	p := promotePlanFixture()
 	p.AllowedCIDR = defaultAllowedCIDR

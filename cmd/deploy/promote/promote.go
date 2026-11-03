@@ -268,9 +268,10 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 	return nil
 }
 
-// pollUntilActive polls fleet status until ACTIVE, printing phase transitions.
-// On ERROR or timeout it surfaces recent fleet events and returns an error
-// WITHOUT flipping the alias.
+// pollUntilActive polls fleet status until the fleet is ACTIVE and reaches
+// the capacity the plan requested, printing phase transitions. On ERROR or
+// timeout it surfaces recent fleet events and returns an error WITHOUT
+// flipping the alias.
 func (c command) pollUntilActive(ctx context.Context, fleetID string, plan *deploy.PromotePlan) error {
 	deadline := c.now().Add(time.Duration(plan.ActivationTimeoutMinutes) * time.Minute)
 	last := ""
@@ -285,19 +286,37 @@ func (c command) pollUntilActive(ctx context.Context, fleetID string, plan *depl
 		}
 		switch info.Status {
 		case "ACTIVE":
-			return nil
+			if fleetMeetsPlan(plan, info) {
+				return nil
+			}
+			fmt.Fprintf(c.out, "  fleet %s: ACTIVE, %d active of %d desired — waiting for the requested capacity\n", fleetID, info.CapacityCurrent, plan.DesiredInstances)
 		case "ERROR", "DELETING", "TERMINATED":
 			c.printFleetEvents(ctx, fleetID)
 			return fmt.Errorf("fleet %s entered status %s before becoming ACTIVE — see events above and 'fabrica deploy status'; the alias was not changed", fleetID, info.Status)
 		}
 		if c.now().After(deadline) {
 			c.printFleetEvents(ctx, fleetID)
-			return fmt.Errorf("timed out after %d minutes waiting for fleet %s to become ACTIVE (status %s) — check 'fabrica deploy status'; the alias was not changed", plan.ActivationTimeoutMinutes, fleetID, info.Status)
+			extra := ""
+			if info.CapacityCurrent > 0 || info.CapacityDesired > 0 {
+				extra = fmt.Sprintf(", %d active of %d desired", info.CapacityCurrent, info.CapacityDesired)
+			}
+			return fmt.Errorf("timed out after %d minutes waiting for fleet %s to become ACTIVE (status %s%s) — check 'fabrica deploy status'; the alias was not changed", plan.ActivationTimeoutMinutes, fleetID, info.Status, extra)
 		}
 		if err := c.waitCtx(ctx, pollInterval); err != nil {
 			return fmt.Errorf("waiting for fleet %s cancelled: %w — the alias was not changed; check 'fabrica deploy status'", fleetID, err)
 		}
 	}
+}
+
+// fleetMeetsPlan reports whether an ACTIVE fleet meets the size the plan
+// requested. Zero instance counts mean the provider did not expose capacity
+// (accepted, so synthetic fakes keep working); when counts are exposed, the
+// AWS-recorded desired must match the plan and the active count must reach it.
+func fleetMeetsPlan(plan *deploy.PromotePlan, info cloud.FleetInfo) bool {
+	if info.CapacityDesired == 0 && info.CapacityCurrent == 0 {
+		return true
+	}
+	return info.CapacityDesired == plan.DesiredInstances && info.CapacityCurrent >= plan.DesiredInstances
 }
 
 func (c command) printFleetEvents(ctx context.Context, fleetID string) {

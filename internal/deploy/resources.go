@@ -43,7 +43,10 @@ func BuildDesiredState(plan *PromotePlan) (json.RawMessage, error) {
 }
 
 // FleetDesiredState returns the desired state for a managed EC2 fleet running
-// the given build.
+// the given build. The fleet requests the plan's instance count through the
+// location's LocationCapacity (desired plus min/max bounds) — without it
+// GameLift ignores the configured capacity and the fleet comes up at its own
+// default size.
 func FleetDesiredState(plan *PromotePlan, buildID string) (json.RawMessage, error) {
 	doc := map[string]any{
 		"Name":            plan.FleetName,
@@ -67,7 +70,14 @@ func FleetDesiredState(plan *PromotePlan, buildID string) (json.RawMessage, erro
 			}},
 		},
 		"Locations": []map[string]any{
-			{"Location": plan.Region},
+			{
+				"Location": plan.Region,
+				"LocationCapacity": map[string]any{
+					"DesiredEC2Instances":      plan.DesiredInstances,
+					"MinimumNumberOfInstances": plan.MinimumInstances,
+					"MaximumNumberOfInstances": plan.MaximumInstances,
+				},
+			},
 		},
 		"Tags": []map[string]string{
 			{"Key": "ManagedBy", "Value": "fabrica"},
