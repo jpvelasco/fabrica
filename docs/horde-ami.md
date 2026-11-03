@@ -153,6 +153,8 @@ Bake these into the AMI at `/etc/horde/`:
 
 ### Path A — Generated Image Builder bake (recommended)
 
+Guardrailed accounts: the bake needs the request-tag-gated Image Builder grant in [guardrailed-accounts.md](guardrailed-accounts.md#operator-policy-minimal-example); pass `--tags`/`--resource-tags` with `ManagedBy=fabrica` on each create.
+
 `fabrica horde ami build --install docker` generates a `component.yaml` that is
 now a **complete** jobs-capable bake: it installs the AWS CLI v2 + `unzip`,
 Docker CE, writes `/etc/horde/docker-compose.yml` + `globals.json` (Build
