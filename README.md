@@ -674,6 +674,8 @@ deploy:
   buildBucket: my-studio-builds   # S3 bucket where packaged server builds land
 ```
 
+`cloud.aws.tags` adds your attribution tags (for example `project: my-project`) to every resource Fabrica creates, including the surfaces Cloud Control cannot tag through desired state: IAM instance profiles (tagged after create with `iam:TagInstanceProfile`) and the workstation DCV session-password SSM parameter. The Fabrica identity tags (`ManagedBy`, `FabricaModule`, `FabricaVersion`, `FabricaCreateNonce`) are owned by Fabrica: `cloud.aws.tags` entries under those key names are ignored, so tag-scoped sweeps keep their attribution.
+
 Accounts that require an IAM path and permissions boundary, or a project tag on both the instance and its root volume, set `cloud.aws.iam` and `cloud.aws.volumeRequestTags`. See [docs/guardrailed-accounts.md](docs/guardrailed-accounts.md).
 
 ## Architecture
