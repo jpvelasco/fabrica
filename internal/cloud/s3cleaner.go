@@ -10,6 +10,9 @@ import "context"
 // otherwise Cloud Control deletion fails with BucketNotEmpty forever.
 type S3BucketCleaner interface {
 	// PurgeBucket deletes all current object versions, noncurrent versions,
-	// and delete markers in the named bucket.
+	// and delete markers in the named bucket. Per-object S3 deletion
+	// failures (e.g. AccessDenied on individual keys) are surfaced as an
+	// error naming the affected keys; the bucket is then left partially
+	// purged for the operator to resolve.
 	PurgeBucket(ctx context.Context, bucket string) error
 }
