@@ -73,6 +73,32 @@ func TestValidateIAM(t *testing.T) {
 	}
 }
 
+func TestValidateIAMPath(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"", true},          // empty: valid, property omitted
+		{"/", true},         // AWS root path
+		{"/fabrica/", true}, // nested path
+		{"/fabrica/team/", true},
+		{"fabrica", false},  // missing leading and trailing slash
+		{"/fabrica", false}, // missing trailing slash
+		{"fabrica/", false}, // missing leading slash
+		{"//", false},       // empty segment
+		{"/fabrica//roles/", false},
+	}
+	for _, tc := range cases {
+		err := validateIAMPath(tc.path)
+		if tc.want && err != nil {
+			t.Errorf("validateIAMPath(%q) = %v, want nil", tc.path, err)
+		}
+		if !tc.want && err == nil {
+			t.Errorf("validateIAMPath(%q) = nil, want an error", tc.path)
+		}
+	}
+}
+
 func TestLoadIAMAndVolumeRequestTags(t *testing.T) {
 	path := writeConfig(t, `cloud:
   aws:

@@ -55,7 +55,8 @@ type roleOptions struct {
 	PermissionsBoundary string
 }
 
-// WithPath sets the IAM path. The path must start and end with "/".
+// WithPath sets the IAM path. The path is the AWS root "/" or must start
+// and end with "/".
 func WithPath(path string) RoleOption {
 	return func(o *roleOptions) { o.Path = path }
 }
@@ -116,10 +117,10 @@ func RoleDocument(roleName string, service string, managedArns []string, policie
 }
 
 func validateRolePath(path string) error {
-	if path == "" {
+	if path == "" || path == "/" {
 		return nil
 	}
-	if len(path) < 2 || !strings.HasPrefix(path, "/") || !strings.HasSuffix(path, "/") || strings.Contains(path, "//") {
+	if !strings.HasPrefix(path, "/") || !strings.HasSuffix(path, "/") || strings.Contains(path, "//") {
 		return fmt.Errorf("iam.path %q must start and end with /", path)
 	}
 	return nil
