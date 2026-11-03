@@ -83,19 +83,57 @@ func (c *resourceClients) Create(ctx context.Context, r *fabricac.Resource) erro
 }
 
 // tagPostCreateResources tags resources whose Cloud Control create schema
-// cannot carry tags: IAM instance profiles (no Tags property). The tag set is
+// cannot carry tags: IAM instance profiles (no Tags property) and security
+// group ingress rules (inline on the group, or standalone). The tag set is
 // taken from the final desired state — the exact set stamped at create — so
-// profiles carry the same identity and operator tags as their parent
-// resources. Re-runs are safe: the AlreadyExists recovery path re-enters this
-// hook, and the tag API is additive.
+// rules and profiles carry the same identity and operator tags as their
+// parent resources. Re-runs are safe: the AlreadyExists recovery path
+// re-enters this hook, and both tag APIs are additive.
 func (c *resourceClients) tagPostCreateResources(ctx context.Context, r *fabricac.Resource) error {
-	if r.TypeName != fabricac.TypeAWSIAMInstanceProfile {
-		return nil
+	switch r.TypeName {
+	case fabricac.TypeAWSIAMInstanceProfile:
+		if c.iam == nil {
+			return nil
+		}
+		return c.iam.TagInstanceProfile(ctx, r.Identifier, postCreateTags(r.DesiredState, c.version, c.operatorTags))
+	case fabricac.TypeAWSEC2SecurityGroup, fabricac.TypeAWSEC2SecurityGroupIngress:
+		if c.instances == nil {
+			return nil
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(r.DesiredState, &doc); err != nil {
+			return nil
+		}
+		var specs []sgRuleSpec
+		var groupID string
+		if r.TypeName == fabricac.TypeAWSEC2SecurityGroup {
+			specs = sgIngressSpecs(doc)
+			groupID = r.Identifier
+		} else {
+			specs = []sgRuleSpec{sgRuleSpecFromDoc(doc)}
+			groupID = docString(doc, "GroupId")
+			if groupID == "" {
+				oplog.WithResourceAndRegion(r.TypeName, r.Identifier, c.awsCfg.region).Warn(
+					"security group ingress carries no GroupId; skipping rule tagging",
+				)
+				return nil
+			}
+		}
+		if len(specs) == 0 {
+			return nil
+		}
+		n, err := c.instances.TagSecurityGroupRules(ctx, groupID, specs, postCreateTags(r.DesiredState, c.version, c.operatorTags))
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			oplog.WithResourceAndRegion(r.TypeName, r.Identifier, c.awsCfg.region).Warn(
+				"no live security group rule matched the desired state; skipping rule tagging",
+				"group", groupID,
+			)
+		}
 	}
-	if c.iam == nil {
-		return nil
-	}
-	return c.iam.TagInstanceProfile(ctx, r.Identifier, postCreateTags(r.DesiredState, c.version, c.operatorTags))
+	return nil
 }
 
 // createAsync fires CreateResource and returns once the resource Identifier is
