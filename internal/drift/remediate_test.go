@@ -1789,7 +1789,7 @@ func TestRebuildInstanceDesiredState_Lore_S3Store(t *testing.T) {
 	}
 }
 
-func TestRebuildInstanceDesiredState_DDScylla(t *testing.T) {
+func TestRebuildInstanceDesiredState_DDCScylla(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.DDC.ScyllaAmiID = "ami-scylla"
 
