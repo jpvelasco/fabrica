@@ -7,6 +7,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/ddc"
 	"github.com/jpvelasco/fabrica/internal/deploy"
 	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/jpvelasco/fabrica/internal/perforce"
@@ -162,6 +163,122 @@ func TestAggregateDeployFleetPrefersState(t *testing.T) {
 	base := cost.Global.EstimateAll(cfgOnly).Total
 	if b.Modules[0].Subtotal <= base {
 		t.Errorf("state fleet (3 desired) subtotal %v should exceed config-default %v", b.Modules[0].Subtotal, base)
+	}
+}
+
+// homeDDCState is a DDC module with only the home (coordinator) instance.
+func homeDDCState() *state.State {
+	st := state.NewState("acct", "us-east-1")
+	st.Modules = []state.ModuleState{
+		mod("ddc", "ready",
+			state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-home",
+				Properties: map[string]string{"region": "us-east-1", "role": ddc.RoleCoordinator, "instanceType": "c5.large", "volumeSize": "200"}}),
+	}
+	return st
+}
+
+func TestAggregateDDCEdgeRaisesTotal(t *testing.T) {
+	// The issue reproduction: adding a recorded edge increases the estimate —
+	// the edge contributes its own compute + volume lines at its recorded
+	// shape, and the shared home bucket is not duplicated.
+	cfg := config.Defaults()
+	home := Aggregate(cfg, homeDDCState(), cost.Global)
+
+	st := homeDDCState()
+	st.Modules[0].Resources = append(st.Modules[0].Resources,
+		state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-eu",
+			Properties: map[string]string{"region": "eu-west-1", "role": ddc.RoleEdge, "instanceType": "m5.large", "volumeSize": "128"}},
+	)
+	b := Aggregate(cfg, st, cost.Global)
+	if b.Modules[0].Subtotal <= home.Modules[0].Subtotal {
+		t.Errorf("home+edge subtotal %v should exceed home-only %v", b.Modules[0].Subtotal, home.Modules[0].Subtotal)
+	}
+	// The edge lines use the recorded shape (m5.large x128), not the config shape.
+	var edgeInstance, edgeVolume bool
+	for _, r := range b.Modules[0].Report.Results {
+		if r.Resource.TypeName == cloud.TypeAWSEC2Instance && r.Resource.Name == "m5.large" {
+			edgeInstance = true
+		}
+		if r.Resource.TypeName == cloud.TypeAWSEC2Volume && r.Resource.Name == "gp3-128GiB" {
+			edgeVolume = true
+		}
+	}
+	if !edgeInstance || !edgeVolume {
+		t.Errorf("edge lines missing: instance=%v volume=%v", edgeInstance, edgeVolume)
+	}
+	// Exactly one S3 bucket line: the edge reuses the home blob bucket.
+	buckets := 0
+	for _, r := range b.Modules[0].Report.Results {
+		if r.Resource.TypeName == cloud.TypeAWSS3Bucket {
+			buckets++
+		}
+	}
+	if buckets != 1 {
+		t.Errorf("S3 bucket lines = %d, want 1 (shared home bucket)", buckets)
+	}
+}
+
+func TestAggregateDDCMultipleEdgesAllPriced(t *testing.T) {
+	cfg := config.Defaults()
+	st := homeDDCState()
+	st.Modules[0].Resources = append(st.Modules[0].Resources,
+		state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-eu",
+			Properties: map[string]string{"region": "eu-west-1", "role": ddc.RoleEdge, "instanceType": "m5.large", "volumeSize": "100"}},
+		state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-ap",
+			Properties: map[string]string{"region": "ap-southeast-2", "role": ddc.RoleEdge, "instanceType": "m5.2xlarge", "volumeSize": "150"}},
+		// Edge security groups carry the edge role but no shape; they price nothing.
+		state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-eu",
+			Properties: map[string]string{"region": "eu-west-1", "role": ddc.RoleEdge}},
+	)
+	b := Aggregate(cfg, st, cost.Global)
+	edgeLines := map[string]int{}
+	for _, r := range b.Modules[0].Report.Results {
+		if r.Resource.TypeName == cloud.TypeAWSEC2Instance && (r.Resource.Name == "m5.large" || r.Resource.Name == "m5.2xlarge") {
+			edgeLines[r.Resource.Name]++
+		}
+	}
+	if edgeLines["m5.large"] != 1 || edgeLines["m5.2xlarge"] != 1 {
+		t.Errorf("edge instance lines = %v, want one per edge shape", edgeLines)
+	}
+}
+
+func TestAggregateDDCStoppedDropsEdgeCompute(t *testing.T) {
+	cfg := config.Defaults()
+	st := homeDDCState()
+	st.Modules[0].Status = "stopped"
+	st.Modules[0].Resources = append(st.Modules[0].Resources,
+		state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-eu",
+			Properties: map[string]string{"region": "eu-west-1", "role": ddc.RoleEdge, "instanceType": "m5.large", "volumeSize": "128"}},
+	)
+	b := Aggregate(cfg, st, cost.Global)
+	var edgeInstance, edgeVolume bool
+	for _, r := range b.Modules[0].Report.Results {
+		if r.Resource.TypeName == cloud.TypeAWSEC2Instance && r.Resource.Name == "m5.large" {
+			edgeInstance = true
+		}
+		if r.Resource.TypeName == cloud.TypeAWSEC2Volume && r.Resource.Name == "gp3-128GiB" {
+			edgeVolume = true
+		}
+	}
+	if edgeInstance {
+		t.Error("stopped DDC must drop the edge compute line")
+	}
+	if !edgeVolume {
+		t.Error("stopped DDC keeps billing the edge EBS volume")
+	}
+}
+
+func TestDDCEdgeWithoutShapeContributesNoLines(t *testing.T) {
+	// A recorded edge instance without a shape (partial record) contributes no
+	// lines, and an edge security group (edge role, no shape) prices nothing.
+	m := &state.ModuleState{Resources: []state.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-eu",
+			Properties: map[string]string{"region": "eu-west-1", "role": ddc.RoleEdge}},
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-eu",
+			Properties: map[string]string{"region": "eu-west-1", "role": ddc.RoleEdge}},
+	}}
+	if got := ddcEdgeCostResources(m); len(got) != 0 {
+		t.Errorf("shapeless edge contributed lines: %+v", got)
 	}
 }
 
