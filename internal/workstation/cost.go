@@ -12,6 +12,14 @@ import (
 // The cost path uses config + defaults; template overrides only apply at create time.
 func CostResources(cfg config.WorkstationConfig) []cost.Resource {
 	instanceType, volumeSize := resolveSizing(cfg, "")
+	return CostResourcesForShape(cfg, instanceType, volumeSize)
+}
+
+// CostResourcesForShape prices an explicit shape (instance type and volume
+// size) with the module's configured Spot and schedule planning factors
+// applied, so recorded-state cost reporting keeps the same discount (and
+// invalid-schedule naming) as the config-derived estimate.
+func CostResourcesForShape(cfg config.WorkstationConfig, instanceType string, volumeSize int) []cost.Resource {
 	factor, ferr := schedule.CostFactor(cfg.Spot, cfg.Schedule)
 	res := applyCapacity(CostResourcesFor(instanceType, volumeSize), factor)
 	if ferr != nil {

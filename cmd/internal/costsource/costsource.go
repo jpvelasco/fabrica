@@ -113,7 +113,7 @@ func costInputs(cfg *config.Config, m *state.ModuleState) ([]cost.Resource, stri
 	case "lore":
 		return applyStopped(ec2CostResources(m, lore.CostResources(cfg.Lore)), m.Status)
 	case "workstation":
-		return applyStopped(ec2CostResources(m, workstation.CostResources(cfg.Workstation)), m.Status)
+		return applyStopped(workstationCostResources(m, cfg.Workstation), m.Status)
 	case "ci":
 		res := ci.CostResources(cfg.CI)
 		res = append(res, ci.PipelineCostResources(cfg.CI)...)
@@ -156,6 +156,21 @@ func ec2CostResources(m *state.ModuleState, cfgResources []cost.Resource) []cost
 		}
 	}
 	return out
+}
+
+// workstationCostResources prefers the instance type and volume size recorded
+// in state at create time over the config-derived fallback. The recorded shape
+// is priced through the module's own cost path so the configured Spot and
+// schedule planning factors keep applying (ec2CostResources would replace the
+// factor-encoded instance name and drop the discount).
+func workstationCostResources(m *state.ModuleState, cfg config.WorkstationConfig) []cost.Resource {
+	inst := instanceProperties(m)
+	if inst["instanceType"] != "" && inst["volumeSize"] != "" {
+		if size, err := strconv.Atoi(inst["volumeSize"]); err == nil {
+			return workstation.CostResourcesForShape(cfg, inst["instanceType"], size)
+		}
+	}
+	return workstation.CostResources(cfg)
 }
 
 // deployCostResources prices every GameLift fleet recorded in state by its own
