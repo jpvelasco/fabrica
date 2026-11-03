@@ -55,6 +55,19 @@ type CreatePlan struct {
 	CostResources []cost.Resource
 }
 
+// RequiredResources lists the resource TypeNames a complete Perforce module
+// records in state. Create retries compare a module's recorded inventory
+// against this list to separate a fully provisioned module (in any
+// transitional status) from a partial one.
+func (p CreatePlan) RequiredResources() []string {
+	return []string{
+		cloud.TypeAWSEC2SecurityGroup,
+		cloud.TypeAWSIAMRole,
+		cloud.TypeAWSIAMInstanceProfile,
+		cloud.TypeAWSEC2Instance,
+	}
+}
+
 // NewCreatePlan validates inputs and builds a CreatePlan. VPCResolver is called
 // only when VPCId/SubnetId are absent from cfg; pass nil to skip resolution
 // (dry-run with explicit VPC values, or tests).

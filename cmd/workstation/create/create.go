@@ -76,8 +76,10 @@ terminate deletes that recorded name. A create that fails before the instance
 exists deletes the parameter too; once the instance exists the parameter stays
 so cloud-init can read it.
 
-State is written after each resource so a partial failure is recoverable:
-re-running create will detect the already-provisioned module and exit cleanly.
+State is written after each resource, so an interrupted create leaves a
+recoverable record. Re-running create on a complete module exits cleanly; on
+a partial one it fails and names the missing resources plus the cleanup
+command to run first.
 
 A random DCV session password is written to .fabrica/workstation-credentials.yaml.
 
@@ -211,13 +213,18 @@ func (c command) run(ctx context.Context) error {
 		AssumeYes:       c.assumeYes,
 		Out:             c.out,
 		ExistingMessage: "Workstation is already provisioned. Run 'fabrica workstation list' to view details.\n",
-		Confirm:         c.confirm,
-		ReadState:       c.readState,
-		PrintDryRun:     c.printDryRun,
-		PrintApplyPlan:  c.printApplyPlan,
-		Apply:           c.applyCreate,
-		Runtime:         c.runtime,
-		Operation:       "workstation create",
+		// A stopped workstation is fully provisioned: its state is parked,
+		// not partial.
+		ReadyStatuses:     []string{"ready", "stopped"},
+		RequiredResources: plan.RequiredResources(),
+		CleanupCommand:    "fabrica workstation terminate",
+		Confirm:           c.confirm,
+		ReadState:         c.readState,
+		PrintDryRun:       c.printDryRun,
+		PrintApplyPlan:    c.printApplyPlan,
+		Apply:             c.applyCreate,
+		Runtime:           c.runtime,
+		Operation:         "workstation create",
 	})
 }
 

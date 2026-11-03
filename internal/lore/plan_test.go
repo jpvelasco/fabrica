@@ -2,6 +2,7 @@ package lore
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/assert"
@@ -425,5 +426,33 @@ func TestNewCreatePlanExplicitCIDROverridesResolver(t *testing.T) {
 	}
 	if cidrResolver.Calls != 0 {
 		t.Errorf("ResolveVPCCIDR calls = %d, want 0 (explicit CIDR skips resolver)", cidrResolver.Calls)
+	}
+}
+
+func TestCreatePlanRequiredResources_LocalStore(t *testing.T) {
+	p := CreatePlan{StoreBackend: StoreBackendLocal}
+	want := []string{
+		cloud.TypeAWSEC2SecurityGroup,
+		cloud.TypeAWSIAMRole,
+		cloud.TypeAWSIAMInstanceProfile,
+		cloud.TypeAWSEC2Instance,
+	}
+	if got := p.RequiredResources(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("local RequiredResources() = %v, want %v", got, want)
+	}
+}
+
+func TestCreatePlanRequiredResources_S3Store(t *testing.T) {
+	p := CreatePlan{StoreBackend: StoreBackendS3, StoreTables: []string{"fragments", "metadata", "mutable", "locks"}}
+	got := p.RequiredResources()
+	if len(got) != 9 {
+		t.Fatalf("s3 RequiredResources() length = %d, want 9", len(got))
+	}
+	counts := make(map[string]int, len(got))
+	for _, t := range got {
+		counts[t]++
+	}
+	if counts[cloud.TypeAWSS3Bucket] != 1 || counts[cloud.TypeAWSDynamoDBTable] != 4 {
+		t.Fatalf("s3 RequiredResources() = %v, want one bucket and four tables", got)
 	}
 }

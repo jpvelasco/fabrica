@@ -63,6 +63,27 @@ type CreatePlan struct {
 	CostResources []cost.Resource
 }
 
+// RequiredResources lists the resource TypeNames a complete Lore module
+// records in state, including the S3 store resources when the plan uses the
+// s3 store backend. Create retries compare a module's recorded inventory
+// against this list to separate a fully provisioned module (in any
+// transitional status) from a partial one.
+func (p CreatePlan) RequiredResources() []string {
+	required := []string{
+		cloud.TypeAWSEC2SecurityGroup,
+		cloud.TypeAWSIAMRole,
+		cloud.TypeAWSIAMInstanceProfile,
+		cloud.TypeAWSEC2Instance,
+	}
+	if p.StoreBackend == StoreBackendS3 {
+		required = append(required, cloud.TypeAWSS3Bucket)
+		for range p.StoreTables {
+			required = append(required, cloud.TypeAWSDynamoDBTable)
+		}
+	}
+	return required
+}
+
 // DefaultAllowedCIDR is the security-group fallback when no explicit CIDR is
 // configured and the VPC CIDR cannot be resolved.
 const DefaultAllowedCIDR = "10.0.0.0/8"

@@ -3,6 +3,7 @@ package horde
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/assert"
@@ -223,5 +224,18 @@ func TestNewCreatePlanExplicitCIDROverridesResolver(t *testing.T) {
 	}
 	if cidrResolver.Calls != 0 {
 		t.Errorf("ResolveVPCCIDR calls = %d, want 0 (explicit CIDR skips resolver)", cidrResolver.Calls)
+	}
+}
+
+func TestCreatePlanRequiredResources(t *testing.T) {
+	p := CreatePlan{}
+	want := []string{
+		cloud.TypeAWSEC2SecurityGroup,
+		cloud.TypeAWSIAMRole,
+		cloud.TypeAWSIAMInstanceProfile,
+		cloud.TypeAWSEC2Instance,
+	}
+	if got := p.RequiredResources(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("RequiredResources() = %v, want %v", got, want)
 	}
 }
