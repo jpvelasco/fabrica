@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -77,6 +79,9 @@ func TestLoadIAMAndVolumeRequestTags(t *testing.T) {
     iam:
       path: /fabrica/
       permissionsBoundary: arn:aws:iam::123456789012:policy/fabrica-boundary
+    tags:
+      Project: fabrica-e2e
+      Env: prod
     volumeRequestTags:
       Project: fabrica-e2e
 workstation:
@@ -86,6 +91,15 @@ workstation:
 	cfg := loadConfig(t, path)
 	if cfg.Cloud.AWS.IAM.Path != "/fabrica/" {
 		t.Errorf("global path = %q", cfg.Cloud.AWS.IAM.Path)
+	}
+	if cfg.Cloud.AWS.Tags["Project"] != "fabrica-e2e" {
+		t.Errorf("tags[Project] = %q, want fabrica-e2e (tags: %v)", cfg.Cloud.AWS.Tags["Project"], cfg.Cloud.AWS.Tags)
+	}
+	if cfg.Cloud.AWS.Tags["Env"] != "prod" {
+		t.Errorf("tags[Env] = %q, want prod (tags: %v)", cfg.Cloud.AWS.Tags["Env"], cfg.Cloud.AWS.Tags)
+	}
+	if _, lowered := cfg.Cloud.AWS.Tags["project"]; lowered {
+		t.Errorf("tags leaked a lowercased key: %v", cfg.Cloud.AWS.Tags)
 	}
 	if cfg.Cloud.AWS.VolumeRequestTags["Project"] != "fabrica-e2e" {
 		t.Errorf("volume tags = %v", cfg.Cloud.AWS.VolumeRequestTags)
@@ -100,22 +114,75 @@ workstation:
 	}
 }
 
-func TestRestoreVolumeRequestTagCaseEdges(t *testing.T) {
+// TestAWSTagsSaveLoadRoundTrip verifies a mixed-case operator tag set
+// survives the config save/load round trip with its exact key casing.
+func TestAWSTagsSaveLoadRoundTrip(t *testing.T) {
 	cfg := Defaults()
-	if err := restoreVolumeRequestTagCase("unused", nil); err != nil {
+	cfg.Cloud.AWS.Tags = map[string]string{"Project": "fabrica-e2e", "Env": "prod"}
+	cfg.Cloud.AWS.VolumeRequestTags = map[string]string{"CostCenter": "studio"}
+	path := filepath.Join(t.TempDir(), "fabrica.yaml")
+	if err := cfg.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got := loadConfig(t, path)
+	if got.Cloud.AWS.Tags["Project"] != "fabrica-e2e" {
+		t.Errorf("round-trip tags[Project] = %q, want fabrica-e2e (tags: %v)", got.Cloud.AWS.Tags["Project"], got.Cloud.AWS.Tags)
+	}
+	if got.Cloud.AWS.Tags["Env"] != "prod" {
+		t.Errorf("round-trip tags[Env] = %q, want prod (tags: %v)", got.Cloud.AWS.Tags["Env"], got.Cloud.AWS.Tags)
+	}
+	if got.Cloud.AWS.VolumeRequestTags["CostCenter"] != "studio" {
+		t.Errorf("round-trip volume tags = %v", got.Cloud.AWS.VolumeRequestTags)
+	}
+}
+
+// TestLoadAWSTagMapsReadFailure forces the re-read inside Load to fail,
+// covering the error branch Viper's successful first read makes unreachable.
+func TestLoadAWSTagMapsReadFailure(t *testing.T) {
+	path := writeConfig(t, "cloud:\n  aws:\n    tags:\n      Project: studio\n")
+	orig := readConfigFile
+	readConfigFile = func(string) ([]byte, error) {
+		return nil, errors.New("disk failure")
+	}
+	t.Cleanup(func() { readConfigFile = orig })
+
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "reading AWS tag maps") {
+		t.Fatalf("Load = %v, want wrapped 'reading AWS tag maps' error", err)
+	}
+}
+
+func TestRestoreAWSTagMapsEdges(t *testing.T) {
+	cfg := Defaults()
+	if err := restoreAWSTagMaps("unused", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := restoreVolumeRequestTagCase("", cfg); err != nil {
+	if err := restoreAWSTagMaps("", cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := restoreVolumeRequestTagCase(t.TempDir(), cfg); err == nil {
+	if err := restoreAWSTagMaps(t.TempDir(), cfg); err == nil {
 		t.Fatal("expected a directory read to fail")
 	}
-	if err := restoreVolumeRequestTagCase(t.TempDir()+"/missing.yaml", cfg); err != nil {
+	if err := restoreAWSTagMaps(t.TempDir()+"/missing.yaml", cfg); err != nil {
 		t.Fatal(err)
 	}
 	path := writeConfig(t, "cloud: [\n")
-	if err := restoreVolumeRequestTagCase(path, cfg); err == nil {
+	if err := restoreAWSTagMaps(path, cfg); err == nil {
 		t.Fatal("expected a YAML parse error")
+	}
+
+	// A file with only one of the two maps restores that map and leaves the
+	// other in place.
+	before := map[string]string{"Existing": "kept"}
+	cfg = Defaults()
+	cfg.Cloud.AWS.Tags = before
+	path = writeConfig(t, "cloud:\n  aws:\n    volumeRequestTags:\n      Project: restored\n")
+	if err := restoreAWSTagMaps(path, cfg); err != nil {
+		t.Fatalf("restoreAWSTagMaps: %v", err)
+	}
+	if cfg.Cloud.AWS.VolumeRequestTags["Project"] != "restored" {
+		t.Errorf("volume tags = %v, want Project restored", cfg.Cloud.AWS.VolumeRequestTags)
+	}
+	if cfg.Cloud.AWS.Tags["Existing"] != "kept" {
+		t.Errorf("tags = %v, want the in-memory map left in place", cfg.Cloud.AWS.Tags)
 	}
 }

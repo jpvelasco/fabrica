@@ -76,6 +76,46 @@ func TestCreate_MergesOperatorTags(t *testing.T) {
 	}
 }
 
+// TestCreate_MixedCaseOperatorTags verifies case-sensitive operator tag keys
+// (such as Project) reach Cloud Control with the operator's exact casing.
+// Viper lowercases map keys at config load; internal/config restores the
+// written case, and the provider carries it to the wire verbatim.
+func TestCreate_MixedCaseOperatorTags(t *testing.T) {
+	client := &fakeCCClient{
+		createOut: &cloudcontrol.CreateResourceOutput{
+			ProgressEvent: &types.ProgressEvent{RequestToken: awssdk.String("tok")},
+		},
+	}
+	waiter := &fakeCCWaiter{
+		out: &cloudcontrol.GetResourceRequestStatusOutput{
+			ProgressEvent: &types.ProgressEvent{
+				OperationStatus: types.OperationStatusSuccess,
+				Identifier:      awssdk.String("sg-ops-mixed"),
+			},
+		},
+	}
+	rc := newCCTestClients(client, waiter)
+	rc.operatorTags = map[string]string{"Project": "fabrica-e2e", "Env": "prod"}
+
+	r := &fabricac.Resource{
+		TypeName:     "AWS::EC2::SecurityGroup",
+		DesiredState: json.RawMessage(`{"GroupName":"fabrica-horde-sg"}`),
+	}
+	if err := rc.Create(context.Background(), r); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	tags := desiredStateTags(t, client.createInputs[0])
+	if tags["Project"] != "fabrica-e2e" {
+		t.Errorf("operator tag Project = %q, want fabrica-e2e (tags: %v)", tags["Project"], tags)
+	}
+	if tags["Env"] != "prod" {
+		t.Errorf("operator tag Env = %q, want prod (tags: %v)", tags["Env"], tags)
+	}
+	if _, lowered := tags["project"]; lowered {
+		t.Errorf("lowercased operator key leaked onto the wire: %v", tags)
+	}
+}
+
 // TestCreate_NoOperatorTagsUnchanged verifies a nil operatorTags map leaves the
 // tag set exactly as injectFabricaTags produced it (no empty-key entries).
 func TestCreate_NoOperatorTagsUnchanged(t *testing.T) {

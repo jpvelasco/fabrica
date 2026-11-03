@@ -76,6 +76,41 @@ func TestCreate_VolumeRequestTagsSkipCloudControl(t *testing.T) {
 	assertSameTagSet(t, in)
 }
 
+// TestCreate_VolumeRequestTagsMixedCaseOnInstanceAndVolume verifies
+// case-sensitive volumeRequestTags keys (such as CostCenter) land on both the
+// instance and the root volume TagSpecifications with the exact casing the
+// operator configured.
+func TestCreate_VolumeRequestTagsMixedCaseOnInstanceAndVolume(t *testing.T) {
+	rec := &recordingEC2{}
+	rc := &resourceClients{
+		version:           "test",
+		volumeRequestTags: map[string]string{"CostCenter": "studio"},
+		instances:         &ec2Service{client: rec},
+	}
+	r := &fabricac.Resource{
+		TypeName: fabricac.TypeAWSEC2Instance,
+		DesiredState: json.RawMessage(`{
+			"ImageId":"ami-123","InstanceType":"g6.xlarge","SubnetId":"subnet-1",
+			"SecurityGroupIds":["sg-1"],
+			"IamInstanceProfile":"fabrica-workstation-profile",
+			"BlockDeviceMappings":[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":100,"VolumeType":"gp3","DeleteOnTermination":true}}],
+			"Tags":[{"Key":"Name","Value":"fabrica-workstation"},{"Key":"ManagedBy","Value":"fabrica"},{"Key":"FabricaCreateNonce","Value":"0123456789abcdef0123456789abcdef"}],
+			"MetadataOptions":{"HttpTokens":"optional","HttpPutResponseHopLimit":1}
+		}`),
+	}
+	if err := rc.Create(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	in := rec.in
+	if in == nil {
+		t.Fatal("RunInstances was not called")
+		return
+	}
+	assertTagSpec(t, in, types.ResourceTypeInstance, "CostCenter", "studio")
+	assertTagSpec(t, in, types.ResourceTypeVolume, "CostCenter", "studio")
+	assertSameTagSet(t, in)
+}
+
 func TestCreate_FallsBackOnceOnVolumeTagDeny(t *testing.T) {
 	client := &fakeCCClient{createErr: errors.New("AccessDenied: ec2:RunInstances not authorized because aws:RequestTag/Project is missing on the volume")}
 	var calls int
