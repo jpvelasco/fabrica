@@ -5,11 +5,13 @@ package doctorchecks
 
 import (
 	"context"
+	"fmt"
 	"runtime"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/perforce"
 	fabricav "github.com/jpvelasco/fabrica/internal/version"
 )
 
@@ -115,16 +117,33 @@ func stateBackendWarning(name string) DoctorCheck {
 	return DoctorCheck{name, "warning", "not yet provisioned (run fabrica setup)"}
 }
 
+// perforceSectionConfigured reports whether the operator set any perforce.*
+// key, so the CIDR check runs for a configured deployment even when
+// instanceType is left at the default.
+func perforceSectionConfigured(p config.PerforceConfig) bool {
+	if p.Version != "" || p.InstanceType != "" || p.VPCId != "" || p.SubnetId != "" || p.AllowedCIDR != "" {
+		return true
+	}
+	if p.VolumeSize > 0 {
+		return true
+	}
+	b := p.Backup
+	if b.Path != "" || b.S3Export || b.S3Bucket != "" || b.S3Prefix != "" || b.Schedule != "" || b.Retain > 0 {
+		return true
+	}
+	return p.IAM.Path != "" || p.IAM.PermissionsBoundary != ""
+}
+
 // checkPerforceCIDR warns when perforce is configured but its allowedCidr is
 // unset. Unlike lore and horde (which resolve the VPC CIDR at create),
 // perforce falls back to 10.0.0.0/8, which does not cover AWS default VPCs
 // (172.31.0.0/16) — in-VPC clients would not reach port 1666.
 func checkPerforceCIDR(rt globals.Runtime) DoctorCheck {
-	if rt.Config == nil || rt.Config.Perforce.InstanceType == "" {
+	if rt.Config == nil || !perforceSectionConfigured(rt.Config.Perforce) {
 		return DoctorCheck{"Perforce CIDR", "ok", "not configured"}
 	}
 	if rt.Config.Perforce.AllowedCIDR == "" {
-		return DoctorCheck{"Perforce CIDR", "warning", "unset — port 1666 opens only to 10.0.0.0/8 (perforce does not auto-resolve the VPC CIDR). Set perforce.allowedCidr to your VPC CIDR (e.g. 172.31.0.0/16 on the default VPC)"}
+		return DoctorCheck{"Perforce CIDR", "warning", fmt.Sprintf("unset — port 1666 opens only to %s (default). perforce does not auto-resolve the VPC CIDR. Set perforce.allowedCidr to your VPC CIDR (e.g. 172.31.0.0/16 on the default VPC)", perforce.DefaultAllowedCIDR)}
 	}
-	return DoctorCheck{"Perforce CIDR", "ok", rt.Config.Perforce.AllowedCIDR}
+	return DoctorCheck{"Perforce CIDR", "ok", rt.Config.Perforce.AllowedCIDR + " (configured)"}
 }

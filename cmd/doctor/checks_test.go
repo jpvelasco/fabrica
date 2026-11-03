@@ -316,6 +316,28 @@ func TestCheckPerforceCIDR(t *testing.T) {
 			wantStatus: "ok",
 			wantMsg:    "172.31.0.0/16",
 		},
+		{
+			name: "perforce configured via vpc keys only, allowedCidr set",
+			cfg: func() *config.Config {
+				c := config.Defaults()
+				c.Perforce.VPCId = "vpc-123"
+				c.Perforce.SubnetId = "subnet-456"
+				c.Perforce.AllowedCIDR = "172.31.0.0/16"
+				return c
+			}(),
+			wantStatus: "ok",
+			wantMsg:    "configured",
+		},
+		{
+			name: "perforce configured via vpc keys only, no allowedCidr",
+			cfg: func() *config.Config {
+				c := config.Defaults()
+				c.Perforce.VPCId = "vpc-123"
+				return c
+			}(),
+			wantStatus: "warning",
+			wantMsg:    "10.0.0.0/8",
+		},
 	}
 
 	for _, tt := range tests {
