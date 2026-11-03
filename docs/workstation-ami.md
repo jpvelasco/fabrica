@@ -148,10 +148,50 @@ AMI and tag its snapshots as the build guide shows. The Image Builder
 resources are not Fabrica resources; delete the pipeline, infrastructure
 configuration, recipe, and component afterwards.
 
-## Private path
+## Private-subnet deployment
 
-Verify through SSM (or VPN/in-VPC), not laptop `workstation list` against a
-private IP. Endpoint SG inbound TCP 443 from the VPC CIDR: [ssm-private.md](ssm-private.md).
+Deploy the workstation in a **private subnet with no public IP**
+(`MapPublicIpOnLaunch=false`) and reach it through SSM or VPN/in-VPC.
+`workstation.subnetId` in `fabrica.yaml` pins the subnet; when it is unset,
+create resolves the account's default VPC, which in many accounts is public.
+A private subnet with SSM VPC interface endpoints gives the instance no
+internet route at all.
+
+> **Never open port 8443 to `0.0.0.0/0`.** NICE DCV's `dcvserver` binds
+> `0.0.0.0:8443` — every interface on the instance — so the security group
+> is the only control in front of the desktop session. On a public subnet
+> the SG is the only exposure control, and one widened rule (or an overly
+> wide `workstation.allowedCidr`) puts the desktop session on the internet.
+> The default `allowedCidr` is the private range `10.0.0.0/8`; set it to
+> your VPN CIDR in production.
+
+SSM registration on a private subnet needs VPC interface endpoints for the
+three SSM services (no NAT in front of them):
+
+| Endpoint service | Name |
+|------------------|------|
+| `com.amazonaws.<region>.ssm` | AmazonSSM |
+| `com.amazonaws.<region>.ssmmessages` | AmazonSSMMessages |
+| `com.amazonaws.<region>.ec2messages` | AmazonEC2Messages |
+
+One interface endpoint per service, with a network interface in every
+Availability Zone that hosts the workstation subnet, and endpoint SG
+inbound TCP 443 from the VPC CIDR. `scripts/ensure-ssm-endpoints.ps1`
+creates the three endpoints idempotently; full setup and verification:
+[ssm-private.md](ssm-private.md). Verify through SSM (or VPN/in-VPC), not
+laptop `workstation list` against a private IP.
+
+Reach the DCV session from a laptop without a public IP through SSM port
+forwarding (the operator identity needs the SSM session actions, e.g.
+`ssm:StartPortForwardingSession`):
+
+```bash
+aws ssm start-port-forwarding-session \
+  --target i-<instance-id> \
+  --local-port 8443 --remote-port 8443
+```
+
+then connect the DCV client to `https://localhost:8443`.
 
 ## Known-good AMIs
 
