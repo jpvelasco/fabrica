@@ -14,7 +14,9 @@ type fakePurgeS3Client struct {
 	pages       []s3.ListObjectVersionsOutput
 	listErr     error
 	deleteErr   error
+	deleteOut   *s3.DeleteObjectsOutput
 	calls       int
+	deleteCalls int
 	deletedObjs []s3types.ObjectIdentifier
 }
 
@@ -34,7 +36,11 @@ func (f *fakePurgeS3Client) DeleteObjects(_ context.Context, params *s3.DeleteOb
 	if f.deleteErr != nil {
 		return nil, f.deleteErr
 	}
+	f.deleteCalls++
 	f.deletedObjs = append(f.deletedObjs, params.Delete.Objects...)
+	if f.deleteOut != nil {
+		return f.deleteOut, nil
+	}
 	return &s3.DeleteObjectsOutput{}, nil
 }
 
@@ -166,5 +172,96 @@ func TestPurgeBucketMissingBucketConverges(t *testing.T) {
 	}
 	if err := p.PurgeBucket(context.Background(), "already-gone"); err != nil {
 		t.Fatalf("missing bucket must converge to nil, got: %v", err)
+	}
+}
+
+func TestPurgeBucketPerKeyDeleteErrorsReported(t *testing.T) {
+	fake := &fakePurgeS3Client{
+		pages: []s3.ListObjectVersionsOutput{
+			{
+				Versions: []s3types.ObjectVersion{
+					{Key: awssdk.String("k1"), VersionId: awssdk.String("v1")},
+					{Key: awssdk.String("k2"), VersionId: awssdk.String("v2")},
+					{Key: awssdk.String("k3"), VersionId: awssdk.String("v3")},
+				},
+			},
+		},
+		deleteOut: &s3.DeleteObjectsOutput{
+			Errors: []s3types.Error{
+				{Key: awssdk.String("k2"), VersionId: awssdk.String("v2"), Code: awssdk.String("AccessDenied")},
+				{Key: awssdk.String("k3"), VersionId: awssdk.String("v3"), Code: awssdk.String("AccessDenied")},
+			},
+		},
+	}
+	p := &awsProvider{
+		loadConfig: func(_ context.Context, _, _ string) (awssdk.Config, error) {
+			return awssdk.Config{Region: "us-east-1"}, nil
+		},
+		newPurgeS3Client: func(awssdk.Config) purgeS3Client { return fake },
+	}
+	err := p.PurgeBucket(context.Background(), "store-bucket")
+	if err == nil {
+		t.Fatal("expected error when individual deletions are denied")
+	}
+	for _, want := range []string{"store-bucket", "2 of 3 failed", "k2 (AccessDenied)", "k3 (AccessDenied)", "resolve the S3 errors"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to contain %q", err, want)
+		}
+	}
+	if fake.deleteCalls != 1 {
+		t.Errorf("DeleteObjects calls = %d, want 1 (no retry after per-key failures)", fake.deleteCalls)
+	}
+	if len(fake.deletedObjs) != 3 {
+		t.Errorf("deleted %d objects, want the full batch of 3", len(fake.deletedObjs))
+	}
+}
+
+func TestPurgeBucketTruncatedListWithPersistentFailure(t *testing.T) {
+	fake := &fakePurgeS3Client{
+		pages: []s3.ListObjectVersionsOutput{
+			{
+				IsTruncated: awssdk.Bool(true),
+				Versions: []s3types.ObjectVersion{
+					{Key: awssdk.String("locked"), VersionId: awssdk.String("v1")},
+				},
+			},
+		},
+		deleteOut: &s3.DeleteObjectsOutput{
+			Errors: []s3types.Error{
+				{Key: awssdk.String("locked"), VersionId: awssdk.String("v1"), Code: awssdk.String("AccessDenied")},
+			},
+		},
+	}
+	p := &awsProvider{
+		loadConfig: func(_ context.Context, _, _ string) (awssdk.Config, error) {
+			return awssdk.Config{Region: "us-east-1"}, nil
+		},
+		newPurgeS3Client: func(awssdk.Config) purgeS3Client { return fake },
+	}
+	err := p.PurgeBucket(context.Background(), "store-bucket")
+	if err == nil {
+		t.Fatal("expected persistent per-key failure to abort the purge")
+	}
+	if !strings.Contains(err.Error(), "locked (AccessDenied)") {
+		t.Errorf("error = %v, want the failing key and code", err)
+	}
+	if fake.deleteCalls != 1 {
+		t.Errorf("DeleteObjects calls = %d, want 1 (must not loop over the undeletable page)", fake.deleteCalls)
+	}
+}
+
+func TestSummarizeDeleteErrors(t *testing.T) {
+	mk := func(n int) []s3types.Error {
+		errs := make([]s3types.Error, n)
+		for i := range errs {
+			errs[i] = s3types.Error{Key: awssdk.String("k1"), Code: awssdk.String("AccessDenied")}
+		}
+		return errs
+	}
+	if got := summarizeDeleteErrors(mk(1), 3); got != "1 of 3 failed: k1 (AccessDenied)" {
+		t.Errorf("single error = %q", got)
+	}
+	if got := summarizeDeleteErrors(mk(6), 6); got != "6 of 6 failed: k1 (AccessDenied), k1 (AccessDenied), k1 (AccessDenied), k1 (AccessDenied), k1 (AccessDenied), +1 more" {
+		t.Errorf("capped summary = %q", got)
 	}
 }
