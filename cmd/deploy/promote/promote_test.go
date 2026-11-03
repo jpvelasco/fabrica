@@ -732,3 +732,427 @@ func TestPromoteLockHeldAborts(t *testing.T) {
 		t.Fatalf("err = %v, want held-lock abort", err)
 	}
 }
+
+// ---- Pending promote resume ----
+
+// pendingState seeds a recorded promote for the default version (v1.2.3): a
+// registered build plus a fleet still in role "provisioning".
+func pendingState() *fabricastate.State {
+	st := seededState()
+	m := st.GetModule("deploy")
+	m.Resources = append(m.Resources,
+		fabricastate.ModuleResource{
+			TypeName:   "AWS::GameLift::Build",
+			Identifier: "build-123",
+			Properties: map[string]string{"buildVersion": "v1.2.3"},
+		},
+		fabricastate.ModuleResource{
+			TypeName:   "AWS::GameLift::Fleet",
+			Identifier: "fleet-pending",
+			Properties: map[string]string{"buildVersion": "v1.2.3", "role": "provisioning"},
+		},
+	)
+	return st
+}
+
+// TestPromoteNoWaitThenResumeNoDuplicate verifies the documented recovery
+// path: a --no-wait promote followed by a re-run without --no-wait resumes
+// the recorded pending deployment (one build, one fleet) instead of
+// registering a second build and creating a second fleet.
+func TestPromoteNoWaitThenResumeNoDuplicate(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	buildCreates, fleetCreates, flips := 0, 0, 0
+	c := newTestCmd(&out, st)
+	c.assumeYes = true
+	c.createResource = func(_ context.Context, r *cloud.Resource) error {
+		buildCreates++
+		r.Identifier = "build-1"
+		return nil
+	}
+	c.createFleetAsync = func(_ context.Context, r *cloud.Resource) error {
+		fleetCreates++
+		r.Identifier = "fleet-1"
+		return nil
+	}
+	c.updateResource = func(context.Context, *cloud.Resource) error { flips++; return nil }
+
+	// First run: --no-wait starts the fleet and returns.
+	c.wait = false
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("no-wait run: %v", err)
+	}
+
+	// Second run: re-run without --no-wait resumes the pending deployment.
+	c.wait = true
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("resume run: %v", err)
+	}
+
+	if buildCreates != 1 || fleetCreates != 1 {
+		t.Errorf("buildCreates = %d, fleetCreates = %d, want 1 and 1", buildCreates, fleetCreates)
+	}
+	if flips != 1 {
+		t.Errorf("alias flips = %d, want 1", flips)
+	}
+	m := st.GetModule("deploy")
+	fleets, builds := 0, 0
+	for _, r := range m.Resources {
+		switch r.TypeName {
+		case "AWS::GameLift::Fleet":
+			fleets++
+			if r.Properties["role"] != "active" {
+				t.Errorf("fleet %s role = %q, want active", r.Identifier, r.Properties["role"])
+			}
+		case "AWS::GameLift::Build":
+			builds++
+		}
+	}
+	if fleets != 1 || builds != 1 {
+		t.Errorf("recorded fleets = %d, builds = %d, want 1 and 1", fleets, builds)
+	}
+	s := out.String()
+	if !strings.Contains(s, "Resuming pending promote") {
+		t.Errorf("expected resume message:\n%s", s)
+	}
+	if !strings.Contains(s, "live on fleet fleet-1") {
+		t.Errorf("expected completion on the original fleet:\n%s", s)
+	}
+}
+
+// TestPromoteResumeAfterAliasFlipFailure verifies a re-run after a failed
+// alias flip makes no new create calls: it polls the recorded fleet, flips
+// the alias, and completes.
+func TestPromoteResumeAfterAliasFlipFailure(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	buildCreates, fleetCreates, flips := 0, 0, 0
+	c := newTestCmd(&out, st)
+	c.assumeYes = true
+	c.createResource = func(_ context.Context, r *cloud.Resource) error {
+		buildCreates++
+		r.Identifier = "build-1"
+		return nil
+	}
+	c.createFleetAsync = func(_ context.Context, r *cloud.Resource) error {
+		fleetCreates++
+		r.Identifier = "fleet-1"
+		return nil
+	}
+	c.fleetStatus = func(_ context.Context, id string) (cloud.FleetInfo, error) {
+		return cloud.FleetInfo{FleetID: id, Status: "ACTIVE"}, nil
+	}
+	c.updateResource = func(context.Context, *cloud.Resource) error { return errors.New("throttled") }
+
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "flipping the alias failed") {
+		t.Fatalf("expected alias-flip error on first run, got %v", err)
+	}
+
+	// Re-run on the same state: the recorded pending deployment is resumed.
+	var out2 bytes.Buffer
+	c2 := newTestCmd(&out2, st)
+	c2.assumeYes = true
+	c2.createResource = c.createResource
+	c2.createFleetAsync = c.createFleetAsync
+	c2.fleetStatus = c.fleetStatus
+	c2.updateResource = func(context.Context, *cloud.Resource) error { flips++; return nil }
+	if err := c2.run(context.Background()); err != nil {
+		t.Fatalf("resume run: %v", err)
+	}
+	if buildCreates != 1 || fleetCreates != 1 {
+		t.Errorf("buildCreates = %d, fleetCreates = %d, want 1 and 1 (resume must not re-create)", buildCreates, fleetCreates)
+	}
+	if flips != 1 {
+		t.Errorf("alias flips = %d, want 1", flips)
+	}
+	if !strings.Contains(out2.String(), "Resuming pending promote") {
+		t.Errorf("expected resume message:\n%s", out2.String())
+	}
+}
+
+// TestPromoteResumeAfterPollFailure verifies a re-run after a fleet ERROR
+// during polling resumes the recorded deployment with no new create calls.
+func TestPromoteResumeAfterPollFailure(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	buildCreates, fleetCreates := 0, 0
+	c := newTestCmd(&out, st)
+	c.assumeYes = true
+	c.createResource = func(_ context.Context, r *cloud.Resource) error {
+		buildCreates++
+		r.Identifier = "build-1"
+		return nil
+	}
+	c.createFleetAsync = func(_ context.Context, r *cloud.Resource) error {
+		fleetCreates++
+		r.Identifier = "fleet-1"
+		return nil
+	}
+	c.fleetStatus = func(_ context.Context, id string) (cloud.FleetInfo, error) {
+		return cloud.FleetInfo{FleetID: id, Status: "ERROR"}, nil
+	}
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "entered status ERROR") {
+		t.Fatalf("expected fleet ERROR on first run, got %v", err)
+	}
+
+	// Re-run: the default status sequence reaches ACTIVE for the resume poll.
+	var out2 bytes.Buffer
+	c2 := newTestCmd(&out2, st)
+	c2.assumeYes = true
+	c2.createResource = func(_ context.Context, r *cloud.Resource) error {
+		buildCreates++
+		r.Identifier = "build-1"
+		return nil
+	}
+	c2.createFleetAsync = func(_ context.Context, r *cloud.Resource) error {
+		fleetCreates++
+		r.Identifier = "fleet-1"
+		return nil
+	}
+	if err := c2.run(context.Background()); err != nil {
+		t.Fatalf("resume run: %v", err)
+	}
+	if buildCreates != 1 || fleetCreates != 1 {
+		t.Errorf("buildCreates = %d, fleetCreates = %d, want 1 and 1", buildCreates, fleetCreates)
+	}
+	if !strings.Contains(out2.String(), "live on fleet fleet-1") {
+		t.Errorf("expected completion on the original fleet:\n%s", out2.String())
+	}
+}
+
+// TestPromoteAmbiguousPendingMultipleFleets verifies two recorded pending
+// fleets fail with a loud error naming both, and no resources are created.
+func TestPromoteAmbiguousPendingMultipleFleets(t *testing.T) {
+	var out bytes.Buffer
+	st := pendingState()
+	m := st.GetModule("deploy")
+	m.Resources = append(m.Resources, fabricastate.ModuleResource{
+		TypeName:   "AWS::GameLift::Fleet",
+		Identifier: "fleet-other",
+		Properties: map[string]string{"buildVersion": "v1.2.3", "role": "provisioning"},
+	})
+	c := newTestCmd(&out, st)
+	c.assumeYes = true
+	builds := 0
+	c.createResource = func(context.Context, *cloud.Resource) error { builds++; return nil }
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "multiple pending deploys") {
+		t.Fatalf("expected ambiguity error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "fleet-pending, fleet-other") {
+		t.Errorf("error should name both fleets: %v", err)
+	}
+	if builds != 0 {
+		t.Errorf("no build may be registered on ambiguity, got %d", builds)
+	}
+}
+
+// TestPromotePendingFleetDifferentVersion verifies a pending fleet recorded
+// for another build version is not adopted by a promote of a new version.
+func TestPromotePendingFleetDifferentVersion(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	m := st.GetModule("deploy")
+	m.Resources = append(m.Resources,
+		fabricastate.ModuleResource{
+			TypeName:   "AWS::GameLift::Build",
+			Identifier: "build-old",
+			Properties: map[string]string{"buildVersion": "v1.0.0"},
+		},
+		fabricastate.ModuleResource{
+			TypeName:   "AWS::GameLift::Fleet",
+			Identifier: "fleet-old",
+			Properties: map[string]string{"buildVersion": "v1.0.0", "role": "provisioning"},
+		},
+	)
+	c := newTestCmd(&out, st)
+	c.assumeYes = true
+	builds := 0
+	c.createResource = func(context.Context, *cloud.Resource) error { builds++; return nil }
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "v1.0.0") || !strings.Contains(err.Error(), "v1.2.3") {
+		t.Fatalf("expected version-mismatch error, got %v", err)
+	}
+	if builds != 0 {
+		t.Errorf("no build may be registered while another version is pending, got %d", builds)
+	}
+}
+
+// TestPromotePendingFleetNoBuildRecord verifies a pending fleet with no
+// matching build record fails with a loud error.
+func TestPromotePendingFleetNoBuildRecord(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	m := st.GetModule("deploy")
+	m.Resources = append(m.Resources, fabricastate.ModuleResource{
+		TypeName:   "AWS::GameLift::Fleet",
+		Identifier: "fleet-pending",
+		Properties: map[string]string{"buildVersion": "v1.2.3", "role": "provisioning"},
+	})
+	c := newTestCmd(&out, st)
+	c.assumeYes = true
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "no recorded build for v1.2.3") {
+		t.Fatalf("expected missing-build error, got %v", err)
+	}
+}
+
+// TestPromotePendingFleetMultipleBuildRecords verifies a pending fleet with
+// several matching build records fails as ambiguous.
+func TestPromotePendingFleetMultipleBuildRecords(t *testing.T) {
+	var out bytes.Buffer
+	st := pendingState()
+	m := st.GetModule("deploy")
+	m.Resources = append(m.Resources, fabricastate.ModuleResource{
+		TypeName:   "AWS::GameLift::Build",
+		Identifier: "build-again",
+		Properties: map[string]string{"buildVersion": "v1.2.3"},
+	})
+	c := newTestCmd(&out, st)
+	c.assumeYes = true
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "ambiguous pending deploy") || !strings.Contains(err.Error(), "build-123, build-again") {
+		t.Fatalf("expected ambiguous-builds error, got %v", err)
+	}
+}
+
+// TestPromoteNoWaitResumeNoWait verifies a --no-wait re-run resumes the
+// pending deployment without polling or flipping the alias.
+func TestPromoteNoWaitResumeNoWait(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	buildCreates, fleetCreates, polled, flips := 0, 0, 0, 0
+	c := newTestCmd(&out, st)
+	c.assumeYes = true
+	c.wait = false
+	c.createResource = func(_ context.Context, r *cloud.Resource) error {
+		buildCreates++
+		r.Identifier = "build-1"
+		return nil
+	}
+	c.createFleetAsync = func(_ context.Context, r *cloud.Resource) error {
+		fleetCreates++
+		r.Identifier = "fleet-1"
+		return nil
+	}
+	c.fleetStatus = func(_ context.Context, id string) (cloud.FleetInfo, error) {
+		polled++
+		return cloud.FleetInfo{FleetID: id, Status: "ACTIVE"}, nil
+	}
+	c.updateResource = func(context.Context, *cloud.Resource) error { flips++; return nil }
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("first no-wait run: %v", err)
+	}
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("second no-wait run: %v", err)
+	}
+	if buildCreates != 1 || fleetCreates != 1 {
+		t.Errorf("buildCreates = %d, fleetCreates = %d, want 1 and 1", buildCreates, fleetCreates)
+	}
+	if polled != 0 || flips != 0 {
+		t.Errorf("polls = %d, flips = %d, want 0 and 0 (no-wait resume must not poll or flip)", polled, flips)
+	}
+	if !strings.Contains(out.String(), "Re-run without --no-wait to resume") {
+		t.Errorf("expected no-wait resume guidance:\n%s", out.String())
+	}
+}
+
+// TestPromoteDryRunPendingNote verifies a dry run names the pending promote
+// and does not create anything.
+func TestPromoteDryRunPendingNote(t *testing.T) {
+	var out bytes.Buffer
+	st := pendingState()
+	c := newTestCmd(&out, st)
+	c.dryRun = true
+	builds := 0
+	c.createResource = func(context.Context, *cloud.Resource) error { builds++; return nil }
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+	s := out.String()
+	if !strings.Contains(s, "Pending promote detected (build build-123, fleet fleet-pending)") {
+		t.Errorf("expected pending note:\n%s", s)
+	}
+	if strings.Contains(s, "Run without --dry-run to register the build and create the fleet.") {
+		t.Errorf("fresh-create line must not appear with a pending promote:\n%s", s)
+	}
+	if builds != 0 {
+		t.Errorf("dry-run must not register builds, got %d", builds)
+	}
+}
+
+// TestPromoteResumeConfirmRejected verifies a cancelled resume flips no
+// alias and reports the cancellation.
+func TestPromoteResumeConfirmRejected(t *testing.T) {
+	var out bytes.Buffer
+	st := pendingState()
+	c := newTestCmd(&out, st)
+	c.confirm = func(string) bool { return false }
+	flipped := false
+	c.updateResource = func(context.Context, *cloud.Resource) error { flipped = true; return nil }
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("confirm rejection should return nil: %v", err)
+	}
+	if flipped {
+		t.Error("alias must not flip when resume is cancelled")
+	}
+	if !strings.Contains(out.String(), "cancelled") {
+		t.Errorf("expected cancellation message:\n%s", out.String())
+	}
+}
+
+// TestPromoteConfirmGateProceeds verifies the interactive confirm (no
+// --yes) path proceeds to completion.
+func TestPromoteConfirmGateProceeds(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	c := newTestCmd(&out, st)
+	c.confirm = func(string) bool { return true }
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.Contains(out.String(), "live on fleet") {
+		t.Errorf("expected completion after interactive confirm:\n%s", out.String())
+	}
+}
+
+// TestPromoteFinalStateWriteFails verifies a failed final state write after
+// the alias flip surfaces as an error.
+func TestPromoteFinalStateWriteFails(t *testing.T) {
+	var out bytes.Buffer
+	st := seededState()
+	c := newTestCmd(&out, st)
+	c.assumeYes = true
+	c.fleetStatus = func(_ context.Context, id string) (cloud.FleetInfo, error) {
+		return cloud.FleetInfo{FleetID: id, Status: "ACTIVE"}, nil
+	}
+	calls := 0
+	c.writeState = func(*fabricastate.State) error {
+		calls++
+		if calls == 3 {
+			return errors.New("disk full")
+		}
+		return nil
+	}
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "writing state") {
+		t.Fatalf("expected final state-write error, got %v", err)
+	}
+}
+
+// TestPromoteResumeRequiresGameLiftSupport verifies a resume on a provider
+// without the GameLift seams fails before polling or flipping.
+func TestPromoteResumeRequiresGameLiftSupport(t *testing.T) {
+	var out bytes.Buffer
+	st := pendingState()
+	c := newTestCmd(&out, st)
+	c.assumeYes = true
+	c.updateResource = nil
+	c.fleetStatus = nil
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected error when the provider lacks GameLift support on resume")
+	}
+}

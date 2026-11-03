@@ -309,6 +309,7 @@ git config core.hooksPath .githooks
 - **Alias-flip blue/green** — `promote` always creates a new fleet and flips the alias to it only once ACTIVE. The previous fleet is retained for `rollback`.
 - **Retain prior fleet for rollback** — `promote` stores the previous active fleet ID in state so `rollback` can flip the alias back instantly.
 - **Incremental state writes are checked** — a failed write after build registration stops promote before fleet creation; under `--no-wait`, a failed post-fleet write is an error, not a false success.
+- **Pending-promote resume** — a recorded `provisioning` fleet for the requested build version makes a re-run of `promote <version>` a resume: it polls the existing fleet to ACTIVE and flips the alias via the shared `completeActivation` path — no second build or fleet (the `--no-wait` recovery and the retry after a polling or alias-flip failure). `--no-wait` on a pending promote reports the pending fleet and returns without flipping. Ambiguous recorded state fails loud naming the records instead of guessing: two or more pending fleets, a pending fleet recorded for another build version, or a pending fleet with no (or with more than one) matching build record.
 - **Destroy default vs. `--all`** — `destroy` (default) deletes fleets + builds but leaves the alias and IAM role. `--all` also removes the alias + role.
 - **`deploy.buildBucket` required** — S3 bucket where CI/Horde uploads packaged builds. `promote` uses `s3://<buildBucket>/builds/<build-version>/server.zip` by default.
 
