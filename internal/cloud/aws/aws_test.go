@@ -214,3 +214,7 @@ func (stubEC2) RunInstances(context.Context, *ec2.RunInstancesInput, ...func(*ec
 func (stubEC2) DescribeInstances(context.Context, *ec2.DescribeInstancesInput, ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
 	return &ec2.DescribeInstancesOutput{}, nil
 }
+
+func (stubEC2) DescribeSecurityGroupRules(context.Context, *ec2.DescribeSecurityGroupRulesInput, ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupRulesOutput, error) {
+	return &ec2.DescribeSecurityGroupRulesOutput{}, nil
+}
