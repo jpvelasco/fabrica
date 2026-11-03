@@ -3,6 +3,7 @@ package submit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -52,8 +53,10 @@ Parses the BuildGraph file to extract the job name and target, then POSTs to
 the Horde REST API. By default, submits and returns immediately (fire-and-forget).
 
 Use --wait / -w to poll every 30 seconds until the job completes or errors
-(times out after 60 minutes). Use --dry-run to preview the job and the
-coordinator address without submitting.
+(times out after 60 minutes). With --wait the command exits non-zero when
+the job finishes in error, the wait times out, or polling is cancelled (the
+job keeps running on the coordinator either way). Use --dry-run to preview
+the job and the coordinator address without submitting.
 
 The Horde coordinator must be reachable from this machine (VPN or same VPC).
 Run 'fabrica horde status' to confirm the coordinator is ready.`,
@@ -172,19 +175,22 @@ func (c command) pollUntilDone(ctx context.Context, client HordeClient, jobID st
 
 		fmt.Fprintf(c.out, "Job %s: %s\n", jobID, state)
 
-		if state == "complete" || state == "error" {
+		switch state {
+		case "complete":
 			return nil
+		case "error":
+			return fmt.Errorf("job %s finished in error — inspect it in the Horde web UI", jobID)
 		}
 
 		if c.now().After(deadline) {
-			fmt.Fprintf(c.out, "timed out waiting for job %s to complete (60 minutes)\n", jobID)
-			fmt.Fprintf(c.out, "Job ID: %s — monitor in Horde web UI\n", jobID)
-			return nil
+			return fmt.Errorf("timed out waiting for job %s after 60 minutes — job %s is still running; monitor it in the Horde web UI", jobID, jobID)
 		}
 
 		if err := c.waitCtx(ctx, waitInterval); err != nil {
-			fmt.Fprintf(c.out, "waiting cancelled: %v\n", err)
-			return nil
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return fmt.Errorf("waiting for job %s cancelled: %w — job %s continues on the coordinator; check its state in the Horde web UI", jobID, err, jobID)
+			}
+			return fmt.Errorf("waiting for job %s: %w", jobID, err)
 		}
 	}
 }
