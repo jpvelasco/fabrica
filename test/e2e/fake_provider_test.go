@@ -47,6 +47,29 @@ type storedResource struct {
 	identifier string
 	desired    json.RawMessage
 	ec2Status  string // for EC2 instances: "running" / "stopped"
+	// tags ride along in the actual-state properties so ownership checks
+	// (drift Extra) behave like the real Cloud Control API.
+	tags map[string]string
+}
+
+// actualStateFor builds the Cloud Control properties document a stored
+// resource reports: EC2 instances carry their lifecycle state so teardown
+// and drift see a terminal state, and any seeded tags ride along.
+func actualStateFor(sr *storedResource) json.RawMessage {
+	props := map[string]any{}
+	if sr.typeName == "AWS::EC2::Instance" {
+		props["State"] = map[string]any{"Name": sr.ec2Status}
+		props["PrivateIpAddress"] = "10.0.0.10"
+	}
+	if len(sr.tags) > 0 {
+		tagList := make([]map[string]string, 0, len(sr.tags))
+		for k, v := range sr.tags {
+			tagList = append(tagList, map[string]string{"Key": k, "Value": v})
+		}
+		props["Tags"] = tagList
+	}
+	b, _ := json.Marshal(props)
+	return json.RawMessage(b)
 }
 
 type remoteCall struct {
@@ -217,11 +240,7 @@ func (c *fakeRC) Get(_ context.Context, r *cloud.Resource) error {
 	}
 	// Provide a minimal actual state; EC2 instances report their status so the
 	// teardown engine's transitional-state check sees a terminal state.
-	if sr.typeName == "AWS::EC2::Instance" {
-		r.ActualState = json.RawMessage(fmt.Sprintf(`{"State":{"Name":%q},"PrivateIpAddress":"10.0.0.10"}`, sr.ec2Status))
-	} else {
-		r.ActualState = json.RawMessage(`{}`)
-	}
+	r.ActualState = actualStateFor(sr)
 	return nil
 }
 
@@ -246,7 +265,7 @@ func (c *fakeRC) List(_ context.Context, typeName string) ([]cloud.Resource, err
 	var out []cloud.Resource
 	for _, sr := range c.store.resources {
 		if sr.typeName == typeName {
-			out = append(out, cloud.Resource{TypeName: sr.typeName, Identifier: sr.identifier})
+			out = append(out, cloud.Resource{TypeName: sr.typeName, Identifier: sr.identifier, ActualState: actualStateFor(sr)})
 		}
 	}
 	return out, nil

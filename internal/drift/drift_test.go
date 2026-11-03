@@ -784,11 +784,12 @@ func TestRun_ExtraResource(t *testing.T) {
 			return nil
 		},
 		ResourceList: func(_ context.Context, typeName string) ([]cloud.Resource, error) {
-			// State has i-123; live has i-123 and i-456 (extra).
+			// State has i-123; live has i-123 and i-456, a Fabrica-tagged
+			// orphan.
 			if typeName == "AWS::EC2::Instance" {
 				return []cloud.Resource{
 					{TypeName: "AWS::EC2::Instance", Identifier: "i-123"},
-					{TypeName: "AWS::EC2::Instance", Identifier: "i-456"},
+					{TypeName: "AWS::EC2::Instance", Identifier: "i-456", ActualState: json.RawMessage(`{"Tags":[{"Key":"ManagedBy","Value":"fabrica"}]}`)},
 				}, nil
 			}
 			return nil, nil
@@ -815,6 +816,185 @@ func TestRun_ExtraResource(t *testing.T) {
 	}
 	if !foundExtra {
 		t.Error("expected to find i-456 as Extra in drift report")
+	}
+}
+
+// TestRun_ExtraOwnershipFilter: only resources tagged ManagedBy=fabrica are
+// reported as Extra. A resource tagged by another tool is excluded from the
+// list tags alone (no fetch); a resource whose list result lacks tag
+// information is fetched, and is reported only when the fetch attributes it
+// to Fabrica; an untagged resource is never reported.
+func TestRun_ExtraOwnershipFilter(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-123"},
+	})
+
+	var fetched []string
+	engine := &Engine{
+		State: st,
+		ResourceGet: func(_ context.Context, r *cloud.Resource) error {
+			if r.Identifier == "i-123" {
+				// Module attribute check on the recorded resource, not an
+				// ownership fetch.
+				return nil
+			}
+			fetched = append(fetched, r.Identifier)
+			if r.Identifier == "i-ghost" {
+				r.ActualState = json.RawMessage(`{"Tags":[{"Key":"ManagedBy","Value":"fabrica"}]}`)
+			}
+			return nil
+		},
+		ResourceList: func(_ context.Context, typeName string) ([]cloud.Resource, error) {
+			if typeName == "AWS::EC2::Instance" {
+				return []cloud.Resource{
+					{TypeName: "AWS::EC2::Instance", Identifier: "i-123"},
+					{TypeName: "AWS::EC2::Instance", Identifier: "i-other", ActualState: json.RawMessage(`{"Tags":[{"Key":"ManagedBy","Value":"other-tool"}]}`)},
+					{TypeName: "AWS::EC2::Instance", Identifier: "i-ghost"},
+					{TypeName: "AWS::EC2::Instance", Identifier: "i-plain"},
+				}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	report := engine.Run(context.Background())
+
+	if report.Extra != 1 {
+		t.Fatalf("expected 1 extra (i-ghost only), got %d", report.Extra)
+	}
+	for _, md := range report.Modules {
+		for _, r := range md.Resources {
+			if r.Status == Extra && r.Identifier != "i-ghost" {
+				t.Errorf("unexpected extra %s (only i-ghost is Fabrica-owned)", r.Identifier)
+			}
+		}
+	}
+	if len(fetched) != 2 || fetched[0] != "i-ghost" || fetched[1] != "i-plain" {
+		t.Errorf("expected fetches for i-ghost and i-plain only, got %v", fetched)
+	}
+}
+
+// TestRun_ExtraOwnershipFetchFails: a fetch that errors leaves ownership
+// unresolved, and the resource is not reported as Extra.
+func TestRun_ExtraOwnershipFetchFails(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-123"},
+	})
+
+	engine := &Engine{
+		State: st,
+		ResourceGet: func(_ context.Context, r *cloud.Resource) error {
+			if r.Identifier == "i-ghost" {
+				return errors.New("transient lookup failure")
+			}
+			return nil
+		},
+		ResourceList: func(_ context.Context, typeName string) ([]cloud.Resource, error) {
+			if typeName == "AWS::EC2::Instance" {
+				return []cloud.Resource{
+					{TypeName: "AWS::EC2::Instance", Identifier: "i-123"},
+					{TypeName: "AWS::EC2::Instance", Identifier: "i-ghost"},
+				}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	report := engine.Run(context.Background())
+	if report.Extra != 0 {
+		t.Errorf("expected 0 extra when the ownership fetch fails, got %d", report.Extra)
+	}
+}
+
+func TestTagsFromState(t *testing.T) {
+	tests := []struct {
+		name     string
+		actual   json.RawMessage
+		expected map[string]string
+		present  bool
+	}{
+		{name: "empty state", actual: nil, expected: map[string]string{}, present: false},
+		{name: "bad json", actual: json.RawMessage(`{`), expected: map[string]string{}, present: false},
+		{name: "no tags key", actual: json.RawMessage(`{"State":{"Name":"running"}}`), expected: map[string]string{}, present: false},
+		{name: "empty tags array", actual: json.RawMessage(`{"Tags":[]}`), expected: map[string]string{}, present: true},
+		{name: "fabrica tags", actual: json.RawMessage(`{"Tags":[{"Key":"ManagedBy","Value":"fabrica"},{"Key":"FabricaModule","Value":"horde"}]}`), expected: map[string]string{"ManagedBy": "fabrica", "FabricaModule": "horde"}, present: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, present := tagsFromState(&cloud.Resource{ActualState: tt.actual})
+			if present != tt.present {
+				t.Fatalf("present = %v, want %v", present, tt.present)
+			}
+			if len(got) != len(tt.expected) {
+				t.Fatalf("tags = %v, want %v", got, tt.expected)
+			}
+			for k, v := range tt.expected {
+				if got[k] != v {
+					t.Errorf("tag %q = %q, want %q", k, got[k], v)
+				}
+			}
+		})
+	}
+}
+
+func TestFabricaOwned(t *testing.T) {
+	engine := &Engine{}
+	tests := []struct {
+		name string
+		res  cloud.Resource
+		get  func(context.Context, *cloud.Resource) error
+		want bool
+	}{
+		{
+			name: "fabrica tag in list state",
+			res:  cloud.Resource{ActualState: json.RawMessage(`{"Tags":[{"Key":"ManagedBy","Value":"fabrica"}]}`)},
+			want: true,
+		},
+		{
+			name: "other tag in list state",
+			res:  cloud.Resource{ActualState: json.RawMessage(`{"Tags":[{"Key":"ManagedBy","Value":"other-tool"}]}`)},
+			want: false,
+		},
+		{
+			name: "no tag info and no fetch seam",
+			res:  cloud.Resource{},
+			want: false,
+		},
+		{
+			name: "no tag info, fetch attributes to fabrica",
+			res:  cloud.Resource{},
+			get: func(_ context.Context, r *cloud.Resource) error {
+				r.ActualState = json.RawMessage(`{"Tags":[{"Key":"ManagedBy","Value":"fabrica"}]}`)
+				return nil
+			},
+			want: true,
+		},
+		{
+			name: "no tag info, fetch returns no tags",
+			res:  cloud.Resource{},
+			get: func(_ context.Context, r *cloud.Resource) error {
+				r.ActualState = json.RawMessage(`{}`)
+				return nil
+			},
+			want: false,
+		},
+		{
+			name: "no tag info, fetch errors",
+			res:  cloud.Resource{},
+			get:  func(context.Context, *cloud.Resource) error { return errors.New("lookup failed") },
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := engine.fabricaOwned(context.Background(), &tt.res, tt.get); got != tt.want {
+				t.Errorf("fabricaOwned() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

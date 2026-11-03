@@ -372,11 +372,12 @@ func TestTwoRegion_StrayEdgeInstanceIsExtra(t *testing.T) {
 		Identifier:  "i-edge",
 		ActualState: json.RawMessage(`{"State":{"Name":"running"},"InstanceType":"m7i.xlarge","ImageId":"ami-edge"}`),
 	})
-	// A stray instance in the edge store that is not recorded anywhere.
+	// A stray instance in the edge store that is not recorded anywhere but
+	// carries the Fabrica identity tag.
 	f.put(edgeTestRegion, cloud.Resource{
 		TypeName:    cloud.TypeAWSEC2Instance,
 		Identifier:  "i-stray",
-		ActualState: json.RawMessage(`{"State":{"Name":"running"}}`),
+		ActualState: json.RawMessage(`{"State":{"Name":"running"},"Tags":[{"Key":"ManagedBy","Value":"fabrica"}]}`),
 	})
 
 	report := twoRegionEngine(st, f).Run(context.Background())
