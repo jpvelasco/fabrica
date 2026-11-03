@@ -143,7 +143,11 @@ func newSet(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSo
 				dryRun:  opts.DryRun,
 				out:     out,
 				cfgPath: rt.ConfigFile(),
-				cfgSave: func(cc *config.Config, path string) error { return cc.Save(path) },
+				// SaveKeys updates only cost.budgets in place, preserving the
+				// operator's comments, key order, and sections.
+				cfgSave: func(cc *config.Config, path string) error {
+					return cc.SaveKeys(path, map[string]any{"cost.budgets": cc.Cost.Budgets})
+				},
 			}
 			return c.run(args[0], monthly, warnPct)
 		},
