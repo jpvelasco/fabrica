@@ -128,12 +128,22 @@ func (p *fakeProvider) Identity(context.Context) (string, string, string, error)
 
 func (p *fakeProvider) Resources() cloud.ResourceClient { return &fakeRC{store: p.store} }
 
-var _ cloud.ImageInspector = (*fakeProvider)(nil)
+var (
+	_ cloud.ImageInspector = (*fakeProvider)(nil)
+	_ cloud.AMIResolver    = (*fakeProvider)(nil)
+)
 
 // DescribeImage reports a DCV AMI with an EBS root on /dev/sda1: workstation
 // create reads the root device from the AMI and refuses to launch without it.
 func (p *fakeProvider) DescribeImage(_ context.Context, id string) (cloud.ImageInfo, error) {
 	return cloud.ImageInfo{ID: id, Name: "fabrica-workstation-dcv", RootDeviceName: "/dev/sda1", RootDeviceType: "ebs"}, nil
+}
+
+// ResolveUbuntuAMI gives perforce create the Ubuntu AMI its apply path
+// requires; the e2e store is region-agnostic, so every region resolves the
+// same id.
+func (p *fakeProvider) ResolveUbuntuAMI(_ context.Context, _ string) (string, error) {
+	return "ami-fake-ubuntu", nil
 }
 
 var _ cloud.ParameterStore = (*fakeProvider)(nil)
@@ -161,6 +171,7 @@ func (p *fakeProvider) WithRegion(_ context.Context, _ string) (cloud.RegionView
 	return cloud.RegionView{
 		Resources: &fakeRC{store: p.store},
 		VPCs:      &fakeVPCResolver{},
+		Images:    p,
 	}, nil
 }
 

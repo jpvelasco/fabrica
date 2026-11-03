@@ -855,17 +855,20 @@ func rebuildResource(ctx context.Context, dr *DriftResult, st *state.State, cfg 
 // instance profile, security group, and bootstrap script — through the
 // module's canonical plan and desired-state helpers, so a remediated instance
 // boots the way the original create would have launched it. Recorded
-// properties (instanceType, volumeSize, subnetId, imageId) win over config,
-// which wins over module defaults.
+// properties (instanceType, volumeSize, subnetId, imageId, rootDevice) win
+// over config, which wins over module defaults.
 //
 // The AMI source depends on the module: Perforce records its AMI in
 // Properties.imageId (its module version is a Helix Core software version,
 // which create also pins in cloud-init, so it must never stand in for an AMI
 // id); every other module records the AMI as the module version at create
-// time; the DDC Scylla node uses ddc.scyllaAmiId. If any required input is
-// missing — AMI, IAM profile, security group, or module credentials — the
-// error propagates and the caller reports the instance as unsupported for
-// automatic remediation instead of launching a broken replacement.
+// time; the DDC Scylla node uses ddc.scyllaAmiId. The perforce root device —
+// where the encrypted root mapping lands — is recorded as
+// Properties.rootDevice at create time; state written before #513 has none.
+// If any required input is missing — AMI, root device, IAM profile,
+// security group, or module credentials — the error propagates and the
+// caller reports the instance as unsupported for automatic remediation
+// instead of launching a broken replacement.
 func rebuildInstanceDesiredState(ctx context.Context, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config, inspector imageInspectorFunc) (json.RawMessage, error) {
 	if mod.Name == "ddc" && isEdgeResource(rec) {
 		return rebuildEdgeInstanceDesiredState(rec, mod, st, cfg)
@@ -977,6 +980,10 @@ func rebuildPerforceInstance(rec *state.ModuleResource, mod *state.ModuleState, 
 	if err != nil {
 		return nil, err
 	}
+	rootDevice := rec.Properties["rootDevice"]
+	if rootDevice == "" {
+		return nil, fmt.Errorf("no root device recorded for the perforce instance (Properties.rootDevice); re-run 'fabrica perforce create'")
+	}
 	adminPass, err := readPerforcePassword(perforceCredFile)
 	if err != nil {
 		return nil, err
@@ -990,10 +997,11 @@ func rebuildPerforceInstance(rec *state.ModuleResource, mod *state.ModuleState, 
 		return nil, fmt.Errorf("rendering perforce cloud-init: %w", err)
 	}
 	plan := &perforce.CreatePlan{
-		InstanceType: instanceTypeFor(rec, cfg.Perforce.InstanceType, perforce.DefaultInstanceType),
-		VolumeSize:   volumeSizeFor(rec, cfg.Perforce.VolumeSize, 500),
-		SubnetID:     subnetFor(rec, cfg.Perforce.SubnetId),
-		InstanceName: "fabrica-perforce",
+		InstanceType:   instanceTypeFor(rec, cfg.Perforce.InstanceType, perforce.DefaultInstanceType),
+		VolumeSize:     volumeSizeFor(rec, cfg.Perforce.VolumeSize, 500),
+		SubnetID:       subnetFor(rec, cfg.Perforce.SubnetId),
+		InstanceName:   "fabrica-perforce",
+		RootDeviceName: rootDevice,
 	}
 	ds, err := perforce.InstanceDesiredState(plan, sgID, userData, profile, ami)
 	if err != nil {

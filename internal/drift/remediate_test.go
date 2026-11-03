@@ -1014,6 +1014,7 @@ func TestRebuildInstanceDesiredState_Perforce(t *testing.T) {
 			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{
 				"instanceType": "m5.xlarge",
 				"imageId":      "ami-perforce-123",
+				"rootDevice":   "/dev/sda1",
 			}},
 		},
 	}
@@ -1041,12 +1042,30 @@ func TestRebuildInstanceDesiredState_Perforce(t *testing.T) {
 		t.Errorf("expected the recorded IAM profile, got %v", m["IamInstanceProfile"])
 	}
 	bdm, ok := m["BlockDeviceMappings"].([]any)
-	if !ok || len(bdm) != 1 {
-		t.Fatalf("expected 1 block device mapping, got %v", m["BlockDeviceMappings"])
+	if !ok || len(bdm) != 2 {
+		t.Fatalf("expected 2 block device mappings, got %v", m["BlockDeviceMappings"])
 	}
-	ebs := bdm[0].(map[string]any)["Ebs"].(map[string]any)
-	if ebs["DeleteOnTermination"] != false {
-		t.Errorf("expected the data volume to survive termination, got %v", ebs)
+	data := bdm[0].(map[string]any)
+	if data["DeviceName"] != "/dev/sdf" {
+		t.Errorf("expected the data volume on /dev/sdf, got %v", data["DeviceName"])
+	}
+	dataEbs := data["Ebs"].(map[string]any)
+	if dataEbs["DeleteOnTermination"] != false {
+		t.Errorf("expected the data volume to survive termination, got %v", dataEbs)
+	}
+	if dataEbs["Encrypted"] != true {
+		t.Errorf("expected the data volume to be encrypted, got %v", dataEbs)
+	}
+	root := bdm[1].(map[string]any)
+	if root["DeviceName"] != "/dev/sda1" {
+		t.Errorf("expected the encrypted root mapping on /dev/sda1, got %v", root["DeviceName"])
+	}
+	rootEbs := root["Ebs"].(map[string]any)
+	if rootEbs["Encrypted"] != true {
+		t.Errorf("expected the root mapping to be encrypted, got %v", rootEbs)
+	}
+	if rootEbs["DeleteOnTermination"] != true {
+		t.Errorf("expected the root mapping to be deleted with the instance, got %v", rootEbs)
 	}
 	if _, ok := m["MetadataOptions"]; !ok {
 		t.Error("expected MetadataOptions (IMDSv2) in the rebuilt desired state")
@@ -1078,6 +1097,25 @@ func TestRebuildInstanceDesiredState_Perforce_MissingImageID(t *testing.T) {
 	}
 }
 
+// A recorded Perforce instance without its root device is unsupported: the
+// encrypted root mapping needs the AMI's real root device, never a guess.
+func TestRebuildInstanceDesiredState_Perforce_MissingRootDevice(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	mod := &state.ModuleState{
+		Name:    "perforce",
+		Version: "2025.2",
+		Resources: []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-pf"},
+			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-perforce-profile"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf"}},
+		},
+	}
+	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, st, config.Defaults(), nil)
+	if err == nil || !strings.Contains(err.Error(), "no root device recorded for the perforce instance (Properties.rootDevice); re-run 'fabrica perforce create'") {
+		t.Fatalf("expected a Properties.rootDevice error, got %v", err)
+	}
+}
+
 // A missing or unreadable credentials file reports the instance
 // unsupported instead of rebuilding it with a guessed password.
 func TestRebuildInstanceDesiredState_Perforce_MissingCredentials(t *testing.T) {
@@ -1088,7 +1126,7 @@ func TestRebuildInstanceDesiredState_Perforce_MissingCredentials(t *testing.T) {
 		Resources: []state.ModuleResource{
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-pf"},
 			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-perforce-profile"},
-			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf"}},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf", "rootDevice": "/dev/sda1"}},
 		},
 	}
 	withPerforcePassword(t, func(string) (string, error) { return "", errors.New("no such file") })
@@ -1106,7 +1144,7 @@ func TestRebuildInstanceDesiredState_Perforce_MissingProfile(t *testing.T) {
 		Version: "2025.2",
 		Resources: []state.ModuleResource{
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-pf"},
-			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf"}},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf", "rootDevice": "/dev/sda1"}},
 		},
 	}
 	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[1], mod, st, config.Defaults(), nil)

@@ -133,12 +133,24 @@ func (f *TestProvider) DescribeASG(_ context.Context, _ string) (cloud.ASGInfo, 
 
 // WithRegion satisfies cloud.RegionProvider for multi-region command tests:
 // the fake store is region-agnostic, so every region shares the same fake
-// client; the resolver is a dedicated TestVPCResolver.
+// client; the resolver is a dedicated TestVPCResolver and the inspector
+// reports a canned Ubuntu root device.
 func (f *TestProvider) WithRegion(_ context.Context, _ string) (cloud.RegionView, error) {
 	return cloud.RegionView{
 		Resources: &FakeResourceClient{provider: f},
 		VPCs:      &TestVPCResolver{VPCID: "vpc-fake", SubnetID: "subnet-fake"},
+		Images:    &fakeImageInspector{},
 	}, nil
+}
+
+// fakeImageInspector is the canned AMI inspector WithRegion bundles into its
+// RegionView so edge-region commands can read a root device.
+type fakeImageInspector struct{}
+
+var _ cloud.ImageInspector = (*fakeImageInspector)(nil)
+
+func (*fakeImageInspector) DescribeImage(_ context.Context, imageID string) (cloud.ImageInfo, error) {
+	return cannedImageInfo(imageID, "", ""), nil
 }
 
 // FakeResourceClient is a fake ResourceClient backed by TestProvider.

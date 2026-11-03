@@ -33,7 +33,7 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 // error, because a mapping on the wrong device would leave the real root
 // unencrypted.
 func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMessage, error) {
-	if !ValidRootDeviceName(plan.RootDeviceName) {
+	if !ec2state.ValidRootDeviceName(plan.RootDeviceName) {
 		return nil, fmt.Errorf("workstation root device %q is unset or invalid; refusing to build a launch without an encrypted root volume mapping", plan.RootDeviceName)
 	}
 	dsOpts := []ec2state.DesiredStateOption{

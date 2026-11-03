@@ -47,10 +47,13 @@ type Resource struct {
 
 // RegionView bundles the clients a multi-region module needs to operate on
 // resources in one specific region. Resources performs Cloud Control CRUD in
-// that region; VPCs resolves the region's default VPC/subnet.
+// that region; VPCs resolves the region's default VPC/subnet. Images inspects
+// AMIs in that region (may be nil when the provider cannot inspect; callers
+// fail closed in that case).
 type RegionView struct {
 	Resources ResourceClient
 	VPCs      VPCResolver
+	Images    ImageInspector
 }
 
 // RegionProvider supplies region-scoped clients. Multi-region commands (DDC

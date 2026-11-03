@@ -31,6 +31,16 @@ func TestFakeProviderWithRegion(t *testing.T) {
 	if vpcID == "" || subnetID == "" {
 		t.Errorf("resolver returned empty ids: %q / %q", vpcID, subnetID)
 	}
+	if view.Images == nil {
+		t.Fatal("RegionView must expose Images")
+	}
+	img, err := view.Images.DescribeImage(context.Background(), "ami-edge-1")
+	if err != nil {
+		t.Fatalf("DescribeImage error: %v", err)
+	}
+	if img.ID != "ami-edge-1" || img.RootDeviceName != "/dev/sda1" || img.RootDeviceType != "ebs" {
+		t.Errorf("DescribeImage = %+v, want the canned /dev/sda1 ebs info", img)
+	}
 }
 
 func TestFakeProviderName(t *testing.T) {

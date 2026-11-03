@@ -13,6 +13,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/credentials"
+	"github.com/jpvelasco/fabrica/internal/ec2state"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -41,6 +42,7 @@ type command struct {
 	writeState     func(*fabricastate.State) error
 	createResource func(ctx context.Context, r *cloud.Resource) error
 	resolveAMI     func(ctx context.Context, region string) (string, error)
+	inspectImage   func(ctx context.Context, imageID string) (cloud.ImageInfo, error)
 	genPassword    func(int) (string, error)
 	writeCreds     func(string, string) error
 }
@@ -95,6 +97,9 @@ making any AWS calls.`,
 				c.createResource = rt.Provider.Resources().Create
 				if resolver, ok := rt.Provider.(cloud.AMIResolver); ok {
 					c.resolveAMI = resolver.ResolveUbuntuAMI
+				}
+				if insp, ok := rt.Provider.(cloud.ImageInspector); ok {
+					c.inspectImage = insp.DescribeImage
 				}
 			}
 			return c.run(cmd.Context())
@@ -224,6 +229,14 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	if err != nil {
 		return err
 	}
+	if imageID == "" {
+		return fmt.Errorf("no Ubuntu AMI could be resolved in %s, so the Perforce instance cannot be launched", plan.Region)
+	}
+	rootDevice, err := c.rootDeviceForAMI(ctx, imageID)
+	if err != nil {
+		return err
+	}
+	plan.RootDeviceName = rootDevice
 
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:    "Instance",
@@ -235,6 +248,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 			"instanceType": plan.InstanceType,
 			"volumeSize":   strconv.Itoa(plan.VolumeSize),
 			"imageId":      imageID,
+			"rootDevice":   rootDevice,
 		},
 		PostCreate: provision.TagVolumesPostCreate(c.runtime.Provider, "perforce", plan.InstanceName),
 	}, moduleName, plan.HelixVersion, "provisioning", resources, st, c.out, c.createResource, c.writeState)
@@ -279,6 +293,21 @@ func (c command) resolveImageID(ctx context.Context, region string) (string, err
 	}
 	fmt.Fprintf(c.out, "  Resolved AMI: %s\n", imageID)
 	return imageID, nil
+}
+
+// rootDeviceForAMI reads the AMI's root device so the encrypted root mapping
+// lands on the real root (#513). A provider that cannot inspect AMIs refuses
+// the launch rather than guessing a device: a mapping on the wrong name would
+// boot the root unencrypted from the snapshot.
+func (c command) rootDeviceForAMI(ctx context.Context, imageID string) (string, error) {
+	if c.inspectImage == nil {
+		return "", fmt.Errorf("cannot read the root device of the perforce AMI %s (the provider cannot inspect AMIs), so the root volume cannot be encrypted; refusing to launch", imageID)
+	}
+	info, err := c.inspectImage(ctx, imageID)
+	if err != nil {
+		return "", fmt.Errorf("inspecting perforce AMI %s: %w", imageID, err)
+	}
+	return ec2state.RootDeviceFor("the perforce AMI", imageID, info.RootDeviceName, info.RootDeviceType)
 }
 
 func (c command) printDryRun(plan *perforce.CreatePlan) {
