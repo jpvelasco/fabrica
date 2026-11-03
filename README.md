@@ -49,7 +49,7 @@ affected.
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build`, `agents schedule`, `agents metrics` | Complete |
 | `lore` | `create`, `status`, `destroy`, `ami build` | Complete (AMI-first; local-store private path proven; S3 store provisioned, not re-verified on a known-good AMI) |
 | `ddc` | `setup`, `status`, `destroy`, `region add`, `ami build`, `topology` | Complete (V1, home + edge regions) |
-| `workstation` | `create`, `list`, `stop`, `start`, `schedule`, `terminate`, `ami build` | Complete |
+| `workstation` | `create`, `status`, `list`, `stop`, `start`, `schedule`, `terminate`, `ami build` | Complete |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `pipeline`, `destroy` | Complete |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | Complete |
 | `cost` | `report`, `forecast`, `alerts` | Complete (offline, static price table) |
@@ -438,6 +438,10 @@ Key flags:
 ```
 
 When `--mount-perforce` is set, `create` reads the Perforce server's private IP from local state (requires `fabrica perforce create` to have run first) and writes `~/.p4config` on the workstation with `P4PORT` set. The developer still runs `p4 sync` manually.
+
+#### `fabrica workstation status`
+
+Shows the current status of the workstation: reads local state, queries the instance via Cloud Control for live details (instance type, private IP, EC2 state), and probes TCP 8443 to verify the DCV server is accepting connections. When the workstation transitions from `provisioning` to `ready` for the first time, status updates the local state file (which is what `list` and the aggregate `status` report from then on). `--wait` / `-w` polls every 15 seconds until the DCV server responds, timing out after 10 minutes. Instances reachable only from inside the VPC report "unreachable from this machine" — verify them via SSM ([docs/ssm-private.md](docs/ssm-private.md)). Supports `--json`.
 
 #### `fabrica workstation list`
 
