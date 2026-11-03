@@ -8,8 +8,12 @@
 // a DriftReport. No AWS SDK imports belong here.
 //
 // Extra detection uses ResourceClient.List to enumerate live resources per
-// type and diff against recorded state identifiers. CodeBuild projects are
-// excluded from Extra checks since CodeBuildRunner has no List method.
+// type and diff against recorded state identifiers. Only resources tagged
+// ManagedBy=fabrica are reported as Extra, so resources owned by other tools
+// (or with unknown ownership) never surface as Fabrica leftovers; list
+// results without tag information are fetched so ownership is resolved
+// before the decision. CodeBuild projects are excluded from Extra checks
+// since CodeBuildRunner has no List method.
 //
 // Remediation (V1) supports recreating Missing EC2 instances and security
 // groups from recorded state. Mismatch and Extra are report-only in V1.
@@ -31,6 +35,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/tags"
 	"github.com/jpvelasco/fabrica/internal/workstation"
 )
 
@@ -231,7 +236,8 @@ func (e *Engine) checkModule(ctx context.Context, m *state.ModuleState) ModuleDr
 // not scoped to a module. We diff against all recorded identifiers across all
 // modules to avoid false positives when multiple modules share the same
 // resource type (e.g., IAM roles). Extras are assigned to the first module
-// that records the matching type name.
+// that records the matching type name. Only resources Fabrica owns (the
+// ManagedBy=fabrica identity tag) are reported — see fabricaOwned.
 //
 // Home-region resources are listed through the home client; resources
 // recorded in an edge region (DDC edges) are additionally listed through
@@ -274,7 +280,7 @@ func (e *Engine) checkExtraResources(ctx context.Context) []DriftResult {
 		if err != nil {
 			continue
 		}
-		results = append(results, e.extraResults(ctx, typeName, live, recordedIDs, typeOwner[typeName])...)
+		results = append(results, e.extraResults(ctx, typeName, live, recordedIDs, typeOwner[typeName], e.ResourceGet)...)
 	}
 
 	// Edge regions: enumerate the types recorded there through that
@@ -293,24 +299,85 @@ func (e *Engine) checkExtraResources(ctx context.Context) []DriftResult {
 			if err != nil {
 				continue
 			}
-			results = append(results, e.extraResults(ctx, typeName, live, allRecorded[typeName], typeOwner[typeName])...)
+			results = append(results, e.extraResults(ctx, typeName, live, allRecorded[typeName], typeOwner[typeName], rc.Get)...)
 		}
 	}
 
 	return results
 }
 
+// tagsFromState parses the Cloud Control Tags array (Key/Value objects) from
+// a resource's actual state into a map. present is false when the document is
+// missing, unparseable, or carries no Tags key at all, so callers can tell
+// "has no tags" from "no tag information".
+func tagsFromState(res *cloud.Resource) (map[string]string, bool) {
+	out := map[string]string{}
+	if len(res.ActualState) == 0 {
+		return out, false
+	}
+	var props struct {
+		Tags *[]struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"Tags"`
+	}
+	if err := json.Unmarshal(res.ActualState, &props); err != nil || props.Tags == nil {
+		return out, false
+	}
+	for _, tag := range *props.Tags {
+		out[tag.Key] = tag.Value
+	}
+	return out, true
+}
+
+// isASGManagedInstance returns true if the resource is an EC2 instance with
+// FabricaRole=agent in its tags. These are ASG-launched instances that are
+// not tracked individually in Fabrica state and should be excluded from
+// Extra detection.
+func isASGManagedInstance(res cloud.Resource) bool {
+	if res.TypeName != cloud.TypeAWSEC2Instance {
+		return false
+	}
+	tagMap, _ := tagsFromState(&res)
+	return tagMap["FabricaRole"] == "agent"
+}
+
+// fabricaOwned reports whether a live resource carries the ManagedBy=fabrica
+// identity tag, the ownership marker drift relies on before suggesting
+// manual deletion. List results without tag information are fetched once
+// (get) so the decision never rests on an enumeration that omitted
+// properties; a resource that still cannot be attributed is treated as not
+// Fabrica's.
+func (e *Engine) fabricaOwned(ctx context.Context, res *cloud.Resource, get func(ctx context.Context, r *cloud.Resource) error) bool {
+	if resTags, known := tagsFromState(res); known {
+		return resTags[tags.ManagedByKey] == tags.ManagedByValue
+	}
+	if get == nil {
+		return false
+	}
+	fetch := *res
+	if err := get(ctx, &fetch); err != nil {
+		return false
+	}
+	resTags, _ := tagsFromState(&fetch)
+	return resTags[tags.ManagedByKey] == tags.ManagedByValue
+}
+
 // extraResults diffs one type's live list against the recorded identifiers
-// and returns the unrecorded (Extra) ones. ASG-managed instances carry
-// FabricaRole=agent in their tags and are not tracked individually in
-// state, so they are excluded.
-func (e *Engine) extraResults(_ context.Context, typeName string, live []cloud.Resource, recordedIDs map[string]bool, owner string) []DriftResult {
+// and returns the unrecorded (Extra) ones. Only resources Fabrica owns —
+// tagged ManagedBy=fabrica — are eligible, so the report never points the
+// operator at a resource another tool created. ASG-managed instances carry
+// FabricaRole=agent and are not tracked individually in state, so they are
+// excluded as well. get fetches a resource's properties when the list
+// result lacks tag information.
+func (e *Engine) extraResults(ctx context.Context, typeName string, live []cloud.Resource, recordedIDs map[string]bool, owner string, get func(ctx context.Context, r *cloud.Resource) error) []DriftResult {
 	var results []DriftResult
-	for _, res := range live {
-		if recordedIDs[res.Identifier] {
+	for i := range live {
+		res := live[i]
+		if recordedIDs[res.Identifier] || isASGManagedInstance(res) {
 			continue
 		}
-		if isASGManagedInstance(res) {
+		if !e.fabricaOwned(ctx, &res, get) {
 			continue
 		}
 		results = append(results, DriftResult{
@@ -322,34 +389,6 @@ func (e *Engine) extraResults(_ context.Context, typeName string, live []cloud.R
 		})
 	}
 	return results
-}
-
-// isASGManagedInstance returns true if the resource is an EC2 instance with
-// FabricaRole=agent in its tags. These are ASG-launched instances that are
-// not tracked individually in Fabrica state and should be excluded from
-// Extra detection.
-func isASGManagedInstance(res cloud.Resource) bool {
-	if res.TypeName != "AWS::EC2::Instance" {
-		return false
-	}
-	if len(res.ActualState) == 0 {
-		return false
-	}
-	var props struct {
-		Tags []struct {
-			Key   string `json:"Key"`
-			Value string `json:"Value"`
-		} `json:"Tags"`
-	}
-	if err := json.Unmarshal(res.ActualState, &props); err != nil {
-		return false
-	}
-	for _, tag := range props.Tags {
-		if tag.Key == "FabricaRole" && tag.Value == "agent" {
-			return true
-		}
-	}
-	return false
 }
 
 // homeRegion returns the region the home client is bound to.

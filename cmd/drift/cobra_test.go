@@ -314,7 +314,7 @@ func TestDriftCobraExtraResource(t *testing.T) {
 		},
 		ListResult: []cloud.Resource{
 			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123"},
-			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-extra"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-extra", ActualState: json.RawMessage(`{"Tags":[{"Key":"ManagedBy","Value":"fabrica"}]}`)},
 		},
 	}
 

@@ -1,10 +1,18 @@
 package tags
 
+// ManagedByKey and ManagedByValue are the identity tag pair that marks a
+// resource as Fabrica-owned. Teardown, drift, and cost attribution key off
+// this tag.
+const (
+	ManagedByKey   = "ManagedBy"
+	ManagedByValue = "fabrica"
+)
+
 // Standard returns the default Fabrica resource tags for a given module and version.
 // This is the single source of truth for all Fabrica-managed resource tagging.
 func Standard(module, version string) map[string]string {
 	return map[string]string{
-		"ManagedBy":      "fabrica",
+		ManagedByKey:     ManagedByValue,
 		"FabricaModule":  module,
 		"FabricaVersion": version,
 	}
@@ -26,7 +34,7 @@ func Merge(module, version string, extra map[string]string) map[string]string {
 // to the tag set but never shadow these — a resource that lost ManagedBy
 // would leak on `destroy --all` and skew drift and cost reporting.
 var identityTagKeys = map[string]struct{}{
-	"ManagedBy":          {},
+	ManagedByKey:         {},
 	"FabricaModule":      {},
 	"FabricaVersion":     {},
 	"FabricaCreateNonce": {},
