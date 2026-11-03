@@ -13,6 +13,8 @@ import (
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
+	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
+	fabricav "github.com/jpvelasco/fabrica/internal/version"
 )
 
 var _ fabricac.StateBackendChecker = (*awsProvider)(nil)
@@ -30,6 +32,7 @@ type stateBackendS3Client interface {
 	DeleteBucket(context.Context, *s3.DeleteBucketInput, ...func(*s3.Options)) (*s3.DeleteBucketOutput, error)
 	CreateBucket(context.Context, *s3.CreateBucketInput, ...func(*s3.Options)) (*s3.CreateBucketOutput, error)
 	PutBucketVersioning(context.Context, *s3.PutBucketVersioningInput, ...func(*s3.Options)) (*s3.PutBucketVersioningOutput, error)
+	PutBucketTagging(context.Context, *s3.PutBucketTaggingInput, ...func(*s3.Options)) (*s3.PutBucketTaggingOutput, error)
 	PutBucketEncryption(context.Context, *s3.PutBucketEncryptionInput, ...func(*s3.Options)) (*s3.PutBucketEncryptionOutput, error)
 	PutPublicAccessBlock(context.Context, *s3.PutPublicAccessBlockInput, ...func(*s3.Options)) (*s3.PutPublicAccessBlockOutput, error)
 	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
@@ -234,6 +237,32 @@ func (p *awsProvider) createBucket(ctx context.Context, client stateBackendS3Cli
 	return nil
 }
 
+// stateBackendTags is the tag set applied to the state bucket and lock table:
+// the standard setup tags plus the operator's cloud.aws.tags.
+func (p *awsProvider) stateBackendTags() map[string]string {
+	extra := map[string]string{}
+	if p.cfg != nil {
+		extra = p.cfg.Cloud.AWS.Tags
+	}
+	return fabricatags.Merge("setup", fabricav.Version, extra)
+}
+
+func s3TagList(tags map[string]string) []s3types.Tag {
+	out := make([]s3types.Tag, 0, len(tags))
+	for k, v := range tags {
+		out = append(out, s3types.Tag{Key: aws.String(k), Value: aws.String(v)})
+	}
+	return out
+}
+
+func dynamoTagList(tags map[string]string) []dynamodbtypes.Tag {
+	out := make([]dynamodbtypes.Tag, 0, len(tags))
+	for k, v := range tags {
+		out = append(out, dynamodbtypes.Tag{Key: aws.String(k), Value: aws.String(v)})
+	}
+	return out
+}
+
 func (p *awsProvider) configureBucket(ctx context.Context, client stateBackendS3Client, bucket string) error {
 	if _, err := client.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{
 		Bucket:                  aws.String(bucket),
@@ -269,6 +298,15 @@ func (p *awsProvider) configureBucket(ctx context.Context, client stateBackendS3
 	}); err != nil {
 		return fmt.Errorf("blocking public access on S3 bucket %s: %w", bucket, err)
 	}
+
+	// PutBucketTagging replaces the bucket tag set on every call, so a
+	// re-run of setup keeps the tags in sync with fabrica.yaml.
+	if _, err := client.PutBucketTagging(ctx, &s3.PutBucketTaggingInput{
+		Bucket:  aws.String(bucket),
+		Tagging: &s3types.Tagging{TagSet: s3TagList(p.stateBackendTags())},
+	}); err != nil {
+		return fmt.Errorf("tagging S3 bucket %s: %w", bucket, err)
+	}
 	return nil
 }
 
@@ -296,6 +334,7 @@ func (p *awsProvider) EnsureStateLockTable(ctx context.Context, table string) (f
 	if _, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
 		TableName:   aws.String(table),
 		BillingMode: dynamodbtypes.BillingModePayPerRequest,
+		Tags:        dynamoTagList(p.stateBackendTags()),
 		AttributeDefinitions: []dynamodbtypes.AttributeDefinition{
 			{AttributeName: aws.String("LockID"), AttributeType: dynamodbtypes.ScalarAttributeTypeS},
 		},

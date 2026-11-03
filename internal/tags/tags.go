@@ -9,3 +9,14 @@ func Standard(module, version string) map[string]string {
 		"FabricaVersion": version,
 	}
 }
+
+// Merge returns the standard Fabrica tags for module/version with extra
+// operator tags layered on top. An operator tag overrides the standard tag
+// with the same key (for example ManagedBy).
+func Merge(module, version string, extra map[string]string) map[string]string {
+	tags := Standard(module, version)
+	for k, v := range extra {
+		tags[k] = v
+	}
+	return tags
+}

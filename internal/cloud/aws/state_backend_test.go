@@ -12,10 +12,12 @@ import (
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	fabricav "github.com/jpvelasco/fabrica/internal/version"
 )
 
 func TestStateBucketExistsUsesS3HeadBucket(t *testing.T) {
@@ -485,6 +487,55 @@ func TestEnsureStateBucketPublicAccessBlockErrorPropagates(t *testing.T) {
 	}
 }
 
+func TestEnsureStateBucketAppliesTags(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.Tags = map[string]string{"Project": "studio", "ManagedBy": "ops"}
+	s3Client := &fakeS3StateBackendClient{headErr: apiErr("404")}
+	p := newBootstrapTestProvider(s3Client, nil, nil, cfg)
+
+	if _, err := p.EnsureStateBucket(context.Background(), "b", "us-west-2"); err != nil {
+		t.Fatalf("EnsureStateBucket: %v", err)
+	}
+	if !s3Client.taggingCalled {
+		t.Fatal("PutBucketTagging was not called")
+	}
+	if s3Client.taggedBucket != "b" {
+		t.Errorf("taggedBucket = %q, want b", s3Client.taggedBucket)
+	}
+	assertTagsContain(t, s3Client.bucketTags, map[string]string{
+		"ManagedBy":      "ops", // operator tag overrides the standard one
+		"Project":        "studio",
+		"FabricaModule":  "setup",
+		"FabricaVersion": fabricav.Version,
+	})
+}
+
+func TestEnsureStateBucketReconcilesTagsOnExistingBucket(t *testing.T) {
+	s3Client := &fakeS3StateBackendClient{} // HeadBucket succeeds => exists
+	p := newBootstrapTestProvider(s3Client, nil, nil, nil)
+
+	if _, err := p.EnsureStateBucket(context.Background(), "b", "us-west-2"); err != nil {
+		t.Fatalf("EnsureStateBucket: %v", err)
+	}
+	if s3Client.createCalled {
+		t.Error("CreateBucket should not be called for existing bucket")
+	}
+	if !s3Client.taggingCalled || len(s3Client.bucketTags) != 3 {
+		t.Errorf("tags should be reconciled on existing bucket: called=%v tags=%v", s3Client.taggingCalled, s3Client.bucketTags)
+	}
+}
+
+func TestEnsureStateBucketTaggingErrorPropagates(t *testing.T) {
+	s3Client := &fakeS3StateBackendClient{headErr: apiErr("404"), taggingErr: fmt.Errorf("denied")}
+	p := newBootstrapTestProvider(s3Client, nil, nil, nil)
+
+	_, err := p.EnsureStateBucket(context.Background(), "b", "us-west-2")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertStringContains(t, err.Error(), "tagging S3 bucket")
+}
+
 func TestEnsureStateLockTableCreatesAndWaits(t *testing.T) {
 	ddbClient := &fakeDynamoDBStateBackendClient{describeErr: apiErr("ResourceNotFoundException")}
 	waiter := &fakeTableExistsWaiter{}
@@ -500,6 +551,27 @@ func TestEnsureStateLockTableCreatesAndWaits(t *testing.T) {
 	if ddbClient.createKey != "LockID" {
 		t.Errorf("hash key = %q, want LockID", ddbClient.createKey)
 	}
+}
+
+func TestEnsureStateLockTableCreatedWithTags(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.Tags = map[string]string{"Project": "studio"}
+	ddbClient := &fakeDynamoDBStateBackendClient{describeErr: apiErr("ResourceNotFoundException")}
+	waiter := &fakeTableExistsWaiter{}
+	p := newBootstrapTestProvider(nil, ddbClient, waiter, cfg)
+
+	if _, err := p.EnsureStateLockTable(context.Background(), "fabrica-state-lock"); err != nil {
+		t.Fatalf("EnsureStateLockTable: %v", err)
+	}
+	if len(ddbClient.createTags) != 4 {
+		t.Fatalf("CreateTable tags = %d entries, want 4: %v", len(ddbClient.createTags), ddbTagMap(t, ddbClient.createTags))
+	}
+	assertTagsContain(t, ddbTagMap(t, ddbClient.createTags), map[string]string{
+		"ManagedBy":      "fabrica",
+		"Project":        "studio",
+		"FabricaModule":  "setup",
+		"FabricaVersion": fabricav.Version,
+	})
 }
 
 func TestEnsureStateLockTableIdempotent(t *testing.T) {
@@ -622,6 +694,9 @@ type fakeS3StateBackendClient struct {
 	versioningCalled   bool
 	encryptionCalled   bool
 	pabCalled          bool
+	taggingCalled      bool
+	taggedBucket       string
+	bucketTags         map[string]string
 	locationConstraint string
 	kmsKeyID           string
 	sseAlgorithm       string
@@ -629,6 +704,7 @@ type fakeS3StateBackendClient struct {
 	versioningErr      error
 	encryptionErr      error
 	pabErr             error
+	taggingErr         error
 
 	objectBody    string
 	getObjectKey  string
@@ -700,6 +776,16 @@ func (f *fakeS3StateBackendClient) PutPublicAccessBlock(ctx context.Context, in 
 	return &s3.PutPublicAccessBlockOutput{}, f.pabErr
 }
 
+func (f *fakeS3StateBackendClient) PutBucketTagging(ctx context.Context, in *s3.PutBucketTaggingInput, optFns ...func(*s3.Options)) (*s3.PutBucketTaggingOutput, error) {
+	f.taggingCalled = true
+	f.taggedBucket = awssdk.ToString(in.Bucket)
+	f.bucketTags = map[string]string{}
+	for _, tag := range in.Tagging.TagSet {
+		f.bucketTags[awssdk.ToString(tag.Key)] = awssdk.ToString(tag.Value)
+	}
+	return &s3.PutBucketTaggingOutput{}, f.taggingErr
+}
+
 type fakeDynamoDBStateBackendClient struct {
 	describeCalls int
 	deleteCalls   int
@@ -710,6 +796,7 @@ type fakeDynamoDBStateBackendClient struct {
 
 	createCalled bool
 	createKey    string
+	createTags   []dynamodbtypes.Tag
 	createErr    error
 }
 
@@ -730,6 +817,7 @@ func (f *fakeDynamoDBStateBackendClient) CreateTable(ctx context.Context, in *dy
 	if len(in.KeySchema) > 0 {
 		f.createKey = awssdk.ToString(in.KeySchema[0].AttributeName)
 	}
+	f.createTags = in.Tags
 	return &dynamodb.CreateTableOutput{}, f.createErr
 }
 
@@ -795,6 +883,24 @@ func assertStringContains(t *testing.T, s, substr string) {
 		}
 	}
 	t.Fatalf("%q does not contain %q", s, substr)
+}
+
+func assertTagsContain(t *testing.T, got, want map[string]string) {
+	t.Helper()
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("tag %q = %q, want %q (all tags: %v)", k, got[k], v, got)
+		}
+	}
+}
+
+func ddbTagMap(t *testing.T, tags []dynamodbtypes.Tag) map[string]string {
+	t.Helper()
+	out := make(map[string]string, len(tags))
+	for _, tag := range tags {
+		out[awssdk.ToString(tag.Key)] = awssdk.ToString(tag.Value)
+	}
+	return out
 }
 
 // TestStateBackendDeleteTimeoutCoversWaiterBounds pins the invariant that the

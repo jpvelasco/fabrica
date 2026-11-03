@@ -90,7 +90,7 @@ func (c command) run(ctx context.Context) error {
 
 	cfg := c.runtime.Config
 	plan := fabricastate.NewSetupPlan(cfg, account, region)
-	tags := setupTags(c.version, cfg.Cloud.AWS.Tags)
+	tags := fabricatags.Merge("setup", c.version, cfg.Cloud.AWS.Tags)
 
 	if c.dryRun {
 		c.printDryRun(plan, tags)
@@ -109,14 +109,6 @@ func (c command) printIdentityHelp() {
 	fmt.Fprintln(c.out, "  - Region not set or unreachable — set 'cloud.aws.region' in fabrica.yaml.")
 	fmt.Fprintln(c.out, "Verify with 'aws sts get-caller-identity', then run 'fabrica doctor'.")
 	fmt.Fprintln(c.out)
-}
-
-func setupTags(version string, extra map[string]string) map[string]string {
-	tags := fabricatags.Standard("setup", version)
-	for k, v := range extra {
-		tags[k] = v
-	}
-	return tags
 }
 
 func (c command) printDryRun(plan fabricastate.SetupPlan, tags map[string]string) {

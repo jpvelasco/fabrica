@@ -14,23 +14,6 @@ import (
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
-func TestSetupTagsMergesStandardAndUserTags(t *testing.T) {
-	tags := setupTags("test-version", map[string]string{
-		"Environment": "dev",
-		"ManagedBy":   "custom",
-	})
-
-	if tags["Environment"] != "dev" {
-		t.Fatalf("user tag not copied")
-	}
-	if tags["ManagedBy"] != "custom" {
-		t.Fatalf("user tag should override standard tag, got %q", tags["ManagedBy"])
-	}
-	if tags["FabricaVersion"] != "test-version" {
-		t.Fatalf("FabricaVersion = %q", tags["FabricaVersion"])
-	}
-}
-
 func TestCostResourcesPreservesPlanLabels(t *testing.T) {
 	resources := costResources([]fabricastate.ResourcePlan{
 		{TypeName: "AWS::S3::Bucket", Label: "S3 bucket", Identifier: "state-bucket"},
