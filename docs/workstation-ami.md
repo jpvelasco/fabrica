@@ -232,7 +232,11 @@ writes the password to it as a Parameter Store SecureString, tagged
 `ManagedBy=fabrica`. There is no shared name and no overwrite: a create
 that finds an existing name fails and names the orphan. The password is
 also recorded in `.fabrica/workstation-credentials.yaml` (mode `0600`) —
-the operator source of truth. The value is not placed in UserData, Cloud
+the operator source of truth. The file's lifecycle is tied to the instance:
+`workstation create` writes it, and `workstation terminate` removes it after
+a fully successful teardown (both standalone and via `destroy --all`); a file
+it cannot remove is reported as a warning so the operator can delete it by
+hand. The value is not placed in UserData, Cloud
 Control desired state, or module state. State records the parameter name
 only (`sessionPasswordParameter` on the instance resource).
 

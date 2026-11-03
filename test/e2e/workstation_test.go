@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -132,5 +133,33 @@ func TestWorkstationRootVolumeEncrypted(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no EC2 instance was created")
+	}
+}
+
+// TestWorkstationTerminateRemovesCredentialsFile: create writes the local DCV
+// credentials record, and a fully successful teardown removes it (#511). This
+// drives the real command tree, so the teardown engine's real os.Remove wiring
+// runs end to end.
+func TestWorkstationTerminateRemovesCredentialsFile(t *testing.T) {
+	setupE2E(t)
+
+	credsPath := filepath.Join(".fabrica", "workstation-credentials.yaml")
+	out, err := runCLI(t, "workstation", "create", "--yes")
+	if err != nil {
+		t.Fatalf("workstation create: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(credsPath); err != nil {
+		t.Fatalf("create should have written %s: %v", credsPath, err)
+	}
+
+	out, err = runCLI(t, "workstation", "terminate", "--yes")
+	if err != nil {
+		t.Fatalf("workstation terminate: %v\n%s", err, out)
+	}
+	// The engine prints the constant's forward-slash path regardless of the
+	// platform separator in credsPath.
+	assert.Contains(t, out, "Removed: .fabrica/workstation-credentials.yaml")
+	if _, err := os.Stat(credsPath); !os.IsNotExist(err) {
+		t.Fatalf("terminate left %s on disk: %v", credsPath, err)
 	}
 }
