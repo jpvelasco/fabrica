@@ -202,7 +202,13 @@ func planActionAttrs(a drift.RemediationAction) []any {
 }
 
 func (c *command) runFix(ctx context.Context, dryRun bool, st *fabricastate.State, report *drift.DriftReport) error {
-	plan := drift.PlanRemediation(report, st, c.runtime.Config)
+	var opts []drift.PlanOption
+	// Workstation rebuilds need the AMI's root device; providers that can
+	// inspect AMIs supply the capability, others fail those rebuilds closed.
+	if insp, ok := c.runtime.Provider.(cloud.ImageInspector); ok {
+		opts = append(opts, drift.WithImageInspector(insp.DescribeImage))
+	}
+	plan := drift.PlanRemediation(ctx, report, st, c.runtime.Config, opts...)
 
 	if len(plan.Actions) == 0 {
 		oplog.WithModule("drift").Debug("no drift found, nothing to fix")
