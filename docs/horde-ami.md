@@ -34,6 +34,25 @@ At boot, Fabrica's cloud-init script will:
 or a Fabrica-written `Server.json`. The compose stack manages all services and
 configuration.
 
+## EBS root volume encryption
+
+`fabrica horde create` inspects the root device of the AMI you pass (`horde.amiId`)
+and requests exactly that device with `Encrypted=true` on both launch paths
+(Cloud Control and the direct `RunInstances` path). The root volume is encrypted
+even when the AMI's snapshot is unencrypted and the account's default EBS
+encryption is off.
+
+Create fails closed, before the state lock and any resource or credential file
+is written, when the AMI reports no root device name, a name that is not an EC2
+device name, or a root that is not EBS, and when the provider cannot inspect
+the AMI at all.
+
+Fabrica sets no `KmsKeyId`, so EBS uses the account's default EBS encryption
+key: the AWS managed key `aws/ebs`, or the account's default CMK if one is
+configured. The root device name is recorded in module state
+(`Properties.rootDevice`) and `drift --fix` rebuilds map the encrypted root
+from it.
+
 ---
 
 ## The Compose Stack

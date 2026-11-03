@@ -855,17 +855,20 @@ func rebuildResource(ctx context.Context, dr *DriftResult, st *state.State, cfg 
 // instance profile, security group, and bootstrap script — through the
 // module's canonical plan and desired-state helpers, so a remediated instance
 // boots the way the original create would have launched it. Recorded
-// properties (instanceType, volumeSize, subnetId, imageId) win over config,
-// which wins over module defaults.
+// properties (instanceType, volumeSize, subnetId, imageId, rootDevice) win
+// over config, which wins over module defaults.
 //
 // The AMI source depends on the module: Perforce records its AMI in
 // Properties.imageId (its module version is a Helix Core software version,
 // which create also pins in cloud-init, so it must never stand in for an AMI
 // id); every other module records the AMI as the module version at create
-// time; the DDC Scylla node uses ddc.scyllaAmiId. If any required input is
-// missing — AMI, IAM profile, security group, or module credentials — the
-// error propagates and the caller reports the instance as unsupported for
-// automatic remediation instead of launching a broken replacement.
+// time; the DDC Scylla node uses ddc.scyllaAmiId. The AMI's root device —
+// where the encrypted root mapping lands — is recorded as
+// Properties.rootDevice at create time; state written before #513 has none.
+// If any required input is missing — AMI, root device, IAM profile,
+// security group, or module credentials — the error propagates and the
+// caller reports the instance as unsupported for automatic remediation
+// instead of launching a broken replacement.
 func rebuildInstanceDesiredState(ctx context.Context, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config, inspector imageInspectorFunc) (json.RawMessage, error) {
 	if mod.Name == "ddc" && isEdgeResource(rec) {
 		return rebuildEdgeInstanceDesiredState(rec, mod, st, cfg)
@@ -977,6 +980,10 @@ func rebuildPerforceInstance(rec *state.ModuleResource, mod *state.ModuleState, 
 	if err != nil {
 		return nil, err
 	}
+	rootDevice := rec.Properties["rootDevice"]
+	if rootDevice == "" {
+		return nil, fmt.Errorf("no root device recorded for the perforce instance (Properties.rootDevice); re-run 'fabrica perforce create'")
+	}
 	adminPass, err := readPerforcePassword(perforceCredFile)
 	if err != nil {
 		return nil, err
@@ -990,10 +997,11 @@ func rebuildPerforceInstance(rec *state.ModuleResource, mod *state.ModuleState, 
 		return nil, fmt.Errorf("rendering perforce cloud-init: %w", err)
 	}
 	plan := &perforce.CreatePlan{
-		InstanceType: instanceTypeFor(rec, cfg.Perforce.InstanceType, perforce.DefaultInstanceType),
-		VolumeSize:   volumeSizeFor(rec, cfg.Perforce.VolumeSize, 500),
-		SubnetID:     subnetFor(rec, cfg.Perforce.SubnetId),
-		InstanceName: "fabrica-perforce",
+		InstanceType:   instanceTypeFor(rec, cfg.Perforce.InstanceType, perforce.DefaultInstanceType),
+		VolumeSize:     volumeSizeFor(rec, cfg.Perforce.VolumeSize, 500),
+		SubnetID:       subnetFor(rec, cfg.Perforce.SubnetId),
+		InstanceName:   "fabrica-perforce",
+		RootDeviceName: rootDevice,
 	}
 	ds, err := perforce.InstanceDesiredState(plan, sgID, userData, profile, ami)
 	if err != nil {
@@ -1017,6 +1025,10 @@ func rebuildHordeInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg
 	if err != nil {
 		return nil, err
 	}
+	rootDevice := rec.Properties["rootDevice"]
+	if rootDevice == "" {
+		return nil, fmt.Errorf("no root device recorded for the horde instance (Properties.rootDevice); re-run 'fabrica horde create'")
+	}
 	mongoPass, err := readHordePassword(hordeCredFile)
 	if err != nil {
 		return nil, err
@@ -1030,11 +1042,12 @@ func rebuildHordeInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg
 		return nil, fmt.Errorf("rendering horde cloud-init: %w", err)
 	}
 	plan := &horde.CreatePlan{
-		AmiID:        ami,
-		InstanceType: instanceTypeFor(rec, cfg.Horde.InstanceType, horde.DefaultInstanceType),
-		VolumeSize:   volumeSizeFor(rec, cfg.Horde.VolumeSize, 100),
-		SubnetID:     subnetFor(rec, cfg.Horde.SubnetId),
-		InstanceName: "fabrica-horde",
+		AmiID:          ami,
+		InstanceType:   instanceTypeFor(rec, cfg.Horde.InstanceType, horde.DefaultInstanceType),
+		VolumeSize:     volumeSizeFor(rec, cfg.Horde.VolumeSize, 100),
+		SubnetID:       subnetFor(rec, cfg.Horde.SubnetId),
+		InstanceName:   "fabrica-horde",
+		RootDeviceName: rootDevice,
 	}
 	ds, err := horde.InstanceDesiredState(plan, sgID, userData, profile)
 	if err != nil {
@@ -1055,6 +1068,10 @@ func rebuildLoreInstance(rec *state.ModuleResource, mod *state.ModuleState, st *
 	sgID, profile, err := recordedSGAndProfile(rec, mod, "lore")
 	if err != nil {
 		return nil, err
+	}
+	rootDevice := rec.Properties["rootDevice"]
+	if rootDevice == "" {
+		return nil, fmt.Errorf("no root device recorded for the lore instance (Properties.rootDevice); re-run 'fabrica lore create'")
 	}
 	// Same normalization create uses: trim + lowercase, anything that is
 	// not "s3" resolves to the local backend.
@@ -1097,6 +1114,7 @@ func rebuildLoreInstance(rec *state.ModuleResource, mod *state.ModuleState, st *
 		SubnetID:            subnetFor(rec, cfg.Lore.SubnetId),
 		InstanceName:        "fabrica-lore",
 		InstanceProfileName: profile,
+		RootDeviceName:      rootDevice,
 	}
 	ds, err := lore.InstanceDesiredState(plan, sgID, userData)
 	if err != nil {
@@ -1145,6 +1163,10 @@ func rebuildDDCInstance(rec *state.ModuleResource, mod *state.ModuleState, st *s
 	if err != nil {
 		return nil, err
 	}
+	rootDevice := rec.Properties["rootDevice"]
+	if rootDevice == "" {
+		return nil, fmt.Errorf("no root device recorded for the ddc instance (Properties.rootDevice); re-run 'fabrica ddc setup'")
+	}
 	publicPort, internalPort := ddcPorts(cfg)
 	nodes := ddc.ResolveScyllaNodes(cfg.DDC.Scylla)
 	userData, err := ddc.Generate(ddc.UserDataConfig{
@@ -1168,13 +1190,14 @@ func rebuildDDCInstance(rec *state.ModuleResource, mod *state.ModuleState, st *s
 		return nil, fmt.Errorf("rendering ddc cloud-init: %w", err)
 	}
 	plan := &ddc.SetupPlan{
-		Account:      st.Account,
-		Region:       st.Region,
-		AmiID:        ami,
-		InstanceType: instanceTypeFor(rec, cfg.DDC.InstanceType, ddc.DefaultInstanceType),
-		VolumeSize:   volumeSizeFor(rec, cfg.DDC.VolumeSize, ddc.DefaultVolumeSize),
-		SubnetID:     subnetFor(rec, cfg.DDC.SubnetId),
-		InstanceName: "fabrica-ddc",
+		Account:        st.Account,
+		Region:         st.Region,
+		AmiID:          ami,
+		InstanceType:   instanceTypeFor(rec, cfg.DDC.InstanceType, ddc.DefaultInstanceType),
+		VolumeSize:     volumeSizeFor(rec, cfg.DDC.VolumeSize, ddc.DefaultVolumeSize),
+		SubnetID:       subnetFor(rec, cfg.DDC.SubnetId),
+		InstanceName:   "fabrica-ddc",
+		RootDeviceName: rootDevice,
 	}
 	ds, err := ddc.InstanceDesiredState(plan, sgID, userData, profile)
 	if err != nil {
@@ -1195,6 +1218,10 @@ func rebuildScyllaInstance(rec *state.ModuleResource, mod *state.ModuleState, st
 	if err != nil {
 		return nil, err
 	}
+	rootDevice := rec.Properties["rootDevice"]
+	if rootDevice == "" {
+		return nil, fmt.Errorf("no root device recorded for the ddc scylla instance (Properties.rootDevice); re-run 'fabrica ddc setup'")
+	}
 	userData, err := ddc.GenerateScylla(ddc.ScyllaUserDataConfig{
 		ClusterName: "fabrica-ddc",
 	})
@@ -1202,13 +1229,14 @@ func rebuildScyllaInstance(rec *state.ModuleResource, mod *state.ModuleState, st
 		return nil, fmt.Errorf("rendering ddc scylla cloud-init: %w", err)
 	}
 	plan := &ddc.SetupPlan{
-		Account:            st.Account,
-		Region:             st.Region,
-		ScyllaAmiID:        ami,
-		ScyllaInstanceType: instanceTypeFor(rec, cfg.DDC.ScyllaInstanceType, ddc.DefaultScyllaInstanceType),
-		ScyllaVolumeSize:   volumeSizeFor(rec, cfg.DDC.ScyllaVolumeSize, ddc.DefaultScyllaVolumeSize),
-		SubnetID:           subnetFor(rec, cfg.DDC.SubnetId),
-		ScyllaInstanceName: "fabrica-ddc-scylla",
+		Account:              st.Account,
+		Region:               st.Region,
+		ScyllaAmiID:          ami,
+		ScyllaInstanceType:   instanceTypeFor(rec, cfg.DDC.ScyllaInstanceType, ddc.DefaultScyllaInstanceType),
+		ScyllaVolumeSize:     volumeSizeFor(rec, cfg.DDC.ScyllaVolumeSize, ddc.DefaultScyllaVolumeSize),
+		SubnetID:             subnetFor(rec, cfg.DDC.SubnetId),
+		ScyllaInstanceName:   "fabrica-ddc-scylla",
+		ScyllaRootDeviceName: rootDevice,
 	}
 	ds, err := ddc.ScyllaInstanceDesiredState(plan, sgID, userData, profile)
 	if err != nil {
@@ -1319,6 +1347,10 @@ func rebuildEdgeInstanceDesiredState(rec *state.ModuleResource, mod *state.Modul
 	if profile == "" {
 		return nil, fmt.Errorf("no IAM instance profile recorded for the ddc module; re-run 'fabrica ddc setup'")
 	}
+	rootDevice := rec.Properties["rootDevice"]
+	if rootDevice == "" {
+		return nil, fmt.Errorf("no root device recorded for the DDC edge instance %s (Properties.rootDevice); re-run 'fabrica ddc region add %s'", region, region)
+	}
 	publicPort, internalPort := ddcPorts(cfg)
 	userData, err := ddc.Generate(ddc.UserDataConfig{
 		StorePath:    ddc.DefaultStorePath,
@@ -1346,6 +1378,7 @@ func rebuildEdgeInstanceDesiredState(rec *state.ModuleResource, mod *state.Modul
 		VPCID:               rec.Properties["vpcId"],
 		InstanceName:        fmt.Sprintf("fabrica-ddc-edge-%s", region),
 		InstanceProfileName: profile,
+		RootDeviceName:      rootDevice,
 	}
 	ds, err := ddc.EdgeInstanceDesiredState(plan, sgID, userData)
 	if err != nil {

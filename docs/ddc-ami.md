@@ -11,6 +11,27 @@ aws ec2 copy-image --source-region us-east-1 --region eu-west-1 \
 
 Then pass the copy (or set `ddc.amiId` in `fabrica.yaml`) when adding the region. Edge nodes reuse the home blob bucket and the global instance profile; there is no replication-peer automation — peer/replication wiring is operator-managed.
 
+## EBS root volume encryption
+
+`fabrica ddc setup` inspects the root device of `ddc.amiId` — and of
+`ddc.scyllaAmiId` when the backend is `scylla` — and requests each AMI's real
+root device with `Encrypted=true` on both launch paths (Cloud Control and the
+direct `RunInstances` path). `fabrica ddc region add` inspects the edge AMI the
+same way through the edge region's client. The root volume is encrypted even
+when the AMI's snapshot is unencrypted and the account's default EBS encryption
+is off.
+
+The command fails closed, before the state lock and any resource or state is
+written, when an AMI reports no root device name, a name that is not an EC2
+device name, or a root that is not EBS, and when the provider (or the edge
+region's client) cannot inspect the AMI at all.
+
+Fabrica sets no `KmsKeyId`, so EBS uses the account's default EBS encryption
+key: the AWS managed key `aws/ebs`, or the account's default CMK if one is
+configured. The root device names are recorded in module state
+(`Properties.rootDevice`) and `drift --fix` rebuilds map the encrypted root
+from them.
+
 ## Required (zen — default)
 
 - Unreal Cloud DDC (Jupiter) binary or container entrypoint

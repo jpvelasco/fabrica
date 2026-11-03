@@ -55,6 +55,7 @@ func TestRunReadStateError(t *testing.T) {
 		runtime: testRuntime(), assumeYes: true, out: &bytes.Buffer{}, costs: fabricacost.Global,
 		readState: func() (*fabricastate.State, error) { return nil, fmt.Errorf("state boom") },
 	}
+	wireInspector(&c)
 	if err := c.run(context.Background()); err == nil || !strings.Contains(err.Error(), "state boom") {
 		t.Fatalf("err = %v", err)
 	}
@@ -101,7 +102,7 @@ func TestRunOpenCIDRWarning(t *testing.T) {
 func TestRunApplyScylla(t *testing.T) {
 	var buf bytes.Buffer
 	st := &fabricastate.State{Account: "123", Region: "us-east-1"}
-	fp := &testutil.TestProvider{}
+	fp := &testutil.InspectorProvider{}
 	rt := testRuntime()
 	rt.Config.DDC.Backend = ddc.BackendScylla
 	rt.Config.DDC.ScyllaAmiID = "ami-scylla"
@@ -114,6 +115,7 @@ func TestRunApplyScylla(t *testing.T) {
 		createResource: fp.Resources().Create,
 		writeEndpoints: func(path, content string) error { return nil },
 	}
+	wireInspector(&c)
 	if err := c.run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -154,6 +156,7 @@ func TestRunCreateFailEachStep(t *testing.T) {
 				createResource: fc.Create,
 				writeEndpoints: func(string, string) error { return nil },
 			}
+			wireInspector(&c)
 			if err := c.run(context.Background()); err == nil {
 				t.Fatal("expected create error")
 			}
@@ -190,6 +193,7 @@ func TestRunWriteStateFailures(t *testing.T) {
 				},
 				writeEndpoints: func(string, string) error { return nil },
 			}
+			wireInspector(&c)
 			if err := c.run(context.Background()); err == nil || !strings.Contains(err.Error(), tc.msg) {
 				t.Fatalf("err = %v", err)
 			}
@@ -206,6 +210,7 @@ func TestRunWriteEndpointsFail(t *testing.T) {
 		createResource: func(ctx context.Context, r *cloud.Resource) error { r.Identifier = "x"; return nil },
 		writeEndpoints: func(string, string) error { return fmt.Errorf("perm denied") },
 	}
+	wireInspector(&c)
 	if err := c.run(context.Background()); err == nil || !strings.Contains(err.Error(), "perm denied") {
 		t.Fatalf("err = %v", err)
 	}
@@ -225,6 +230,7 @@ func TestRunScyllaCreateFail(t *testing.T) {
 		createResource: fc.Create,
 		writeEndpoints: func(string, string) error { return nil },
 	}
+	wireInspector(&c)
 	if err := c.run(context.Background()); err == nil {
 		t.Fatal("expected scylla create fail")
 	}

@@ -44,7 +44,7 @@ func perforceModuleFixture() *state.ModuleState {
 		Resources: []state.ModuleResource{
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-pf"},
 			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-perforce-profile"},
-			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf"}},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf", "rootDevice": "/dev/sda1"}},
 		},
 	}
 }
@@ -56,7 +56,7 @@ func hordeModuleFixture() *state.ModuleState {
 		Resources: []state.ModuleResource{
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-coord"},
 			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
-			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord", Properties: map[string]string{"rootDevice": "/dev/sda1"}},
 		},
 	}
 }

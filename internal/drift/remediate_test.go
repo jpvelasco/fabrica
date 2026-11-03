@@ -51,6 +51,7 @@ func TestPlanRemediation_MissingEC2Instance(t *testing.T) {
 		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
 		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
 			"instanceType": "m7i.2xlarge",
+			"rootDevice":   "/dev/sda1",
 		}},
 	})
 
@@ -1014,6 +1015,7 @@ func TestRebuildInstanceDesiredState_Perforce(t *testing.T) {
 			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{
 				"instanceType": "m5.xlarge",
 				"imageId":      "ami-perforce-123",
+				"rootDevice":   "/dev/sda1",
 			}},
 		},
 	}
@@ -1041,12 +1043,30 @@ func TestRebuildInstanceDesiredState_Perforce(t *testing.T) {
 		t.Errorf("expected the recorded IAM profile, got %v", m["IamInstanceProfile"])
 	}
 	bdm, ok := m["BlockDeviceMappings"].([]any)
-	if !ok || len(bdm) != 1 {
-		t.Fatalf("expected 1 block device mapping, got %v", m["BlockDeviceMappings"])
+	if !ok || len(bdm) != 2 {
+		t.Fatalf("expected 2 block device mappings, got %v", m["BlockDeviceMappings"])
 	}
-	ebs := bdm[0].(map[string]any)["Ebs"].(map[string]any)
-	if ebs["DeleteOnTermination"] != false {
-		t.Errorf("expected the data volume to survive termination, got %v", ebs)
+	data := bdm[0].(map[string]any)
+	if data["DeviceName"] != "/dev/sdf" {
+		t.Errorf("expected the data volume on /dev/sdf, got %v", data["DeviceName"])
+	}
+	dataEbs := data["Ebs"].(map[string]any)
+	if dataEbs["DeleteOnTermination"] != false {
+		t.Errorf("expected the data volume to survive termination, got %v", dataEbs)
+	}
+	if dataEbs["Encrypted"] != true {
+		t.Errorf("expected the data volume to be encrypted, got %v", dataEbs)
+	}
+	root := bdm[1].(map[string]any)
+	if root["DeviceName"] != "/dev/sda1" {
+		t.Errorf("expected the encrypted root mapping on /dev/sda1, got %v", root["DeviceName"])
+	}
+	rootEbs := root["Ebs"].(map[string]any)
+	if rootEbs["Encrypted"] != true {
+		t.Errorf("expected the root mapping to be encrypted, got %v", rootEbs)
+	}
+	if rootEbs["DeleteOnTermination"] != true {
+		t.Errorf("expected the root mapping to be deleted with the instance, got %v", rootEbs)
 	}
 	if _, ok := m["MetadataOptions"]; !ok {
 		t.Error("expected MetadataOptions (IMDSv2) in the rebuilt desired state")
@@ -1078,6 +1098,25 @@ func TestRebuildInstanceDesiredState_Perforce_MissingImageID(t *testing.T) {
 	}
 }
 
+// A recorded Perforce instance without its root device is unsupported: the
+// encrypted root mapping needs the AMI's real root device, never a guess.
+func TestRebuildInstanceDesiredState_Perforce_MissingRootDevice(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	mod := &state.ModuleState{
+		Name:    "perforce",
+		Version: "2025.2",
+		Resources: []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-pf"},
+			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-perforce-profile"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf"}},
+		},
+	}
+	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, st, config.Defaults(), nil)
+	if err == nil || !strings.Contains(err.Error(), "no root device recorded for the perforce instance (Properties.rootDevice); re-run 'fabrica perforce create'") {
+		t.Fatalf("expected a Properties.rootDevice error, got %v", err)
+	}
+}
+
 // A missing or unreadable credentials file reports the instance
 // unsupported instead of rebuilding it with a guessed password.
 func TestRebuildInstanceDesiredState_Perforce_MissingCredentials(t *testing.T) {
@@ -1088,7 +1127,7 @@ func TestRebuildInstanceDesiredState_Perforce_MissingCredentials(t *testing.T) {
 		Resources: []state.ModuleResource{
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-pf"},
 			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-perforce-profile"},
-			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf"}},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf", "rootDevice": "/dev/sda1"}},
 		},
 	}
 	withPerforcePassword(t, func(string) (string, error) { return "", errors.New("no such file") })
@@ -1106,7 +1145,7 @@ func TestRebuildInstanceDesiredState_Perforce_MissingProfile(t *testing.T) {
 		Version: "2025.2",
 		Resources: []state.ModuleResource{
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-pf"},
-			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf"}},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf", "rootDevice": "/dev/sda1"}},
 		},
 	}
 	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[1], mod, st, config.Defaults(), nil)
@@ -1131,7 +1170,7 @@ func TestRebuildInstanceDesiredState_HordeAgentSGIndependence(t *testing.T) {
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-agent", Properties: map[string]string{"role": "agent"}},
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-coord"},
 			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
-			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord", Properties: map[string]string{"rootDevice": "/dev/sda1"}},
 		},
 	}
 	rec := &mod.Resources[3]
@@ -1165,7 +1204,7 @@ func TestRebuildInstanceDesiredState_Lore(t *testing.T) {
 			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-lore-profile"},
 		},
 	}
-	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Properties: map[string]string{"rootDevice": "/dev/sda1"}}
 
 	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
 	if err != nil {
@@ -1199,7 +1238,7 @@ func TestRebuildInstanceDesiredState_DDC(t *testing.T) {
 			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
 		},
 	}
-	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Properties: map[string]string{"rootDevice": "/dev/sda1"}}
 
 	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
 	if err != nil {
@@ -1275,7 +1314,7 @@ func TestRebuildInstanceDesiredState_SecurityGroupLink(t *testing.T) {
 	mod.Resources = []state.ModuleResource{
 		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-linked"},
 		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
-		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123"},
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{"rootDevice": "/dev/sda1"}},
 	}
 	rec := &mod.Resources[2]
 	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
@@ -1316,6 +1355,7 @@ func TestRebuildInstanceDesiredState_PropertiesOverride(t *testing.T) {
 			"instanceType": "m7i.4xlarge",
 			"subnetId":     "subnet-recorded",
 			"volumeSize":   "512",
+			"rootDevice":   "/dev/sda1",
 		},
 	}
 	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
@@ -1400,6 +1440,7 @@ func TestRebuildResource_InstanceWithDesiredState(t *testing.T) {
 		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
 		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
 			"instanceType": "m7i.2xlarge",
+			"rootDevice":   "/dev/sda1",
 		}},
 	})
 	cfg := config.Defaults()
@@ -1669,6 +1710,7 @@ func TestPlanRemediation_MissingDDCInstance(t *testing.T) {
 		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
 		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-ddc", Properties: map[string]string{
 			"instanceType": "m5.xlarge",
+			"rootDevice":   "/dev/sda1",
 		}},
 	})
 
@@ -1771,7 +1813,7 @@ func TestRebuildInstanceDesiredState_Horde_FullContract(t *testing.T) {
 		Resources: []state.ModuleResource{
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-coord"},
 			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
-			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord", Properties: map[string]string{"rootDevice": "/dev/sda1"}},
 		},
 	}
 	rec := &mod.Resources[2]
@@ -1815,6 +1857,25 @@ func TestRebuildInstanceDesiredState_Horde_FullContract(t *testing.T) {
 	}
 }
 
+// A recorded horde instance without its root device is unsupported: the
+// encrypted root mapping needs the AMI's real root device, never a guess.
+func TestRebuildInstanceDesiredState_Horde_MissingRootDevice(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	mod := &state.ModuleState{
+		Name:    "horde",
+		Version: "ami-horde",
+		Resources: []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-coord"},
+			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord"},
+		},
+	}
+	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, st, config.Defaults(), nil)
+	if err == nil || !strings.Contains(err.Error(), "no root device recorded for the horde instance (Properties.rootDevice); re-run 'fabrica horde create'") {
+		t.Fatalf("expected a Properties.rootDevice error, got %v", err)
+	}
+}
+
 func TestRebuildInstanceDesiredState_Lore_S3Store(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Lore.StoreBackend = "s3"
@@ -1828,7 +1889,7 @@ func TestRebuildInstanceDesiredState_Lore_S3Store(t *testing.T) {
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-lore"},
 			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-lore-profile"},
 			{TypeName: cloud.TypeAWSS3Bucket, Identifier: bucket},
-			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-lore"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-lore", Properties: map[string]string{"rootDevice": "/dev/sda1"}},
 		},
 	}
 	rec := &mod.Resources[3]
@@ -1969,7 +2030,7 @@ func TestRebuildInstanceDesiredState_DDCScylla(t *testing.T) {
 		Resources: []state.ModuleResource{
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-ddc"},
 			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
-			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-scylla", Properties: map[string]string{"role": ddc.RoleScylla}},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-scylla", Properties: map[string]string{"role": ddc.RoleScylla, "rootDevice": "/dev/sda1"}},
 		},
 	}
 	rec := &mod.Resources[2]
@@ -2098,6 +2159,17 @@ func TestRebuildInstanceDesiredState_MissingInputs(t *testing.T) {
 		cfg.DDC.ScyllaAmiID = "ami-scylla"
 		check(t, &m, 1, cfg, "no security group recorded")
 	})
+	t.Run("lore without a recorded root device", func(t *testing.T) {
+		check(t, lore, 2, config.Defaults(), "no root device recorded for the lore instance (Properties.rootDevice); re-run 'fabrica lore create'")
+	})
+	t.Run("ddc coordinator without a recorded root device", func(t *testing.T) {
+		check(t, ddcMod, 2, config.Defaults(), "no root device recorded for the ddc instance (Properties.rootDevice); re-run 'fabrica ddc setup'")
+	})
+	t.Run("ddc scylla without a recorded root device", func(t *testing.T) {
+		cfg := config.Defaults()
+		cfg.DDC.ScyllaAmiID = "ami-scylla"
+		check(t, scylla, 2, cfg, "no root device recorded for the ddc scylla instance (Properties.rootDevice); re-run 'fabrica ddc setup'")
+	})
 }
 
 // An s3 store with no recorded bucket resource falls back to the same
@@ -2115,7 +2187,7 @@ func TestRebuildInstanceDesiredState_Lore_S3BucketFallback(t *testing.T) {
 			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-lore-profile"},
 		},
 	}
-	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Properties: map[string]string{"rootDevice": "/dev/sda1"}}
 
 	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
 	if err != nil {
@@ -2142,7 +2214,7 @@ func TestRebuildInstanceDesiredState_DDC_RecordedBucketWins(t *testing.T) {
 			{TypeName: cloud.TypeAWSS3Bucket, Identifier: "fabrica-ddc-blobs-recorded"},
 		},
 	}
-	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Properties: map[string]string{"rootDevice": "/dev/sda1"}}
 
 	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
 	if err != nil {

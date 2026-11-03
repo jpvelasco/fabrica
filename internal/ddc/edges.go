@@ -32,9 +32,14 @@ type EdgeOptions struct {
 // No AWS SDK types. The edge shares the home region's blob bucket and IAM
 // instance profile; only the SG and EC2 instance are region-scoped.
 type EdgePlan struct {
-	Account             string
-	Region              string
-	AmiID               string
+	Account string
+	Region  string
+	AmiID   string
+	// RootDeviceName is the edge AMI's root device name (for example
+	// /dev/sda1), read from the AMI at create time. The encrypted root
+	// volume mapping is built on it; empty refuses launch (fail-closed,
+	// #513).
+	RootDeviceName      string
 	InstanceType        string
 	VolumeSize          int
 	PublicPort          int

@@ -433,3 +433,173 @@ func TestBuildOmitsEmptyAMI(t *testing.T) {
 		t.Error("ImageId should be absent")
 	}
 }
+
+func TestValidRootDeviceName(t *testing.T) {
+	valid := []string{"/dev/sda", "/dev/sda1", "/dev/sdab12", "/dev/xvda", "/dev/xvdba1"}
+	for _, name := range valid {
+		if !ValidRootDeviceName(name) {
+			t.Errorf("ValidRootDeviceName(%q) = false, want true", name)
+		}
+	}
+	invalid := []string{"", "sda1", "/dev/ram0", "/dev/nvme0n1", "/dev/sda100", "/dev/sd", "/dev/"}
+	for _, name := range invalid {
+		if ValidRootDeviceName(name) {
+			t.Errorf("ValidRootDeviceName(%q) = true, want false", name)
+		}
+	}
+}
+
+func TestRootDeviceFor(t *testing.T) {
+	tests := []struct {
+		subject string
+		amiID   string
+		root    string
+		devType string
+		want    string
+		errSub  string
+	}{
+		{"horde.amiId", "ami-horde", "/dev/sda1", "ebs", "/dev/sda1", ""},
+		{"lore.amiId", "ami-lore", "/dev/xvda", "ebs", "/dev/xvda", ""},
+		{"perforce", "ami-fake-ubuntu", "", "ebs", "", "reports no root device name, so Fabrica cannot map an encrypted root volume onto it; refusing to launch"},
+		{"ddc.amiId", "ami-ddc", "/dev/nvme0n1", "ebs", "", `reports root device "/dev/nvme0n1", which is not an EC2 device name Fabrica can map an encrypted root volume onto; refusing to launch`},
+		{"ddc.amiId", "ami-ddc", "/dev/sda1", "instance-store", "", `has root device type "instance-store"; the module needs an EBS-backed AMI so its root volume can be encrypted`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.subject+"_"+tc.root+"_"+tc.devType, func(t *testing.T) {
+			got, err := RootDeviceFor(tc.subject, tc.amiID, tc.root, tc.devType)
+			if tc.errSub == "" {
+				if err != nil {
+					t.Fatalf("RootDeviceFor() error = %v, want none", err)
+				}
+				if got != tc.want {
+					t.Errorf("RootDeviceFor() = %q, want %q", got, tc.want)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("RootDeviceFor() error = nil, want %q", tc.errSub)
+			}
+			if !strings.Contains(err.Error(), tc.errSub) {
+				t.Errorf("error = %q, want containing %q", err, tc.errSub)
+			}
+			if !strings.HasPrefix(err.Error(), fmt.Sprintf("%s %s ", tc.subject, tc.amiID)) {
+				t.Errorf("error = %q, want %q prefix", err, tc.subject+" "+tc.amiID)
+			}
+			if got != "" {
+				t.Errorf("RootDeviceFor() device = %q, want empty on error", got)
+			}
+		})
+	}
+}
+
+// TestWithEncryptedRootRefusesBadDeviceNames pins the fail-closed behavior of
+// the option itself: an empty or malformed root device must error, so Build
+// never emits a desired state whose root mapping is a guessed device name.
+func TestWithEncryptedRootRefusesBadDeviceNames(t *testing.T) {
+	tests := []struct {
+		root string
+		want string
+	}{
+		{"", "EC2 root device name is empty; refusing to map an encrypted root volume"},
+		{"sda1", `EC2 root device "sda1" is not a valid device name; refusing to map an encrypted root volume`},
+		{"/dev/sda1; rm", `EC2 root device "/dev/sda1; rm" is not a valid device name; refusing to map an encrypted root volume`},
+	}
+	for _, tc := range tests {
+		_, err := Build(testSpec(), WithEncryptedRoot(tc.root))
+		if err == nil {
+			t.Fatalf("Build() with root %q: error = nil, want refusal", tc.root)
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("root %q: error = %q, want containing %q", tc.root, err, tc.want)
+		}
+	}
+}
+
+// TestWithEncryptedRootEncryptsTheExistingMapping pins the horde/lore/ddc
+// shape: the single mapping already carries the AMI's root device (set via
+// WithDeviceName), so the flag lands on that mapping without touching size
+// or type.
+func TestWithEncryptedRootEncryptsTheExistingMapping(t *testing.T) {
+	raw, err := Build(testSpec(), WithDeviceName("/dev/xvda"), WithEncryptedRoot("/dev/xvda"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := doc(t, raw)
+	mappings := d["BlockDeviceMappings"].([]any)
+	if len(mappings) != 1 {
+		t.Fatalf("BlockDeviceMappings len = %d, want 1", len(mappings))
+	}
+	m := mappings[0].(map[string]any)
+	if m["DeviceName"].(string) != "/dev/xvda" {
+		t.Errorf("DeviceName = %v, want /dev/xvda", m["DeviceName"])
+	}
+	ebs := m["Ebs"].(map[string]any)
+	if ebs["Encrypted"] != true {
+		t.Error("Encrypted should be true")
+	}
+	if ebs["VolumeSize"].(float64) != 100 {
+		t.Errorf("VolumeSize = %v, want 100", ebs["VolumeSize"])
+	}
+	if ebs["VolumeType"].(string) != "gp3" {
+		t.Errorf("VolumeType = %v, want gp3", ebs["VolumeType"])
+	}
+}
+
+// TestWithEncryptedRootAppendsRootMapping pins the perforce shape: the first
+// mapping is a data volume, so the encrypted root mapping is appended with
+// an explicit DeleteOnTermination and no size of its own (the AMI snapshot
+// owns the root size).
+func TestWithEncryptedRootAppendsRootMapping(t *testing.T) {
+	raw, err := Build(testSpec(), WithDeleteOnTermination(false), WithEncryptedVolume(), WithEncryptedRoot("/dev/sda1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := doc(t, raw)
+	mappings := d["BlockDeviceMappings"].([]any)
+	if len(mappings) != 2 {
+		t.Fatalf("BlockDeviceMappings len = %d, want 2", len(mappings))
+	}
+	data := mappings[0].(map[string]any)
+	if data["DeviceName"].(string) != "/dev/sdf" {
+		t.Errorf("data DeviceName = %v, want /dev/sdf", data["DeviceName"])
+	}
+	dataEbs := data["Ebs"].(map[string]any)
+	if dataEbs["Encrypted"] != true {
+		t.Error("data volume Encrypted should be true")
+	}
+	if dataEbs["DeleteOnTermination"] != false {
+		t.Error("data volume DeleteOnTermination should be false")
+	}
+	root := mappings[1].(map[string]any)
+	if root["DeviceName"].(string) != "/dev/sda1" {
+		t.Errorf("root DeviceName = %v, want /dev/sda1", root["DeviceName"])
+	}
+	rootEbs := root["Ebs"].(map[string]any)
+	if rootEbs["Encrypted"] != true {
+		t.Error("root Encrypted should be true")
+	}
+	if rootEbs["DeleteOnTermination"] != true {
+		t.Error("root DeleteOnTermination should be true")
+	}
+	for _, absent := range []string{"VolumeSize", "VolumeType"} {
+		if _, ok := rootEbs[absent]; ok {
+			t.Errorf("root Ebs must not carry %s; the AMI snapshot owns the root size", absent)
+		}
+	}
+}
+
+// TestWithEncryptedRootRefusesMappingWithoutEbs drives the option directly
+// with a malformed document: a matching device name whose mapping carries no
+// Ebs block must fail rather than append a second, empty root.
+func TestWithEncryptedRootRefusesMappingWithoutEbs(t *testing.T) {
+	d := map[string]any{
+		"BlockDeviceMappings": []map[string]any{{"DeviceName": "/dev/sda1"}},
+	}
+	err := WithEncryptedRoot("/dev/sda1")(d)
+	if err == nil {
+		t.Fatal("expected an error for a mapping without an Ebs block")
+	}
+	if !strings.Contains(err.Error(), "has no Ebs block") {
+		t.Errorf("error = %q, want the no-Ebs-block refusal", err)
+	}
+}

@@ -44,6 +44,11 @@ type CreatePlan struct {
 	RoleName            string
 	InstanceProfileName string
 
+	// RootDeviceName is the AMI's root device name (for example /dev/sda1),
+	// read from the AMI at create time. The encrypted root volume mapping is
+	// built on it; empty refuses launch (fail-closed, #513).
+	RootDeviceName string
+
 	// Backup settings copied from config for IAM S3 policy (optional).
 	BackupS3Export bool
 	BackupS3Bucket string

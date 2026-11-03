@@ -48,7 +48,7 @@ func TestCreateCobraDryRunNoAWSCalls(t *testing.T) {
 
 func TestCreateCobraYesFlagSkipsConfirmation(t *testing.T) {
 	t.Chdir(t.TempDir())
-	provider := &testutil.TestProvider{}
+	provider := &testutil.InspectorProvider{}
 	_, err := runCreate(t, newCobraTestRuntime(provider), "--yes")
 	if err != nil {
 		t.Fatalf("--yes run failed: %v", err)

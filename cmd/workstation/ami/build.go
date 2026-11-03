@@ -14,7 +14,7 @@ import (
 	"text/template"
 
 	"github.com/jpvelasco/fabrica/internal/amissm"
-	"github.com/jpvelasco/fabrica/internal/workstation"
+	"github.com/jpvelasco/fabrica/internal/ec2state"
 	"github.com/spf13/cobra"
 )
 
@@ -138,7 +138,7 @@ func (c buildCommand) run() error {
 // off. Generation refuses to write a recipe that would bake an unencrypted
 // root snapshot.
 func validateRecipeEncryption(recipe []byte, rootDevice string) error {
-	if !workstation.ValidRootDeviceName(rootDevice) {
+	if !ec2state.ValidRootDeviceName(rootDevice) {
 		return fmt.Errorf("root device %q is not an EC2 device name; refusing to write a recipe that cannot encrypt the root", rootDevice)
 	}
 	var doc struct {
@@ -177,7 +177,7 @@ func (c buildCommand) validate() error {
 	if c.cfg.OutputDir == "" {
 		return fmt.Errorf("--output-dir is required")
 	}
-	if !workstation.ValidRootDeviceName(c.cfg.RootDevice) {
+	if !ec2state.ValidRootDeviceName(c.cfg.RootDevice) {
 		return fmt.Errorf("--root-device must be the base image's root device name (for example /dev/sda1 or /dev/xvda); got %q", c.cfg.RootDevice)
 	}
 	return nil

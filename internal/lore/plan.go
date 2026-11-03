@@ -47,6 +47,11 @@ type CreatePlan struct {
 	SGName       string
 	InstanceName string
 
+	// RootDeviceName is the AMI's root device name (for example /dev/sda1),
+	// read from the AMI at create time. The encrypted root volume mapping is
+	// built on it; empty refuses launch (fail-closed, #513).
+	RootDeviceName string
+
 	// S3 store (optional, enabled when storeBackend is "s3").
 	StoreBackend        string
 	StoreBucket         string
