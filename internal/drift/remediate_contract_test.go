@@ -56,7 +56,7 @@ func hordeModuleFixture() *state.ModuleState {
 		Resources: []state.ModuleResource{
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-coord"},
 			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
-			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord", Properties: map[string]string{"rootDevice": "/dev/sda1"}},
 		},
 	}
 }

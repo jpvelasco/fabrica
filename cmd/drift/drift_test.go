@@ -55,6 +55,7 @@ func hordeFixResources() []fabricastate.ModuleResource {
 		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
 		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]string{
 			"instanceType": "m7i.2xlarge",
+			"rootDevice":   "/dev/sda1",
 		}},
 		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
 	}

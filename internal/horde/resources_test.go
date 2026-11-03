@@ -59,11 +59,12 @@ func TestSGDesiredStateAllowedCIDRAppliedToBothPorts(t *testing.T) {
 
 func TestInstanceDesiredStateShape(t *testing.T) {
 	plan := &CreatePlan{
-		InstanceName: "fabrica-horde",
-		InstanceType: "m7i.xlarge",
-		AmiID:        "ami-abc123",
-		SubnetID:     "subnet-abc",
-		VolumeSize:   100,
+		InstanceName:   "fabrica-horde",
+		InstanceType:   "m7i.xlarge",
+		AmiID:          "ami-abc123",
+		SubnetID:       "subnet-abc",
+		VolumeSize:     100,
+		RootDeviceName: "/dev/sda1",
 	}
 	raw, err := InstanceDesiredState(plan, "sg-abc123", "dXNlcmRhdGE=", "")
 	if err != nil {
@@ -89,13 +90,60 @@ func TestInstanceDesiredStateShape(t *testing.T) {
 	}
 }
 
+// TestInstanceDesiredStateEncryptedRoot pins #513: the horde root volume is
+// requested with Encrypted=true on the AMI's own root device, so it is
+// encrypted even when the AMI snapshot is not.
+func TestInstanceDesiredStateEncryptedRoot(t *testing.T) {
+	mk := func(root string) *CreatePlan {
+		return &CreatePlan{
+			InstanceName:   "fabrica-horde",
+			InstanceType:   "m7i.xlarge",
+			AmiID:          "ami-abc123",
+			SubnetID:       "subnet-abc",
+			VolumeSize:     100,
+			RootDeviceName: root,
+		}
+	}
+
+	for _, dev := range []string{"/dev/sda1", "/dev/xvda1"} {
+		t.Run(dev, func(t *testing.T) {
+			raw, err := InstanceDesiredState(mk(dev), "sg-abc123", "dXNlcmRhdGE=", "")
+			if err != nil {
+				t.Fatalf("InstanceDesiredState: %v", err)
+			}
+			bdms := ec2state.UnmarshalDesiredState(t, raw)["BlockDeviceMappings"].([]any)
+			if len(bdms) != 1 {
+				t.Fatalf("BlockDeviceMappings = %v, want only the root", bdms)
+			}
+			m0 := bdms[0].(map[string]any)
+			if m0["DeviceName"] != dev {
+				t.Errorf("DeviceName = %v, want %s", m0["DeviceName"], dev)
+			}
+			if enc, ok := m0["Ebs"].(map[string]any)["Encrypted"].(bool); !ok || !enc {
+				t.Errorf("Ebs.Encrypted = %v, want true", m0["Ebs"])
+			}
+		})
+	}
+
+	t.Run("empty root device refuses", func(t *testing.T) {
+		_, err := InstanceDesiredState(mk(""), "sg-abc123", "dXNlcmRhdGE=", "")
+		if err == nil {
+			t.Fatal("expected an error for an empty root device")
+		}
+		if !strings.Contains(err.Error(), "EC2 block device name is empty") {
+			t.Errorf("err = %v", err)
+		}
+	})
+}
+
 func TestInstanceDesiredState_WithIAMProfile(t *testing.T) {
 	plan := &CreatePlan{
-		InstanceName: "fabrica-horde",
-		InstanceType: "m7i.xlarge",
-		AmiID:        "ami-abc123",
-		SubnetID:     "subnet-abc",
-		VolumeSize:   100,
+		InstanceName:   "fabrica-horde",
+		InstanceType:   "m7i.xlarge",
+		AmiID:          "ami-abc123",
+		SubnetID:       "subnet-abc",
+		VolumeSize:     100,
+		RootDeviceName: "/dev/sda1",
 	}
 	raw, err := InstanceDesiredState(plan, "sg-abc123", "dXNlcmRhdGE=", "fabrica-horde-profile")
 	if err != nil {
@@ -192,7 +240,7 @@ func TestCoordinatorDesiredStatesStampFabricaModule(t *testing.T) {
 
 	instRaw, err := InstanceDesiredState(&CreatePlan{
 		AmiID: "ami-1", InstanceType: "m7i.2xlarge", SubnetID: "subnet-abc",
-		InstanceName: "fabrica-horde", VolumeSize: 100,
+		InstanceName: "fabrica-horde", VolumeSize: 100, RootDeviceName: "/dev/sda1",
 	}, "sg-123", "ud", "")
 	if err != nil {
 		t.Fatalf("InstanceDesiredState: %v", err)
