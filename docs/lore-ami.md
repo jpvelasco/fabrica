@@ -203,6 +203,19 @@ $AMI = $Image.image.outputResources.amis[0].image
 Write-Host "Candidate Lore AMI: $AMI"
 ```
 
+Image Builder tags the build and the output AMI, but not the snapshots it
+takes. Tag the candidate's snapshots before recording the AMI, so
+`ManagedBy`-based sweeps and teardown find them:
+
+```powershell
+$Snapshots = aws ec2 describe-images --region $Region --image-ids $AMI `
+  --query "Images[0].BlockDeviceMappings[].Ebs.SnapshotId" --output text
+foreach ($SnapshotId in $Snapshots) {
+  aws ec2 create-tags --region $Region --resources $SnapshotId `
+    --tags "Key=ManagedBy,Value=fabrica" "Key=FabricaModule,Value=lore" "Key=LoreVersion,Value=$LoreVersion"
+}
+```
+
 If a command fails after creating a component, recipe, infrastructure
 configuration, or pipeline, delete those named resources after investigating;
 also remove any unneeded AMI and snapshots after a failed verification. Do not

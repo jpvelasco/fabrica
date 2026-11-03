@@ -55,6 +55,15 @@ source "amazon-ebs" "horde" {
     InstallMethod = "{{ .Install }}"
     Name          = local.ami_name
   }
+
+  # The snapshots the bake takes keep the AMI tag set, so ManagedBy sweeps
+  # find them (`tags` alone tags the AMI only).
+  snapshot_tags = {
+    ManagedBy     = "fabrica"
+    HordeVersion  = var.horde_version
+    InstallMethod = "{{ .Install }}"
+    Name          = local.ami_name
+  }
 }
 
 # Docker install: the bake script (shared with component.yaml via

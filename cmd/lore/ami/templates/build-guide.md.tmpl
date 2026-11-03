@@ -60,7 +60,19 @@ cleanup instructions, follow the repository runbook: `docs/lore-ami.md`.
    create the recipe and pipeline as described in `docs/lore-ami.md`.
 2. Start the pipeline. It runs `verify-lore-ami-bake.sh` before it distributes an AMI.
    Bake verification fails closed if Amazon SSM Agent is missing or not enabled.
-3. Launch through `fabrica lore create`. Verify SSM registration on the private
+3. Tag the output AMI's snapshots before recording the AMI. Image Builder tags
+   the build and the output AMI, but not the snapshots it takes, so an untagged
+   snapshot stays invisible to `ManagedBy`-based sweeps and teardown:
+
+   ```bash
+   AMI=<candidate AMI id from the docs/lore-ami.md flow>
+   for s in $(aws ec2 describe-images --region {{ .Region }} --image-ids "$AMI" \
+       --query 'Images[0].BlockDeviceMappings[?Ebs].Ebs.SnapshotId' --output text); do
+     aws ec2 create-tags --region {{ .Region }} --resources "$s" \
+       --tags Key=ManagedBy,Value=fabrica Key=FabricaModule,Value=lore Key=Name,Value={{ .Name }}
+   done
+   ```
+4. Launch through `fabrica lore create`. Verify SSM registration on the private
    path, then run `verify-lore-ami-runtime.sh` through SSM before recording the
    AMI as known-good. Laptop `status --wait` against a private IP is not the
    private-path check.
