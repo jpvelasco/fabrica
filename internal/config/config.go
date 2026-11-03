@@ -28,19 +28,11 @@ func Path(explicit, profile string) string {
 // Save writes the config to a YAML file at the given path.
 // If path is empty, defaults to fabrica.yaml.
 func (c *Config) Save(path string) error {
-	if path == "" {
-		path = DefaultFile
-	}
-
 	data, err := c.YAML()
 	if err != nil {
 		return err
 	}
-	// fabrica.yaml is non-secret project config (not credentials).
-	if err := os.WriteFile(path, data, 0644); err != nil { // #nosec G306 -- project config file, not secrets
-		return fmt.Errorf("writing config %s: %w", path, err)
-	}
-	return nil
+	return writeConfigFile(configFilePath(path), data)
 }
 
 // YAML renders the config in the on-disk schema used by fabrica.yaml.

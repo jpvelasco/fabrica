@@ -3,6 +3,8 @@ package setup
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -334,6 +336,82 @@ func TestSaveBackendConfigPartialFill(t *testing.T) {
 	// Bucket should be filled from plan (which uses the plan's account)
 	if cfg.State.Bucket != "fabrica-state-new-account" {
 		t.Errorf("Bucket = %q, want fabrica-state-new-account", cfg.State.Bucket)
+	}
+}
+
+// TestSaveBackendConfigRoundTripPreservesFile is the issue #558 regression
+// test: a short hand-written config must come back with its comments, key
+// order, and indentation intact, the missing backend keys added in place,
+// and no re-emitted zero-value sections.
+func TestSaveBackendConfigRoundTripPreservesFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fabrica.yaml")
+	original := "# studio fabrica config\n" +
+		"cloud:\n" +
+		"  aws:\n" +
+		"    region: us-west-2  # home region\n" +
+		"state:\n" +
+		"  table: my-locks\n"
+	if err := os.WriteFile(path, []byte(original), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	var buf strings.Builder
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = ""
+	cfg.State.Bucket = ""
+	cfg.State.Table = "my-locks" // already set (as a loaded config would be), so it stays out of the update set
+
+	cmd := command{
+		runtime: globals.Runtime{
+			Config:     cfg,
+			ConfigPath: path,
+		},
+		out: &buf,
+	}
+
+	plan := fabricastate.NewSetupPlan(cfg, "111222333444", "us-west-2")
+	cmd.saveBackendConfig(plan)
+
+	if buf.Len() > 0 {
+		t.Fatalf("expected a clean save, got:\n%s", buf.String())
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading updated config: %v", err)
+	}
+	got := string(data)
+
+	for _, want := range []string{"# studio fabrica config", "# home region", "table: my-locks"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("config lost %q after save:\n%s", want, got)
+		}
+	}
+	if !strings.Contains(got, `accountId: "111222333444"`) {
+		t.Errorf("expected quoted accountId under cloud.aws, got:\n%s", got)
+	}
+	if !strings.Contains(got, "bucket: fabrica-state-111222333444") {
+		t.Errorf("expected state.bucket, got:\n%s", got)
+	}
+	for _, section := range []string{"perforce:", "horde:", "ddc:", "workstation:"} {
+		if strings.Contains(got, section) {
+			t.Errorf("config re-emitted omitted section %s:\n%s", section, got)
+		}
+	}
+
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("loading updated config: %v", err)
+	}
+	if loaded.Cloud.AWS.AccountID != "111222333444" {
+		t.Errorf("AccountID = %q, want 111222333444", loaded.Cloud.AWS.AccountID)
+	}
+	if loaded.State.Bucket != "fabrica-state-111222333444" {
+		t.Errorf("Bucket = %q, want fabrica-state-111222333444", loaded.State.Bucket)
+	}
+	if loaded.State.Table != "my-locks" {
+		t.Errorf("Table = %q, want my-locks", loaded.State.Table)
 	}
 }
 
