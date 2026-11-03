@@ -80,6 +80,72 @@ Fabrica's `permissionsBoundary` setting does **not** enforce encryption.
 It bounds the roles Fabrica creates, not the identity that launches the
 instance. See [guardrailed-accounts.md](guardrailed-accounts.md#ebs-encryption-is-not-enforced-by-the-permissions-boundary).
 
+## Bake with Image Builder
+
+The generated `component.yaml` is larger than the 16,000-character limit of
+`create-component`'s `--data` parameter, so the component must be
+registered from an S3 URI (`--uri`) instead of inlined (`--data`). The
+generated `build-guide.md` shows the component registration and the
+snapshot-tagging loop; the full sequence:
+
+```bash
+REGION=us-west-2
+BUCKET=<your-bucket>
+DIR=workstation-ami                          # workstation ami build --output-dir
+INSTANCE_PROFILE=studio-imagebuilder-profile
+SUBNET_ID=<private-subnet>
+SG_ID=<sg-id>
+
+# 1. Upload the component and register it from the S3 URI.
+aws s3 cp "$DIR/component.yaml" "s3://$BUCKET/workstation-ami/component.yaml" --region "$REGION"
+COMPONENT_ARN=$(aws imagebuilder create-component --region "$REGION" \
+  --name fabrica-workstation-dcv --semantic-version 1.0.0 --platform Linux \
+  --uri "s3://$BUCKET/workstation-ami/component.yaml" \
+  --query componentBuildVersionArn --output text)
+
+# 2. Point the recipe at the component.
+sed -i.bak "s|REPLACE_WITH_CUSTOM_COMPONENT_ARN|$COMPONENT_ARN|" "$DIR/image-builder-recipe.json"
+
+# 3. Create the recipe. The recipe JSON is small, so --cli-input-json with
+# a local file is fine here (the 16,000-character limit applies to
+# create-component's --data, not to --cli-input-json).
+RECIPE_ARN=$(aws imagebuilder create-image-recipe --region "$REGION" \
+  --cli-input-json "file://$DIR/image-builder-recipe.json" \
+  --query imageRecipeArn --output text)
+
+# 4. Infrastructure configuration.
+INFRA_ARN=$(aws imagebuilder create-infrastructure-configuration --region "$REGION" \
+  --name fabrica-workstation-imagebuilder \
+  --instance-profile-name "$INSTANCE_PROFILE" \
+  --instance-types m5.xlarge \
+  --subnet-id "$SUBNET_ID" \
+  --security-group-ids "$SG_ID" \
+  --terminate-instance-on-failure \
+  --resource-tags '{"ManagedBy":"fabrica","Purpose":"workstation-ami-bake"}' \
+  --query infrastructureConfigurationArn --output text)
+
+# 5. Pipeline, created DISABLED so a push cannot start a bake.
+PIPELINE_ARN=$(aws imagebuilder create-image-pipeline --region "$REGION" \
+  --name fabrica-workstation-imagebuilder \
+  --image-recipe-arn "$RECIPE_ARN" \
+  --infrastructure-configuration-arn "$INFRA_ARN" \
+  --status DISABLED \
+  --query imagePipelineArn --output text)
+
+# 6. Run one execution, then poll the build version until CANCELLED/FAILED
+# is ruled out (SUCCEEDED ends the poll).
+BUILD_ARN=$(aws imagebuilder start-image-pipeline-execution --region "$REGION" \
+  --image-pipeline-arn "$PIPELINE_ARN" \
+  --query imageBuildVersionArn --output text)
+aws imagebuilder get-image --region "$REGION" --image-build-version-arn "$BUILD_ARN"
+```
+
+The bake runs on `m5.xlarge` (GPU drivers are not baked; see the Contract).
+After the build succeeds, run the generated `verify-ami.sh` against the new
+AMI and tag its snapshots as the build guide shows. The Image Builder
+resources are not Fabrica resources; delete the pipeline, infrastructure
+configuration, recipe, and component afterwards.
+
 ## Private path
 
 Verify through SSM (or VPN/in-VPC), not laptop `workstation list` against a

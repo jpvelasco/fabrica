@@ -153,6 +153,50 @@ func TestBuildWritesDCVAndSSM(t *testing.T) {
 	}
 }
 
+// TestBuildGuideUsesUriForOversizedComponent guards the Image Builder
+// inline-data limit: create-component's --data parameter is limited to
+// 16,000 characters, and the generated component.yaml exceeds it. While
+// that holds, the build guide must point operators at the --uri flow and
+// must not recommend the inline --data flow (#555).
+func TestBuildGuideUsesUriForOversizedComponent(t *testing.T) {
+	const imageBuilderInlineDataLimit = 16000
+	dir := t.TempDir()
+	var out bytes.Buffer
+	c := buildCommand{
+		out: &out,
+		cfg: BuildConfig{
+			BaseImage:  defaultBaseImage,
+			Region:     "us-west-2",
+			Name:       defaultName,
+			OutputDir:  dir,
+			RootDevice: defaultRootDevice,
+		},
+		writeFile: os.WriteFile,
+		mkdirAll:  os.MkdirAll,
+	}
+	if err := c.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	comp, err := os.ReadFile(filepath.Join(dir, "component.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(comp) <= imageBuilderInlineDataLimit {
+		t.Skipf("component.yaml is %d chars, within the %d-char inline limit", len(comp), imageBuilderInlineDataLimit)
+	}
+	guide, err := os.ReadFile(filepath.Join(dir, "build-guide.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := string(guide)
+	if !strings.Contains(g, "--uri") || !strings.Contains(g, "s3://") {
+		t.Error("component exceeds the inline limit; guide must show the --uri s3:// registration flow")
+	}
+	if strings.Contains(g, `--data "file://`) {
+		t.Error("component exceeds the inline limit; guide must not recommend the --data file:// flow")
+	}
+}
+
 func TestIndent(t *testing.T) {
 	got := indent(2, "a\nb\n")
 	if got != "  a\n  b" {
