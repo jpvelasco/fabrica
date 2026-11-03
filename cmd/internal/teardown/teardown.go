@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -54,6 +56,13 @@ type Spec struct {
 	Irreversible string
 	// SuccessMessage is printed after a successful teardown (e.g. "Perforce Helix Core destroyed.").
 	SuccessMessage string
+	// LocalCleanupFile, when non-empty, is removed after a fully successful
+	// teardown (all resources deleted and the module dropped from state).
+	// Modules set it for local artifacts that hold live credentials for the
+	// torn-down resources (e.g. .fabrica/workstation-credentials.yaml). A
+	// missing file is a no-op; a removal failure prints a warning, never
+	// fails the teardown — the cloud resources are already gone.
+	LocalCleanupFile string
 	// ResourceOrder, when non-nil, returns the resources to delete in the order
 	// they should be deleted. When nil, the engine uses the default EC2
 	// Instance -> SecurityGroup order. Modules whose resources are not the
@@ -101,6 +110,11 @@ type Command struct {
 	// Modules whose resources live in multiple regions (ddc edges) use this
 	// to route each resource to its region-scoped client.
 	DeleteHook func(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, resources []cloud.Resource) ([]string, error)
+
+	// RemoveLocalFile, when non-nil, deletes Spec.LocalCleanupFile after a
+	// successful teardown. NewStandalone wires os.Remove; tests inject a
+	// fake. When nil the engine falls back to os.Remove.
+	RemoveLocalFile func(path string) error
 }
 
 // Run executes the teardown: read state, plan, confirm, then delete resources
@@ -179,6 +193,8 @@ func (c Command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 		fmt.Fprintf(c.Out, "Warning: could not update local state: %v\n", err)
 	}
 
+	c.removeLocalCleanupFile()
+
 	if c.JSONOut {
 		modstatus.WriteJSON(c.Out, Output{Destroyed: destroyed, DryRun: false})
 		return nil
@@ -190,6 +206,31 @@ func (c Command) apply(ctx context.Context, st *fabricastate.State, m *fabricast
 		fmt.Fprintf(c.Out, "  Deleted: %s\n", id)
 	}
 	return nil
+}
+
+// removeLocalCleanupFile deletes Spec.LocalCleanupFile after a successful
+// teardown. A missing file is a no-op (it may already be gone). A removal
+// failure is a warning, never a teardown failure: the cloud resources are
+// already gone, and the operator can delete the file by hand.
+func (c Command) removeLocalCleanupFile() {
+	path := c.Spec.LocalCleanupFile
+	if path == "" {
+		return
+	}
+	remove := c.RemoveLocalFile
+	if remove == nil {
+		remove = os.Remove
+	}
+	if err := remove(path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return
+		}
+		fmt.Fprintf(c.Out, "Warning: could not remove %s: %v — delete it manually\n", path, err)
+		return
+	}
+	if !c.JSONOut {
+		fmt.Fprintf(c.Out, "  Removed: %s\n", path)
+	}
 }
 
 // deleteAll runs the deletion loop, delegating to DeleteHook when set.
@@ -464,15 +505,16 @@ func WireProvider(tc *Command, rt globals.Runtime) {
 // Confirmation is handled interactively unless AssumeYes is true.
 func NewStandalone(spec Spec, rt globals.Runtime, out io.Writer, dryRun, assumeYes, jsonOut bool) Command {
 	tc := Command{
-		Spec:       spec,
-		Runtime:    rt,
-		DryRun:     dryRun,
-		AssumeYes:  assumeYes,
-		JSONOut:    jsonOut,
-		Out:        out,
-		Confirm:    prompt.ConfirmExact,
-		ReadState:  func(ctx context.Context) (*fabricastate.State, error) { return provision.ReadState(ctx, rt) },
-		WriteState: func(ctx context.Context, st *fabricastate.State) error { return provision.StateWriter(ctx, rt)(st) },
+		Spec:            spec,
+		Runtime:         rt,
+		DryRun:          dryRun,
+		AssumeYes:       assumeYes,
+		JSONOut:         jsonOut,
+		Out:             out,
+		Confirm:         prompt.ConfirmExact,
+		ReadState:       func(ctx context.Context) (*fabricastate.State, error) { return provision.ReadState(ctx, rt) },
+		WriteState:      func(ctx context.Context, st *fabricastate.State) error { return provision.StateWriter(ctx, rt)(st) },
+		RemoveLocalFile: os.Remove,
 	}
 	WireProvider(&tc, rt)
 	if spec.WireCommand != nil {

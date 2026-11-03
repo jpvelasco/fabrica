@@ -1412,3 +1412,124 @@ func TestRunLockAcquiredAndReleased(t *testing.T) {
 		t.Errorf("acquires = %d, want 1", provider.Acquires)
 	}
 }
+
+// TestRunRemovesLocalCleanupFileOnSuccess: a spec LocalCleanupFile is deleted
+// after a fully successful teardown, through the real os.Remove (no seam
+// injected — the nil seam falls back to os.Remove).
+func TestRunRemovesLocalCleanupFileOnSuccess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credentials.yaml")
+	if err := os.WriteFile(path, []byte("dcv_session_password: \"x\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	st := moduleState("ready", true)
+	c := newTestCommand(&out, st, nil)
+	c.AssumeYes = true
+	c.Spec.LocalCleanupFile = path
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cleanup file still exists after teardown: %v", err)
+	}
+	assert.Contains(t, out.String(), "Removed: "+path)
+}
+
+// TestRunLocalCleanupFileMissingIsNoOp: an already-gone file is a silent
+// no-op, not a warning (nothing left over to clean up).
+func TestRunLocalCleanupFileMissingIsNoOp(t *testing.T) {
+	var out bytes.Buffer
+	st := moduleState("ready", true)
+	c := newTestCommand(&out, st, nil)
+	c.AssumeYes = true
+	c.Spec.LocalCleanupFile = filepath.Join(t.TempDir(), "absent.yaml")
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(out.String(), "Warning:") {
+		t.Fatalf("missing cleanup file should be a silent no-op:\n%s", out.String())
+	}
+}
+
+// TestRunLocalCleanupFileWarningOnRemoveError: a removal failure never fails
+// the teardown — the cloud resources are already gone — and is reported as a
+// warning that names the file and the fix.
+func TestRunLocalCleanupFileWarningOnRemoveError(t *testing.T) {
+	var out bytes.Buffer
+	st := moduleState("ready", true)
+	c := newTestCommand(&out, st, nil)
+	c.AssumeYes = true
+	c.Spec.LocalCleanupFile = ".fabrica/workstation-credentials.yaml"
+	c.RemoveLocalFile = func(_ string) error { return errors.New("permission denied") }
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	assert.Contains(t, out.String(), "Warning: could not remove .fabrica/workstation-credentials.yaml: permission denied — delete it manually")
+}
+
+// TestRunLocalCleanupNotCalledWhenDeleteFails: a failed teardown keeps the
+// local credentials file — the operator still needs it to retry against the
+// resources that survived.
+func TestRunLocalCleanupNotCalledWhenDeleteFails(t *testing.T) {
+	var out bytes.Buffer
+	st := moduleState("ready", true)
+	// The fake keys deleteErr by type name, so fail the instance delete.
+	c := newTestCommand(&out, st, map[string]error{"AWS::EC2::Instance": errors.New("delete boom")})
+	c.AssumeYes = true
+	c.Spec.LocalCleanupFile = ".fabrica/workstation-credentials.yaml"
+	called := false
+	c.RemoveLocalFile = func(_ string) error { called = true; return nil }
+
+	if err := c.Run(context.Background()); err == nil {
+		t.Fatal("Run: expected a delete failure")
+	}
+	if called {
+		t.Error("local cleanup ran despite a failed teardown")
+	}
+}
+
+// TestRunDryRunSkipsLocalCleanup: --dry-run makes no disk changes.
+func TestRunDryRunSkipsLocalCleanup(t *testing.T) {
+	var out bytes.Buffer
+	st := moduleState("ready", true)
+	c := newTestCommand(&out, st, nil)
+	c.DryRun = true
+	c.Spec.LocalCleanupFile = ".fabrica/workstation-credentials.yaml"
+	called := false
+	c.RemoveLocalFile = func(_ string) error { called = true; return nil }
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if called {
+		t.Error("dry-run removed the local credentials file")
+	}
+}
+
+// TestRunLocalCleanupRunsInJSONMode: cleanup happens under --json too; the
+// human confirmation line is suppressed, the file is still deleted.
+func TestRunLocalCleanupRunsInJSONMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credentials.yaml")
+	if err := os.WriteFile(path, []byte("dcv_session_password: \"x\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	st := moduleState("ready", true)
+	c := newTestCommand(&out, st, nil)
+	c.AssumeYes = true
+	c.JSONOut = true
+	c.Spec.LocalCleanupFile = path
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cleanup file still exists after teardown: %v", err)
+	}
+	if strings.Contains(out.String(), "Removed:") {
+		t.Fatalf("JSON output must not carry the human Removed line:\n%s", out.String())
+	}
+}

@@ -22,7 +22,6 @@ import (
 
 const (
 	moduleName  = "workstation"
-	credFile    = ".fabrica/workstation-credentials.yaml"
 	passwordLen = 24
 )
 
@@ -296,10 +295,10 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	}
 
 	credContent := credentials.FormatWorkstation(sessionPass)
-	if err := credentials.WriteCredentials(credFile, credContent); err != nil {
+	if err := credentials.WriteCredentials(workstation.CredentialsFile, credContent); err != nil {
 		return fmt.Errorf("writing credentials file: %w", err)
 	}
-	fmt.Fprintf(c.out, "\nDCV credentials written to %s\n", credFile)
+	fmt.Fprintf(c.out, "\nDCV credentials written to %s\n", workstation.CredentialsFile)
 
 	// plan.SessionPasswordParameter is minted in run() before the plan is
 	// printed or applied, so the role (which scopes ssm:GetParameter to this
@@ -518,7 +517,7 @@ func (c command) printPostCreate(_ *workstation.CreatePlan, instanceID string) {
 		InstanceID:   instanceID,
 		StatusDetail: "provisioning (DCV setup in progress)",
 		Details: []provision.PlanField{
-			{Key: "DCV credentials", Value: credFile},
+			{Key: "DCV credentials", Value: workstation.CredentialsFile},
 		},
 		NextSteps: []string{
 			"fabrica workstation list     Show workstation details",

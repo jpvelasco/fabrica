@@ -21,8 +21,12 @@ var spec = teardown.Spec{
 	NotProvisioned: "Workstation is not provisioned. Nothing to terminate.",
 	PlanHeader:     "Cloud Workstation — terminate plan",
 	DryRunHeader:   "Cloud Workstation (terminate dry run)",
-	Irreversible:   "IRREVERSIBLE: This will permanently delete the workstation, IAM role/profile, the DCV session password parameter, and its data.",
+	Irreversible:   "IRREVERSIBLE: This will permanently delete the workstation, IAM role/profile, the DCV session password parameter, its data, and the local " + workstation.CredentialsFile + " record.",
 	SuccessMessage: "Cloud workstation terminated.",
+	// After a fully successful teardown, the local DCV session-password
+	// record is stale: the instance it describes no longer exists. A file
+	// that cannot be removed is reported as a warning (issue #511).
+	LocalCleanupFile: workstation.CredentialsFile,
 	// Parameter → instance → profile → role → SG. The SecureString goes first:
 	// its name lives only on the instance resource, which is dropped from state
 	// as soon as the instance is deleted — deleting the parameter before the
@@ -71,7 +75,8 @@ func workstationResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 	// parameter delete that runs after the instance would lose the only name
 	// reference and orphan the SecureString on a failed or interrupted run.
 	// Deleting it first is safe: cloud-init reads it at boot only, and the
-	// operator's copy stays in .fabrica/workstation-credentials.yaml.
+	// operator's copy stays in .fabrica/workstation-credentials.yaml until
+	// the teardown fully completes (the engine removes it last).
 	// Deleting a shared name could remove another instance's password, so
 	// terminate deletes exactly the recorded name and skips when it is absent
 	// (nothing recorded means no secret to clean up). Delete is success when
@@ -120,7 +125,9 @@ The per-create DCV session password SecureString
 (/fabrica/workstation/<create-nonce>/dcv-password) is deleted too. Its name is
 recorded in state on the instance, so terminate removes exactly the parameter
 that create stored and skips when none is recorded. A parameter already gone
-is success. .fabrica/workstation-credentials.yaml is left on disk.
+is success. After a fully successful teardown, terminate also removes the
+local .fabrica/workstation-credentials.yaml record; a file it cannot remove is
+reported as a warning so the operator can delete it by hand.
 
 State is updated after each deletion so a partial failure leaves a recoverable
 record. Re-running terminate will skip resources that are already gone.
