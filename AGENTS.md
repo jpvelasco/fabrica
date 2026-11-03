@@ -331,7 +331,7 @@ git config core.hooksPath .githooks
 ### Cost
 - **Config-derive model** — fully offline; `costsource.Aggregate` engine reads state + config. No AWS calls.
 - **Stopped instances drop the compute line** — `workstation stop` filters the instance out of the cost model; EBS volumes remain billed.
-- **Deploy fleet cost counted only when a fleet exists** — zero cost until a fleet is promoted.
+- **Deploy prices every recorded fleet** — the active fleet, retained (superseded) fleets kept running for rollback, and pending (provisioning) fleets acquiring capacity are each priced by their own recorded shape (instance type + desired count), so report/forecast/alerts count the capacity actually running; a module with no fleet still reports ~$0.
 - **Spot/schedule discounts** — `internal/schedule.CostFactor` (spot 30% × weekly duty cycle) multiplies agent/workstation compute lines and is encoded in the cost resource name (`EncodeFactor`); standing lines appear when flags are on: `ci.pipeline` (CodePipeline), `ops.enabled` (CloudWatch lines), `perforce.backup.schedule` (backup storage).
 - **Local thresholds only** — `cost alerts` work entirely on the local `fabrica.yaml` — no AWS Budgets resources. `alerts check` is informational (exit 0 always).
 
