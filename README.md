@@ -214,7 +214,7 @@ fabrica deploy status
 
 #### `fabrica doctor`
 
-Checks your environment: Go version, AWS credentials, region, S3 state bucket, DynamoDB lock table, and Perforce CIDR (perforce does not auto-resolve the VPC CIDR the way lore and horde do — port 1666 opens only to `10.0.0.0/8` unless `perforce.allowedCidr` is set).
+Checks your environment: Go version, AWS credentials, region, S3 state bucket, DynamoDB lock table, and Perforce CIDR (runs when any `perforce.*` key is configured; perforce does not auto-resolve the VPC CIDR the way lore and horde do — port 1666 opens only to `10.0.0.0/8` unless `perforce.allowedCidr` is set).
 
 #### `fabrica setup`
 
