@@ -214,7 +214,8 @@ func TestSubmitWaitPollsUntilComplete(t *testing.T) {
 	assert.Contains(t, out.String(), "complete")
 }
 
-// TestSubmitWaitTimeout verifies --wait surfaces timeout after 60 minutes.
+// TestSubmitWaitTimeout verifies --wait returns a timeout error after 60
+// minutes instead of reporting success.
 func TestSubmitWaitTimeout(t *testing.T) {
 	var out bytes.Buffer
 	st := hordeProvisionedState()
@@ -231,10 +232,36 @@ func TestSubmitWaitTimeout(t *testing.T) {
 		return startTime.Add(waitTimeout + time.Second)
 	}
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected timeout error")
 	}
-	assert.Contains(t, out.String(), "timed out")
+	assert.Contains(t, err.Error(), "timed out")
+	assert.Contains(t, err.Error(), "job-timeout")
+	if client := c.hordeClient.(*fakeHordeClient); client.statusCalls != 1 {
+		t.Errorf("statusCalls = %d, want 1 (no further polling after the deadline)", client.statusCalls)
+	}
+}
+
+// TestSubmitWaitNonContextWaitError verifies a non-context waitCtx error is
+// wrapped and reported without being mistaken for a cancellation.
+func TestSubmitWaitNonContextWaitError(t *testing.T) {
+	var out bytes.Buffer
+	st := hordeProvisionedState()
+	c := newTestCommand(&out, &fakeHordeClient{submitJobID: "job-wait-err"}, st)
+	c.buildGraphPath = writeTempBuildGraph(t)
+	c.wait = true
+	c.waitCtx = func(context.Context, time.Duration) error { return errors.New("wait interrupted") }
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected wait error")
+	}
+	if errors.Is(err, context.Canceled) {
+		t.Errorf("error %v must not match context.Canceled", err)
+	}
+	assert.Contains(t, err.Error(), "wait interrupted")
+	assert.Contains(t, err.Error(), "job-wait-err")
 }
 
 // TestSubmitClientError verifies connection error is returned.
@@ -368,21 +395,28 @@ func TestSubmitWaitStatusError(t *testing.T) {
 	assert.Contains(t, err.Error(), "polling job")
 }
 
-// TestSubmitWaitErrorState verifies --wait returns nil when job errors.
+// TestSubmitWaitErrorState verifies --wait returns an actionable error naming
+// the job when the job finishes in error.
 func TestSubmitWaitErrorState(t *testing.T) {
 	var out bytes.Buffer
 	st := hordeProvisionedState()
-	c := newTestCommand(&out, &fakeHordeClient{
+	client := &fakeHordeClient{
 		submitJobID: "job-err-state",
 		statusMap:   map[string]string{"job-err-state": "error"},
-	}, st)
+	}
+	c := newTestCommand(&out, client, st)
 	c.buildGraphPath = writeTempBuildGraph(t)
 	c.wait = true
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when the job finishes in error")
 	}
-	assert.Contains(t, out.String(), "error")
+	assert.Contains(t, err.Error(), "job-err-state")
+	assert.Contains(t, out.String(), "Job job-err-state: error")
+	if client.statusCalls != 1 {
+		t.Errorf("statusCalls = %d, want 1 (terminal state stops polling)", client.statusCalls)
+	}
 }
 
 // TestSubmitWithInjectedClient verifies that when a client is injected,
@@ -756,7 +790,8 @@ func TestHordeHTTPClientSubmitJobAPI404RouteExists(t *testing.T) {
 }
 
 // TestSubmitWaitCancelled verifies Ctrl+C during the polling interval ends the
-// wait immediately with a cancellation notice instead of hanging.
+// wait immediately with a context error (wrapped context.Canceled) instead of
+// hanging or reporting success.
 func TestSubmitWaitCancelled(t *testing.T) {
 	var out bytes.Buffer
 	st := hordeProvisionedState()
@@ -765,8 +800,17 @@ func TestSubmitWaitCancelled(t *testing.T) {
 	c.wait = true
 	c.waitCtx = func(context.Context, time.Duration) error { return context.Canceled }
 
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	// A cancelled run context mirrors the production wiring: Ctrl+C cancels
+	// cmd.Context() and WaitInterval returns ctx.Err().
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := c.run(ctx)
+	if err == nil {
+		t.Fatal("expected cancellation error")
 	}
-	assert.Contains(t, out.String(), "waiting cancelled")
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error %v must wrap context.Canceled", err)
+	}
+	assert.Contains(t, err.Error(), "job-cancel")
 }

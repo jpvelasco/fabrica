@@ -303,7 +303,7 @@ Reads live state and TCP-probes port 5000. Reports the Horde web UI URL and gRPC
 Parses a BuildGraph XML file and POSTs the job to the Horde REST API via the coordinator's private IP. The target is resolved from the XML (first `<Agent>`'s first `<Node>` name). Use `examples/BuildGraph.sample.xml` as a starting point. Options:
 
 ```
---wait         Poll until the job completes
+--wait         Poll until the job completes (exits non-zero if the job errors, the wait times out, or polling is cancelled)
 --dry-run      Preview the job and coordinator address without submitting
 ```
 
