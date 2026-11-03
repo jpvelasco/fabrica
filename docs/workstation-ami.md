@@ -52,8 +52,32 @@ volume and boot the real root unencrypted.
 
 Fabrica sets no `KmsKeyId`, so EBS uses the account's default EBS
 encryption key: the AWS managed key `aws/ebs`, unless the account default
-has been changed to a customer managed key (CMK). With a CMK default, the
-identity that launches (and the bake) needs KMS permissions on that key.
+has been changed to a customer managed key (CMK). There is no `KmsKeyId`
+option today; the key in use is whatever the account default names.
+
+**When the account default is a CMK**, the identity that launches —
+directly through `RunInstances` or through Cloud Control, which makes the
+EC2 calls with the caller's credentials — and the Image Builder or bake
+principal need these actions on that key:
+
+- `kms:CreateGrant`
+- `kms:Decrypt`
+- `kms:GenerateDataKey*`
+- `kms:ReEncrypt*`
+
+They typically also need `kms:DescribeKey`, and the grants are usually
+scoped with the `kms:GrantIsForAWSResource` condition. Both sides must
+allow the actions — the key policy and the principal's IAM policy (or the
+permissions boundary the launch identity sits under). The symptom when a
+grant is missing: the instance goes to `terminated` shortly after launch
+with a client error about the KMS key state. See
+[guardrailed-accounts.md](guardrailed-accounts.md#kms-permissions-for-a-cmk-default-ebs-key)
+for the same list in the guardrailed-account context.
+
+**Cross-account sharing.** An AMI whose snapshots are encrypted with the
+AWS managed `aws/ebs` key cannot be shared with another account. To share
+a baked AMI, either use a CMK whose key policy grants the target account,
+or copy the AMI into a CMK first (`copy-image --encrypted --kms-key-id`).
 
 The bake encrypts the AMI itself: the generated `image-builder-recipe.json`
 maps the base image's root device (`--root-device`, default `/dev/sda1`,
