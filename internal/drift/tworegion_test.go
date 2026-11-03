@@ -131,6 +131,7 @@ func ddcEdgeState() *state.State {
 				"instanceType": "m7i.xlarge",
 				"imageId":      "ami-home",
 				"subnetId":     "subnet-home",
+				"rootDevice":   "/dev/sda1",
 			},
 		},
 		{
@@ -153,6 +154,7 @@ func ddcEdgeState() *state.State {
 				"imageId":      "ami-edge",
 				"subnetId":     "subnet-edge",
 				"vpcId":        "vpc-edge",
+				"rootDevice":   "/dev/sda1",
 			},
 		},
 	})
@@ -455,6 +457,7 @@ func TestRebuildEdgeInstanceDesiredState_Full(t *testing.T) {
 				"instanceType": "m7i.4xlarge",
 				"imageId":      "ami-edge",
 				"subnetId":     "subnet-edge",
+				"rootDevice":   "/dev/sda1",
 			},
 		},
 		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
@@ -491,7 +494,7 @@ func TestRebuildEdgeInstanceDesiredState_TypeFallback(t *testing.T) {
 	}}
 	rec := &state.ModuleResource{
 		TypeName:   cloud.TypeAWSEC2Instance,
-		Properties: map[string]string{"region": edgeTestRegion, "role": ddc.RoleEdge, "imageId": "ami-edge", "subnetId": "subnet-edge"},
+		Properties: map[string]string{"region": edgeTestRegion, "role": ddc.RoleEdge, "imageId": "ami-edge", "subnetId": "subnet-edge", "rootDevice": "/dev/sda1"},
 	}
 
 	cfg := config.Defaults()
@@ -572,6 +575,27 @@ func TestRebuildEdgeInstanceDesiredState_MissingInputs(t *testing.T) {
 	if _, err := rebuildEdgeInstanceDesiredState(noSG, edgeSGOnly, st, cfg); err == nil {
 		t.Error("expected error without a recorded IAM instance profile")
 	} else if !strings.Contains(err.Error(), "no IAM instance profile recorded") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// A fully recorded edge instance without its root device fails closed: the
+// encrypted root mapping needs the AMI's real root device, never a guess.
+func TestRebuildEdgeInstanceDesiredState_MissingRootDevice(t *testing.T) {
+	cfg := config.Defaults()
+	st := state.NewState("123456789012", homeTestRegion)
+	mod := &state.ModuleState{Name: "ddc", Resources: []state.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-edge", Properties: map[string]string{"region": edgeTestRegion, "role": ddc.RoleEdge}},
+		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
+	}}
+	rec := &state.ModuleResource{
+		TypeName:   cloud.TypeAWSEC2Instance,
+		Properties: map[string]string{"region": edgeTestRegion, "role": ddc.RoleEdge, "imageId": "ami-edge", "subnetId": "subnet-edge"},
+	}
+	want := "no root device recorded for the DDC edge instance " + edgeTestRegion + " (Properties.rootDevice); re-run 'fabrica ddc region add " + edgeTestRegion + "'"
+	if _, err := rebuildEdgeInstanceDesiredState(rec, mod, st, cfg); err == nil {
+		t.Error("expected error without a recorded root device")
+	} else if !strings.Contains(err.Error(), want) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

@@ -1238,7 +1238,7 @@ func TestRebuildInstanceDesiredState_DDC(t *testing.T) {
 			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
 		},
 	}
-	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Properties: map[string]string{"rootDevice": "/dev/sda1"}}
 
 	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
 	if err != nil {
@@ -1710,6 +1710,7 @@ func TestPlanRemediation_MissingDDCInstance(t *testing.T) {
 		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
 		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-ddc", Properties: map[string]string{
 			"instanceType": "m5.xlarge",
+			"rootDevice":   "/dev/sda1",
 		}},
 	})
 
@@ -2029,7 +2030,7 @@ func TestRebuildInstanceDesiredState_DDCScylla(t *testing.T) {
 		Resources: []state.ModuleResource{
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-ddc"},
 			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
-			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-scylla", Properties: map[string]string{"role": ddc.RoleScylla}},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-scylla", Properties: map[string]string{"role": ddc.RoleScylla, "rootDevice": "/dev/sda1"}},
 		},
 	}
 	rec := &mod.Resources[2]
@@ -2161,6 +2162,14 @@ func TestRebuildInstanceDesiredState_MissingInputs(t *testing.T) {
 	t.Run("lore without a recorded root device", func(t *testing.T) {
 		check(t, lore, 2, config.Defaults(), "no root device recorded for the lore instance (Properties.rootDevice); re-run 'fabrica lore create'")
 	})
+	t.Run("ddc coordinator without a recorded root device", func(t *testing.T) {
+		check(t, ddcMod, 2, config.Defaults(), "no root device recorded for the ddc instance (Properties.rootDevice); re-run 'fabrica ddc setup'")
+	})
+	t.Run("ddc scylla without a recorded root device", func(t *testing.T) {
+		cfg := config.Defaults()
+		cfg.DDC.ScyllaAmiID = "ami-scylla"
+		check(t, scylla, 2, cfg, "no root device recorded for the ddc scylla instance (Properties.rootDevice); re-run 'fabrica ddc setup'")
+	})
 }
 
 // An s3 store with no recorded bucket resource falls back to the same
@@ -2205,7 +2214,7 @@ func TestRebuildInstanceDesiredState_DDC_RecordedBucketWins(t *testing.T) {
 			{TypeName: cloud.TypeAWSS3Bucket, Identifier: "fabrica-ddc-blobs-recorded"},
 		},
 	}
-	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance}
+	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Properties: map[string]string{"rootDevice": "/dev/sda1"}}
 
 	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
 	if err != nil {

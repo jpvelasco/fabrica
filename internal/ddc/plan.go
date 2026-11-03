@@ -75,6 +75,13 @@ type SetupPlan struct {
 	RoleName            string
 	InstanceProfileName string
 
+	// RootDeviceName and ScyllaRootDeviceName are the AMIs' root device names
+	// (for example /dev/sda1), read from the AMIs at create time. The
+	// encrypted root volume mappings are built on them; empty refuses launch
+	// (fail-closed, #513).
+	RootDeviceName       string
+	ScyllaRootDeviceName string
+
 	// IAM is the resolved path and permissions boundary for the instance role.
 	IAM config.IAM
 
