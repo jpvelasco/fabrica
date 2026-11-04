@@ -173,57 +173,114 @@ func TestLockRenewFailedIsError(t *testing.T) {
 	}
 }
 
-func TestLockHeartbeatRenewsUntilCancelled(t *testing.T) {
-	rec := &recordingLockStore{}
-	ls := NewFuncLockStore("t", 30*time.Millisecond, rec.put, rec.del)
+// manualTicker returns a ticker seam whose ticks are sent by the test, so
+// heartbeat renewals happen exactly when the test says so, not when the
+// scheduler gets around to them.
+func manualTicker(ticks <-chan time.Time) TickerFunc {
+	return func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} }
+}
+
+// acquireHeartbeatLock acquires the "res" lock and returns its token.
+func acquireHeartbeatLock(t *testing.T, ls *LockStore) string {
+	t.Helper()
 	token, err := ls.Acquire(context.Background(), "res", "holder")
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
+	return token
+}
 
-	ctx, cancel := context.WithCancel(context.Background())
+// startHeartbeat runs Heartbeat in a goroutine and returns a channel closed
+// when it returns.
+func startHeartbeat(ctx context.Context, ls *LockStore, token string) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		ls.Heartbeat(ctx, "res", token, "holder")
 		close(done)
 	}()
+	return done
+}
 
-	deadline := time.Now().Add(400 * time.Millisecond)
-	for time.Now().Before(deadline) && rec.puts() < 3 {
-		time.Sleep(10 * time.Millisecond)
+// sendTick delivers one tick to the heartbeat loop. It fails the test instead
+// of blocking forever when the loop has already returned.
+func sendTick(t *testing.T, ticks chan<- time.Time) {
+	t.Helper()
+	select {
+	case ticks <- time.Time{}:
+	case <-time.After(5 * time.Second):
+		t.Fatal("heartbeat did not receive tick; loop returned early")
 	}
-	cancel()
+}
+
+// waitHeartbeatDone fails the test if the heartbeat has not returned within a
+// generous bound; the bound only guards against hangs, not timing.
+func waitHeartbeatDone(t *testing.T, done <-chan struct{}) {
+	t.Helper()
 	select {
 	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("heartbeat did not stop after cancel")
+	case <-time.After(5 * time.Second):
+		t.Fatal("heartbeat did not return")
 	}
-	if got := rec.puts(); got < 3 {
-		t.Fatalf("putCalls = %d, want at least 3 (acquire + renewals)", got)
+}
+
+func TestLockHeartbeatRenewsOnEachTick(t *testing.T) {
+	rec := &recordingLockStore{}
+	ls := NewFuncLockStore("t", 30*time.Millisecond, rec.put, rec.del)
+	token := acquireHeartbeatLock(t, ls)
+	ticks := make(chan time.Time)
+	ls.SetTicker(manualTicker(ticks))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := startHeartbeat(ctx, ls, token)
+
+	// Unbuffered sends: each send returns only once the loop has received the
+	// tick, and the loop renews before it selects again. After three sends,
+	// exactly three renewals have been issued (the cancel below stops the loop
+	// after its in-flight renewal completes).
+	for range 3 {
+		sendTick(t, ticks)
+	}
+	cancel()
+	waitHeartbeatDone(t, done)
+
+	if got := rec.puts(); got != 4 {
+		t.Fatalf("putCalls = %d, want 4 (acquire + 3 renewals)", got)
 	}
 }
 
 func TestLockHeartbeatStopsOnRenewError(t *testing.T) {
 	rec := &recordingLockStore{}
-	ls := NewFuncLockStore("t", 20*time.Millisecond, rec.put, rec.del)
-	token, err := ls.Acquire(context.Background(), "res", "holder")
-	if err != nil {
-		t.Fatalf("Acquire: %v", err)
-	}
+	ls := NewFuncLockStore("t", 30*time.Millisecond, rec.put, rec.del)
+	token := acquireHeartbeatLock(t, ls)
 	rec.mu.Lock()
 	rec.putErr = fmt.Errorf("taken over")
 	rec.mu.Unlock()
 
-	done := make(chan struct{})
-	go func() {
-		ls.Heartbeat(context.Background(), "res", token, "holder")
-		close(done)
-	}()
+	ticks := make(chan time.Time)
+	ls.SetTicker(manualTicker(ticks))
+	done := startHeartbeat(context.Background(), ls, token)
+
+	sendTick(t, ticks) // the renewal fails and the loop returns
+	waitHeartbeatDone(t, done)
+
 	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("heartbeat did not stop after renew error")
+	case ticks <- time.Time{}:
+		t.Fatal("heartbeat kept consuming ticks after a renew error")
+	default:
 	}
+}
+
+// TestLockHeartbeatDefaultTickerReturnsOnCancel exercises the production
+// ticker (no seam) and only asserts the one timing-independent property:
+// a cancelled context stops the loop.
+func TestLockHeartbeatDefaultTickerReturnsOnCancel(t *testing.T) {
+	rec := &recordingLockStore{}
+	ls := NewFuncLockStore("t", 30*time.Millisecond, rec.put, rec.del)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	waitHeartbeatDone(t, startHeartbeat(ctx, ls, "tok"))
 }
 
 func TestLockRelease(t *testing.T) {

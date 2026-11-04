@@ -34,11 +34,21 @@ type DeleteItemFunc func(ctx context.Context, key map[string]string, condition s
 // functions so the SDK stays out of this package; internal/cloud/aws provides
 // the DynamoDB implementation via cloud.StateLockManager.
 type LockStore struct {
-	table string
-	ttl   time.Duration
-	now   func() time.Time
-	put   PutItemFunc
-	del   DeleteItemFunc
+	table     string
+	ttl       time.Duration
+	now       func() time.Time
+	newTicker TickerFunc
+	put       PutItemFunc
+	del       DeleteItemFunc
+}
+
+// TickerFunc starts a periodic tick source of period d and returns its channel
+// and a stop function. It is the seam that lets tests drive heartbeats exactly.
+type TickerFunc func(d time.Duration) (ticks <-chan time.Time, stop func())
+
+func realTicker(d time.Duration) (<-chan time.Time, func()) {
+	t := time.NewTicker(d)
+	return t.C, t.Stop
 }
 
 // NewFuncLockStore builds a LockStore over injected storage functions.
@@ -48,16 +58,20 @@ func NewFuncLockStore(table string, ttl time.Duration, put PutItemFunc, del Dele
 		ttl = DefaultLockTTL
 	}
 	return &LockStore{
-		table: table,
-		ttl:   ttl,
-		now:   time.Now,
-		put:   put,
-		del:   del,
+		table:     table,
+		ttl:       ttl,
+		now:       time.Now,
+		newTicker: realTicker,
+		put:       put,
+		del:       del,
 	}
 }
 
 // SetClock overrides the time source (tests).
 func (s *LockStore) SetClock(now func() time.Time) { s.now = now }
+
+// SetTicker overrides the heartbeat tick source (tests).
+func (s *LockStore) SetTicker(newTicker TickerFunc) { s.newTicker = newTicker }
 
 // Acquire attempts to acquire a lock for resourceID held by holder.
 // Succeeds when the lock row is absent OR older than the TTL (stale takeover).
@@ -116,13 +130,13 @@ func (s *LockStore) Heartbeat(ctx context.Context, resourceID, token, holder str
 	if interval <= 0 {
 		interval = time.Millisecond
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	ticks, stop := s.newTicker(interval)
+	defer stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-ticks:
 			if err := s.Renew(ctx, resourceID, token, holder); err != nil {
 				return
 			}
