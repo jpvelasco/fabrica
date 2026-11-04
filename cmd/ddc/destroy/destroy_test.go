@@ -51,8 +51,8 @@ func TestNewTeardownRun(t *testing.T) {
 	rt := globals.Runtime{Config: &config.Config{}, Provider: provider}
 	var buf bytes.Buffer
 	tc := NewTeardown(rt, &buf)
-	tc.ReadState = func() (*fabricastate.State, error) { return st, nil }
-	tc.WriteState = func(*fabricastate.State) error { return nil }
+	tc.ReadState = func(_ context.Context) (*fabricastate.State, error) { return st, nil }
+	tc.WriteState = func(_ context.Context, _ *fabricastate.State) error { return nil }
 	resources := provider.Resources()
 	tc.DeleteResource = wrapDelete(resources.Delete)
 	tc.GetResource = resources.Get
@@ -134,8 +134,8 @@ func TestDeleteWithRegionsNoRegionProvider(t *testing.T) {
 	var buf bytes.Buffer
 	rt := globals.Runtime{Config: &config.Config{}, Provider: legacyProvider{inner: &testutil.TestProvider{}}}
 	tc := NewTeardown(rt, &buf)
-	tc.ReadState = func() (*fabricastate.State, error) { return st, nil }
-	tc.WriteState = func(*fabricastate.State) error { return nil }
+	tc.ReadState = func(_ context.Context) (*fabricastate.State, error) { return st, nil }
+	tc.WriteState = func(_ context.Context, _ *fabricastate.State) error { return nil }
 	err := tc.Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "cannot delete edge resources") {
 		t.Fatalf("err = %v, want region-provider failure", err)
@@ -187,8 +187,8 @@ func TestDeleteWithRegions(t *testing.T) {
 	var buf bytes.Buffer
 	rt := globals.Runtime{Config: &config.Config{}, Provider: fp}
 	tc := NewTeardown(rt, &buf)
-	tc.ReadState = func() (*fabricastate.State, error) { return st, nil }
-	tc.WriteState = func(*fabricastate.State) error { return nil }
+	tc.ReadState = func(_ context.Context) (*fabricastate.State, error) { return st, nil }
+	tc.WriteState = func(_ context.Context, _ *fabricastate.State) error { return nil }
 	if err := tc.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}

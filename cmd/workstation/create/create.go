@@ -22,7 +22,6 @@ import (
 
 const (
 	moduleName  = "workstation"
-	credFile    = ".fabrica/workstation-credentials.yaml"
 	passwordLen = 24
 )
 
@@ -76,8 +75,10 @@ terminate deletes that recorded name. A create that fails before the instance
 exists deletes the parameter too; once the instance exists the parameter stays
 so cloud-init can read it.
 
-State is written after each resource so a partial failure is recoverable:
-re-running create will detect the already-provisioned module and exit cleanly.
+State is written after each resource, so an interrupted create leaves a
+recoverable record. Re-running create on a complete module exits cleanly; on
+a partial one it fails and names the missing resources plus the cleanup
+command to run first.
 
 A random DCV session password is written to .fabrica/workstation-credentials.yaml.
 
@@ -109,8 +110,8 @@ making any AWS calls.`,
 				costs:         fabricacost.Global,
 				confirm:       prompt.ConfirmExact,
 			}
-			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = fabricastate.WriteState
+			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
+			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			if rt.Provider != nil {
 				c.createResource = rt.Provider.Resources().Create
 				c.getResource = rt.Provider.Resources().Get
@@ -211,13 +212,18 @@ func (c command) run(ctx context.Context) error {
 		AssumeYes:       c.assumeYes,
 		Out:             c.out,
 		ExistingMessage: "Workstation is already provisioned. Run 'fabrica workstation list' to view details.\n",
-		Confirm:         c.confirm,
-		ReadState:       c.readState,
-		PrintDryRun:     c.printDryRun,
-		PrintApplyPlan:  c.printApplyPlan,
-		Apply:           c.applyCreate,
-		Runtime:         c.runtime,
-		Operation:       "workstation create",
+		// A stopped workstation is fully provisioned: its state is parked,
+		// not partial.
+		ReadyStatuses:     []string{"ready", "stopped"},
+		RequiredResources: plan.RequiredResources(),
+		CleanupCommand:    "fabrica workstation terminate",
+		Confirm:           c.confirm,
+		ReadState:         c.readState,
+		PrintDryRun:       c.printDryRun,
+		PrintApplyPlan:    c.printApplyPlan,
+		Apply:             c.applyCreate,
+		Runtime:           c.runtime,
+		Operation:         "workstation create",
 	})
 }
 
@@ -289,10 +295,10 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	}
 
 	credContent := credentials.FormatWorkstation(sessionPass)
-	if err := credentials.WriteCredentials(credFile, credContent); err != nil {
+	if err := credentials.WriteCredentials(workstation.CredentialsFile, credContent); err != nil {
 		return fmt.Errorf("writing credentials file: %w", err)
 	}
-	fmt.Fprintf(c.out, "\nDCV credentials written to %s\n", credFile)
+	fmt.Fprintf(c.out, "\nDCV credentials written to %s\n", workstation.CredentialsFile)
 
 	// plan.SessionPasswordParameter is minted in run() before the plan is
 	// printed or applied, so the role (which scopes ssm:GetParameter to this
@@ -300,10 +306,13 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	// all agree on one per-create name. A shared name would let a concurrent
 	// create or a re-create clobber another instance's password.
 	paramName := plan.SessionPasswordParameter
+	// cloud.aws.tags rides the parameter too: the password parameter is
+	// Fabrica-managed, and sweeps should see the operator's attribution
+	// tags on it like on every other resource (ManagedBy stays Fabrica's).
 	if err := c.putSecureParameter(ctx, cloud.SecureParameter{
 		Name:  paramName,
 		Value: sessionPass,
-		Tags:  map[string]string{"ManagedBy": "fabrica"},
+		Tags:  c.runtime.Config.Cloud.AWS.Tags,
 	}); err != nil {
 		return fmt.Errorf("storing the DCV session password in SSM parameter %s: %w", paramName, err)
 	}
@@ -388,6 +397,10 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 			"volumeSize":               strconv.Itoa(plan.VolumeSize),
 			"sessionPasswordParameter": paramName,
 			"createNonce":              plan.CreateNonce,
+			// Recorded so `fabrica drift --fix` can rebuild the instance:
+			// a "true" value needs the Perforce server address, which state
+			// does not record, so such instances are reported unsupported.
+			"mountPerforce": strconv.FormatBool(plan.MountPerforce),
 		},
 		PostCreate: provision.TagVolumesPostCreate(c.runtime.Provider, "workstation", plan.InstanceName),
 		// fail on writeState error (default)
@@ -504,7 +517,7 @@ func (c command) printPostCreate(_ *workstation.CreatePlan, instanceID string) {
 		InstanceID:   instanceID,
 		StatusDetail: "provisioning (DCV setup in progress)",
 		Details: []provision.PlanField{
-			{Key: "DCV credentials", Value: credFile},
+			{Key: "DCV credentials", Value: workstation.CredentialsFile},
 		},
 		NextSteps: []string{
 			"fabrica workstation list     Show workstation details",

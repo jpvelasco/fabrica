@@ -50,23 +50,28 @@ type SetupPlan struct {
 
 // PromotePlan is the resolved promote plan (build registration + new fleet).
 type PromotePlan struct {
-	Account                  string
-	Region                   string
-	BuildVersion             string
-	RoleName                 string
-	RoleARN                  string
-	AliasID                  string
-	FleetName                string
-	BuildName                string
-	InstanceType             string
-	FleetType                string
-	LaunchPath               string
-	BuildOS                  string
-	S3Bucket                 string
-	S3Key                    string
-	FromPort                 int
-	ToPort                   int
-	DesiredInstances         int
+	Account          string
+	Region           string
+	BuildVersion     string
+	RoleName         string
+	RoleARN          string
+	AliasID          string
+	FleetName        string
+	BuildName        string
+	InstanceType     string
+	FleetType        string
+	LaunchPath       string
+	BuildOS          string
+	S3Bucket         string
+	S3Key            string
+	FromPort         int
+	ToPort           int
+	DesiredInstances int
+	// MinimumInstances/MaximumInstances are the fleet's EC2 instance-count
+	// bounds (GameLift LocationCapacity). Minimum defaults to 0; maximum
+	// defaults to DesiredInstances so the fleet comes up at the planned size.
+	MinimumInstances         int
+	MaximumInstances         int
 	ActivationTimeoutMinutes int
 	// AllowedCIDR is the CIDR the fleet inbound rule grants UDP access from
 	// FromPort..ToPort. Public by default (see defaultAllowedCIDR).
@@ -129,6 +134,23 @@ func NewPromotePlan(cfg config.DeployConfig, account, region, buildVersion, role
 	if desired <= 0 {
 		desired = defaultDesiredInstances
 	}
+	minInstances := cfg.MinimumInstances
+	if minInstances < 0 {
+		return nil, fmt.Errorf("deploy.minimumInstances must be >= 0 (got %d)", minInstances)
+	}
+	maxInstances := cfg.MaximumInstances
+	if maxInstances == 0 {
+		maxInstances = desired
+	}
+	if maxInstances < 0 {
+		return nil, fmt.Errorf("deploy.maximumInstances must be > 0 (got %d)", maxInstances)
+	}
+	if minInstances > desired {
+		return nil, fmt.Errorf("deploy.minimumInstances (%d) exceeds deploy.desiredInstances (%d) — lower minimumInstances or raise desiredInstances", minInstances, desired)
+	}
+	if maxInstances < desired {
+		return nil, fmt.Errorf("deploy.maximumInstances (%d) is below deploy.desiredInstances (%d) — raise maximumInstances or lower desiredInstances", maxInstances, desired)
+	}
 	timeout := cfg.ActivationTimeoutMinutes
 	if timeout <= 0 {
 		timeout = defaultActivationTimeoutMinutes
@@ -169,6 +191,8 @@ func NewPromotePlan(cfg config.DeployConfig, account, region, buildVersion, role
 		FromPort:                 fromPort,
 		ToPort:                   toPort,
 		DesiredInstances:         desired,
+		MinimumInstances:         minInstances,
+		MaximumInstances:         maxInstances,
 		ActivationTimeoutMinutes: timeout,
 		AllowedCIDR:              allowedCIDR,
 		CostResources: []cost.Resource{

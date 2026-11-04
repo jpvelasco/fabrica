@@ -8,8 +8,12 @@
 // a DriftReport. No AWS SDK imports belong here.
 //
 // Extra detection uses ResourceClient.List to enumerate live resources per
-// type and diff against recorded state identifiers. CodeBuild projects are
-// excluded from Extra checks since CodeBuildRunner has no List method.
+// type and diff against recorded state identifiers. Only resources tagged
+// ManagedBy=fabrica are reported as Extra, so resources owned by other tools
+// (or with unknown ownership) never surface as Fabrica leftovers; list
+// results without tag information are fetched so ownership is resolved
+// before the decision. CodeBuild projects are excluded from Extra checks
+// since CodeBuildRunner has no List method.
 //
 // Remediation (V1) supports recreating Missing EC2 instances and security
 // groups from recorded state. Mismatch and Extra are report-only in V1.
@@ -19,10 +23,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 
+	"github.com/jpvelasco/fabrica/internal/ci"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/credentials"
+	"github.com/jpvelasco/fabrica/internal/ddc"
+	"github.com/jpvelasco/fabrica/internal/horde"
+	"github.com/jpvelasco/fabrica/internal/lore"
+	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/tags"
+	"github.com/jpvelasco/fabrica/internal/workstation"
 )
 
 // DriftStatus represents the drift state of a single resource.
@@ -75,12 +89,19 @@ type ModuleDrift struct {
 
 // Engine is the drift detection engine. All fields are seams for testability.
 type Engine struct {
-	State           *state.State
-	ResourceGet     func(ctx context.Context, r *cloud.Resource) error
-	ResourceList    func(ctx context.Context, typeName string) ([]cloud.Resource, error)
+	State        *state.State
+	ResourceGet  func(ctx context.Context, r *cloud.Resource) error
+	ResourceList func(ctx context.Context, typeName string) ([]cloud.Resource, error)
+	// RegionResource resolves a region-scoped resource client for resources
+	// recorded in a non-home region (DDC edges). Nil when the provider does
+	// not support additional regions; such resources are reported as Error.
+	RegionResource  func(ctx context.Context, region string) (cloud.ResourceClient, error)
 	BackendChecker  cloud.StateBackendChecker
 	CodeBuildRunner cloud.CodeBuildRunner
 	Config          *DriftConfig
+
+	// regionClients caches region-scoped clients resolved during one Run.
+	regionClients map[string]cloud.ResourceClient
 }
 
 // DriftConfig holds configuration for the drift check.
@@ -95,6 +116,7 @@ type DriftConfig struct {
 // state backend, returning a DriftReport.
 func (e *Engine) Run(ctx context.Context) *DriftReport {
 	report := &DriftReport{}
+	e.regionClients = map[string]cloud.ResourceClient{}
 
 	// Check state backend health.
 	report.Backend = e.checkBackend(ctx)
@@ -214,7 +236,13 @@ func (e *Engine) checkModule(ctx context.Context, m *state.ModuleState) ModuleDr
 // not scoped to a module. We diff against all recorded identifiers across all
 // modules to avoid false positives when multiple modules share the same
 // resource type (e.g., IAM roles). Extras are assigned to the first module
-// that records the matching type name.
+// that records the matching type name. Only resources Fabrica owns (the
+// ManagedBy=fabrica identity tag) are reported — see fabricaOwned.
+//
+// Home-region resources are listed through the home client; resources
+// recorded in an edge region (DDC edges) are additionally listed through
+// that region's client so edge resources are not reported as missing by the
+// home list and strays created in an edge region surface as Extra.
 func (e *Engine) checkExtraResources(ctx context.Context) []DriftResult {
 	if e.ResourceList == nil {
 		return nil
@@ -224,6 +252,8 @@ func (e *Engine) checkExtraResources(ctx context.Context) []DriftResult {
 	allRecorded := make(map[string]map[string]bool)
 	// Track which module owns each type (first module that has the type).
 	typeOwner := make(map[string]string)
+	// Track which resource types are recorded per region ("" = home).
+	regionTypes := make(map[string]map[string]bool)
 	for i := range e.State.Modules {
 		sm := &e.State.Modules[i]
 		for j := range sm.Resources {
@@ -236,6 +266,11 @@ func (e *Engine) checkExtraResources(ctx context.Context) []DriftResult {
 				typeOwner[r.TypeName] = sm.Name
 			}
 			allRecorded[r.TypeName][r.Identifier] = true
+			region := resourceRegion(r)
+			if regionTypes[region] == nil {
+				regionTypes[region] = make(map[string]bool)
+			}
+			regionTypes[region][r.TypeName] = true
 		}
 	}
 
@@ -245,26 +280,54 @@ func (e *Engine) checkExtraResources(ctx context.Context) []DriftResult {
 		if err != nil {
 			continue
 		}
+		results = append(results, e.extraResults(ctx, typeName, live, recordedIDs, typeOwner[typeName], e.ResourceGet)...)
+	}
 
-		for _, res := range live {
-			if !recordedIDs[res.Identifier] {
-				// Skip ASG-managed instances: they carry FabricaRole=agent
-				// in their tags and are not tracked individually in state.
-				if isASGManagedInstance(res) {
-					continue
-				}
-				results = append(results, DriftResult{
-					Module:     typeOwner[typeName],
-					TypeName:   typeName,
-					Identifier: res.Identifier,
-					Status:     Extra,
-					Details:    "resource exists in live state but not in recorded state",
-				})
+	// Edge regions: enumerate the types recorded there through that
+	// region's client. Regions that cannot be resolved (no region seam)
+	// are skipped — the home list already covers the home side.
+	for region, types := range regionTypes {
+		if region == "" || region == e.homeRegion() {
+			continue
+		}
+		rc, err := e.regionClient(ctx, region)
+		if err != nil {
+			continue
+		}
+		for typeName := range types {
+			live, err := rc.List(ctx, typeName)
+			if err != nil {
+				continue
 			}
+			results = append(results, e.extraResults(ctx, typeName, live, allRecorded[typeName], typeOwner[typeName], rc.Get)...)
 		}
 	}
 
 	return results
+}
+
+// tagsFromState parses the Cloud Control Tags array (Key/Value objects) from
+// a resource's actual state into a map. present is false when the document is
+// missing, unparseable, or carries no Tags key at all, so callers can tell
+// "has no tags" from "no tag information".
+func tagsFromState(res *cloud.Resource) (map[string]string, bool) {
+	out := map[string]string{}
+	if len(res.ActualState) == 0 {
+		return out, false
+	}
+	var props struct {
+		Tags *[]struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"Tags"`
+	}
+	if err := json.Unmarshal(res.ActualState, &props); err != nil || props.Tags == nil {
+		return out, false
+	}
+	for _, tag := range *props.Tags {
+		out[tag.Key] = tag.Value
+	}
+	return out, true
 }
 
 // isASGManagedInstance returns true if the resource is an EC2 instance with
@@ -272,27 +335,108 @@ func (e *Engine) checkExtraResources(ctx context.Context) []DriftResult {
 // not tracked individually in Fabrica state and should be excluded from
 // Extra detection.
 func isASGManagedInstance(res cloud.Resource) bool {
-	if res.TypeName != "AWS::EC2::Instance" {
+	if res.TypeName != cloud.TypeAWSEC2Instance {
 		return false
 	}
-	if len(res.ActualState) == 0 {
+	tagMap, _ := tagsFromState(&res)
+	return tagMap["FabricaRole"] == "agent"
+}
+
+// fabricaOwned reports whether a live resource carries the ManagedBy=fabrica
+// identity tag, the ownership marker drift relies on before suggesting
+// manual deletion. List results without tag information are fetched once
+// (get) so the decision never rests on an enumeration that omitted
+// properties; a resource that still cannot be attributed is treated as not
+// Fabrica's.
+func (e *Engine) fabricaOwned(ctx context.Context, res *cloud.Resource, get func(ctx context.Context, r *cloud.Resource) error) bool {
+	if resTags, known := tagsFromState(res); known {
+		return resTags[tags.ManagedByKey] == tags.ManagedByValue
+	}
+	if get == nil {
 		return false
 	}
-	var props struct {
-		Tags []struct {
-			Key   string `json:"Key"`
-			Value string `json:"Value"`
-		} `json:"Tags"`
-	}
-	if err := json.Unmarshal(res.ActualState, &props); err != nil {
+	fetch := *res
+	if err := get(ctx, &fetch); err != nil {
 		return false
 	}
-	for _, tag := range props.Tags {
-		if tag.Key == "FabricaRole" && tag.Value == "agent" {
-			return true
+	resTags, _ := tagsFromState(&fetch)
+	return resTags[tags.ManagedByKey] == tags.ManagedByValue
+}
+
+// extraResults diffs one type's live list against the recorded identifiers
+// and returns the unrecorded (Extra) ones. Only resources Fabrica owns —
+// tagged ManagedBy=fabrica — are eligible, so the report never points the
+// operator at a resource another tool created. ASG-managed instances carry
+// FabricaRole=agent and are not tracked individually in state, so they are
+// excluded as well. get fetches a resource's properties when the list
+// result lacks tag information.
+func (e *Engine) extraResults(ctx context.Context, typeName string, live []cloud.Resource, recordedIDs map[string]bool, owner string, get func(ctx context.Context, r *cloud.Resource) error) []DriftResult {
+	var results []DriftResult
+	for i := range live {
+		res := live[i]
+		if recordedIDs[res.Identifier] || isASGManagedInstance(res) {
+			continue
 		}
+		if !e.fabricaOwned(ctx, &res, get) {
+			continue
+		}
+		results = append(results, DriftResult{
+			Module:     owner,
+			TypeName:   typeName,
+			Identifier: res.Identifier,
+			Status:     Extra,
+			Details:    "resource exists in live state but not in recorded state",
+		})
 	}
-	return false
+	return results
+}
+
+// homeRegion returns the region the home client is bound to.
+func (e *Engine) homeRegion() string {
+	if e.Config == nil {
+		return ""
+	}
+	return e.Config.Region
+}
+
+// resourceRegion returns the region a recorded resource belongs to; the
+// empty string means the home region.
+func resourceRegion(r *state.ModuleResource) string {
+	if r.Properties == nil {
+		return ""
+	}
+	return r.Properties["region"]
+}
+
+// regionClient resolves (and caches) the resource client for a non-home
+// region via the RegionResource seam.
+func (e *Engine) regionClient(ctx context.Context, region string) (cloud.ResourceClient, error) {
+	if e.RegionResource == nil {
+		return nil, fmt.Errorf("provider does not support additional regions")
+	}
+	if c, ok := e.regionClients[region]; ok {
+		return c, nil
+	}
+	c, err := e.RegionResource(ctx, region)
+	if err != nil {
+		return nil, err
+	}
+	e.regionClients[region] = c
+	return c, nil
+}
+
+// getFor routes a Get to the client bound to the resource's region: the
+// home seam for home-region resources, the region-scoped client otherwise.
+func (e *Engine) getFor(ctx context.Context, r *state.ModuleResource, cloudRes *cloud.Resource) error {
+	region := resourceRegion(r)
+	if region == "" || region == e.homeRegion() {
+		return e.ResourceGet(ctx, cloudRes)
+	}
+	rc, err := e.regionClient(ctx, region)
+	if err != nil {
+		return fmt.Errorf("routing to region %s: %w", region, err)
+	}
+	return rc.Get(ctx, cloudRes)
 }
 
 func (e *Engine) checkResource(ctx context.Context, m *state.ModuleState, r *state.ModuleResource) DriftResult {
@@ -320,7 +464,7 @@ func (e *Engine) checkResource(ctx context.Context, m *state.ModuleState, r *sta
 		Identifier: r.Identifier,
 	}
 
-	err := e.ResourceGet(ctx, cloudRes)
+	err := e.getFor(ctx, r, cloudRes)
 	if err != nil {
 		if err == cloud.ErrResourceNotFound {
 			res.Status = Missing
@@ -505,12 +649,16 @@ const (
 
 // RemediationAction describes one remediation step for a drifted resource.
 type RemediationAction struct {
-	Module     string      `json:"module"`
-	TypeName   string      `json:"typeName"`
-	Identifier string      `json:"identifier"`
-	Drift      DriftStatus `json:"drift"`
-	Kind       ActionKind  `json:"kind"`
-	Reason     string      `json:"reason,omitempty"`
+	Module     string `json:"module"`
+	TypeName   string `json:"typeName"`
+	Identifier string `json:"identifier"`
+	// Region is the resource's region when it is recorded in a non-home
+	// region (DDC edges); empty for home-region resources. Remediation
+	// must create the resource through that region's client.
+	Region string      `json:"region,omitempty"`
+	Drift  DriftStatus `json:"drift"`
+	Kind   ActionKind  `json:"kind"`
+	Reason string      `json:"reason,omitempty"`
 	// Resource is the cloud.Resource to create (populated for ActionCreate).
 	Resource *cloud.Resource `json:"-"`
 }
@@ -533,31 +681,74 @@ type RemediationResult struct {
 	Errors  []string            `json:"errors,omitempty"`
 }
 
+// imageInspectorFunc inspects an AMI so a rebuilt instance can derive launch
+// inputs only the AMI knows (workstation root device). nil means the provider
+// cannot inspect AMIs, and rebuilds that need it fail closed.
+type imageInspectorFunc func(ctx context.Context, imageID string) (cloud.ImageInfo, error)
+
+// planOptions carries provider capabilities into PlanRemediation.
+type planOptions struct {
+	inspector imageInspectorFunc
+}
+
+// PlanOption configures PlanRemediation.
+type PlanOption func(*planOptions)
+
+// WithImageInspector lets the plan layer inspect AMIs. The workstation
+// rebuild maps its encrypted root volume onto the AMI's own root device, which
+// only DescribeImage can supply; without it, workstation instances are
+// reported unsupported for automatic remediation.
+func WithImageInspector(inspector imageInspectorFunc) PlanOption {
+	return func(o *planOptions) { o.inspector = inspector }
+}
+
 // PlanRemediation takes a DriftReport and the state + config, and returns a
 // RemediationPlan describing what would be fixed. Missing EC2 instances and
 // security groups are marked for creation. Mismatch and Extra are report-only
 // in V1.
-func PlanRemediation(report *DriftReport, st *state.State, cfg *config.Config) *RemediationPlan {
+func PlanRemediation(ctx context.Context, report *DriftReport, st *state.State, cfg *config.Config, opts ...PlanOption) *RemediationPlan {
+	var po planOptions
+	for _, opt := range opts {
+		opt(&po)
+	}
+
 	plan := &RemediationPlan{}
 
 	for i := range report.Modules {
 		md := &report.Modules[i]
 		for j := range md.Resources {
 			r := &md.Resources[j]
+			region := recordedRegion(st, r.Module, r.TypeName, r.Identifier)
 
 			var action RemediationAction
 			switch r.Status {
 			case Missing:
 				if canRecreate(r.TypeName) {
-					action = RemediationAction{
-						Module:     r.Module,
-						TypeName:   r.TypeName,
-						Identifier: r.Identifier,
-						Drift:      r.Status,
-						Kind:       ActionCreate,
-						Resource:   rebuildResource(r, st, cfg),
+					res, err := rebuildResource(ctx, r, st, cfg, po.inspector)
+					if err != nil {
+						action = RemediationAction{
+							Module:     r.Module,
+							TypeName:   r.TypeName,
+							Identifier: r.Identifier,
+							Drift:      r.Status,
+							Kind:       ActionSkip,
+							Reason:     fmt.Sprintf("cannot rebuild %s from recorded state: %v; recreate manually via fabrica", r.TypeName, err),
+							Region:     region,
+						}
+						plan.ToSkip++
+						plan.ReportOnly++
+					} else {
+						action = RemediationAction{
+							Module:     r.Module,
+							TypeName:   r.TypeName,
+							Identifier: r.Identifier,
+							Drift:      r.Status,
+							Kind:       ActionCreate,
+							Resource:   res,
+							Region:     region,
+						}
+						plan.ToFix++
 					}
-					plan.ToFix++
 				} else {
 					action = RemediationAction{
 						Module:     r.Module,
@@ -566,6 +757,7 @@ func PlanRemediation(report *DriftReport, st *state.State, cfg *config.Config) *
 						Drift:      r.Status,
 						Kind:       ActionSkip,
 						Reason:     fmt.Sprintf("auto-remediation unsupported for %s; recreate manually via fabrica", r.TypeName),
+						Region:     region,
 					}
 					plan.ToSkip++
 					plan.ReportOnly++
@@ -578,6 +770,7 @@ func PlanRemediation(report *DriftReport, st *state.State, cfg *config.Config) *
 					Drift:      r.Status,
 					Kind:       ActionSkip,
 					Reason:     "extra resources are report-only in V1; manually delete if needed",
+					Region:     region,
 				}
 				plan.ToSkip++
 				plan.ReportOnly++
@@ -589,6 +782,7 @@ func PlanRemediation(report *DriftReport, st *state.State, cfg *config.Config) *
 					Drift:      r.Status,
 					Kind:       ActionSkip,
 					Reason:     "mismatch remediation is report-only in V1; " + r.Details,
+					Region:     region,
 				}
 				plan.ToSkip++
 				plan.ReportOnly++
@@ -600,6 +794,7 @@ func PlanRemediation(report *DriftReport, st *state.State, cfg *config.Config) *
 					Drift:      r.Status,
 					Kind:       ActionSkip,
 					Reason:     "cannot remediate: " + r.Details,
+					Region:     region,
 				}
 				plan.ToSkip++
 			case InSync:
@@ -627,16 +822,34 @@ func canRecreate(typeName string) bool {
 	}
 }
 
+// recordedRegion returns the region recorded on the resource in state; the
+// empty string means the home region.
+func recordedRegion(st *state.State, module, typeName, identifier string) string {
+	mod := st.GetModule(module)
+	if mod == nil {
+		return ""
+	}
+	for i := range mod.Resources {
+		r := &mod.Resources[i]
+		if r.TypeName == typeName && r.Identifier == identifier {
+			return resourceRegion(r)
+		}
+	}
+	return ""
+}
+
 // rebuildResource reconstructs a cloud.Resource from the drift result, state,
-// and config so it can be recreated via the provider. It uses the module's
-// recorded properties and config defaults to build the desired state.
-func rebuildResource(dr *DriftResult, st *state.State, cfg *config.Config) *cloud.Resource {
+// and module config so remediation can recreate it. Returns an error when the
+// recorded state is insufficient to rebuild the resource's desired state;
+// the caller then reports the resource as skip-with-reason instead of
+// creating it with a partial state.
+func rebuildResource(ctx context.Context, dr *DriftResult, st *state.State, cfg *config.Config, inspector imageInspectorFunc) (*cloud.Resource, error) {
 	mod := st.GetModule(dr.Module)
 	if mod == nil {
 		return &cloud.Resource{
 			TypeName:   dr.TypeName,
 			Identifier: dr.Identifier,
-		}
+		}, nil
 	}
 
 	// Find the recorded resource in state.
@@ -654,178 +867,819 @@ func rebuildResource(dr *DriftResult, st *state.State, cfg *config.Config) *clou
 	}
 
 	if rec == nil {
-		return res
+		return res, nil
 	}
 
 	// Build desired state from recorded properties and config defaults.
 	switch dr.TypeName {
 	case cloud.TypeAWSEC2Instance:
-		res.DesiredState = rebuildInstanceDesiredState(rec, mod, cfg)
+		ds, err := rebuildInstanceDesiredState(ctx, rec, mod, st, cfg, inspector)
+		if err != nil {
+			return nil, fmt.Errorf("rebuild desired state for instance %s in module %s: %w", dr.Identifier, dr.Module, err)
+		}
+		res.DesiredState = ds
 	case cloud.TypeAWSEC2SecurityGroup:
-		res.DesiredState = rebuildSGDesiredState(rec, mod, cfg)
+		ds, err := rebuildSGDesiredState(rec, mod, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("rebuild desired state for security group %s in module %s: %w", dr.Identifier, dr.Module, err)
+		}
+		res.DesiredState = ds
 	}
 
-	return res
+	return res, nil
 }
 
-// rebuildInstanceDesiredState builds a minimal EC2 instance desired state from
-// recorded properties. It uses the module version as the AMI and the
-// instanceType from properties (falling back to module config).
-func rebuildInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) json.RawMessage {
-	instanceType := ""
-	ami := mod.Version
-	subnetID := ""
+// rebuildInstanceDesiredState rebuilds a Missing instance's desired state by
+// reconstructing the module's full create contract — image, sizing, IAM
+// instance profile, security group, and bootstrap script — through the
+// module's canonical plan and desired-state helpers, so a remediated instance
+// boots the way the original create would have launched it. Recorded
+// properties (instanceType, volumeSize, subnetId, imageId, rootDevice) win
+// over config, which wins over module defaults.
+//
+// The AMI source depends on the module: Perforce records its AMI in
+// Properties.imageId (its module version is a Helix Core software version,
+// which create also pins in cloud-init, so it must never stand in for an AMI
+// id); every other module records the AMI as the module version at create
+// time; the DDC Scylla node uses ddc.scyllaAmiId. The AMI's root device —
+// where the encrypted root mapping lands — is recorded as
+// Properties.rootDevice at create time; state written before #513 has none.
+// If any required input is missing — AMI, root device, IAM profile,
+// security group, or module credentials — the error propagates and the
+// caller reports the instance as unsupported for automatic remediation
+// instead of launching a broken replacement.
+func rebuildInstanceDesiredState(ctx context.Context, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config, inspector imageInspectorFunc) (json.RawMessage, error) {
+	if mod.Name == "ddc" && isEdgeResource(rec) {
+		return rebuildEdgeInstanceDesiredState(rec, mod, st, cfg)
+	}
+	switch mod.Name {
+	case "perforce":
+		return rebuildPerforceInstance(rec, mod, cfg)
+	case "horde":
+		return rebuildHordeInstance(rec, mod, cfg)
+	case "lore":
+		return rebuildLoreInstance(rec, mod, st, cfg)
+	case "ddc":
+		return rebuildDDCInstance(rec, mod, st, cfg)
+	case "workstation":
+		return rebuildWorkstationInstance(ctx, rec, mod, st, cfg, inspector)
+	}
+	return nil, fmt.Errorf("module %s has no canonical instance contract to rebuild from", mod.Name)
+}
 
-	// Resolve per-module config based on module name.
+// instanceTypeFor resolves the launch instance type for one module: the
+// recorded property wins, then the module config, then the module default the
+// create command uses.
+func instanceTypeFor(rec *state.ModuleResource, cfgType, moduleDefault string) string {
+	if v := rec.Properties["instanceType"]; v != "" {
+		return v
+	}
+	if cfgType != "" {
+		return cfgType
+	}
+	return moduleDefault
+}
+
+// volumeSizeFor resolves the data volume size for one module: the recorded
+// property wins, then the module config, then the module default the create
+// command uses.
+func volumeSizeFor(rec *state.ModuleResource, cfgSize, moduleDefault int) int {
+	if v, ok := rec.Properties["volumeSize"]; ok {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	if cfgSize > 0 {
+		return cfgSize
+	}
+	return moduleDefault
+}
+
+// subnetFor resolves the launch subnet for one module: the recorded property
+// wins, then the module config. Empty means the account default VPC.
+func subnetFor(rec *state.ModuleResource, cfgSubnet string) string {
+	if v := rec.Properties["subnetId"]; v != "" {
+		return v
+	}
+	return cfgSubnet
+}
+
+// recordedSGAndProfile returns the security group and IAM instance profile
+// identifiers a rebuilt instance must carry: the module records one of each
+// at create, and an instance launched without either cannot register with
+// SSM or join its VPC.
+func recordedSGAndProfile(rec *state.ModuleResource, mod *state.ModuleState, module string) (string, string, error) {
+	sgID := moduleSGIDFor(rec, mod)
+	if sgID == "" {
+		return "", "", fmt.Errorf("no security group recorded for the %s module; re-run the %s create command", module, module)
+	}
+	profile := moduleInstanceProfileFor(mod)
+	if profile == "" {
+		return "", "", fmt.Errorf("no IAM instance profile recorded for the %s module; re-run the %s create command", module, module)
+	}
+	return sgID, profile, nil
+}
+
+// Credential file paths the create commands write, relative to the working
+// directory (the .fabrica/ directory that holds the state cache).
+const (
+	perforceCredFile = ".fabrica/perforce-credentials.yaml"
+	// #nosec G101 -- the value is a file path to a credentials file, not a credential.
+	hordeCredFile = ".fabrica/horde-credentials.yaml"
+)
+
+// readPerforcePassword and readHordePassword are seams over the create-time
+// credential files. Tests swap them with fakes; the real readers come from
+// internal/credentials.
+var (
+	readPerforcePassword = credentials.ReadPerforceAdminPassword
+	readHordePassword    = credentials.ReadHordeMongoPassword
+)
+
+// rebuildPerforceInstance rebuilds the Perforce instance. The AMI is the
+// recorded Properties.imageId: Perforce's module version is the Helix Core
+// software version, so it is used as the pinned version in cloud-init
+// instead. The admin password comes from the create-time credentials file.
+func rebuildPerforceInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+	ami := rec.Properties["imageId"]
+	if ami == "" {
+		return nil, fmt.Errorf("no AMI recorded for the perforce instance (Properties.imageId); re-run 'fabrica perforce create'")
+	}
+	helixVersion := mod.Version
+	if helixVersion == "" {
+		helixVersion = cfg.Perforce.Version
+	}
+	if helixVersion == "" {
+		helixVersion = perforce.DefaultHelixVersion
+	}
+	// Structural inputs are checked before the credential file read: a
+	// state that cannot supply the full launch contract should say so
+	// without touching .fabrica.
+	sgID, profile, err := recordedSGAndProfile(rec, mod, "perforce")
+	if err != nil {
+		return nil, err
+	}
+	rootDevice := rec.Properties["rootDevice"]
+	if rootDevice == "" {
+		return nil, fmt.Errorf("no root device recorded for the perforce instance (Properties.rootDevice); re-run 'fabrica perforce create'")
+	}
+	adminPass, err := readPerforcePassword(perforceCredFile)
+	if err != nil {
+		return nil, err
+	}
+	userData, err := perforce.Generate(perforce.UserDataConfig{
+		Version:   helixVersion,
+		ServerID:  "fabrica-perforce",
+		AdminPass: adminPass,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rendering perforce cloud-init: %w", err)
+	}
+	plan := &perforce.CreatePlan{
+		InstanceType:   instanceTypeFor(rec, cfg.Perforce.InstanceType, perforce.DefaultInstanceType),
+		VolumeSize:     volumeSizeFor(rec, cfg.Perforce.VolumeSize, 500),
+		SubnetID:       subnetFor(rec, cfg.Perforce.SubnetId),
+		InstanceName:   "fabrica-perforce",
+		RootDeviceName: rootDevice,
+	}
+	ds, err := perforce.InstanceDesiredState(plan, sgID, userData, profile, ami)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptySubnetID(ds)
+}
+
+// rebuildHordeInstance rebuilds the Horde coordinator instance. The MongoDB
+// password comes from the create-time credentials file and the AMI is the
+// module version create recorded at launch.
+func rebuildHordeInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+	ami := mod.Version
+	if ami == "" {
+		return nil, fmt.Errorf("no AMI recorded for the horde instance (module version); re-run 'fabrica horde create'")
+	}
+	// Structural inputs are checked before the credential file read: a
+	// state that cannot supply the full launch contract should say so
+	// without touching .fabrica.
+	sgID, profile, err := recordedSGAndProfile(rec, mod, "horde")
+	if err != nil {
+		return nil, err
+	}
+	rootDevice := rec.Properties["rootDevice"]
+	if rootDevice == "" {
+		return nil, fmt.Errorf("no root device recorded for the horde instance (Properties.rootDevice); re-run 'fabrica horde create'")
+	}
+	mongoPass, err := readHordePassword(hordeCredFile)
+	if err != nil {
+		return nil, err
+	}
+	port := cfg.Horde.Port
+	if port <= 0 {
+		port = horde.DefaultPort
+	}
+	userData, err := horde.Generate(horde.UserDataConfig{MongoPassword: mongoPass, Port: port})
+	if err != nil {
+		return nil, fmt.Errorf("rendering horde cloud-init: %w", err)
+	}
+	plan := &horde.CreatePlan{
+		AmiID:          ami,
+		InstanceType:   instanceTypeFor(rec, cfg.Horde.InstanceType, horde.DefaultInstanceType),
+		VolumeSize:     volumeSizeFor(rec, cfg.Horde.VolumeSize, 100),
+		SubnetID:       subnetFor(rec, cfg.Horde.SubnetId),
+		InstanceName:   "fabrica-horde",
+		RootDeviceName: rootDevice,
+	}
+	ds, err := horde.InstanceDesiredState(plan, sgID, userData, profile)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptySubnetID(ds)
+}
+
+// rebuildLoreInstance rebuilds the Lore instance. The S3 store backend takes
+// its bucket from the bucket resource the lore module recorded in state (the
+// name create actually launched with), falling back to the same resolution
+// create uses; the local backend carries no store inputs.
+func rebuildLoreInstance(rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
+	ami := mod.Version
+	if ami == "" {
+		return nil, fmt.Errorf("no AMI recorded for the lore instance (module version); re-run 'fabrica lore create'")
+	}
+	sgID, profile, err := recordedSGAndProfile(rec, mod, "lore")
+	if err != nil {
+		return nil, err
+	}
+	rootDevice := rec.Properties["rootDevice"]
+	if rootDevice == "" {
+		return nil, fmt.Errorf("no root device recorded for the lore instance (Properties.rootDevice); re-run 'fabrica lore create'")
+	}
+	// Same normalization create uses: trim + lowercase, anything that is
+	// not "s3" resolves to the local backend.
+	backend := strings.ToLower(strings.TrimSpace(cfg.Lore.StoreBackend))
+	if backend != lore.StoreBackendS3 {
+		backend = lore.StoreBackendLocal
+	}
+	// The bucket resource the module recorded wins; the config value and the
+	// deterministic default mirror create's resolution for s3 stores.
+	var bucket string
+	if backend == lore.StoreBackendS3 {
+		bucket = moduleS3BucketFor(mod)
+		if bucket == "" {
+			bucket = lore.ResolveStoreBucket(cfg.Lore.StoreBucket, st.Account, st.Region, backend)
+		}
+	}
+	var storeTables []string
+	if backend == lore.StoreBackendS3 {
+		storeTables = lore.StoreTableNames(bucket)
+	}
+	userData, err := lore.Generate(lore.UserDataConfig{
+		StorePath:    lore.DefaultStorePath,
+		ConfigDir:    lore.DefaultConfigDir,
+		GRPCPort:     lore.DefaultGRPCPort,
+		HTTPPort:     lore.DefaultHTTPPort,
+		StoreBackend: backend,
+		StoreBucket:  bucket,
+		StoreTables:  storeTables,
+		TLSEnabled:   cfg.Lore.TLSConfig.Enabled,
+		CertPath:     cfg.Lore.TLSConfig.CertPath,
+		KeyPath:      cfg.Lore.TLSConfig.KeyPath,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rendering lore cloud-init: %w", err)
+	}
+	plan := &lore.CreatePlan{
+		AmiID:               ami,
+		InstanceType:        instanceTypeFor(rec, cfg.Lore.InstanceType, lore.DefaultInstanceType),
+		VolumeSize:          volumeSizeFor(rec, cfg.Lore.VolumeSize, 500),
+		SubnetID:            subnetFor(rec, cfg.Lore.SubnetId),
+		InstanceName:        "fabrica-lore",
+		InstanceProfileName: profile,
+		RootDeviceName:      rootDevice,
+	}
+	ds, err := lore.InstanceDesiredState(plan, sgID, userData)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptySubnetID(ds)
+}
+
+// ddcPorts resolves the DDC public/internal ports from config, falling back
+// to the module defaults create uses.
+func ddcPorts(cfg *config.Config) (int, int) {
+	publicPort := cfg.DDC.PublicPort
+	if publicPort <= 0 {
+		publicPort = ddc.DefaultPublicPort
+	}
+	internalPort := cfg.DDC.InternalPort
+	if internalPort <= 0 {
+		internalPort = ddc.DefaultInternalPort
+	}
+	return publicPort, internalPort
+}
+
+// ddcBucket resolves the DDC blob bucket: the bucket resource the ddc module
+// recorded in state wins, then the same resolution create uses (config value
+// or the deterministic per-account default).
+func ddcBucket(mod *state.ModuleState, st *state.State, cfg *config.Config) string {
+	if bucket := moduleS3BucketFor(mod); bucket != "" {
+		return bucket
+	}
+	return ddc.BucketOrDefault(cfg.DDC.Bucket, st.Account, st.Region)
+}
+
+// rebuildDDCInstance rebuilds a Missing DDC home-region instance: the
+// coordinator (default) or the 1-node Scylla host (Properties.role =
+// ddc.RoleScylla). The coordinator AMI is the module version create recorded;
+// the Scylla AMI lives only in config (ddc.scyllaAmiId).
+func rebuildDDCInstance(rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
+	if rec.Properties["role"] == ddc.RoleScylla {
+		return rebuildScyllaInstance(rec, mod, st, cfg)
+	}
+	ami := mod.Version
+	if ami == "" {
+		return nil, fmt.Errorf("no AMI recorded for the ddc instance (module version); re-run 'fabrica ddc setup'")
+	}
+	sgID, profile, err := recordedSGAndProfile(rec, mod, "ddc")
+	if err != nil {
+		return nil, err
+	}
+	rootDevice := rec.Properties["rootDevice"]
+	if rootDevice == "" {
+		return nil, fmt.Errorf("no root device recorded for the ddc instance (Properties.rootDevice); re-run 'fabrica ddc setup'")
+	}
+	publicPort, internalPort := ddcPorts(cfg)
+	nodes := ddc.ResolveScyllaNodes(cfg.DDC.Scylla)
+	userData, err := ddc.Generate(ddc.UserDataConfig{
+		StorePath:        ddc.DefaultStorePath,
+		Bucket:           ddcBucket(mod, st, cfg),
+		Region:           st.Region,
+		Namespace:        ddc.NamespaceOrDefault(cfg.DDC.Namespace),
+		PublicPort:       publicPort,
+		InternalPort:     internalPort,
+		Backend:          ddc.NormalizeBackend(cfg.DDC.Backend),
+		OIDCEnabled:      cfg.DDC.OIDC.Enabled,
+		OIDCIssuer:       cfg.DDC.OIDC.Issuer,
+		OIDCClientID:     cfg.DDC.OIDC.ClientID,
+		OIDCAudience:     cfg.DDC.OIDC.Audience,
+		OIDCRedirect:     cfg.DDC.OIDC.RedirectPath,
+		ReplicationPeers: strings.Join(cfg.DDC.Replication.Peers, ","),
+		ScyllaNodes:      nodes,
+		ScyllaRF:         ddc.ResolveRF(cfg.DDC.Scylla, nodes),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rendering ddc cloud-init: %w", err)
+	}
+	plan := &ddc.SetupPlan{
+		Account:        st.Account,
+		Region:         st.Region,
+		AmiID:          ami,
+		InstanceType:   instanceTypeFor(rec, cfg.DDC.InstanceType, ddc.DefaultInstanceType),
+		VolumeSize:     volumeSizeFor(rec, cfg.DDC.VolumeSize, ddc.DefaultVolumeSize),
+		SubnetID:       subnetFor(rec, cfg.DDC.SubnetId),
+		InstanceName:   "fabrica-ddc",
+		RootDeviceName: rootDevice,
+	}
+	ds, err := ddc.InstanceDesiredState(plan, sgID, userData, profile)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptySubnetID(ds)
+}
+
+// rebuildScyllaInstance rebuilds the DDC Scylla host. Its AMI is not recorded
+// in state — create read ddc.scyllaAmiId — so an empty config value reports
+// the instance unrebuildable.
+func rebuildScyllaInstance(rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
+	ami := cfg.DDC.ScyllaAmiID
+	if ami == "" {
+		return nil, fmt.Errorf("no Scylla AMI configured in ddc.scyllaAmiId; set it in fabrica.yaml to remediate the ddc scylla instance")
+	}
+	sgID, profile, err := recordedSGAndProfile(rec, mod, "ddc")
+	if err != nil {
+		return nil, err
+	}
+	rootDevice := rec.Properties["rootDevice"]
+	if rootDevice == "" {
+		return nil, fmt.Errorf("no root device recorded for the ddc scylla instance (Properties.rootDevice); re-run 'fabrica ddc setup'")
+	}
+	userData, err := ddc.GenerateScylla(ddc.ScyllaUserDataConfig{
+		ClusterName: "fabrica-ddc",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rendering ddc scylla cloud-init: %w", err)
+	}
+	plan := &ddc.SetupPlan{
+		Account:              st.Account,
+		Region:               st.Region,
+		ScyllaAmiID:          ami,
+		ScyllaInstanceType:   instanceTypeFor(rec, cfg.DDC.ScyllaInstanceType, ddc.DefaultScyllaInstanceType),
+		ScyllaVolumeSize:     volumeSizeFor(rec, cfg.DDC.ScyllaVolumeSize, ddc.DefaultScyllaVolumeSize),
+		SubnetID:             subnetFor(rec, cfg.DDC.SubnetId),
+		ScyllaInstanceName:   "fabrica-ddc-scylla",
+		ScyllaRootDeviceName: rootDevice,
+	}
+	ds, err := ddc.ScyllaInstanceDesiredState(plan, sgID, userData, profile)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptySubnetID(ds)
+}
+
+// rebuildWorkstationInstance rebuilds the workstation instance. It fails
+// closed on every input it cannot reconstruct from recorded state: the AMI
+// (module version), the DCV session password parameter name (the value stays
+// in SSM and the credentials file), the mount-perforce flag (a true value
+// needs the Perforce server address, which state does not record), and the
+// AMI's root device (only an AMI inspector can supply it).
+func rebuildWorkstationInstance(ctx context.Context, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config, inspector imageInspectorFunc) (json.RawMessage, error) {
+	ami := mod.Version
+	if ami == "" {
+		return nil, fmt.Errorf("no AMI recorded for the workstation instance (module version); re-run 'fabrica workstation create'")
+	}
+	paramName := rec.Properties["sessionPasswordParameter"]
+	if paramName == "" {
+		return nil, fmt.Errorf("no DCV session password parameter recorded for the workstation instance; re-run 'fabrica workstation create'")
+	}
+	if mp := rec.Properties["mountPerforce"]; mp == "" {
+		return nil, fmt.Errorf("mountPerforce not recorded on the workstation instance (pre-#508 state); re-run 'fabrica workstation create'")
+	} else if mp != "false" {
+		return nil, fmt.Errorf("workstation was created with --mount-perforce and the Perforce server address is not recorded in state; re-run 'fabrica workstation create'")
+	}
+	if inspector == nil {
+		return nil, fmt.Errorf("provider cannot inspect AMIs, so the workstation root device cannot be resolved; re-run 'fabrica workstation create'")
+	}
+	info, err := inspector(ctx, ami)
+	if err != nil {
+		return nil, fmt.Errorf("inspecting AMI %s for the workstation root device: %w", ami, err)
+	}
+	rootDevice, err := workstation.RootDeviceFor(ami, info.RootDeviceName, info.RootDeviceType)
+	if err != nil {
+		return nil, err
+	}
+	sgID, profile, err := recordedSGAndProfile(rec, mod, "workstation")
+	if err != nil {
+		return nil, err
+	}
+	idle := cfg.Workstation.IdleTimeoutMinutes
+	if idle <= 0 {
+		idle = workstation.DefaultIdleTimeoutMinutes
+	}
+	userData, err := workstation.Generate(workstation.UserDataConfig{
+		SessionPasswordParameter: paramName,
+		Region:                   st.Region,
+		IdleTimeoutMinutes:       idle,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rendering workstation cloud-init: %w", err)
+	}
+	plan := &workstation.CreatePlan{
+		Account:             st.Account,
+		Region:              st.Region,
+		AmiID:               ami,
+		InstanceType:        instanceTypeFor(rec, cfg.Workstation.InstanceType, workstation.DefaultInstanceType),
+		VolumeSize:          volumeSizeFor(rec, cfg.Workstation.VolumeSize, workstation.DefaultVolumeSize),
+		DCVPort:             workstation.DefaultDCVPort,
+		IdleTimeoutMinutes:  idle,
+		SubnetID:            subnetFor(rec, cfg.Workstation.SubnetId),
+		RootDeviceName:      rootDevice,
+		InstanceName:        "fabrica-workstation",
+		InstanceProfileName: profile,
+	}
+	ds, err := workstation.InstanceDesiredState(plan, sgID, userData)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptySubnetID(ds)
+}
+
+// isEdgeResource reports whether a recorded resource is a DDC edge resource:
+// it carries the edge role plus an explicit region. Home resources record
+// neither, so they never match.
+func isEdgeResource(rec *state.ModuleResource) bool {
+	if rec.Properties == nil {
+		return false
+	}
+	return rec.Properties["role"] == ddc.RoleEdge && rec.Properties["region"] != ""
+}
+
+// rebuildEdgeInstanceDesiredState rebuilds a Missing DDC edge instance's
+// desired state from its recorded region-specific inputs. Edge AMIs and
+// subnets are per-region, so the recorded imageId and subnetId are required;
+// resources recorded before those inputs were captured are reported
+// unrebuildable with a hint to re-run the edge provisioning command. The
+// canonical edge builder supplies the full create contract: IAM profile,
+// cloud-init with the home bucket, and the edge region's network wiring.
+func rebuildEdgeInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
+	region := rec.Properties["region"]
+	ami := rec.Properties["imageId"]
+	if ami == "" {
+		return nil, fmt.Errorf("no AMI recorded for DDC edge %s; re-run 'fabrica ddc region add %s'", region, region)
+	}
+	subnetID := rec.Properties["subnetId"]
+	if subnetID == "" {
+		return nil, fmt.Errorf("no subnet recorded for DDC edge %s; re-run 'fabrica ddc region add %s'", region, region)
+	}
+	sgID := moduleSGIDFor(rec, mod)
+	if sgID == "" {
+		return nil, fmt.Errorf("no security group recorded for DDC edge %s; re-run 'fabrica ddc region add %s'", region, region)
+	}
+	profile := moduleInstanceProfileFor(mod)
+	if profile == "" {
+		return nil, fmt.Errorf("no IAM instance profile recorded for the ddc module; re-run 'fabrica ddc setup'")
+	}
+	rootDevice := rec.Properties["rootDevice"]
+	if rootDevice == "" {
+		return nil, fmt.Errorf("no root device recorded for the DDC edge instance %s (Properties.rootDevice); re-run 'fabrica ddc region add %s'", region, region)
+	}
+	publicPort, internalPort := ddcPorts(cfg)
+	userData, err := ddc.Generate(ddc.UserDataConfig{
+		StorePath:    ddc.DefaultStorePath,
+		Bucket:       ddcBucket(mod, st, cfg),
+		Region:       region,
+		Namespace:    ddc.NamespaceOrDefault(cfg.DDC.Namespace),
+		PublicPort:   publicPort,
+		InternalPort: internalPort,
+		OIDCEnabled:  cfg.DDC.OIDC.Enabled,
+		OIDCIssuer:   cfg.DDC.OIDC.Issuer,
+		OIDCClientID: cfg.DDC.OIDC.ClientID,
+		OIDCAudience: cfg.DDC.OIDC.Audience,
+		OIDCRedirect: cfg.DDC.OIDC.RedirectPath,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rendering ddc edge cloud-init: %w", err)
+	}
+	plan := &ddc.EdgePlan{
+		Account:             st.Account,
+		Region:              region,
+		AmiID:               ami,
+		InstanceType:        instanceTypeFor(rec, cfg.DDC.InstanceType, ddc.DefaultInstanceType),
+		VolumeSize:          volumeSizeFor(rec, cfg.DDC.VolumeSize, ddc.DefaultVolumeSize),
+		SubnetID:            subnetID,
+		VPCID:               rec.Properties["vpcId"],
+		InstanceName:        fmt.Sprintf("fabrica-ddc-edge-%s", region),
+		InstanceProfileName: profile,
+		RootDeviceName:      rootDevice,
+	}
+	ds, err := ddc.EdgeInstanceDesiredState(plan, sgID, userData)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptySubnetID(ds)
+}
+
+// moduleSGIDFor returns the security group identifier an instance's desired
+// state should reference. DDC edge instances pair with the edge group
+// recorded in their own region (the home group sits in another VPC). Home
+// instances pair with the group whose recorded role matches their own (both
+// absent is the module's default group), so a coordinator instance is never
+// paired with an agent-pool group even when the agent group is recorded
+// first; the fallback is the first group in the module.
+func moduleSGIDFor(rec *state.ModuleResource, mod *state.ModuleState) string {
+	if isEdgeResource(rec) {
+		for i := range mod.Resources {
+			r := &mod.Resources[i]
+			if r.TypeName == cloud.TypeAWSEC2SecurityGroup && isEdgeResource(r) && r.Properties["region"] == rec.Properties["region"] {
+				return r.Identifier
+			}
+		}
+		return ""
+	}
+	role := ""
+	if rec.Properties != nil {
+		role = rec.Properties["role"]
+	}
+	var fallback string
+	for i := range mod.Resources {
+		r := &mod.Resources[i]
+		if r.TypeName != cloud.TypeAWSEC2SecurityGroup {
+			continue
+		}
+		if r.Properties["role"] == role {
+			return r.Identifier
+		}
+		if fallback == "" {
+			fallback = r.Identifier
+		}
+	}
+	return fallback
+}
+
+// moduleInstanceProfileFor returns the identifier of the IAM instance profile
+// the module recorded in state, or "" when none is recorded. The first
+// profile wins; modules record exactly one.
+func moduleInstanceProfileFor(mod *state.ModuleState) string {
+	for i := range mod.Resources {
+		r := &mod.Resources[i]
+		if r.TypeName == cloud.TypeAWSIAMInstanceProfile {
+			return r.Identifier
+		}
+	}
+	return ""
+}
+
+// moduleS3BucketFor returns the identifier of the S3 bucket the module
+// recorded in state, or "" when none is recorded. The first bucket wins;
+// modules record exactly one.
+func moduleS3BucketFor(mod *state.ModuleState) string {
+	for i := range mod.Resources {
+		r := &mod.Resources[i]
+		if r.TypeName == cloud.TypeAWSS3Bucket {
+			return r.Identifier
+		}
+	}
+	return ""
+}
+
+// rebuildSGDesiredState rebuilds a Missing security group's desired state by
+// reusing each module's canonical SG builder against the resolved config, so
+// the remediated group matches what the create command would have
+// provisioned: configured ports, distinct public/internal CIDRs, and
+// role-specific groups (horde agent pool, DDC edge nodes). Recorded state
+// properties (vpcId, role, region) override config where they exist.
+func rebuildSGDesiredState(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+	ds, err := moduleSGDispatch(rec, mod, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return stripEmptyVPCID(ds)
+}
+
+// moduleSGDispatch is the per-module SG dispatch. It is a var seam so tests
+// can force a builder failure through rebuildSGDesiredState's error path —
+// the canonical builders only fail on JSON marshaling, which is unreachable
+// in production.
+var moduleSGDispatch = dispatchModuleSG
+
+// dispatchModuleSG builds the canonical SG desired state for one module's
+// recorded resource against the resolved configuration.
+func dispatchModuleSG(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+	var ds json.RawMessage
+	var err error
+
 	switch mod.Name {
 	case "horde":
-		instanceType = cfg.Horde.InstanceType
-		if ami == "" {
-			ami = cfg.Horde.AmiID
-		}
-		subnetID = cfg.Horde.SubnetId
-	case "perforce":
-		instanceType = cfg.Perforce.InstanceType
-		subnetID = cfg.Perforce.SubnetId
-	case "lore":
-		instanceType = cfg.Lore.InstanceType
-		if ami == "" {
-			ami = cfg.Lore.AmiID
-		}
-		subnetID = cfg.Lore.SubnetId
-	case "ddc":
-		instanceType = cfg.DDC.InstanceType
-		if ami == "" {
-			ami = cfg.DDC.AmiID
-		}
-		subnetID = cfg.DDC.SubnetId
-	case "workstation":
-		instanceType = cfg.Workstation.InstanceType
-		if ami == "" {
-			ami = cfg.Workstation.AmiID
-		}
-		subnetID = cfg.Workstation.SubnetId
-	}
-
-	// Recorded properties override config defaults.
-	if v, ok := rec.Properties["instanceType"]; ok && v != "" {
-		instanceType = v
-	}
-	if v, ok := rec.Properties["subnetId"]; ok && v != "" {
-		subnetID = v
-	}
-
-	ds := map[string]any{
-		"InstanceType": instanceType,
-		"ImageId":      ami,
-	}
-
-	if subnetID != "" {
-		ds["SubnetId"] = subnetID
-	}
-
-	// Security group is linked by finding the SG resource in the same module.
-	// Note: if the SG is also Missing, its identifier in state may be updated
-	// by ApplyRemediation after the SG is recreated. The instance's DesiredState
-	// is baked at plan time, so ApplyRemediation must refresh it after SG create.
-	var sgID string
-	for _, r := range mod.Resources {
-		if r.TypeName == cloud.TypeAWSEC2SecurityGroup {
-			sgID = r.Identifier
+		if rec.Properties["role"] == "agent" {
+			// Agent-pool group: agents dial the coordinator, so no ingress.
+			ds, err = horde.AgentSGDesiredState(&horde.AgentsCreatePlan{
+				SGName: horde.DefaultAgentsSGName,
+				VPCID:  sgVPCID(rec, agentsVPC(cfg)),
+			})
 			break
 		}
+		port := cfg.Horde.Port
+		if port <= 0 {
+			port = horde.DefaultPort
+		}
+		grpcPort := cfg.Horde.GRPCPort
+		if grpcPort <= 0 {
+			grpcPort = horde.DefaultGRPCPort
+		}
+		ds, err = horde.SGDesiredState(&horde.CreatePlan{
+			SGName:      horde.DefaultSGName,
+			VPCID:       sgVPCID(rec, cfg.Horde.VPCId),
+			Port:        port,
+			GRPCPort:    grpcPort,
+			AllowedCIDR: defaultCIDR(cfg.Horde.AllowedCIDR, horde.DefaultAllowedCIDR),
+		})
+	case "perforce":
+		ds, err = perforce.SGDesiredState(&perforce.CreatePlan{
+			SGName:      perforce.DefaultSGName,
+			VPCID:       sgVPCID(rec, cfg.Perforce.VPCId),
+			AllowedCIDR: defaultCIDR(cfg.Perforce.AllowedCIDR, perforce.DefaultAllowedCIDR),
+		})
+	case "lore":
+		ds, err = lore.SGDesiredState(&lore.CreatePlan{
+			SGName:      lore.DefaultSGName,
+			VPCID:       sgVPCID(rec, cfg.Lore.VPCId),
+			GRPCPort:    lore.DefaultGRPCPort,
+			HTTPPort:    lore.DefaultHTTPPort,
+			AllowedCIDR: defaultCIDR(cfg.Lore.AllowedCIDR, lore.DefaultAllowedCIDR),
+		})
+	case "ddc":
+		ds, err = rebuildDDCSG(rec, cfg)
+	case "workstation":
+		ds, err = workstation.SGDesiredState(&workstation.CreatePlan{
+			SGName:      workstation.DefaultSGName,
+			VPCID:       sgVPCID(rec, cfg.Workstation.VPCId),
+			DCVPort:     workstation.DefaultDCVPort,
+			AllowedCIDR: defaultCIDR(cfg.Workstation.AllowedCIDR, workstation.DefaultAllowedCIDR),
+		})
+	case "ci":
+		ds, err = ci.SGDesiredState(&ci.CreatePlan{
+			SGName: ci.DefaultSGName,
+			VPCID:  sgVPCID(rec, cfg.CI.VPCId),
+		})
+	default:
+		ds, err = minimalSGDesiredState(rec)
 	}
-	if sgID != "" {
-		ds["SecurityGroupIds"] = []string{sgID}
-	}
-
-	b, _ := json.Marshal(ds)
-	return b
+	return ds, err
 }
 
-// rebuildSGDesiredState builds a minimal security group desired state from
-// recorded properties and module config defaults. Ingress rules are port-specific
-// per module — never IpProtocol -1 (all traffic).
-func rebuildSGDesiredState(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) json.RawMessage {
-	vpcID := ""
-	allowedCIDR := ""
-	var rules []sgIngressRule
-
-	// Resolve per-module config and port-specific ingress rules.
-	switch mod.Name {
-	case "horde":
-		vpcID = cfg.Horde.VPCId
-		allowedCIDR = cfg.Horde.AllowedCIDR
-		rules = []sgIngressRule{
-			{IpProtocol: "tcp", FromPort: 5000, ToPort: 5000, Description: "Horde HTTP API + web UI"},
-			{IpProtocol: "tcp", FromPort: 5002, ToPort: 5002, Description: "Horde gRPC (agent connections)"},
-		}
-	case "perforce":
-		vpcID = cfg.Perforce.VPCId
-		allowedCIDR = cfg.Perforce.AllowedCIDR
-		rules = []sgIngressRule{
-			{IpProtocol: "tcp", FromPort: 1666, ToPort: 1666, Description: "Perforce p4d"},
-		}
-	case "lore":
-		vpcID = cfg.Lore.VPCId
-		allowedCIDR = cfg.Lore.AllowedCIDR
-		rules = []sgIngressRule{
-			{IpProtocol: "tcp", FromPort: 41337, ToPort: 41337, Description: "Lore gRPC"},
-			{IpProtocol: "udp", FromPort: 41337, ToPort: 41337, Description: "Lore QUIC"},
-			{IpProtocol: "tcp", FromPort: 41339, ToPort: 41339, Description: "Lore HTTP health"},
-		}
-	case "ddc":
-		vpcID = cfg.DDC.VPCId
-		allowedCIDR = cfg.DDC.AllowedCIDR
-		rules = []sgIngressRule{
-			{IpProtocol: "tcp", FromPort: 80, ToPort: 80, Description: "Unreal Cloud DDC public API"},
-			{IpProtocol: "tcp", FromPort: 8080, ToPort: 8080, Description: "Unreal Cloud DDC internal API"},
-		}
-	case "workstation":
-		vpcID = cfg.Workstation.VPCId
-		allowedCIDR = cfg.Workstation.AllowedCIDR
-		rules = []sgIngressRule{
-			{IpProtocol: "tcp", FromPort: 8443, ToPort: 8443, Description: "NICE DCV HTTPS"},
-		}
+// rebuildDDCSG rebuilds a DDC security group. Edge nodes (recorded
+// Properties.role = ddc.RoleEdge with a region) get the edge shape named per
+// region; everything else gets the home shape, including the Scylla CQL rule
+// when the configured backend is scylla.
+func rebuildDDCSG(rec *state.ModuleResource, cfg *config.Config) (json.RawMessage, error) {
+	publicPort := cfg.DDC.PublicPort
+	if publicPort <= 0 {
+		publicPort = ddc.DefaultPublicPort
 	}
+	internalPort := cfg.DDC.InternalPort
+	if internalPort <= 0 {
+		internalPort = ddc.DefaultInternalPort
+	}
+	plan := ddc.SetupPlan{
+		SGName:       ddc.DefaultSGName,
+		VPCID:        sgVPCID(rec, cfg.DDC.VPCId),
+		PublicPort:   publicPort,
+		InternalPort: internalPort,
+		AllowedCIDR:  defaultCIDR(cfg.DDC.AllowedCIDR, ddc.DefaultAllowedCIDR),
+		InternalCIDR: defaultCIDR(cfg.DDC.InternalCIDR, ddc.DefaultAllowedCIDR),
+		Backend:      ddc.NormalizeBackend(cfg.DDC.Backend),
+	}
+	if isEdgeResource(rec) {
+		region := rec.Properties["region"]
+		// Edge groups live in the edge region's VPC, so the recorded VPC is
+		// required; the home-config VPC fallback would point at the wrong one.
+		vpcID := rec.Properties["vpcId"]
+		if vpcID == "" {
+			return nil, fmt.Errorf("no VPC recorded for DDC edge %s; re-run 'fabrica ddc region add %s'", region, region)
+		}
+		return ddc.EdgeSGDesiredState(&ddc.EdgePlan{
+			SGName:       ddc.EdgeSGName(region),
+			VPCID:        vpcID,
+			PublicPort:   publicPort,
+			InternalPort: internalPort,
+			AllowedCIDR:  plan.AllowedCIDR,
+			InternalCIDR: plan.InternalCIDR,
+		})
+	}
+	return ddc.SGDesiredState(&plan)
+}
 
-	// Recorded properties override config defaults.
+// sgVPCID returns the VPC recorded on the SG's state properties, falling
+// back to the module-config VPC when nothing is recorded.
+func sgVPCID(rec *state.ModuleResource, cfgVPC string) string {
 	if v, ok := rec.Properties["vpcId"]; ok && v != "" {
-		vpcID = v
+		return v
 	}
+	return cfgVPC
+}
 
+// agentsVPC mirrors the agent placement resolution: an explicit
+// horde.agents.vpcId wins, otherwise the pool follows the coordinator's VPC.
+func agentsVPC(cfg *config.Config) string {
+	if cfg.Horde.Agents.VPCID != "" {
+		return cfg.Horde.Agents.VPCID
+	}
+	return cfg.Horde.VPCId
+}
+
+// defaultCIDR returns the configured CIDR, falling back to the module default
+// the create command uses when the config field is empty.
+func defaultCIDR(cfgCIDR, fallback string) string {
+	if cfgCIDR != "" {
+		return cfgCIDR
+	}
+	return fallback
+}
+
+// minimalSGDesiredState is the fallback for modules without a canonical SG
+// builder: a description plus the recorded VPC when known.
+func minimalSGDesiredState(rec *state.ModuleResource) (json.RawMessage, error) {
 	ds := map[string]any{
 		"GroupDescription": "Fabrica-managed security group",
 	}
-	if vpcID != "" {
-		ds["VpcId"] = vpcID
+	if v, ok := rec.Properties["vpcId"]; ok && v != "" {
+		ds["VpcId"] = v
 	}
-
-	// Build port-specific ingress rules. If no CIDR is configured, omit
-	// ingress entirely — the SG will have no inbound rules by default.
-	if allowedCIDR != "" && len(rules) > 0 {
-		ingress := make([]map[string]any, len(rules))
-		for i, r := range rules {
-			ingress[i] = map[string]any{
-				"IpProtocol":  r.IpProtocol,
-				"FromPort":    r.FromPort,
-				"ToPort":      r.ToPort,
-				"CidrIp":      allowedCIDR,
-				"Description": r.Description,
-			}
-		}
-		ds["SecurityGroupIngress"] = ingress
-	}
-
-	b, _ := json.Marshal(ds)
-	return b
+	return json.Marshal(ds)
 }
 
-// sgIngressRule is a local copy of ec2state.SGIngressRule to avoid importing
-// ec2state into the drift package (which would pull in ec2plan dependencies).
-type sgIngressRule struct {
-	IpProtocol  string
-	FromPort    int
-	ToPort      int
-	Description string
+// stripEmptyVPCID drops the VpcId key when no VPC could be resolved. An
+// empty-string VpcId would be an invalid Cloud Control property; omitting it
+// targets the account default VPC, matching the previous minimal rebuild.
+func stripEmptyVPCID(ds json.RawMessage) (json.RawMessage, error) {
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		return nil, err
+	}
+	if m["VpcId"] == "" {
+		delete(m, "VpcId")
+	}
+	return json.Marshal(m)
+}
+
+// stripEmptySubnetID drops the SubnetId key when no subnet could be resolved.
+// The canonical instance builders emit the key unconditionally; an empty
+// string is an invalid Cloud Control property, while omitting it targets the
+// account default VPC.
+func stripEmptySubnetID(ds json.RawMessage) (json.RawMessage, error) {
+	var m map[string]any
+	if err := json.Unmarshal(ds, &m); err != nil {
+		return nil, err
+	}
+	if m["SubnetId"] == "" {
+		delete(m, "SubnetId")
+	}
+	return json.Marshal(m)
 }

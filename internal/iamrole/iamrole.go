@@ -55,7 +55,8 @@ type roleOptions struct {
 	PermissionsBoundary string
 }
 
-// WithPath sets the IAM path. The path must start and end with "/".
+// WithPath sets the IAM path. The path is the AWS root "/" or must start
+// and end with "/".
 func WithPath(path string) RoleOption {
 	return func(o *roleOptions) { o.Path = path }
 }
@@ -116,10 +117,10 @@ func RoleDocument(roleName string, service string, managedArns []string, policie
 }
 
 func validateRolePath(path string) error {
-	if path == "" {
+	if path == "" || path == "/" {
 		return nil
 	}
-	if len(path) < 2 || !strings.HasPrefix(path, "/") || !strings.HasSuffix(path, "/") || strings.Contains(path, "//") {
+	if !strings.HasPrefix(path, "/") || !strings.HasSuffix(path, "/") || strings.Contains(path, "//") {
 		return fmt.Errorf("iam.path %q must start and end with /", path)
 	}
 	return nil
@@ -241,6 +242,30 @@ func S3BucketPolicy(policyName, bucketName string, bucketActions, objectActions 
 				{
 					"Effect":   "Allow",
 					"Action":   objectActions,
+					"Resource": []string{objectsArn},
+				},
+			},
+		},
+	}
+}
+
+// S3ObjectReadPolicy is the inline policy that lets an instance read objects
+// from one bucket and nothing else: a single s3:GetObject statement scoped to
+// the bucket's object ARNs, with no bucket-level actions. Used by the
+// workstation role for the regional DCV license bucket — the NICE DCV server
+// validates its no-cost EC2 license against an object there and fails to
+// serve sessions without the grant.
+func S3ObjectReadPolicy(policyName, bucketName string) map[string]any {
+	objectsArn := "arn:aws:s3:::" + bucketName + "/*"
+	return map[string]any{
+		"PolicyName": policyName,
+		"PolicyDocument": map[string]any{
+			"Version": "2012-10-17",
+			"Statement": []map[string]any{
+				{
+					"Sid":      "S3ObjectRead",
+					"Effect":   "Allow",
+					"Action":   []string{"s3:GetObject"},
 					"Resource": []string{objectsArn},
 				},
 			},

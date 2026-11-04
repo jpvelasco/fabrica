@@ -39,6 +39,24 @@ The current contract does not pin a Lore or Unreal Engine release because the
 binary is studio supplied. Record the exact Lore/UE source revision or release
 in the known-good table when verification passes.
 
+## EBS root volume encryption
+
+`fabrica lore create` inspects the root device of the AMI you pass (`lore.amiId`)
+and requests exactly that device with `Encrypted=true` on both launch paths
+(Cloud Control and the direct `RunInstances` path). The root volume is encrypted
+even when the AMI's snapshot is unencrypted and the account's default EBS
+encryption is off.
+
+Create fails closed, before the state lock and any resource or state is written,
+when the AMI reports no root device name, a name that is not an EC2 device name,
+or a root that is not EBS, and when the provider cannot inspect the AMI at all.
+
+Fabrica sets no `KmsKeyId`, so EBS uses the account's default EBS encryption
+key: the AWS managed key `aws/ebs`, or the account's default CMK if one is
+configured. The root device name is recorded in module state
+(`Properties.rootDevice`) and `drift --fix` rebuilds map the encrypted root
+from it.
+
 ## Prerequisites
 
 1. Obtain the `loreserver` binary and its required adjacent files through your
@@ -103,6 +121,8 @@ executable. Review the generated files and the source bucket policy before
 continuing.
 
 ## Image Builder (Preferred)
+
+Guardrailed accounts: the bake needs the request-tag-gated Image Builder grant in [guardrailed-accounts.md](guardrailed-accounts.md#operator-policy-minimal-example); pass `--tags`/`--resource-tags` with `ManagedBy=fabrica` on each create.
 
 The following PowerShell sequence is intentionally explicit. It creates only
 the resources needed for a manually started pipeline; no schedule is enabled.
@@ -181,6 +201,19 @@ do {
 if ($BuildState -ne "AVAILABLE") { throw "Image Builder bake failed: $BuildState" }
 $AMI = $Image.image.outputResources.amis[0].image
 Write-Host "Candidate Lore AMI: $AMI"
+```
+
+Image Builder tags the build and the output AMI, but not the snapshots it
+takes. Tag the candidate's snapshots before recording the AMI, so
+`ManagedBy`-based sweeps and teardown find them:
+
+```powershell
+$Snapshots = aws ec2 describe-images --region $Region --image-ids $AMI `
+  --query "Images[0].BlockDeviceMappings[].Ebs.SnapshotId" --output text
+foreach ($SnapshotId in $Snapshots) {
+  aws ec2 create-tags --region $Region --resources $SnapshotId `
+    --tags "Key=ManagedBy,Value=fabrica" "Key=FabricaModule,Value=lore" "Key=LoreVersion,Value=$LoreVersion"
+}
 ```
 
 If a command fails after creating a component, recipe, infrastructure

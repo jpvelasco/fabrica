@@ -96,7 +96,7 @@ Use --json for machine-readable output.`,
 				jsonOut: opts.JSONOutput,
 				out:     out,
 			}
-			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
+			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
 			if rt.Provider != nil {
 				c.getResource = rt.Provider.Resources().Get
 				if asgMgr, ok := rt.Provider.(cloud.ASGManager); ok {

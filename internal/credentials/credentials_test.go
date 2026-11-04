@@ -78,26 +78,28 @@ func TestFormatPerforce(t *testing.T) {
 	}
 }
 
-func TestReadPerforceAdminPassword(t *testing.T) {
+// credReadCase is one table row for a credential reader test.
+type credReadCase struct {
+	name    string
+	content string
+	want    string
+	wantErr bool
+}
+
+// runCredentialReadTests runs the shared table for one credential reader:
+// each case's content is written to its own file under a temp dir and read
+// back; a final read of a file in a missing subdirectory (which no case can
+// create, so it cannot collide with a case named "missing") must error.
+func runCredentialReadTests(t *testing.T, read func(string) (string, error), cases []credReadCase) {
+	t.Helper()
 	dir := t.TempDir()
-	tests := []struct {
-		name    string
-		content string
-		want    string
-		wantErr bool
-	}{
-		{name: "formatted", content: credentials.FormatPerforce("s3cret"), want: "s3cret"},
-		{name: "single quoted", content: "admin_password: 'single'\n", want: "single"},
-		{name: "empty", content: "# comment\n\nother: x\nadmin_password: \"\"\n", wantErr: true},
-		{name: "missing", content: "# comment\nother: x\n", wantErr: true},
-	}
-	for _, tt := range tests {
+	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			path := filepath.Join(dir, tt.name+".yaml")
 			if err := credentials.WriteCredentials(path, tt.content); err != nil {
 				t.Fatal(err)
 			}
-			got, err := credentials.ReadPerforceAdminPassword(path)
+			got, err := read(path)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error")
@@ -112,9 +114,27 @@ func TestReadPerforceAdminPassword(t *testing.T) {
 			}
 		})
 	}
-	if _, err := credentials.ReadPerforceAdminPassword(filepath.Join(dir, "missing.yaml")); err == nil {
+	if _, err := read(filepath.Join(dir, "no-such-dir", "missing.yaml")); err == nil {
 		t.Fatal("expected missing file error")
 	}
+}
+
+func TestReadPerforceAdminPassword(t *testing.T) {
+	runCredentialReadTests(t, credentials.ReadPerforceAdminPassword, []credReadCase{
+		{name: "formatted", content: credentials.FormatPerforce("s3cret"), want: "s3cret"},
+		{name: "single quoted", content: "admin_password: 'single'\n", want: "single"},
+		{name: "empty", content: "# comment\n\nother: x\nadmin_password: \"\"\n", wantErr: true},
+		{name: "missing", content: "# comment\nother: x\n", wantErr: true},
+	})
+}
+
+func TestReadHordeMongoPassword(t *testing.T) {
+	runCredentialReadTests(t, credentials.ReadHordeMongoPassword, []credReadCase{
+		{name: "formatted", content: credentials.FormatHorde("mongopass"), want: "mongopass"},
+		{name: "single quoted", content: "mongodb_password: 'single'\n", want: "single"},
+		{name: "empty", content: "# comment\n\nother: x\nmongodb_password: \"\"\n", wantErr: true},
+		{name: "missing", content: "# comment\nother: x\n", wantErr: true},
+	})
 }
 
 func TestFormatHorde(t *testing.T) {

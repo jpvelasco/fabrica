@@ -90,7 +90,7 @@ func (c command) run(ctx context.Context) error {
 
 	cfg := c.runtime.Config
 	plan := fabricastate.NewSetupPlan(cfg, account, region)
-	tags := setupTags(c.version, cfg.Cloud.AWS.Tags)
+	tags := fabricatags.Merge("setup", c.version, cfg.Cloud.AWS.Tags)
 
 	if c.dryRun {
 		c.printDryRun(plan, tags)
@@ -109,14 +109,6 @@ func (c command) printIdentityHelp() {
 	fmt.Fprintln(c.out, "  - Region not set or unreachable — set 'cloud.aws.region' in fabrica.yaml.")
 	fmt.Fprintln(c.out, "Verify with 'aws sts get-caller-identity', then run 'fabrica doctor'.")
 	fmt.Fprintln(c.out)
-}
-
-func setupTags(version string, extra map[string]string) map[string]string {
-	tags := fabricatags.Standard("setup", version)
-	for k, v := range extra {
-		tags[k] = v
-	}
-	return tags
 }
 
 func (c command) printDryRun(plan fabricastate.SetupPlan, tags map[string]string) {
@@ -237,23 +229,23 @@ func (c command) printBootstrapResults(results []fabricastate.BootstrapResult) {
 }
 
 func (c command) saveBackendConfig(plan fabricastate.SetupPlan) {
-	dirty := false
+	updates := map[string]any{}
 	if c.runtime.Config.Cloud.AWS.AccountID == "" {
 		c.runtime.Config.Cloud.AWS.AccountID = plan.Account
-		dirty = true
+		updates["cloud.aws.accountId"] = plan.Account
 	}
 	if c.runtime.Config.State.Bucket == "" {
 		c.runtime.Config.State.Bucket = plan.Backend.Bucket
-		dirty = true
+		updates["state.bucket"] = plan.Backend.Bucket
 	}
 	if c.runtime.Config.State.Table == "" {
 		c.runtime.Config.State.Table = plan.Backend.Table
-		dirty = true
+		updates["state.table"] = plan.Backend.Table
 	}
-	if !dirty {
+	if len(updates) == 0 {
 		return
 	}
-	if err := c.runtime.Config.Save(c.runtime.ConfigPath); err != nil {
+	if err := c.runtime.Config.SaveKeys(c.runtime.ConfigPath, updates); err != nil {
 		fmt.Fprintf(c.out, "Warning: could not save config to %s: %v\n", c.runtime.ConfigFile(), err)
 		fmt.Fprintln(c.out, "Please update your config with account ID: "+plan.Account)
 	}

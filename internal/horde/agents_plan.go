@@ -17,6 +17,35 @@ import (
 // Fabrica does not scrape Horde. Printed by agents create, status, and metrics.
 const ScalingPublisherNote = "Alarms are ready only after agents (or operator tooling) publish the configured metric. Fabrica does not scrape Horde."
 
+// DefaultAgentsSGName is the agent-pool security group name. Agents dial the
+// coordinator, so the group has no inbound rules.
+const DefaultAgentsSGName = "fabrica-horde-agents-sg"
+
+// CoordinatorRef describes the live Horde coordinator the agent pool must
+// reach: the private IP agents enroll against, the coordinator's ports
+// (HTTP + gRPC), the coordinator security group the agent ingress rules
+// attach to, and the coordinator's VPC/subnet placement. Placement fields
+// are best-effort at resolution time — the pool defaults to the
+// coordinator's placement only when both halves are known; explicit
+// horde.agents.vpcId/subnetId always win.
+type CoordinatorRef struct {
+	PrivateIP string
+	Port      int
+	GRPCPort  int
+	SGID      string
+	VPCID     string
+	SubnetID  string
+}
+
+// CoordinatorPlacement is the coordinator's live VPC/subnet placement,
+// resolved from the instance (subnet) and the coordinator security group
+// (VPC). The pool follows it only when both halves are known; a half-known
+// placement falls back to the account default VPC.
+type CoordinatorPlacement struct {
+	VPCID    string
+	SubnetID string
+}
+
 // AgentsCreatePlan describes the resources needed to provision a Horde agent
 // Auto Scaling Group. It is built from config + the existing coordinator state
 // (coordinator private IP for agent enrollment).
@@ -36,6 +65,9 @@ type AgentsCreatePlan struct {
 	CoordinatorPrivateIP string
 	// CoordinatorPort is the HTTP port of the Horde coordinator (default 5000).
 	CoordinatorPort int
+	// CoordinatorGRPCPort is the gRPC port agents use for enrollment traffic
+	// (default 5002).
+	CoordinatorGRPCPort int
 	// CoordinatorSGID is the security group ID of the coordinator, used as
 	// the source for agent → coordinator traffic.
 	CoordinatorSGID string
@@ -68,13 +100,13 @@ type AgentsCreatePlan struct {
 	CostResources []cost.Resource
 }
 
-// NewAgentsCreatePlan builds an AgentsCreatePlan from config and the
-// coordinator's private IP. The coordinator must already be provisioned.
-func NewAgentsCreatePlan(ctx context.Context, cfg config.HordeAgentsConfig, coordinatorIP string, coordinatorPort int, coordinatorSGID string, account, region string, resolver cloud.VPCResolver) (*AgentsCreatePlan, error) {
+// NewAgentsCreatePlan builds an AgentsCreatePlan from config and the live
+// coordinator reference. The coordinator must already be provisioned.
+func NewAgentsCreatePlan(ctx context.Context, cfg config.HordeAgentsConfig, coord CoordinatorRef, account, region string, resolver cloud.VPCResolver) (*AgentsCreatePlan, error) {
 	if cfg.AmiID == "" {
 		return nil, fmt.Errorf("horde.agents.amiId is required. Provide an AMI ID that contains the Horde agent software.\nSee: https://github.com/jpvelasco/fabrica/blob/main/docs/horde-agent-ami.md")
 	}
-	if coordinatorIP == "" {
+	if coord.PrivateIP == "" {
 		return nil, fmt.Errorf("coordinator private IP is not available. Ensure 'fabrica horde create' has been run and the coordinator instance is running")
 	}
 
@@ -109,12 +141,16 @@ func NewAgentsCreatePlan(ctx context.Context, cfg config.HordeAgentsConfig, coor
 		return nil, fmt.Errorf("agents minSize (%d) must not exceed maxSize (%d)", minSize, maxSize)
 	}
 
-	port := coordinatorPort
+	port := coord.Port
 	if port <= 0 {
-		port = 5000
+		port = DefaultPort
+	}
+	grpcPort := coord.GRPCPort
+	if grpcPort <= 0 {
+		grpcPort = DefaultGRPCPort
 	}
 
-	vpcID, subnetID, defaultVPC, err := topology.ResolveVPC(ctx, "", "", resolver)
+	vpcID, subnetID, defaultVPC, err := resolveAgentPlacement(ctx, cfg, coord, resolver)
 	if err != nil {
 		return nil, err
 	}
@@ -155,10 +191,11 @@ func NewAgentsCreatePlan(ctx context.Context, cfg config.HordeAgentsConfig, coor
 		VPCID:                vpcID,
 		SubnetID:             subnetID,
 		DefaultVPC:           defaultVPC,
-		CoordinatorPrivateIP: coordinatorIP,
+		CoordinatorPrivateIP: coord.PrivateIP,
 		CoordinatorPort:      port,
-		CoordinatorSGID:      coordinatorSGID,
-		SGName:               "fabrica-horde-agents-sg",
+		CoordinatorGRPCPort:  grpcPort,
+		CoordinatorSGID:      coord.SGID,
+		SGName:               DefaultAgentsSGName,
 		RoleName:             "fabrica-horde-agents-role",
 		InstanceProfileName:  "fabrica-horde-agents-profile",
 		LaunchTemplateName:   "fabrica-horde-agents-lt",
@@ -176,4 +213,21 @@ func NewAgentsCreatePlan(ctx context.Context, cfg config.HordeAgentsConfig, coor
 		ScaleInPolicyName:  "fabrica-horde-agents-scale-in-policy",
 		CostResources:      AgentsCostResources(cfg),
 	}, nil
+}
+
+// resolveAgentPlacement picks the VPC + subnet the agent pool launches in.
+// Explicit horde.agents.vpcId/subnetId win and must be set together;
+// otherwise the pool follows the coordinator's placement when both halves
+// are known; otherwise the account default VPC is resolved (legacy
+// behavior). A half-known placement is never mixed in — a coordinator VPC
+// with a default-VPC subnet (or vice versa) would break the agent SG and
+// the ASG.
+func resolveAgentPlacement(ctx context.Context, cfg config.HordeAgentsConfig, coord CoordinatorRef, resolver cloud.VPCResolver) (string, string, bool, error) {
+	if cfg.VPCID != "" || cfg.SubnetID != "" {
+		return topology.ResolveVPC(ctx, cfg.VPCID, cfg.SubnetID, nil)
+	}
+	if coord.VPCID != "" && coord.SubnetID != "" {
+		return coord.VPCID, coord.SubnetID, false, nil
+	}
+	return topology.ResolveVPC(ctx, "", "", resolver)
 }

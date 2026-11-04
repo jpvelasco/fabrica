@@ -35,8 +35,8 @@ func newDelete(runtimeSource globals.RuntimeSource, optionsSource globals.Option
 				out:       out,
 				confirm:   prompt.Confirm,
 			}
-			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = fabricastate.WriteState
+			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
+			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			if rt.Provider != nil {
 				if rr, ok := rt.Provider.(cloud.RemoteRunner); ok {
 					c.runRemote = rr.RunCommand
@@ -61,6 +61,9 @@ type deleteCommand struct {
 }
 
 func (c deleteCommand) run(ctx context.Context) error {
+	if err := perforce.ValidateBackupID(c.backupID); err != nil {
+		return err
+	}
 	ctx, releaseLock, err := provision.AcquireStateLockUnlessDryRun(ctx, c.runtime, "perforce backup delete", c.dryRun)
 	if err != nil {
 		return err

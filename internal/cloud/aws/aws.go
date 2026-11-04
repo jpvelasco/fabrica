@@ -20,7 +20,8 @@ type awsProvider struct {
 	awsCfg                   awsConfig
 	clients                  resourceClients
 	ec2                      ec2Service
-	resMu                    sync.Mutex // guards lazy init of clients/ec2 below
+	iam                      iamService
+	resMu                    sync.Mutex // guards lazy init of clients/ec2/iam below
 	loadConfig               stateBackendConfigLoader
 	newS3StateClient         stateBackendS3ClientFactory
 	newDynamoDBStateClient   stateBackendDynamoDBClientFactory
@@ -52,6 +53,8 @@ type resourceClients struct {
 	// carries the same request tags as the instance. Nil keeps Cloud Control.
 	volumeRequestTags map[string]string
 	instances         *ec2Service
+	// iam tags IAM instance profiles after create (Cloud Control cannot).
+	iam *iamService
 	// runInstances overrides the EC2 client in tests. Nil uses instances.
 	runInstances func(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error)
 	waitTimeout  time.Duration // 0 → defaultWaitTimeout
@@ -93,10 +96,12 @@ func newProvider(cfg *config.Config) (fabricac.Provider, error) {
 		cfg:    cfg,
 		awsCfg: awsCfg,
 		ec2:    ec2Service{awsCfg: awsCfg},
+		iam:    iamService{awsCfg: awsCfg},
 	}
 	p.clients.operatorTags = operatorTagsOf(cfg)
 	p.clients.volumeRequestTags = volumeRequestTagsOf(cfg)
 	p.clients.instances = &p.ec2
+	p.clients.iam = &p.iam
 	return p, nil
 }
 
@@ -192,11 +197,13 @@ func (p *awsProvider) WithRegion(_ context.Context, region string) (fabricac.Reg
 		cfg:    p.cfg,
 		awsCfg: scopedCfg,
 		ec2:    ec2Service{awsCfg: scopedCfg},
+		iam:    iamService{awsCfg: scopedCfg},
 	}
 	scoped.clients.operatorTags = p.clients.operatorTags
 	scoped.clients.volumeRequestTags = p.clients.volumeRequestTags
 	scoped.clients.instances = &scoped.ec2
-	return fabricac.RegionView{Resources: scoped.Resources(), VPCs: scoped}, nil
+	scoped.clients.iam = &scoped.iam
+	return fabricac.RegionView{Resources: scoped.Resources(), VPCs: scoped, Images: scoped}, nil
 }
 
 func init() {

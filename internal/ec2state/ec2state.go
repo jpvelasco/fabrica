@@ -6,8 +6,40 @@ package ec2state
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+// rootDeviceRE matches the root device names EC2 AMIs use: /dev/sda1 (Ubuntu,
+// most Canonical images), /dev/xvda (Amazon Linux), and the other sd/xvd
+// forms. Anything else is refused rather than guessed.
+var rootDeviceRE = regexp.MustCompile(`^/dev/(sd|xvd)[a-z]{1,2}[0-9]{0,2}$`)
+
+// ValidRootDeviceName reports whether name has the shape of an EC2 root
+// device name (/dev/sda1, /dev/xvda, ...).
+func ValidRootDeviceName(name string) bool {
+	return rootDeviceRE.MatchString(name)
+}
+
+// RootDeviceFor returns the device the encrypted root volume must be mapped
+// on, from the AMI's own RootDeviceName and RootDeviceType. subject names the
+// config key or launch source in error messages (for example "horde.amiId").
+// It fails closed: a missing or malformed root device name, or a root that is
+// not EBS, is an error, never a fallback to a default device. Mapping a name
+// that is not the AMI's root would attach a second, empty encrypted volume
+// and boot the real root from the snapshot unencrypted (#507).
+func RootDeviceFor(subject, amiID, rootDeviceName, rootDeviceType string) (string, error) {
+	if rootDeviceName == "" {
+		return "", fmt.Errorf("%s %s reports no root device name, so Fabrica cannot map an encrypted root volume onto it; refusing to launch", subject, amiID)
+	}
+	if !ValidRootDeviceName(rootDeviceName) {
+		return "", fmt.Errorf("%s %s reports root device %q, which is not an EC2 device name Fabrica can map an encrypted root volume onto; refusing to launch", subject, amiID, rootDeviceName)
+	}
+	if rootDeviceType != "ebs" {
+		return "", fmt.Errorf("%s %s has root device type %q; the module needs an EBS-backed AMI so its root volume can be encrypted", subject, amiID, rootDeviceType)
+	}
+	return rootDeviceName, nil
+}
 
 // InstanceSpec holds the common fields needed to build an EC2 instance's
 // Cloud Control desired-state document. UserData must already be base64 encoded.
@@ -92,6 +124,46 @@ func WithEncryptedVolume() DesiredStateOption {
 			return fmt.Errorf("cannot request an encrypted volume: EC2 block device mapping has no Ebs block")
 		}
 		ebs["Encrypted"] = true
+		return nil
+	}
+}
+
+// WithEncryptedRoot maps an encrypted root volume onto the AMI's own root
+// device. It finds the existing mapping that already carries rootDevice
+// (modules set it with WithDeviceName) and sets Encrypted=true there; when no
+// mapping carries the device (modules whose mapping is a data volume, such as
+// Perforce) it appends a root mapping. DeleteOnTermination is sent
+// explicitly: absent parses as false on the SDK launch path. It fails closed
+// on an empty or malformed device name and on a matching mapping without an
+// Ebs block, so Build never returns a desired state whose root stays
+// unencrypted (#507, #513).
+func WithEncryptedRoot(rootDevice string) DesiredStateOption {
+	return func(doc map[string]any) error {
+		if rootDevice == "" {
+			return fmt.Errorf("EC2 root device name is empty; refusing to map an encrypted root volume")
+		}
+		if !ValidRootDeviceName(rootDevice) {
+			return fmt.Errorf("EC2 root device %q is not a valid device name; refusing to map an encrypted root volume", rootDevice)
+		}
+		mappings, _ := doc["BlockDeviceMappings"].([]map[string]any)
+		for _, m := range mappings {
+			if m == nil || m["DeviceName"] != rootDevice {
+				continue
+			}
+			ebs, ok := m["Ebs"].(map[string]any)
+			if !ok || ebs == nil {
+				return fmt.Errorf("cannot request an encrypted root volume: EC2 block device mapping %s has no Ebs block", rootDevice)
+			}
+			ebs["Encrypted"] = true
+			return nil
+		}
+		doc["BlockDeviceMappings"] = append(mappings, map[string]any{
+			"DeviceName": rootDevice,
+			"Ebs": map[string]any{
+				"Encrypted":           true,
+				"DeleteOnTermination": true,
+			},
+		})
 		return nil
 	}
 }

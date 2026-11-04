@@ -13,6 +13,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/ci"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -71,8 +72,8 @@ With --dry-run, it shows the planned resources and estimated monthly cost.`,
 				assumeYes:  opts.AssumeYes,
 				out:        out,
 				costs:      fabricacost.Global,
-				readState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-				writeState: fabricastate.WriteState,
+				readState:  func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
+				writeState: provision.StateWriter(cmd.Context(), rt),
 				confirm:    prompt.Confirm,
 			}
 			if rt.Provider != nil {
@@ -106,7 +107,14 @@ func (c command) run(ctx context.Context) error {
 	// default HORDE_URL is populated. Not required for setup to succeed.
 	hordeURL := c.resolveHordeURL(ctx)
 
-	plan, err := ci.NewCreatePlan(ctx, c.runtime.Config.CI, account, region, hordeURL, provision.VPCResolver(c.runtime.Provider))
+	ciCfg := c.runtime.Config.CI
+	resolvedIAM, err := config.ResolveIAM(c.runtime.Config.Cloud.AWS.IAM, ciCfg.IAM)
+	if err != nil {
+		return err
+	}
+	ciCfg.IAM = resolvedIAM
+
+	plan, err := ci.NewCreatePlan(ctx, ciCfg, account, region, hordeURL, provision.VPCResolver(c.runtime.Provider))
 	if err != nil {
 		return fmt.Errorf("building CI plan: %w", err)
 	}
@@ -249,6 +257,9 @@ func (c command) printPlanDetails(plan *ci.CreatePlan) {
 	fmt.Fprintf(c.out, "  Account:       %s\n", plan.Account)
 	fmt.Fprintf(c.out, "  Region:        %s\n", plan.Region)
 	fmt.Fprintf(c.out, "  IAM role:      %s\n", plan.RoleName)
+	for _, line := range provision.IAMResourceLines(plan.IAM) {
+		fmt.Fprintf(c.out, "  %s\n", line)
+	}
 	fmt.Fprintf(c.out, "  CodeBuild:     %s (%s)\n", plan.ProjectName, plan.ComputeType)
 	if plan.HordeURL != "" {
 		fmt.Fprintf(c.out, "  Horde URL:     %s\n", plan.HordeURL)

@@ -83,6 +83,9 @@ Redis, or the full Horde server stack. Fabrica fails with a clear error if
 horde.agents.amiId is not set; it does not silently fall back to the
 coordinator AMI. See docs/horde-agent-ami.md for the build guide.
 
+The pool launches in the coordinator's VPC/subnet. Set horde.agents.vpcId and
+horde.agents.subnetId together to place the pool explicitly.
+
 Creates five resources in order:
   1. Security Group — no inbound from internet; coordinator SG allowed
   2. IAM Role — AmazonSSMManagedInstanceCore for SSM access
@@ -127,8 +130,8 @@ without making any AWS calls.`,
 				costs:             fabricacost.Global,
 				confirm:           prompt.ConfirmExact,
 			}
-			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = fabricastate.WriteState
+			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
+			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			if rt.Provider != nil {
 				c.createResource = rt.Provider.Resources().Create
 				c.deleteResource = rt.Provider.Resources().Delete
@@ -195,12 +198,25 @@ func (c command) run(ctx context.Context) error {
 	}
 
 	// Resolve coordinator details from state + Cloud Control.
-	coordIP, coordPort, coordSGID, err := c.resolveCoordinator(ctx)
+	coordIP, coordPort, coordSGID, placement, err := c.resolveCoordinator(ctx)
 	if err != nil {
 		return err
 	}
+	// A half-known placement is useless (the SG needs the VPC, the ASG needs
+	// the subnet), so fall back to the account default VPC and say so.
+	if (agentsCfg.VPCID == "" || agentsCfg.SubnetID == "") && (placement.VPCID == "" || placement.SubnetID == "") {
+		oplog.WithModule("horde-agents").Warn("could not determine the coordinator's VPC placement; agents launch in the account default VPC",
+			"hint", "set horde.agents.vpcId and horde.agents.subnetId in fabrica.yaml to place the pool explicitly")
+	}
 
-	plan, err := horde.NewAgentsCreatePlan(ctx, agentsCfg, coordIP, coordPort, coordSGID, account, region, provision.VPCResolver(c.runtime.Provider))
+	plan, err := horde.NewAgentsCreatePlan(ctx, agentsCfg, horde.CoordinatorRef{
+		PrivateIP: coordIP,
+		Port:      coordPort,
+		GRPCPort:  c.runtime.Config.Horde.GRPCPort,
+		SGID:      coordSGID,
+		VPCID:     placement.VPCID,
+		SubnetID:  placement.SubnetID,
+	}, account, region, provision.VPCResolver(c.runtime.Provider))
 	if err != nil {
 		return fmt.Errorf("building agents create plan: %w", err)
 	}
@@ -242,21 +258,27 @@ func (c command) run(ctx context.Context) error {
 	return c.applyCreate(ctx, st, plan)
 }
 
-func (c command) resolveCoordinator(ctx context.Context) (ip string, port int, sgID string, err error) {
+// resolveCoordinator returns the live coordinator details the agent pool
+// reaches: private IP, the coordinator HTTP port, the coordinator security
+// group, and the coordinator's VPC/subnet placement. Placement is resolved
+// live (state records identifiers, not placement): the subnet from the
+// instance and the VPC from the coordinator SG, whose Cloud Control actual
+// state is the only place the VPC ID is exposed.
+func (c command) resolveCoordinator(ctx context.Context) (ip string, port int, sgID string, placement horde.CoordinatorPlacement, err error) {
 	st, err := c.readState()
 	if err != nil {
-		return "", 0, "", fmt.Errorf("reading state for coordinator: %w", err)
+		return "", 0, "", horde.CoordinatorPlacement{}, fmt.Errorf("reading state for coordinator: %w", err)
 	}
 
 	m := st.GetModule(moduleName)
 	if m == nil {
-		return "", 0, "", fmt.Errorf("Horde coordinator is not provisioned. Run 'fabrica horde create' first before creating agents")
+		return "", 0, "", horde.CoordinatorPlacement{}, fmt.Errorf("Horde coordinator is not provisioned. Run 'fabrica horde create' first before creating agents")
 	}
 
 	// Get coordinator instance ID from state.
 	instRes, ok := stateutil.ResourceByType(m, cloud.TypeAWSEC2Instance)
 	if !ok || instRes.Identifier == "" {
-		return "", 0, "", fmt.Errorf("coordinator instance not found in state. Run 'fabrica horde create' first")
+		return "", 0, "", horde.CoordinatorPlacement{}, fmt.Errorf("coordinator instance not found in state. Run 'fabrica horde create' first")
 	}
 
 	// Get coordinator SG from state.
@@ -265,9 +287,9 @@ func (c command) resolveCoordinator(ctx context.Context) (ip string, port int, s
 		sgID = sgRes.Identifier
 	}
 
-	// Resolve private IP from Cloud Control.
+	// Resolve private IP + subnet from Cloud Control.
 	if c.getResource == nil {
-		return "", 0, "", fmt.Errorf("no provider available to resolve coordinator IP")
+		return "", 0, "", horde.CoordinatorPlacement{}, fmt.Errorf("no provider available to resolve coordinator IP")
 	}
 
 	cloudRes := &cloud.Resource{
@@ -275,18 +297,21 @@ func (c command) resolveCoordinator(ctx context.Context) (ip string, port int, s
 		Identifier: instRes.Identifier,
 	}
 	if err := c.getResource(ctx, cloudRes); err != nil {
-		return "", 0, "", fmt.Errorf("querying coordinator instance %s: %w", instRes.Identifier, err)
+		return "", 0, "", horde.CoordinatorPlacement{}, fmt.Errorf("querying coordinator instance %s: %w", instRes.Identifier, err)
 	}
 
 	var actual struct {
 		PrivateIPAddress string `json:"PrivateIpAddress"`
+		SubnetID         string `json:"SubnetId"`
 	}
 	if len(cloudRes.ActualState) == 0 {
-		return "", 0, "", fmt.Errorf("coordinator instance %s has no state data; try again shortly", instRes.Identifier)
+		return "", 0, "", horde.CoordinatorPlacement{}, fmt.Errorf("coordinator instance %s has no state data; try again shortly", instRes.Identifier)
 	}
 	if err := json.Unmarshal(cloudRes.ActualState, &actual); err != nil || actual.PrivateIPAddress == "" {
-		return "", 0, "", fmt.Errorf("could not determine coordinator private IP for instance %s", instRes.Identifier)
+		return "", 0, "", horde.CoordinatorPlacement{}, fmt.Errorf("could not determine coordinator private IP for instance %s", instRes.Identifier)
 	}
+	ip = actual.PrivateIPAddress
+	placement.SubnetID = actual.SubnetID
 
 	// Resolve port from config.
 	port = c.runtime.Config.Horde.Port
@@ -294,7 +319,27 @@ func (c command) resolveCoordinator(ctx context.Context) (ip string, port int, s
 		port = 5000
 	}
 
-	return actual.PrivateIPAddress, port, sgID, nil
+	// Resolve the coordinator's VPC from its security group (the VPC is not
+	// an instance attribute). A missing or unparseable SG state leaves the
+	// placement half-known; the plan falls back to the default VPC and the
+	// caller warns.
+	if sgID != "" {
+		sgCloudRes := &cloud.Resource{
+			TypeName:   cloud.TypeAWSEC2SecurityGroup,
+			Identifier: sgID,
+		}
+		if err := c.getResource(ctx, sgCloudRes); err != nil {
+			return "", 0, "", horde.CoordinatorPlacement{}, fmt.Errorf("querying coordinator security group %s: %w", sgID, err)
+		}
+		var sgActual struct {
+			VpcID string `json:"VpcId"`
+		}
+		if err := json.Unmarshal(sgCloudRes.ActualState, &sgActual); err == nil {
+			placement.VPCID = sgActual.VpcID
+		}
+	}
+
+	return ip, port, sgID, placement, nil
 }
 
 func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *horde.AgentsCreatePlan) error {
@@ -324,7 +369,8 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 
 	// 1b. Agent-to-coordinator ingress on the COORDINATOR security group.
 	// Agents dial the coordinator (HTTP enrollment + gRPC), so the rule must
-	// authorize coordinator inbound from the agent SG — not the reverse.
+	// authorize coordinator inbound from the agent SG — not the reverse. One
+	// Cloud Control resource per port.
 	if plan.CoordinatorSGID != "" {
 		fmt.Fprintln(c.out)
 		fmt.Fprintf(c.out, "Authorizing agents on coordinator security group %s...\n", plan.CoordinatorSGID)
@@ -338,6 +384,23 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		}, moduleName, ver, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 		if err != nil {
 			return fmt.Errorf("creating agent-to-coordinator ingress: %w", err)
+		}
+
+		// 1c. gRPC ingress — agents use the gRPC port for enrollment traffic.
+		// Skipped when it equals the HTTP port (the HTTP rule already covers
+		// it).
+		if plan.CoordinatorGRPCPort != plan.CoordinatorPort {
+			resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+				Label:    "Agent-to-coordinator gRPC ingress",
+				TypeName: cloud.TypeAWSEC2SecurityGroupIngress,
+				BuildDesiredState: func() ([]byte, error) {
+					return horde.AgentToCoordinatorGRPCIngressDesiredState(plan, sgID)
+				},
+				Properties: map[string]string{"role": "agent"},
+			}, moduleName, ver, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+			if err != nil {
+				return fmt.Errorf("creating agent-to-coordinator gRPC ingress: %w", err)
+			}
 		}
 	}
 
@@ -375,8 +438,9 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	// 4. Launch Template
 	fmt.Fprintf(c.out, "Creating launch template %s...\n", plan.LaunchTemplateName)
 	userData, err := horde.AgentUserData(horde.AgentUserDataConfig{
-		CoordinatorIP:   plan.CoordinatorPrivateIP,
-		CoordinatorPort: plan.CoordinatorPort,
+		CoordinatorIP:       plan.CoordinatorPrivateIP,
+		CoordinatorPort:     plan.CoordinatorPort,
+		CoordinatorGRPCPort: plan.CoordinatorGRPCPort,
 	})
 	if err != nil {
 		return fmt.Errorf("generating agent user data: %w", err)
@@ -538,6 +602,9 @@ func (c command) printDryRun(plan *horde.AgentsCreatePlan) {
 		{Key: "Desired capacity", Value: fmt.Sprintf("%d", plan.DesiredCapacity)},
 		{Key: "Max size", Value: fmt.Sprintf("%d", plan.MaxSize)},
 	}
+	if plan.VPCID != "" {
+		extraFields = append(extraFields, provision.PlanField{Key: "Placement", Value: plan.VPCID + " / " + plan.SubnetID})
+	}
 	if plan.ScalingEnabled {
 		extraFields = append(extraFields,
 			provision.PlanField{Key: "Scaling enabled", Value: "yes"},
@@ -583,16 +650,20 @@ func (c command) printDryRun(plan *horde.AgentsCreatePlan) {
 }
 
 func (c command) printApplyPlan(plan *horde.AgentsCreatePlan) {
+	fields := []provision.PlanField{
+		{Key: "Agent AMI ID", Value: plan.AmiID},
+		{Key: "Coordinator", Value: fmt.Sprintf("%s:%d", plan.CoordinatorPrivateIP, plan.CoordinatorPort)},
+		{Key: "Capacity", Value: fmt.Sprintf("%d/%d/%d (min/desired/max)", plan.MinSize, plan.DesiredCapacity, plan.MaxSize)},
+	}
+	if plan.VPCID != "" {
+		fields = append(fields, provision.PlanField{Key: "Placement", Value: plan.VPCID + " / " + plan.SubnetID})
+	}
 	provision.ApplyPlan(c.out, "Horde build agent pool", provision.PlanInfo{
 		Account:      plan.Account,
 		Region:       plan.Region,
 		InstanceType: plan.InstanceType,
 		VolumeSize:   0,
-	}, []provision.PlanField{
-		{Key: "Agent AMI ID", Value: plan.AmiID},
-		{Key: "Coordinator", Value: fmt.Sprintf("%s:%d", plan.CoordinatorPrivateIP, plan.CoordinatorPort)},
-		{Key: "Capacity", Value: fmt.Sprintf("%d/%d/%d (min/desired/max)", plan.MinSize, plan.DesiredCapacity, plan.MaxSize)},
-	}, append([]string{
+	}, fields, append([]string{
 		"Agent Security Group:   " + plan.SGName,
 		"Agent IAM Role:         " + plan.RoleName,
 		"Agent Instance Profile: " + plan.InstanceProfileName,

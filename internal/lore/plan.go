@@ -47,6 +47,11 @@ type CreatePlan struct {
 	SGName       string
 	InstanceName string
 
+	// RootDeviceName is the AMI's root device name (for example /dev/sda1),
+	// read from the AMI at create time. The encrypted root volume mapping is
+	// built on it; empty refuses launch (fail-closed, #513).
+	RootDeviceName string
+
 	// S3 store (optional, enabled when storeBackend is "s3").
 	StoreBackend        string
 	StoreBucket         string
@@ -63,9 +68,33 @@ type CreatePlan struct {
 	CostResources []cost.Resource
 }
 
+// RequiredResources lists the resource TypeNames a complete Lore module
+// records in state, including the S3 store resources when the plan uses the
+// s3 store backend. Create retries compare a module's recorded inventory
+// against this list to separate a fully provisioned module (in any
+// transitional status) from a partial one.
+func (p CreatePlan) RequiredResources() []string {
+	required := []string{
+		cloud.TypeAWSEC2SecurityGroup,
+		cloud.TypeAWSIAMRole,
+		cloud.TypeAWSIAMInstanceProfile,
+		cloud.TypeAWSEC2Instance,
+	}
+	if p.StoreBackend == StoreBackendS3 {
+		required = append(required, cloud.TypeAWSS3Bucket)
+		for range p.StoreTables {
+			required = append(required, cloud.TypeAWSDynamoDBTable)
+		}
+	}
+	return required
+}
+
 // DefaultAllowedCIDR is the security-group fallback when no explicit CIDR is
 // configured and the VPC CIDR cannot be resolved.
 const DefaultAllowedCIDR = "10.0.0.0/8"
+
+// DefaultSGName is the Lore security group name.
+const DefaultSGName = "fabrica-lore-sg"
 
 // NewCreatePlan validates inputs and builds a CreatePlan. VPCResolver is called
 // only when VPCId/SubnetId are absent from cfg; pass nil to skip resolution
@@ -113,7 +142,7 @@ func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region s
 		VPCID:               vpcID,
 		SubnetID:            subnetID,
 		DefaultVPC:          defaultVPC,
-		SGName:              "fabrica-lore-sg",
+		SGName:              DefaultSGName,
 		InstanceName:        "fabrica-lore",
 		StoreBackend:        storeBackend,
 		StoreBucket:         storeBucket,

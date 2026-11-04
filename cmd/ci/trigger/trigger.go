@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -21,6 +22,7 @@ import (
 const (
 	moduleName   = "ci"
 	hordeModule  = "horde"
+	lineWidth    = 58 // match deploy promote's dry-run header width
 	waitInterval = 15 * time.Second
 	waitDeadline = 60 * time.Minute
 	defaultPort  = 5000
@@ -31,6 +33,7 @@ const (
 type command struct {
 	runtime        globals.Runtime
 	buildGraphPath string
+	dryRun         bool
 	wait           bool
 	out            io.Writer
 
@@ -59,6 +62,9 @@ Use --wait / -w to poll until the build reaches a terminal state (60m timeout).`
 		Example: `  # Fire-and-forget — prints a build ID you can track later:
   fabrica ci trigger BuildGraph.xml
 
+  # Preview what would be submitted without starting a build:
+  fabrica ci trigger BuildGraph.xml --dry-run
+
   # Block until the build finishes (or 60m timeout), exit non-zero on failure:
   fabrica ci trigger BuildGraph.xml --wait
 
@@ -70,12 +76,14 @@ Use --wait / -w to poll until the build reaches a terminal state (60m timeout).`
 			if err != nil {
 				return err
 			}
+			opts := optionsSource()
 			c := command{
 				runtime:        rt,
 				buildGraphPath: args[0],
+				dryRun:         opts.DryRun,
 				wait:           wait,
 				out:            out,
-				readState:      func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				readState:      func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
 				waitCtx:        provision.WaitInterval,
 				now:            time.Now,
 			}
@@ -129,6 +137,11 @@ func (c command) run(ctx context.Context) error {
 		"HORDE_URL":  hordeURL,
 	}
 
+	if c.dryRun {
+		c.printDryRun(job, project, hordeURL)
+		return nil
+	}
+
 	buildID, err := c.runner.StartBuild(ctx, project, env)
 	if err != nil {
 		return fmt.Errorf("starting build: %w", err)
@@ -142,6 +155,17 @@ func (c command) run(ctx context.Context) error {
 		return nil
 	}
 	return c.pollUntilDone(ctx, buildID)
+}
+
+// printDryRun previews the build start without touching CodeBuild or Horde.
+func (c command) printDryRun(job *buildgraph.BuildGraphJob, project, hordeURL string) {
+	fmt.Fprintln(c.out, "CI trigger (dry run)")
+	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
+	fmt.Fprintf(c.out, "  job:      %s\n", job.Name)
+	fmt.Fprintf(c.out, "  target:   %s\n", job.Target)
+	fmt.Fprintf(c.out, "  project:  %s\n", project)
+	fmt.Fprintf(c.out, "  horde:    %s\n", hordeURL)
+	fmt.Fprintln(c.out, "Run without --dry-run to start the build.")
 }
 
 func (c command) resolveProject(st *fabricastate.State) (string, error) {

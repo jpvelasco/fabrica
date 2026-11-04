@@ -11,6 +11,27 @@ aws ec2 copy-image --source-region us-east-1 --region eu-west-1 \
 
 Then pass the copy (or set `ddc.amiId` in `fabrica.yaml`) when adding the region. Edge nodes reuse the home blob bucket and the global instance profile; there is no replication-peer automation — peer/replication wiring is operator-managed.
 
+## EBS root volume encryption
+
+`fabrica ddc setup` inspects the root device of `ddc.amiId` — and of
+`ddc.scyllaAmiId` when the backend is `scylla` — and requests each AMI's real
+root device with `Encrypted=true` on both launch paths (Cloud Control and the
+direct `RunInstances` path). `fabrica ddc region add` inspects the edge AMI the
+same way through the edge region's client. The root volume is encrypted even
+when the AMI's snapshot is unencrypted and the account's default EBS encryption
+is off.
+
+The command fails closed, before the state lock and any resource or state is
+written, when an AMI reports no root device name, a name that is not an EC2
+device name, or a root that is not EBS, and when the provider (or the edge
+region's client) cannot inspect the AMI at all.
+
+Fabrica sets no `KmsKeyId`, so EBS uses the account's default EBS encryption
+key: the AWS managed key `aws/ebs`, or the account's default CMK if one is
+configured. The root device names are recorded in module state
+(`Properties.rootDevice`) and `drift --fix` rebuilds map the encrypted root
+from them.
+
 ## Required (zen — default)
 
 - Unreal Cloud DDC (Jupiter) binary or container entrypoint
@@ -85,6 +106,8 @@ SSM-verified `ddc setup`/`status`/`destroy` before the AMI is trusted.
 
 ### Bake (Image Builder, preferred)
 
+Guardrailed accounts: the bake needs the request-tag-gated Image Builder grant in [guardrailed-accounts.md](guardrailed-accounts.md#operator-policy-minimal-example); pass `--tags`/`--resource-tags` with `ManagedBy=fabrica` on each create.
+
 `fabrica ddc ami build` is local-only (writes `build-guide.md` only). Drive
 Image Builder directly, using the same boto3-based flow proven by the Horde
 and Lore bakes in this account:
@@ -103,8 +126,10 @@ and Lore bakes in this account:
    infrastructureConfigurationArn, tags)` — there is no `start_image_build`
    API. Track it with `get_image(imageBuildVersionArn=...)` and poll
    `state.status` to `AVAILABLE` (not `SUCCESS`); the AMI id is in
-   `outputResources.amis[0].image`. Tag the build
-   `ManagedBy=fabrica`/`FabricaModule=ddc` so it is visible to sweeps.
+   `outputResources.amis[0].image`. Tag the build, the AMI, and the AMI's
+   snapshots `ManagedBy=fabrica`/`FabricaModule=ddc` so all of them are
+   visible to sweeps — Image Builder tags the build and the AMI, but not the
+   snapshots it takes (`create-tags` each snapshot id from `describe-images`).
 5. Poll to a terminal state and clean up failed candidates — never reuse a
    failed bake as known-good.
 

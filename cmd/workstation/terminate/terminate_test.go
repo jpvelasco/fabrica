@@ -172,6 +172,15 @@ func TestResourceOrderSkipsMalformedParameterName(t *testing.T) {
 	}
 }
 
+// TestSpecLocalCleanupFile pins the #511 wiring: a fully successful teardown
+// removes the local DCV credentials record, and the path comes from the
+// module's shared constant so create and terminate cannot drift apart.
+func TestSpecLocalCleanupFile(t *testing.T) {
+	if spec.LocalCleanupFile != workstation.CredentialsFile {
+		t.Fatalf("spec.LocalCleanupFile = %q, want %q", spec.LocalCleanupFile, workstation.CredentialsFile)
+	}
+}
+
 func TestNewTeardownSpecStrings(t *testing.T) {
 	tc := teardown.Command{Spec: spec}
 

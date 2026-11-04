@@ -26,8 +26,11 @@ const (
 	defaultComputeType  = "BUILD_GENERAL1_SMALL"
 	defaultImage        = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
 	defaultBuildTimeout = 60
-	defaultSGName       = "fabrica-ci-sg"
 )
+
+// DefaultSGName is the CI project security group name (no inbound rules;
+// CodeBuild egresses to the coordinator only).
+const DefaultSGName = "fabrica-ci-sg"
 
 // CreatePlan is the resolved CI provisioning plan for one account/region.
 type CreatePlan struct {
@@ -51,6 +54,9 @@ type CreatePlan struct {
 	SubnetID string
 	SGName   string
 
+	// IAM is the resolved path and permissions boundary for the CodeBuild role.
+	IAM config.IAM
+
 	CostResources []cost.Resource
 }
 
@@ -60,6 +66,9 @@ type CreatePlan struct {
 // SubnetId are absent from cfg, so the project can be placed inside a VPC;
 // pass nil to skip resolution (explicit VPC values, or tests).
 func NewCreatePlan(ctx context.Context, cfg config.CIConfig, account, region, hordeURL string, resolver cloud.VPCResolver) (*CreatePlan, error) {
+	if err := cfg.IAM.Validate(); err != nil {
+		return nil, err
+	}
 	projectName := cfg.ProjectName
 	if projectName == "" {
 		projectName = defaultProjectName
@@ -93,7 +102,8 @@ func NewCreatePlan(ctx context.Context, cfg config.CIConfig, account, region, ho
 		HordeURL:      hordeURL,
 		VPCID:         vpcID,
 		SubnetID:      subnetID,
-		SGName:        defaultSGName,
+		SGName:        DefaultSGName,
+		IAM:           cfg.IAM,
 		CostResources: CostResources(cfg),
 	}, nil
 }

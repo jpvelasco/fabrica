@@ -314,7 +314,7 @@ func TestDriftCobraExtraResource(t *testing.T) {
 		},
 		ListResult: []cloud.Resource{
 			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123"},
-			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-extra"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-extra", ActualState: json.RawMessage(`{"Tags":[{"Key":"ManagedBy","Value":"fabrica"}]}`)},
 		},
 	}
 
@@ -417,12 +417,17 @@ func TestDriftCobraFixDryRun(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
+	testutil.WriteHordeCredentials(t, dir, "test-pass")
 	testutil.WriteStateFile(t, dir, testutil.NewProvisionedStateJSON(
 		testutil.StateModule{
-			Name:      "horde",
-			Version:   "ami-fake",
-			Status:    "ready",
-			Resources: testutil.EC2Pair("sg-123", "i-123"),
+			Name:    "horde",
+			Version: "ami-fake",
+			Status:  "ready",
+			Resources: []testutil.StateResource{
+				{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
+				{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]any{"rootDevice": "/dev/sda1"}},
+				{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
+			},
 		},
 	))
 
@@ -614,10 +619,14 @@ func TestDriftCobraConfirmReject(t *testing.T) {
 
 	testutil.WriteStateFile(t, dir, testutil.NewProvisionedStateJSON(
 		testutil.StateModule{
-			Name:      "horde",
-			Version:   "ami-fake",
-			Status:    "ready",
-			Resources: testutil.EC2Pair("sg-123", "i-123"),
+			Name:    "horde",
+			Version: "ami-fake",
+			Status:  "ready",
+			Resources: []testutil.StateResource{
+				{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
+				{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-123", Properties: map[string]any{"rootDevice": "/dev/sda1"}},
+				{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-horde-profile"},
+			},
 		},
 	))
 

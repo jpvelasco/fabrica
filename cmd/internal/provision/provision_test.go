@@ -2,6 +2,9 @@ package provision
 
 import (
 	"bytes"
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -38,7 +41,7 @@ func TestPrintConfirmInstructions(t *testing.T) {
 func TestReadState_NilConfigDefaultsToEmpty(t *testing.T) {
 	// No config and no state file: returns a fresh state with empty account/region.
 	t.Chdir(t.TempDir())
-	st, err := ReadState(globals.Runtime{})
+	st, err := ReadState(context.Background(), globals.Runtime{})
 	if err != nil {
 		t.Fatalf("ReadState: %v", err)
 	}
@@ -57,12 +60,93 @@ func TestReadState_SeedsAccountRegionFromConfig(t *testing.T) {
 	cfg.Cloud.AWS.AccountID = "123456789012"
 	cfg.Cloud.AWS.Region = "eu-west-1"
 
-	st, err := ReadState(globals.Runtime{Config: cfg})
+	st, err := ReadState(context.Background(), globals.Runtime{Config: cfg})
 	if err != nil {
 		t.Fatalf("ReadState: %v", err)
 	}
 	if st.Account != "123456789012" || st.Region != "eu-west-1" {
 		t.Errorf("account/region = %q/%q, want from config", st.Account, st.Region)
+	}
+}
+
+func TestReadState_RejectsMismatchedAccount(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	// Seed the default state file with a different account.
+	st := fabricastate.NewState("111111111111", "us-east-1")
+	if err := fabricastate.WriteState(st); err != nil {
+		t.Fatalf("WriteState: %v", err)
+	}
+
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = "222222222222"
+	_, err := ReadState(context.Background(), globals.Runtime{Config: cfg})
+	if err == nil {
+		t.Fatal("expected account mismatch error, got nil")
+	}
+	if !strings.Contains(err.Error(), "state target mismatch") {
+		t.Errorf("error = %v, want target mismatch", err)
+	}
+}
+
+func TestReadState_ProfileUsesNamespacedFile(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = "222222222222"
+	cfg.Cloud.AWS.Region = "eu-west-1"
+	rt := globals.Runtime{Config: cfg, ConfigPath: "fabrica-prod.yaml"}
+
+	st, err := ReadState(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("ReadState: %v", err)
+	}
+	if st.Account != "222222222222" || st.Region != "eu-west-1" {
+		t.Errorf("account/region = %q/%q, want from config", st.Account, st.Region)
+	}
+
+	if err := StateWriter(context.Background(), rt)(st); err != nil {
+		t.Fatalf("StateWriter: %v", err)
+	}
+
+	profilePath := filepath.Join(".fabrica", "state-prod.json")
+	if _, err := os.Stat(profilePath); err != nil {
+		t.Errorf("expected %s to exist: %v", profilePath, err)
+	}
+	if _, err := os.Stat(fabricastate.DefaultStateFile); !os.IsNotExist(err) {
+		t.Errorf("default state file must stay untouched, stat err = %v", err)
+	}
+}
+
+func TestStatePath(t *testing.T) {
+	if got, want := StatePath(globals.Runtime{}), fabricastate.DefaultStateFile; got != want {
+		t.Errorf("StatePath(default) = %q, want %q", got, want)
+	}
+	rt := globals.Runtime{ConfigPath: "fabrica-prod.yaml"}
+	if got, want := StatePath(rt), filepath.Join(".fabrica", "state-prod.json"); got != want {
+		t.Errorf("StatePath(profile) = %q, want %q", got, want)
+	}
+}
+
+func TestStateWriter_WritesToProfileFile(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	rt := globals.Runtime{ConfigPath: "fabrica-staging.yaml"}
+	writer := StateWriter(context.Background(), rt)
+	st := fabricastate.NewState("333333333333", "ap-southeast-2")
+	if err := writer(st); err != nil {
+		t.Fatalf("StateWriter: %v", err)
+	}
+
+	got, err := fabricastate.ReadStateFile(filepath.Join(".fabrica", "state-staging.json"), "", "")
+	if err != nil {
+		t.Fatalf("ReadStateFile: %v", err)
+	}
+	if got.Account != "333333333333" {
+		t.Errorf("profile file account = %q, want 333333333333", got.Account)
+	}
+	if _, err := os.Stat(fabricastate.DefaultStateFile); !os.IsNotExist(err) {
+		t.Errorf("default state file must stay untouched, stat err = %v", err)
 	}
 }
 

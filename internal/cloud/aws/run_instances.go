@@ -87,7 +87,7 @@ func (c *resourceClients) createInstanceWithVolumeTags(ctx context.Context, r *f
 		r.Identifier = id
 		return nil
 	}
-	input, err := runInstancesInput(r.DesiredState, c.volumeRequestTags, c.runInstancesClientToken(r))
+	input, err := BuildRunInstancesInput(r.DesiredState, c.volumeRequestTags, c.runInstancesClientToken(r))
 	if err != nil {
 		return err
 	}
@@ -297,9 +297,11 @@ func verifyAdoptedInstance(inst types.Instance, desired json.RawMessage) error {
 }
 
 // instanceProfileNameFromARN extracts the profile name from the instance's
-// profile ARN (arn:aws:iam::<account>:instance-profile/<name>). The EC2
+// profile ARN (arn:aws:iam::<account>:instance-profile/<path>/<name>). The EC2
 // response carries only the ARN and ID — no name — so the suffix is the
-// identity adoption compares against the desired state. Empty for an absent
+// identity adoption compares against the desired state. The IAM path is not
+// part of the profile name (entity names cannot contain "/"), so a
+// path-qualified ARN contributes its last segment only. Empty for an absent
 // profile or an ARN without the expected shape.
 func instanceProfileNameFromARN(p *types.IamInstanceProfile) string {
 	if p == nil {
@@ -308,7 +310,11 @@ func instanceProfileNameFromARN(p *types.IamInstanceProfile) string {
 	arn := aws.ToString(p.Arn)
 	const marker = "instance-profile/"
 	if i := strings.LastIndex(arn, marker); i >= 0 {
-		return arn[i+len(marker):]
+		name := arn[i+len(marker):]
+		if j := strings.LastIndex(name, "/"); j >= 0 {
+			name = name[j+1:]
+		}
+		return name
 	}
 	return ""
 }
@@ -366,7 +372,14 @@ type ccInstanceDoc struct {
 // instead of silently clamping.
 const maxIMDSv2HopLimit = 64
 
-func runInstancesInput(desired json.RawMessage, volumeTags map[string]string, clientToken string) (*ec2.RunInstancesInput, error) {
+// BuildRunInstancesInput builds the EC2 RunInstances request the volume-tag
+// fallback launches with, from the Cloud Control desired-state document:
+// image and type, a capacity of one, IMDSv2 required, tag specifications for
+// the instance and its volumes, and the block device mappings with the
+// Encrypted flag carried exactly as the desired state writes it. Exported so
+// the e2e fake provider can capture the fallback's request shape without a
+// real EC2 client.
+func BuildRunInstancesInput(desired json.RawMessage, volumeTags map[string]string, clientToken string) (*ec2.RunInstancesInput, error) {
 	var doc ccInstanceDoc
 	if err := json.Unmarshal(desired, &doc); err != nil {
 		return nil, fmt.Errorf("reading EC2 instance desired state: %w", err)

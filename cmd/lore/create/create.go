@@ -13,6 +13,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/credentials"
+	"github.com/jpvelasco/fabrica/internal/ec2state"
 	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/jpvelasco/fabrica/internal/oplog"
 	"github.com/jpvelasco/fabrica/internal/prompt"
@@ -39,6 +40,7 @@ type command struct {
 	readState      func() (*fabricastate.State, error)
 	writeState     func(*fabricastate.State) error
 	createResource func(ctx context.Context, r *cloud.Resource) error
+	inspectImage   func(ctx context.Context, imageID string) (cloud.ImageInfo, error)
 }
 
 // New returns the "lore create" subcommand.
@@ -64,8 +66,10 @@ Store backend:
   - "s3": S3 + DynamoDB-backed store (versioned bucket, four DynamoDB tables,
     and an IAM role with matching S3 + DynamoDB permissions plus SSM)
 
-State is written after each resource so a partial failure is recoverable:
-re-running create will detect the already-provisioned module and exit cleanly.
+State is written after each resource, so an interrupted create leaves a
+recoverable record. Re-running create on a complete module exits cleanly; on
+a partial one it fails and names the missing resources plus the cleanup
+command to run first.
 
 Connection notes are written to .fabrica/lore-credentials.yaml.
 Set lore.tls.enabled and bake cert/key files into the AMI to enable TLS.
@@ -89,10 +93,13 @@ making any AWS calls.`,
 				costs:        fabricacost.Global,
 				confirm:      prompt.ConfirmExact,
 			}
-			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = fabricastate.WriteState
+			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
+			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			if rt.Provider != nil {
 				c.createResource = rt.Provider.Resources().Create
+				if insp, ok := rt.Provider.(cloud.ImageInspector); ok {
+					c.inspectImage = insp.DescribeImage
+				}
 			}
 			return c.run(cmd.Context())
 		},
@@ -133,22 +140,51 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("building create plan: %w", err)
 	}
 
+	rootDevice, err := c.inspectAMI(ctx, plan.AmiID)
+	if err != nil {
+		return err
+	}
+	if rootDevice == "" && !c.dryRun {
+		// Without the AMI's own root device there is no way to put the
+		// encrypted mapping on the real root; a guessed device would boot the
+		// root unencrypted from the snapshot (#507, #513). Fail before any write.
+		return fmt.Errorf("cannot read the root device of lore.amiId %s (the provider cannot inspect AMIs), so the root volume cannot be encrypted; refusing to launch", plan.AmiID)
+	}
+	plan.RootDeviceName = rootDevice
+
 	return provision.RunCreate(ctx, provision.CreateSpec[*lore.CreatePlan]{
-		ModuleName:      moduleName,
-		Account:         account,
-		Plan:            plan,
-		DryRun:          c.dryRun,
-		AssumeYes:       c.assumeYes,
-		Out:             c.out,
-		ExistingMessage: "Lore is already provisioned. Run 'fabrica lore status' to check health.\nUse 'fabrica lore destroy' to remove it first.\n",
-		Confirm:         c.confirm,
-		ReadState:       c.readState,
-		PrintDryRun:     c.printDryRun,
-		PrintApplyPlan:  c.printApplyPlan,
-		Apply:           c.applyCreate,
-		Runtime:         c.runtime,
-		Operation:       "lore create",
+		ModuleName:        moduleName,
+		Account:           account,
+		Plan:              plan,
+		DryRun:            c.dryRun,
+		AssumeYes:         c.assumeYes,
+		Out:               c.out,
+		ExistingMessage:   "Lore is already provisioned. Run 'fabrica lore status' to check health.\nUse 'fabrica lore destroy' to remove it first.\n",
+		ReadyStatuses:     []string{"ready"},
+		RequiredResources: plan.RequiredResources(),
+		CleanupCommand:    "fabrica lore destroy",
+		Confirm:           c.confirm,
+		ReadState:         c.readState,
+		PrintDryRun:       c.printDryRun,
+		PrintApplyPlan:    c.printApplyPlan,
+		Apply:             c.applyCreate,
+		Runtime:           c.runtime,
+		Operation:         "lore create",
 	})
+}
+
+// inspectAMI reads the AMI's root device so the encrypted root mapping lands
+// on the real root (#513). A provider that cannot inspect AMIs returns an
+// empty device; run refuses to apply in that case.
+func (c command) inspectAMI(ctx context.Context, amiID string) (string, error) {
+	if c.inspectImage == nil {
+		return "", nil
+	}
+	info, err := c.inspectImage(ctx, amiID)
+	if err != nil {
+		return "", fmt.Errorf("inspecting lore.amiId %s: %w", amiID, err)
+	}
+	return ec2state.RootDeviceFor("lore.amiId", amiID, info.RootDeviceName, info.RootDeviceType)
 }
 
 func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *lore.CreatePlan) error {
@@ -213,6 +249,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		Properties: map[string]string{
 			"instanceType": plan.InstanceType,
 			"volumeSize":   strconv.Itoa(plan.VolumeSize),
+			"rootDevice":   plan.RootDeviceName,
 		},
 		PostCreate: provision.TagVolumesPostCreate(c.runtime.Provider, "lore", plan.InstanceName),
 		// fail on writeState error (default)
@@ -313,6 +350,16 @@ func (c command) printDryRun(plan *lore.CreatePlan) {
 		"Instance Profile: "+plan.InstanceProfileName,
 	)
 	resources = append(resources, provision.IAMResourceLines(plan.IAM)...)
+	extraFields := append([]provision.PlanField{
+		{Key: "AMI ID", Value: plan.AmiID},
+		{Key: "gRPC/QUIC port", Value: fmt.Sprintf("%d (tcp+udp)", plan.GRPCPort)},
+		{Key: "HTTP port", Value: fmt.Sprintf("%d", plan.HTTPPort)},
+		{Key: "Store backend", Value: plan.StoreBackend},
+		{Key: "Allowed CIDR", Value: plan.AllowedCIDR},
+	}, tlsPlanFields(plan)...)
+	if plan.RootDeviceName != "" {
+		extraFields = append(extraFields, provision.PlanField{Key: "Root volume", Value: plan.RootDeviceName + " (encrypted)"})
+	}
 	provision.DryRun(c.out, provision.DryRunSpec{
 		Title: "Lore loreserver",
 		Info: provision.PlanInfo{
@@ -324,13 +371,7 @@ func (c command) printDryRun(plan *lore.CreatePlan) {
 			VPCID:        plan.VPCID,
 			DefaultVPC:   plan.DefaultVPC,
 		},
-		ExtraFields: append([]provision.PlanField{
-			{Key: "AMI ID", Value: plan.AmiID},
-			{Key: "gRPC/QUIC port", Value: fmt.Sprintf("%d (tcp+udp)", plan.GRPCPort)},
-			{Key: "HTTP port", Value: fmt.Sprintf("%d", plan.HTTPPort)},
-			{Key: "Store backend", Value: plan.StoreBackend},
-			{Key: "Allowed CIDR", Value: plan.AllowedCIDR},
-		}, tlsPlanFields(plan)...),
+		ExtraFields:   extraFields,
 		Resources:     resources,
 		CostResources: plan.CostResources,
 		Costs:         c.costs,

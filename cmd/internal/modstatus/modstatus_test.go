@@ -114,8 +114,8 @@ func newTestCommand(out *bytes.Buffer, st *fabricastate.State, rr *recordingRend
 		SleepCtx: func(context.Context, time.Duration) error { return nil },
 		Now:      time.Now,
 	}
-	c.ReadState = func() (*fabricastate.State, error) { return st, nil }
-	c.WriteState = func(_ *fabricastate.State) error { return nil }
+	c.ReadState = func(_ context.Context) (*fabricastate.State, error) { return st, nil }
+	c.WriteState = func(_ context.Context, _ *fabricastate.State) error { return nil }
 	c.GetResource = getResource
 	if probe != nil {
 		c.ProbeTCP = probe
@@ -217,7 +217,7 @@ func TestRunProbeSuccessTransitionsToReady(t *testing.T) {
 	st := moduleState("provisioning", true)
 	var writtenStatus string
 	c := newTestCommand(&out, st, rr, runningInstance, func(string) bool { return true })
-	c.WriteState = func(s *fabricastate.State) error {
+	c.WriteState = func(_ context.Context, s *fabricastate.State) error {
 		if m := s.GetModule("perforce"); m != nil {
 			writtenStatus = m.Status
 		}
@@ -241,7 +241,7 @@ func TestRunAlreadyReadyNoStateWrite(t *testing.T) {
 	st := moduleState("ready", true)
 	stateWritten := false
 	c := newTestCommand(&out, st, rr, runningInstance, func(string) bool { return true })
-	c.WriteState = func(_ *fabricastate.State) error {
+	c.WriteState = func(_ context.Context, _ *fabricastate.State) error {
 		stateWritten = true
 		return nil
 	}
@@ -291,7 +291,7 @@ func TestRunReadStateError(t *testing.T) {
 	var out bytes.Buffer
 	rr := &recordingRenderer{}
 	c := newTestCommand(&out, nil, rr, nil, nil)
-	c.ReadState = func() (*fabricastate.State, error) {
+	c.ReadState = func(_ context.Context) (*fabricastate.State, error) {
 		return nil, errors.New("disk failure")
 	}
 
@@ -307,7 +307,7 @@ func TestRunWriteStateErrorSurfacedAsWarning(t *testing.T) {
 	rr := &recordingRenderer{}
 	st := moduleState("provisioning", true)
 	c := newTestCommand(&out, st, rr, runningInstance, func(string) bool { return true })
-	c.WriteState = func(_ *fabricastate.State) error {
+	c.WriteState = func(_ context.Context, _ *fabricastate.State) error {
 		return errors.New("disk full")
 	}
 

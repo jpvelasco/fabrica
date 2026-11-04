@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	codebuildtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
+	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
 )
 
 var _ fabricac.CodeBuildRunner = (*awsProvider)(nil)
@@ -74,7 +75,7 @@ func (p *awsProvider) EnsureProject(ctx context.Context, spec fabricac.CodeBuild
 		specTags["FabricaVersion"] = p.clients.version
 	}
 	for k, v := range p.clients.operatorTags {
-		if isReservedTagKey(k) {
+		if fabricatags.IdentityKey(k) {
 			continue
 		}
 		specTags[k] = v

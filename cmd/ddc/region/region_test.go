@@ -115,9 +115,25 @@ func TestRunAdd(t *testing.T) {
 	for _, r := range m.Resources {
 		if r.TypeName == cloud.TypeAWSEC2SecurityGroup && r.Properties["region"] == "eu-west-1" && r.Properties["role"] == ddc.RoleEdge {
 			edgeSG = true
+			// The recorded VPC lets `fabrica drift --fix` rebuild the group
+			// in its own region without falling back to the home VPC.
+			if r.Properties["vpcId"] != "vpc-fake" {
+				t.Errorf("edge SG vpcId = %q, want vpc-fake", r.Properties["vpcId"])
+			}
 		}
 		if r.TypeName == cloud.TypeAWSEC2Instance && r.Properties["region"] == "eu-west-1" && r.Properties["role"] == ddc.RoleEdge {
 			edgeInstance = true
+			// The recorded AMI/subnet/VPC let `fabrica drift --fix` rebuild
+			// the instance from region-specific inputs.
+			if r.Properties["imageId"] != "ami-ddc" {
+				t.Errorf("edge instance imageId = %q, want ami-ddc", r.Properties["imageId"])
+			}
+			if r.Properties["subnetId"] != "subnet-fake" {
+				t.Errorf("edge instance subnetId = %q, want subnet-fake", r.Properties["subnetId"])
+			}
+			if r.Properties["vpcId"] != "vpc-fake" {
+				t.Errorf("edge instance vpcId = %q, want vpc-fake", r.Properties["vpcId"])
+			}
 		}
 	}
 	if !edgeSG || !edgeInstance {
@@ -193,11 +209,61 @@ func TestRunConfirmReject(t *testing.T) {
 // simulating an older or minimal provider that cannot host edge regions.
 type legacyProvider struct{ inner *testutil.TestProvider }
 
+// A region view that cannot inspect AMIs cannot prove the root volume would
+// boot encrypted, so the region add refuses before any state read or create
+// (#513).
+func TestRunRefusesWithoutImageInspector(t *testing.T) {
+	var buf bytes.Buffer
+	st := provisionedState()
+	c := testCommand(&buf, st, nil)
+	c.withRegion = func(_ context.Context, _ string) (cloud.RegionView, error) {
+		return cloud.RegionView{
+			VPCs: &testutil.TestVPCResolver{VPCID: "vpc-fake", SubnetID: "subnet-fake"},
+		}, nil
+	}
+	c.readState = func() (*fabricastate.State, error) {
+		t.Fatal("refuse must precede state read")
+		return nil, nil
+	}
+	err := c.run(context.Background(), "eu-west-1")
+	if err == nil || !strings.Contains(err.Error(), "cannot read the root device of the DDC edge AMI ami-ddc in eu-west-1") || !strings.Contains(err.Error(), "refusing to launch") {
+		t.Fatalf("err = %v, want inspector-less refuse", err)
+	}
+}
+
+func TestRunInspectAMIErrorsRefuse(t *testing.T) {
+	var buf bytes.Buffer
+	st := provisionedState()
+	c := testCommand(&buf, st, nil)
+	c.withRegion = func(_ context.Context, _ string) (cloud.RegionView, error) {
+		return cloud.RegionView{
+			VPCs:   &testutil.TestVPCResolver{VPCID: "vpc-fake", SubnetID: "subnet-fake"},
+			Images: &failingImageInspector{},
+		}, nil
+	}
+	c.readState = func() (*fabricastate.State, error) {
+		t.Fatal("inspect error must precede state read")
+		return nil, nil
+	}
+	err := c.run(context.Background(), "eu-west-1")
+	if err == nil || !strings.Contains(err.Error(), "inspecting the DDC edge AMI ami-ddc in eu-west-1") || !strings.Contains(err.Error(), "region describe denied") {
+		t.Fatalf("err = %v, want wrapped inspect error", err)
+	}
+}
+
 func (l legacyProvider) Name() string { return l.inner.Name() }
 func (l legacyProvider) Identity(ctx context.Context) (string, string, string, error) {
 	return l.inner.Identity(ctx)
 }
 func (l legacyProvider) Resources() cloud.ResourceClient { return l.inner.Resources() }
+
+// failingImageInspector implements cloud.ImageInspector and always errors,
+// simulating a region whose AMI cannot be described.
+type failingImageInspector struct{}
+
+func (*failingImageInspector) DescribeImage(_ context.Context, imageID string) (cloud.ImageInfo, error) {
+	return cloud.ImageInfo{}, errors.New("region describe denied")
+}
 
 func TestRunNoRegionProvider(t *testing.T) {
 	var buf bytes.Buffer

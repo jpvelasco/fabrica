@@ -448,6 +448,9 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			props["ImageId"] = amiIDForModule(moduleName, cfg)
 		}
 		// Map volumeSize → BlockDeviceMappings (not a raw EC2 property).
+		// Every EC2 module launches its volumes encrypted (account default
+		// EBS key, #513), so the reconstructed mapping carries Encrypted=true
+		// to preserve that invariant in generated IaC (#541).
 		if vs, ok := props["__volumeSize"]; ok {
 			props["BlockDeviceMappings"] = []map[string]any{
 				{
@@ -456,6 +459,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 						"VolumeSize":          vs,
 						"VolumeType":          "gp3",
 						"DeleteOnTermination": true,
+						"Encrypted":           true,
 					},
 				},
 			}
@@ -892,7 +896,9 @@ func managedPolicyARNsForModule(module string) []map[string]any {
 // name recorded on the workstation instance (Properties
 // "sessionPasswordParameter"). The workstation case scopes the inline
 // ssm:GetParameter policy to its exact ARN, matching what create attached; an
-// empty name (older/partial state) omits the parameter policy.
+// empty name (older/partial state) omits the parameter policy. The
+// workstation case also always carries the regional DCV license-bucket
+// s3:GetObject grant the create path attaches.
 func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, region, sessionPasswordParameter string) []map[string]any {
 	switch moduleName {
 	case "ci":
@@ -955,19 +961,19 @@ func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, regio
 			iamrole.SSMOutputPolicy(region, account),
 		}
 	case "workstation":
-		// The per-create name is recorded on the instance; without it (older
-		// or partial state) emit no parameter policy rather than a wildcard.
-		if sessionPasswordParameter == "" {
-			return []map[string]any{iamrole.SSMOutputPolicy(region, account)}
+		// Order matches the create path: the parameter policy is appended
+		// when the recorded per-create name resolves (older or partial state
+		// omits it rather than a wildcard), and the DCV license grant is
+		// unconditional — the server reads its no-cost EC2 license object
+		// from the regional dcv-license.<region> bucket.
+		policies := []map[string]any{iamrole.SSMOutputPolicy(region, account)}
+		if sessionPasswordParameter != "" {
+			if parameterARN, err := workstation.SessionPasswordParameterARN(region, account, sessionPasswordParameter); err == nil {
+				policies = append(policies, iamrole.SSMParameterReadPolicy(workstation.SessionPasswordPolicyName, parameterARN))
+			}
 		}
-		parameterARN, err := workstation.SessionPasswordParameterARN(region, account, sessionPasswordParameter)
-		if err != nil {
-			return []map[string]any{iamrole.SSMOutputPolicy(region, account)}
-		}
-		return []map[string]any{
-			iamrole.SSMOutputPolicy(region, account),
-			iamrole.SSMParameterReadPolicy(workstation.SessionPasswordPolicyName, parameterARN),
-		}
+		policies = append(policies, iamrole.S3ObjectReadPolicy(workstation.DCVLicensePolicyName, workstation.DCVLicenseBucket(region)))
+		return policies
 	}
 	return nil
 }
@@ -994,31 +1000,49 @@ func loreStoreTableKeySchema(spec lore.StoreTableSpec) []map[string]any {
 	return schema
 }
 
-// loreStoreTableAttributeDefinitions renders the primary key attributes for
-// KeySchema in CloudFormations AttributeDefinitions format.
+// loreStoreTableAttributeDefinitions renders every key attribute the table
+// uses — primary key first, then GSI key attributes in spec order, deduped —
+// in the CloudControl AttributeDefinitions format. DynamoDB requires a
+// definition for every key attribute referenced by KeySchema or a GSI
+// KeySchema; a primary-key-only list rejects the locks table's GSIs.
 func loreStoreTableAttributeDefinitions(spec lore.StoreTableSpec) []map[string]any {
-	defs := []map[string]any{
-		{"AttributeName": spec.PK, "AttributeType": spec.PKType},
+	types := map[string]string{spec.PK: spec.PKType}
+	names := []string{spec.PK}
+	add := func(name, typ string) {
+		if name == "" {
+			return
+		}
+		if _, known := types[name]; !known {
+			types[name] = typ
+			names = append(names, name)
+		}
 	}
-	if spec.SK != "" {
-		defs = append(defs, map[string]any{"AttributeName": spec.SK, "AttributeType": spec.SKType})
+	add(spec.SK, spec.SKType)
+	for _, gsi := range spec.GSIs {
+		add(gsi.PK, gsi.PKType)
+		add(gsi.SK, gsi.SKType)
+	}
+	defs := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		defs = append(defs, map[string]any{"AttributeName": name, "AttributeType": types[name]})
 	}
 	return defs
 }
 
 // loreStoreTableGSIs renders the locks table's global secondary indexes in
-// CloudFormation format. All Lore store GSIs project all attributes.
+// the canonical CloudControl shape (nested Projection) that the create path
+// ships to Cloud Control, so the export and the live table agree. All Lore
+// store GSIs project all attributes.
 func loreStoreTableGSIs(spec lore.StoreTableSpec) []map[string]any {
 	gsis := make([]map[string]any, 0, len(spec.GSIs))
 	for _, gsi := range spec.GSIs {
-		keySchema := []map[string]any{
-			{"AttributeName": gsi.PK, "KeyType": "HASH"},
-			{"AttributeName": gsi.SK, "KeyType": "RANGE"},
-		}
 		gsis = append(gsis, map[string]any{
-			"IndexName":      gsi.Name,
-			"KeySchema":      keySchema,
-			"ProjectionType": "ALL",
+			"IndexName": gsi.Name,
+			"KeySchema": []map[string]any{
+				{"AttributeName": gsi.PK, "KeyType": "HASH"},
+				{"AttributeName": gsi.SK, "KeyType": "RANGE"},
+			},
+			"Projection": map[string]any{"ProjectionType": "ALL"},
 		})
 	}
 	return gsis

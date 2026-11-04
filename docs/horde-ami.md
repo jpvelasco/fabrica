@@ -34,6 +34,25 @@ At boot, Fabrica's cloud-init script will:
 or a Fabrica-written `Server.json`. The compose stack manages all services and
 configuration.
 
+## EBS root volume encryption
+
+`fabrica horde create` inspects the root device of the AMI you pass (`horde.amiId`)
+and requests exactly that device with `Encrypted=true` on both launch paths
+(Cloud Control and the direct `RunInstances` path). The root volume is encrypted
+even when the AMI's snapshot is unencrypted and the account's default EBS
+encryption is off.
+
+Create fails closed, before the state lock and any resource or credential file
+is written, when the AMI reports no root device name, a name that is not an EC2
+device name, or a root that is not EBS, and when the provider cannot inspect
+the AMI at all.
+
+Fabrica sets no `KmsKeyId`, so EBS uses the account's default EBS encryption
+key: the AWS managed key `aws/ebs`, or the account's default CMK if one is
+configured. The root device name is recorded in module state
+(`Properties.rootDevice`) and `drift --fix` rebuilds map the encrypted root
+from it.
+
 ---
 
 ## The Compose Stack
@@ -133,6 +152,8 @@ Bake these into the AMI at `/etc/horde/`:
 ## Building the AMI
 
 ### Path A — Generated Image Builder bake (recommended)
+
+Guardrailed accounts: the bake needs the request-tag-gated Image Builder grant in [guardrailed-accounts.md](guardrailed-accounts.md#operator-policy-minimal-example); pass `--tags`/`--resource-tags` with `ManagedBy=fabrica` on each create.
 
 `fabrica horde ami build --install docker` generates a `component.yaml` that is
 now a **complete** jobs-capable bake: it installs the AWS CLI v2 + `unzip`,
@@ -258,12 +279,19 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/v1/jobs
 # Stop the stack so the AMI is clean
 sudo docker compose -f /etc/horde/docker-compose.yml down
 
+AMI_NAME="fabrica-horde-$(date +%Y%m%d)"
 aws ec2 create-image \
   --instance-id <instance-id> \
-  --name "fabrica-horde-$(date +%Y%m%d)" \
+  --name "$AMI_NAME" \
   --description "Horde Docker compose AMI — MongoDB, Redis, job-capable Horde server" \
-  --no-reboot
+  --no-reboot \
+  --tag-specifications \
+    "ResourceType=image,Tags=[{Key=ManagedBy,Value=fabrica},{Key=FabricaModule,Value=horde},{Key=Name,Value=$AMI_NAME}]" \
+    "ResourceType=snapshot,Tags=[{Key=ManagedBy,Value=fabrica},{Key=FabricaModule,Value=horde},{Key=Name,Value=$AMI_NAME}]"
 ```
+
+The `snapshot` tag specification is required: without it the root snapshot is
+created untagged and stays invisible to `ManagedBy`-based sweeps and teardown.
 
 Note the resulting AMI ID and add it to `fabrica.yaml`:
 

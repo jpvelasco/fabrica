@@ -73,7 +73,7 @@ Pass --build <id> to also query the live status of a specific build (id from
 				jsonOut:   opts.JSONOutput,
 				buildID:   buildID,
 				out:       out,
-				readState: func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				readState: func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
 			}
 			if rt.Provider != nil {
 				if r, ok := rt.Provider.(cloud.CodeBuildRunner); ok {

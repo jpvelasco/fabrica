@@ -29,6 +29,11 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 // Lore EC2 instance. ImageId is the user-provided AMI ID from LoreConfig.
 // DeleteOnTermination is true: the EBS store dies with the instance.
 // When S3 store is enabled, the instance profile is attached for S3 access.
+//
+// The single block device mapping is the root volume on the AMI's own root
+// device (plan.RootDeviceName), encrypted at launch so the root is protected
+// even when the AMI snapshot is not and account EBS default encryption is
+// off (#513).
 func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMessage, error) {
 	spec := ec2state.InstanceSpec{
 		ImageID:         plan.AmiID,
@@ -40,6 +45,8 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMess
 		InstanceName:    plan.InstanceName,
 	}
 	dsOpts := []ec2state.DesiredStateOption{
+		ec2state.WithDeviceName(plan.RootDeviceName),
+		ec2state.WithEncryptedVolume(),
 		ec2state.WithExtraTags("FabricaModule", "lore"),
 	}
 	dsOpts = append(dsOpts, ec2state.WithIAMProfile(plan.InstanceProfileName))

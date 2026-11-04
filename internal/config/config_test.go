@@ -304,11 +304,15 @@ deploy:
   launchPath: /local/game/ServerApp
   buildBucket: my-build-bucket
   desiredInstances: 2
+  minimumInstances: 1
+  maximumInstances: 4
   activationTimeoutMinutes: 30
 `)
 	cfg := loadConfig(t, path)
 	assertStr(t, cfg.Deploy.InstanceType, "c5.large", "InstanceType")
 	assertInt(t, cfg.Deploy.DesiredInstances, 2, "DesiredInstances")
+	assertInt(t, cfg.Deploy.MinimumInstances, 1, "MinimumInstances")
+	assertInt(t, cfg.Deploy.MaximumInstances, 4, "MaximumInstances")
 	assertInt(t, cfg.Deploy.ActivationTimeoutMinutes, 30, "ActivationTimeoutMinutes")
 }
 

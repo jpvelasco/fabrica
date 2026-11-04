@@ -52,8 +52,32 @@ volume and boot the real root unencrypted.
 
 Fabrica sets no `KmsKeyId`, so EBS uses the account's default EBS
 encryption key: the AWS managed key `aws/ebs`, unless the account default
-has been changed to a customer managed key (CMK). With a CMK default, the
-identity that launches (and the bake) needs KMS permissions on that key.
+has been changed to a customer managed key (CMK). There is no `KmsKeyId`
+option today; the key in use is whatever the account default names.
+
+**When the account default is a CMK**, the identity that launches —
+directly through `RunInstances` or through Cloud Control, which makes the
+EC2 calls with the caller's credentials — and the Image Builder or bake
+principal need these actions on that key:
+
+- `kms:CreateGrant`
+- `kms:Decrypt`
+- `kms:GenerateDataKey*`
+- `kms:ReEncrypt*`
+
+They typically also need `kms:DescribeKey`, and the grants are usually
+scoped with the `kms:GrantIsForAWSResource` condition. Both sides must
+allow the actions — the key policy and the principal's IAM policy (or the
+permissions boundary the launch identity sits under). The symptom when a
+grant is missing: the instance goes to `terminated` shortly after launch
+with a client error about the KMS key state. See
+[guardrailed-accounts.md](guardrailed-accounts.md#kms-permissions-for-a-cmk-default-ebs-key)
+for the same list in the guardrailed-account context.
+
+**Cross-account sharing.** An AMI whose snapshots are encrypted with the
+AWS managed `aws/ebs` key cannot be shared with another account. To share
+a baked AMI, either use a CMK whose key policy grants the target account,
+or copy the AMI into a CMK first (`copy-image --encrypted --kms-key-id`).
 
 The bake encrypts the AMI itself: the generated `image-builder-recipe.json`
 maps the base image's root device (`--root-device`, default `/dev/sda1`,
@@ -80,10 +104,118 @@ Fabrica's `permissionsBoundary` setting does **not** enforce encryption.
 It bounds the roles Fabrica creates, not the identity that launches the
 instance. See [guardrailed-accounts.md](guardrailed-accounts.md#ebs-encryption-is-not-enforced-by-the-permissions-boundary).
 
-## Private path
+## Bake with Image Builder
 
-Verify through SSM (or VPN/in-VPC), not laptop `workstation list` against a
-private IP. Endpoint SG inbound TCP 443 from the VPC CIDR: [ssm-private.md](ssm-private.md).
+Guardrailed accounts: the bake needs the request-tag-gated Image Builder grant in [guardrailed-accounts.md](guardrailed-accounts.md#operator-policy-minimal-example); pass `--tags`/`--resource-tags` with `ManagedBy=fabrica` on each create.
+
+The generated `component.yaml` is larger than the 16,000-character limit of
+`create-component`'s `--data` parameter, so the component must be
+registered from an S3 URI (`--uri`) instead of inlined (`--data`). The
+generated `build-guide.md` shows the component registration and the
+snapshot-tagging loop; the full sequence:
+
+```bash
+REGION=us-west-2
+BUCKET=<your-bucket>
+DIR=workstation-ami                          # workstation ami build --output-dir
+INSTANCE_PROFILE=studio-imagebuilder-profile
+SUBNET_ID=<private-subnet>
+SG_ID=<sg-id>
+
+# 1. Upload the component and register it from the S3 URI.
+aws s3 cp "$DIR/component.yaml" "s3://$BUCKET/workstation-ami/component.yaml" --region "$REGION"
+COMPONENT_ARN=$(aws imagebuilder create-component --region "$REGION" \
+  --name fabrica-workstation-dcv --semantic-version 1.0.0 --platform Linux \
+  --uri "s3://$BUCKET/workstation-ami/component.yaml" \
+  --query componentBuildVersionArn --output text)
+
+# 2. Point the recipe at the component.
+sed -i.bak "s|REPLACE_WITH_CUSTOM_COMPONENT_ARN|$COMPONENT_ARN|" "$DIR/image-builder-recipe.json"
+
+# 3. Create the recipe. The recipe JSON is small, so --cli-input-json with
+# a local file is fine here (the 16,000-character limit applies to
+# create-component's --data, not to --cli-input-json).
+RECIPE_ARN=$(aws imagebuilder create-image-recipe --region "$REGION" \
+  --cli-input-json "file://$DIR/image-builder-recipe.json" \
+  --query imageRecipeArn --output text)
+
+# 4. Infrastructure configuration.
+INFRA_ARN=$(aws imagebuilder create-infrastructure-configuration --region "$REGION" \
+  --name fabrica-workstation-imagebuilder \
+  --instance-profile-name "$INSTANCE_PROFILE" \
+  --instance-types m5.xlarge \
+  --subnet-id "$SUBNET_ID" \
+  --security-group-ids "$SG_ID" \
+  --terminate-instance-on-failure \
+  --resource-tags '{"ManagedBy":"fabrica","Purpose":"workstation-ami-bake"}' \
+  --query infrastructureConfigurationArn --output text)
+
+# 5. Pipeline, created DISABLED so a push cannot start a bake.
+PIPELINE_ARN=$(aws imagebuilder create-image-pipeline --region "$REGION" \
+  --name fabrica-workstation-imagebuilder \
+  --image-recipe-arn "$RECIPE_ARN" \
+  --infrastructure-configuration-arn "$INFRA_ARN" \
+  --status DISABLED \
+  --query imagePipelineArn --output text)
+
+# 6. Run one execution, then poll the build version until CANCELLED/FAILED
+# is ruled out (SUCCEEDED ends the poll).
+BUILD_ARN=$(aws imagebuilder start-image-pipeline-execution --region "$REGION" \
+  --image-pipeline-arn "$PIPELINE_ARN" \
+  --query imageBuildVersionArn --output text)
+aws imagebuilder get-image --region "$REGION" --image-build-version-arn "$BUILD_ARN"
+```
+
+The bake runs on `m5.xlarge` (GPU drivers are not baked; see the Contract).
+After the build succeeds, run the generated `verify-ami.sh` against the new
+AMI and tag its snapshots as the build guide shows. The Image Builder
+resources are not Fabrica resources; delete the pipeline, infrastructure
+configuration, recipe, and component afterwards.
+
+## Private-subnet deployment
+
+Deploy the workstation in a **private subnet with no public IP**
+(`MapPublicIpOnLaunch=false`) and reach it through SSM or VPN/in-VPC.
+`workstation.subnetId` in `fabrica.yaml` pins the subnet; when it is unset,
+create resolves the account's default VPC, which in many accounts is public.
+A private subnet with SSM VPC interface endpoints gives the instance no
+internet route at all.
+
+> **Never open port 8443 to `0.0.0.0/0`.** NICE DCV's `dcvserver` binds
+> `0.0.0.0:8443` — every interface on the instance — so the security group
+> is the only control in front of the desktop session. On a public subnet
+> the SG is the only exposure control, and one widened rule (or an overly
+> wide `workstation.allowedCidr`) puts the desktop session on the internet.
+> The default `allowedCidr` is the private range `10.0.0.0/8`; set it to
+> your VPN CIDR in production.
+
+SSM registration on a private subnet needs VPC interface endpoints for the
+three SSM services (no NAT in front of them):
+
+| Endpoint service | Name |
+|------------------|------|
+| `com.amazonaws.<region>.ssm` | AmazonSSM |
+| `com.amazonaws.<region>.ssmmessages` | AmazonSSMMessages |
+| `com.amazonaws.<region>.ec2messages` | AmazonEC2Messages |
+
+One interface endpoint per service, with a network interface in every
+Availability Zone that hosts the workstation subnet, and endpoint SG
+inbound TCP 443 from the VPC CIDR. `scripts/ensure-ssm-endpoints.ps1`
+creates the three endpoints idempotently; full setup and verification:
+[ssm-private.md](ssm-private.md). Verify through SSM (or VPN/in-VPC), not
+laptop `workstation list` against a private IP.
+
+Reach the DCV session from a laptop without a public IP through SSM port
+forwarding (the operator identity needs the SSM session actions, e.g.
+`ssm:StartPortForwardingSession`):
+
+```bash
+aws ssm start-port-forwarding-session \
+  --target i-<instance-id> \
+  --local-port 8443 --remote-port 8443
+```
+
+then connect the DCV client to `https://localhost:8443`.
 
 ## Known-good AMIs
 
@@ -164,7 +296,11 @@ writes the password to it as a Parameter Store SecureString, tagged
 `ManagedBy=fabrica`. There is no shared name and no overwrite: a create
 that finds an existing name fails and names the orphan. The password is
 also recorded in `.fabrica/workstation-credentials.yaml` (mode `0600`) —
-the operator source of truth. The value is not placed in UserData, Cloud
+the operator source of truth. The file's lifecycle is tied to the instance:
+`workstation create` writes it, and `workstation terminate` removes it after
+a fully successful teardown (both standalone and via `destroy --all`); a file
+it cannot remove is reported as a warning so the operator can delete it by
+hand. The value is not placed in UserData, Cloud
 Control desired state, or module state. State records the parameter name
 only (`sessionPasswordParameter` on the instance resource).
 
@@ -186,10 +322,15 @@ the password. The script never enables `set -x`.
 in `/var/log/cloud-init-output.log`.
 
 `workstation terminate` deletes exactly the name recorded in state and
-skips the deletion when nothing is recorded. A create that fails before
-the instance exists deletes it too; once the instance exists the parameter
-stays until terminate so cloud-init can read it. A missing parameter is
-success. The local credentials file is not deleted.
+skips the deletion when nothing is recorded. The parameter delete runs
+before the EC2 instance delete: the name is recorded only on the instance
+state record, which is dropped as soon as the instance is gone, so a
+failed or interrupted run must be able to find the name again (issue
+#524); a missing parameter is a success, so a retry completes the
+teardown. A create that fails before the instance exists deletes the
+parameter too; once the instance exists the parameter stays until
+terminate so cloud-init can read it. The local credentials file is not
+deleted.
 
 HTTPS 200 on 8443 is **not** proof the session setup ran — `dcvserver` starts
 and serves even when cloud-init aborts. Verify the session over SSM (or

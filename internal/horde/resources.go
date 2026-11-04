@@ -26,6 +26,11 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 // Horde EC2 instance. ImageId is the user-provided AMI ID from HordeConfig.
 // When instanceProfileName is non-empty, the instance is attached to that IAM
 // instance profile (required for SSM access).
+//
+// The single block device mapping is the root volume on the AMI's own root
+// device (plan.RootDeviceName), encrypted at launch so the root is protected
+// even when the AMI snapshot is not and account EBS default encryption is
+// off (#513).
 func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName string) (json.RawMessage, error) {
 	spec := ec2state.InstanceSpec{
 		ImageID:         plan.AmiID,
@@ -39,6 +44,8 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName 
 
 	dsOpts := []ec2state.DesiredStateOption{
 		ec2state.WithDeleteOnTermination(false),
+		ec2state.WithDeviceName(plan.RootDeviceName),
+		ec2state.WithEncryptedVolume(),
 		ec2state.WithExtraTags("FabricaModule", "horde"),
 	}
 	if instanceProfileName != "" {

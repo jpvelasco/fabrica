@@ -21,6 +21,10 @@ const lockHeldKey lockCtxKey = 1
 // lock. Callers surface it verbatim; the message says what to do.
 var ErrStateLocked = errors.New("another fabrica run holds the state lock")
 
+// stateLockTTL is the lease behind the state lock row. It is a variable so
+// tests can shorten it; production holds the default 15-minute lease.
+var stateLockTTL = fabricastate.DefaultLockTTL
+
 // AcquireStateLock takes the account-level state lock so two concurrent runs
 // cannot interleave read-modify-write cycles on remote/local state (road test
 // D10). It returns a child context carrying the lock plus a release function
@@ -59,7 +63,7 @@ func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string)
 	table := rt.Config.State.Table
 
 	var token string
-	store := fabricastate.NewFuncLockStore(table, fabricastate.DefaultLockTTL,
+	store := fabricastate.NewFuncLockStore(table, stateLockTTL,
 		func(ctx context.Context, item map[string]string, condition string, condValues map[string]string) error {
 			return mgr.AcquireStateLockRow(ctx, table, item, condition, condValues)
 		},
@@ -80,25 +84,42 @@ func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string)
 		if errors.Is(err, cloud.ErrLockHeld) {
 			return ctx, noop, fmt.Errorf(
 				"%w — wait for the other run to finish, or delete the stale row (LockID %q) from table %q if it is older than %s",
-				ErrStateLocked, lockID, table, fabricastate.DefaultLockTTL)
+				ErrStateLocked, lockID, table, stateLockTTL)
 		}
 		return ctx, noop, fmt.Errorf("acquiring state lock (%s): %w", operation, err)
 	}
 	token = tok
 
 	// Heartbeat keeps AcquiredAt fresh so a live promote (default 45m wait)
-	// cannot be taken over after DefaultLockTTL. A crashed process stops
-	// renewing and the next run still takes over after the TTL.
+	// cannot be taken over after the lease. A crashed process stops renewing
+	// and the next run still takes over after it. If renewals keep failing or
+	// the lock is taken over, the heartbeat fires onLost and cancels
+	// mutateCtx, so the command's in-flight work aborts before the lease
+	// lapses.
 	renewCtx, stopRenew := context.WithCancel(context.WithoutCancel(ctx))
-	go store.Heartbeat(renewCtx, lockID, token, holder)
+	mutateCtx, stopMutate := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		store.Heartbeat(renewCtx, lockID, token, holder, func(err error) {
+			oplog.WithModule("state-lock").Error("state lock lost — aborting operation",
+				"operation", operation, "error", err)
+			stopMutate()
+		})
+	}()
 
 	release := func() {
 		stopRenew()
+		stopMutate()
+		// Join the heartbeat so no lock machinery (renewals, logging)
+		// outlives the release; the wait is bounded by one in-flight
+		// renewal, cancelled before the wait starts.
+		<-done
 		// WithoutCancel: a cancelled command must still free the lock.
 		// state.Release swallows takeover races and logs storage failures.
 		_ = store.Release(context.WithoutCancel(ctx), lockID, token)
 	}
-	return context.WithValue(ctx, lockHeldKey, holder), release, nil
+	return context.WithValue(mutateCtx, lockHeldKey, holder), release, nil
 }
 
 // shortHostname trims the domain part off a machine hostname for compact

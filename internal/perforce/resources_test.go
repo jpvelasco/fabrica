@@ -68,10 +68,11 @@ func TestSGDesiredState_ManagedByTag(t *testing.T) {
 
 func TestInstanceDesiredState_CoreFields(t *testing.T) {
 	plan := &CreatePlan{
-		InstanceType: "m5.xlarge",
-		SubnetID:     "subnet-abc",
-		InstanceName: "fabrica-perforce",
-		VolumeSize:   500,
+		InstanceType:   "m5.xlarge",
+		SubnetID:       "subnet-abc",
+		InstanceName:   "fabrica-perforce",
+		VolumeSize:     500,
+		RootDeviceName: "/dev/sda1",
 	}
 	raw, err := InstanceDesiredState(plan, "sg-123", "userdata-b64", "fabrica-perforce-profile", "ami-test123")
 	if err != nil {
@@ -88,17 +89,21 @@ func TestInstanceDesiredState_CoreFields(t *testing.T) {
 }
 
 func TestInstanceDesiredState_EBSNotDeletedOnTermination(t *testing.T) {
-	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 750, InstanceName: "fabrica-perforce"}
+	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 750, InstanceName: "fabrica-perforce", RootDeviceName: "/dev/sda1"}
 	raw, err := InstanceDesiredState(plan, "sg-x", "ud", "", "ami-test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	doc := ec2state.UnmarshalDesiredState(t, raw)
 	bdms := doc["BlockDeviceMappings"].([]any)
-	if len(bdms) != 1 {
-		t.Fatalf("expected 1 BDM, got %d", len(bdms))
+	if len(bdms) != 2 {
+		t.Fatalf("expected 2 BDMs (data + encrypted root), got %d", len(bdms))
 	}
-	ebs := bdms[0].(map[string]any)["Ebs"].(map[string]any)
+	data := bdms[0].(map[string]any)
+	if data["DeviceName"] != "/dev/sdf" {
+		t.Errorf("data volume DeviceName = %v, want /dev/sdf", data["DeviceName"])
+	}
+	ebs := data["Ebs"].(map[string]any)
 	if ebs["VolumeSize"].(float64) != 750 {
 		t.Errorf("VolumeSize = %v, want 750", ebs["VolumeSize"])
 	}
@@ -107,6 +112,20 @@ func TestInstanceDesiredState_EBSNotDeletedOnTermination(t *testing.T) {
 	}
 	if ebs["DeleteOnTermination"].(bool) {
 		t.Error("DeleteOnTermination must be false — data volume must survive instance termination")
+	}
+	if ebs["Encrypted"] != true {
+		t.Errorf("data volume Encrypted = %v, want true", ebs["Encrypted"])
+	}
+	root := bdms[1].(map[string]any)
+	if root["DeviceName"] != "/dev/sda1" {
+		t.Errorf("root mapping DeviceName = %v, want /dev/sda1", root["DeviceName"])
+	}
+	rootEbs := root["Ebs"].(map[string]any)
+	if rootEbs["Encrypted"] != true {
+		t.Errorf("root mapping Encrypted = %v, want true", rootEbs["Encrypted"])
+	}
+	if !rootEbs["DeleteOnTermination"].(bool) {
+		t.Error("root mapping must be deleted with the instance")
 	}
 }
 
@@ -189,7 +208,7 @@ func TestRoleDesiredState_S3ExportDefaultPrefix(t *testing.T) {
 }
 
 func TestInstanceDesiredState_ARNProfile(t *testing.T) {
-	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce", SubnetID: "subnet-1"}
+	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce", SubnetID: "subnet-1", RootDeviceName: "/dev/sda1"}
 	raw, err := InstanceDesiredState(plan, "sg-1", "ud", "arn:aws:iam::123:instance-profile/p", "ami-test")
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +235,7 @@ func TestInstanceProfileDesiredState(t *testing.T) {
 }
 
 func TestInstanceDesiredState_IMDSv2Required(t *testing.T) {
-	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce"}
+	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce", RootDeviceName: "/dev/sda1"}
 	raw, err := InstanceDesiredState(plan, "sg-x", "ud", "", "ami-test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -226,7 +245,7 @@ func TestInstanceDesiredState_IMDSv2Required(t *testing.T) {
 }
 
 func TestInstanceDesiredState_ManagedByTag(t *testing.T) {
-	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce"}
+	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce", RootDeviceName: "/dev/sda1"}
 	raw, err := InstanceDesiredState(plan, "sg-x", "ud", "", "ami-test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -240,7 +259,7 @@ func TestInstanceDesiredState_ManagedByTag(t *testing.T) {
 }
 
 func TestInstanceDesiredState_ImageID(t *testing.T) {
-	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce"}
+	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce", RootDeviceName: "/dev/sda1"}
 	raw, err := InstanceDesiredState(plan, "sg-x", "ud", "", "ami-ubuntu2204")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -250,7 +269,7 @@ func TestInstanceDesiredState_ImageID(t *testing.T) {
 }
 
 func TestInstanceDesiredState_EmptyImageID(t *testing.T) {
-	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce"}
+	plan := &CreatePlan{InstanceType: "m5.xlarge", VolumeSize: 500, InstanceName: "fabrica-perforce", RootDeviceName: "/dev/sda1"}
 	raw, err := InstanceDesiredState(plan, "sg-x", "ud", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -275,7 +294,7 @@ func TestDesiredStatesStampFabricaModule(t *testing.T) {
 	}
 
 	instRaw, err := InstanceDesiredState(&CreatePlan{
-		InstanceType: "m5.xlarge", SubnetID: "subnet-abc", InstanceName: "fabrica-perforce", VolumeSize: 500,
+		InstanceType: "m5.xlarge", SubnetID: "subnet-abc", InstanceName: "fabrica-perforce", VolumeSize: 500, RootDeviceName: "/dev/sda1",
 	}, "sg-123", "ud", "", "")
 	if err != nil {
 		t.Fatalf("InstanceDesiredState: %v", err)

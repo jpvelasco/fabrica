@@ -61,7 +61,7 @@ func TestPerforceBackupRestoreFlow(t *testing.T) {
 	}
 	assert.Contains(t, out, "Last backup")
 
-	out, err = runCLI(t, "perforce", "restore", "fake-backup", "--force", "--dry-run")
+	out, err = runCLI(t, "perforce", "restore", "20260715-143022-smoke", "--force", "--dry-run")
 	if err != nil {
 		t.Fatalf("restore dry-run: %v\n%s", err, out)
 	}

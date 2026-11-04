@@ -25,13 +25,16 @@ func TestParseBackupMetaList_EmptyLinesAndError(t *testing.T) {
 
 func TestGenerateRestoreScript_Errors(t *testing.T) {
 	if _, err := GenerateRestoreScript(RestoreScriptConfig{}); err == nil {
-		t.Fatal("empty id")
-	}
-	if _, err := GenerateRestoreScript(RestoreScriptConfig{BackupID: "x"}); err == nil {
 		t.Fatal("empty password")
 	}
+	if _, err := GenerateRestoreScript(RestoreScriptConfig{BackupID: "20260715-143022"}); err == nil {
+		t.Fatal("empty password")
+	}
+	if _, err := GenerateRestoreScript(RestoreScriptConfig{BackupID: "x", AdminPassword: "pw"}); err == nil {
+		t.Fatal("invalid id")
+	}
 	s, err := GenerateRestoreScript(RestoreScriptConfig{
-		BackupID:      "id1",
+		BackupID:      "20260715-143022",
 		AdminPassword: "pw",
 		ServerRoot:    "", // default
 	})

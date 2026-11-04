@@ -525,9 +525,9 @@ func TestTeardownS3Store_Integration(t *testing.T) {
 	cfg := config.Defaults()
 	rt := globals.Runtime{Config: cfg, Provider: capturingProvider}
 	tc := NewTeardown(rt, io.Discard)
-	tc.ReadState = func() (*fabricastate.State, error) { return st, nil }
+	tc.ReadState = func(_ context.Context) (*fabricastate.State, error) { return st, nil }
 	var lastWritten *fabricastate.State
-	tc.WriteState = func(s *fabricastate.State) error {
+	tc.WriteState = func(_ context.Context, s *fabricastate.State) error {
 		cp := *s
 		lastWritten = &cp
 		return nil

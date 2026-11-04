@@ -46,12 +46,30 @@ aws ec2 describe-images --region {{ .Region }} --image-ids {{ .BaseImage }} \
   --query 'Images[0].RootDeviceName' --output text
 ```
 
-**Image Builder (recommended).** `image-builder-recipe.json` requests
-`{{ .RootDevice }}` with `"encrypted": true`. Image Builder applies the recipe's
-mappings to the build instance and the output AMI, so the snapshot is
-encrypted even when the parent image's snapshot is not and EBS default
-encryption is off. `amiTags` tag the output AMI. Image Builder does not tag
-the AMI's snapshots, so tag them after the build:
+**Image Builder (recommended).** The generated `component.yaml` is larger
+than the 16,000-character limit of `create-component`'s `--data` parameter,
+so register the component from an S3 URI:
+
+```bash
+BUCKET=<your-bucket>
+aws s3 cp component.yaml "s3://$BUCKET/workstation-ami/component.yaml" --region {{ .Region }}
+COMPONENT_ARN=$(aws imagebuilder create-component --region {{ .Region }} \
+  --name {{ .Name }} --semantic-version 1.0.0 --platform Linux \
+  --uri "s3://$BUCKET/workstation-ami/component.yaml" \
+  --query componentBuildVersionArn --output text)
+```
+
+Then replace `REPLACE_WITH_CUSTOM_COMPONENT_ARN` in
+`image-builder-recipe.json` with `$COMPONENT_ARN` and follow the full
+recipe, infrastructure configuration, and pipeline sequence in
+`docs/workstation-ami.md` ("Bake with Image Builder").
+
+`image-builder-recipe.json` requests `{{ .RootDevice }}` with
+`"encrypted": true`. Image Builder applies the recipe's mappings to the
+build instance and the output AMI, so the snapshot is encrypted even when
+the parent image's snapshot is not and EBS default encryption is off.
+`amiTags` tag the output AMI. Image Builder does not tag the AMI's
+snapshots, so tag them after the build:
 
 ```bash
 AMI=<new AMI ID>

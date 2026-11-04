@@ -74,6 +74,105 @@ func TestRunCreate_ExistingModuleStopsBeforePlanAndConfirmation(t *testing.T) {
 	}
 }
 
+func TestRunCreate_PartialModuleFailsClosed(t *testing.T) {
+	var events []string
+	spec := workflowTestSpec(&events)
+	spec.RequiredResources = []string{
+		"AWS::EC2::SecurityGroup",
+		"AWS::IAM::Role",
+		"AWS::IAM::InstanceProfile",
+		"AWS::EC2::Instance",
+	}
+	spec.CleanupCommand = "fabrica horde destroy"
+	st := fabricastate.NewState("123456789012", "us-west-2")
+	st.UpsertModule(spec.ModuleName, "1", "provisioning", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-partial"},
+	})
+	spec.ReadState = func() (*fabricastate.State, error) {
+		events = append(events, "read-state")
+		return st, nil
+	}
+
+	err := RunCreate(context.Background(), spec)
+	if err == nil {
+		t.Fatal("RunCreate() error = nil, want partial-module failure")
+	}
+	for _, want := range []string{
+		`status "provisioning"`,
+		"AWS::EC2::SecurityGroup",
+		"AWS::IAM::Role",
+		"AWS::EC2::Instance",
+		"fabrica horde destroy",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("RunCreate() error = %q, want it to contain %q", err, want)
+		}
+	}
+	// No plan, confirmation, or apply may happen on a partial module.
+	if want := []string{"read-state"}; !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %v, want only read-state", events)
+	}
+}
+
+func TestRunCreate_FullInventoryInTransitionalStatusSucceeds(t *testing.T) {
+	var events []string
+	spec := workflowTestSpec(&events)
+	spec.RequiredResources = []string{
+		"AWS::EC2::SecurityGroup",
+		"AWS::IAM::Role",
+		"AWS::IAM::InstanceProfile",
+		"AWS::EC2::Instance",
+	}
+	st := fabricastate.NewState("123456789012", "us-west-2")
+	st.UpsertModule(spec.ModuleName, "1", "provisioning", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-1"},
+		{TypeName: "AWS::IAM::Role", Identifier: "role-1"},
+		{TypeName: "AWS::IAM::InstanceProfile", Identifier: "profile-1"},
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-1"},
+	})
+	spec.ReadState = func() (*fabricastate.State, error) {
+		events = append(events, "read-state")
+		return st, nil
+	}
+
+	if err := RunCreate(context.Background(), spec); err != nil {
+		t.Fatalf("RunCreate() error = %v", err)
+	}
+	if want := []string{"read-state"}; !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %v, want only read-state", events)
+	}
+	if got := spec.Out.(*bytes.Buffer).String(); got != spec.ExistingMessage {
+		t.Fatalf("output = %q, want %q", got, spec.ExistingMessage)
+	}
+}
+
+func TestRunCreate_StoppedModuleInReadyStatusesSucceeds(t *testing.T) {
+	var events []string
+	spec := workflowTestSpec(&events)
+	spec.ModuleName = "workstation"
+	spec.ReadyStatuses = []string{"ready", "stopped"}
+	spec.RequiredResources = []string{
+		"AWS::EC2::SecurityGroup",
+		"AWS::EC2::Instance",
+	}
+	st := fabricastate.NewState("123456789012", "us-west-2")
+	st.UpsertModule(spec.ModuleName, "1", "stopped", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-1"},
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-1"},
+	})
+	spec.ReadState = func() (*fabricastate.State, error) {
+		events = append(events, "read-state")
+		return st, nil
+	}
+
+	if err := RunCreate(context.Background(), spec); err != nil {
+		t.Fatalf("RunCreate() error = %v", err)
+	}
+	if got := spec.Out.(*bytes.Buffer).String(); got != spec.ExistingMessage {
+		t.Fatalf("output = %q, want %q", got, spec.ExistingMessage)
+	}
+}
+
 func TestRunCreate_RejectedConfirmationStopsBeforeApply(t *testing.T) {
 	var events []string
 	spec := workflowTestSpec(&events)
@@ -209,6 +308,7 @@ func workflowTestSpec(events *[]string) CreateSpec[workflowTestPlan] {
 		Plan:            workflowTestPlan{name: "plan"},
 		Out:             &bytes.Buffer{},
 		ExistingMessage: "already provisioned\n",
+		ReadyStatuses:   []string{"ready"},
 		Confirm: func(_, _ string) bool {
 			*events = append(*events, "confirm")
 			return true
@@ -227,5 +327,43 @@ func workflowTestSpec(events *[]string) CreateSpec[workflowTestPlan] {
 			*events = append(*events, "apply")
 			return nil
 		},
+	}
+}
+
+func TestMissingResourceTypes(t *testing.T) {
+	tests := []struct {
+		name     string
+		required []string
+		recorded []string
+		want     []string
+	}{
+		{"empty required", nil, []string{"AWS::EC2::Instance"}, nil},
+		{"all present", []string{"AWS::IAM::Role", "AWS::EC2::Instance"}, []string{"AWS::EC2::Instance", "AWS::IAM::Role"}, nil},
+		{"partial", []string{"AWS::IAM::Role", "AWS::EC2::Instance"}, []string{"AWS::IAM::Role"}, []string{"AWS::EC2::Instance"}},
+		{"duplicate required undercount", []string{"AWS::DynamoDB::Table", "AWS::DynamoDB::Table", "AWS::DynamoDB::Table"}, []string{"AWS::DynamoDB::Table", "AWS::DynamoDB::Table"}, []string{"AWS::DynamoDB::Table"}},
+		{"duplicate required satisfied", []string{"AWS::DynamoDB::Table", "AWS::DynamoDB::Table"}, []string{"AWS::DynamoDB::Table", "AWS::DynamoDB::Table", "AWS::S3::Bucket"}, nil},
+		{"empty recorded", []string{"AWS::EC2::Instance"}, nil, []string{"AWS::EC2::Instance"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := missingResourceTypes(tt.required, tt.recorded)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("missingResourceTypes() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIncompleteResources_ReadyStatusShortCircuitsInventoryCheck(t *testing.T) {
+	mod := &fabricastate.ModuleState{Name: "horde", Status: "ready"}
+	got := incompleteResources([]string{"ready"}, []string{"AWS::EC2::Instance"}, mod)
+	if got != nil {
+		t.Fatalf("incompleteResources() = %v, want nil for ready status with empty inventory", got)
+	}
+
+	provisioning := &fabricastate.ModuleState{Name: "horde", Status: "provisioning"}
+	got = incompleteResources([]string{"ready"}, []string{"AWS::EC2::Instance"}, provisioning)
+	if want := []string{"AWS::EC2::Instance"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("incompleteResources() = %v, want %v for provisioning status with empty inventory", got, want)
 	}
 }

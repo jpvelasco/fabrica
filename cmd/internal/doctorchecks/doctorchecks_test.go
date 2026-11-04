@@ -269,6 +269,22 @@ func TestCheckPerforceCIDR(t *testing.T) {
 			wantStatus: "ok",
 			wantMsg:    "172.31.0.0/16",
 		},
+		{
+			name: "perforce configured via vpc keys only, allowedCidr set",
+			rt: globals.Runtime{Config: &config.Config{
+				Perforce: config.PerforceConfig{VPCId: "vpc-123", SubnetId: "subnet-456", AllowedCIDR: "172.31.0.0/16"},
+			}},
+			wantStatus: "ok",
+			wantMsg:    "configured",
+		},
+		{
+			name: "perforce configured via vpc keys only, no allowedCidr",
+			rt: globals.Runtime{Config: &config.Config{
+				Perforce: config.PerforceConfig{VPCId: "vpc-123"},
+			}},
+			wantStatus: "warning",
+			wantMsg:    "10.0.0.0/8",
+		},
 	}
 
 	for _, tt := range tests {
@@ -282,6 +298,37 @@ func TestCheckPerforceCIDR(t *testing.T) {
 			}
 			if !strings.Contains(c.Message, tt.wantMsg) {
 				t.Errorf("message = %q, want substring %q", c.Message, tt.wantMsg)
+			}
+		})
+	}
+}
+
+func TestPerforceSectionConfigured(t *testing.T) {
+	cases := []struct {
+		name string
+		p    config.PerforceConfig
+		want bool
+	}{
+		{"zero value", config.PerforceConfig{}, false},
+		{"version", config.PerforceConfig{Version: "2025.2"}, true},
+		{"instance type", config.PerforceConfig{InstanceType: "c5.2xlarge"}, true},
+		{"volume size", config.PerforceConfig{VolumeSize: 200}, true},
+		{"vpc id", config.PerforceConfig{VPCId: "vpc-1"}, true},
+		{"subnet id", config.PerforceConfig{SubnetId: "subnet-1"}, true},
+		{"allowed cidr", config.PerforceConfig{AllowedCIDR: "10.0.0.0/8"}, true},
+		{"backup path", config.PerforceConfig{Backup: config.PerforceBackupConfig{Path: "/hxdepots"}}, true},
+		{"backup s3 export", config.PerforceConfig{Backup: config.PerforceBackupConfig{S3Export: true}}, true},
+		{"backup s3 bucket", config.PerforceConfig{Backup: config.PerforceBackupConfig{S3Bucket: "bkt"}}, true},
+		{"backup s3 prefix", config.PerforceConfig{Backup: config.PerforceBackupConfig{S3Prefix: "p"}}, true},
+		{"backup schedule", config.PerforceConfig{Backup: config.PerforceBackupConfig{Schedule: "0 3 * * *"}}, true},
+		{"backup retain", config.PerforceConfig{Backup: config.PerforceBackupConfig{Retain: 7}}, true},
+		{"iam path", config.PerforceConfig{IAM: config.IAM{Path: "/fabrica/"}}, true},
+		{"iam boundary", config.PerforceConfig{IAM: config.IAM{PermissionsBoundary: "arn:aws:iam::123456789012:policy/b"}}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := perforceSectionConfigured(tc.p); got != tc.want {
+				t.Errorf("perforceSectionConfigured(%+v) = %v, want %v", tc.p, got, tc.want)
 			}
 		})
 	}

@@ -14,6 +14,7 @@ import (
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/credentials"
 	"github.com/jpvelasco/fabrica/internal/ddc"
+	"github.com/jpvelasco/fabrica/internal/ec2state"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
@@ -37,6 +38,7 @@ type command struct {
 	readState      func() (*fabricastate.State, error)
 	writeState     func(*fabricastate.State) error
 	createResource func(ctx context.Context, r *cloud.Resource) error
+	inspectImage   func(ctx context.Context, imageID string) (cloud.ImageInfo, error)
 	writeEndpoints func(path, content string) error
 }
 
@@ -76,11 +78,14 @@ With --dry-run, shows the plan and monthly cost estimate without AWS writes.`,
 				costs:     fabricacost.Global,
 				confirm:   prompt.Confirm,
 			}
-			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = fabricastate.WriteState
+			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
+			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			c.writeEndpoints = credentials.WriteCredentials
 			if rt.Provider != nil {
 				c.createResource = rt.Provider.Resources().Create
+				if insp, ok := rt.Provider.(cloud.ImageInspector); ok {
+					c.inspectImage = insp.DescribeImage
+				}
 			}
 			return c.run(cmd.Context())
 		},
@@ -110,6 +115,28 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("building setup plan: %w", err)
 	}
 
+	rootDevice, err := c.inspectRootDevice(ctx, plan.AmiID, "ddc.amiId")
+	if err != nil {
+		return err
+	}
+	if rootDevice == "" && !c.dryRun {
+		// Without the AMI's own root device there is no way to put the
+		// encrypted mapping on the real root; a guessed device would boot the
+		// root unencrypted from the snapshot (#507, #513). Fail before any write.
+		return fmt.Errorf("cannot read the root device of ddc.amiId %s (the provider cannot inspect AMIs), so the root volume cannot be encrypted; refusing to launch", plan.AmiID)
+	}
+	plan.RootDeviceName = rootDevice
+	if plan.Backend == ddc.BackendScylla {
+		// The ddc.amiId refuse above already covers an inspector-less
+		// provider; a configured inspector never yields an empty device
+		// without an error, so only the error path needs handling here.
+		scyllaRootDevice, err := c.inspectRootDevice(ctx, plan.ScyllaAmiID, "ddc.scyllaAmiId")
+		if err != nil {
+			return err
+		}
+		plan.ScyllaRootDeviceName = scyllaRootDevice
+	}
+
 	if c.dryRun {
 		c.printDryRun(plan)
 		return nil
@@ -137,6 +164,21 @@ func (c command) run(ctx context.Context) error {
 	}
 
 	return c.apply(ctx, st, plan)
+}
+
+// inspectRootDevice reads an AMI's root device so the encrypted root mapping
+// lands on the real root (#513). subject names the config key in error
+// messages. A provider that cannot inspect AMIs returns an empty device; run
+// refuses to apply in that case.
+func (c command) inspectRootDevice(ctx context.Context, amiID, subject string) (string, error) {
+	if c.inspectImage == nil {
+		return "", nil
+	}
+	info, err := c.inspectImage(ctx, amiID)
+	if err != nil {
+		return "", fmt.Errorf("inspecting %s %s: %w", subject, amiID, err)
+	}
+	return ec2state.RootDeviceFor(subject, amiID, info.RootDeviceName, info.RootDeviceType)
 }
 
 func (c command) apply(ctx context.Context, st *fabricastate.State, plan *ddc.SetupPlan) error {
@@ -216,6 +258,7 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, plan *ddc.Se
 			"role":         ddc.RoleCoordinator,
 			"instanceType": plan.InstanceType,
 			"volumeSize":   strconv.Itoa(plan.VolumeSize),
+			"rootDevice":   plan.RootDeviceName,
 		},
 		PostCreate: provision.TagVolumesPostCreate(c.runtime.Provider, "ddc", plan.InstanceName),
 	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
@@ -241,6 +284,7 @@ func (c command) apply(ctx context.Context, st *fabricastate.State, plan *ddc.Se
 				"role":         ddc.RoleScylla,
 				"instanceType": plan.ScyllaInstanceType,
 				"volumeSize":   strconv.Itoa(plan.ScyllaVolumeSize),
+				"rootDevice":   plan.ScyllaRootDeviceName,
 			},
 			PostCreate:       provision.TagVolumesPostCreate(c.runtime.Provider, "ddc", plan.InstanceName),
 			IgnoreWriteError: true,
@@ -289,6 +333,9 @@ func (c command) printPlanBody(plan *ddc.SetupPlan) {
 	fmt.Fprintf(c.out, "  AWS region:       %s (home region)\n", plan.Region)
 	fmt.Fprintf(c.out, "  Backend:          %s\n", plan.Backend)
 	fmt.Fprintf(c.out, "  AMI ID:           %s\n", plan.AmiID)
+	if plan.RootDeviceName != "" {
+		fmt.Fprintf(c.out, "  Root volume:      %s (encrypted)\n", plan.RootDeviceName)
+	}
 	fmt.Fprintf(c.out, "  Instance type:    %s\n", plan.InstanceType)
 	fmt.Fprintf(c.out, "  Hot volume:       %d GiB gp3\n", plan.VolumeSize)
 	fmt.Fprintf(c.out, "  Blob bucket:      %s\n", plan.Bucket)

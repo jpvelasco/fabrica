@@ -13,6 +13,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/credentials"
+	"github.com/jpvelasco/fabrica/internal/ec2state"
 	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -39,6 +40,7 @@ type command struct {
 	readState      func() (*fabricastate.State, error)
 	writeState     func(*fabricastate.State) error
 	createResource func(ctx context.Context, r *cloud.Resource) error
+	inspectImage   func(ctx context.Context, imageID string) (cloud.ImageInfo, error)
 	genPassword    func(int) (string, error)
 	genUserData    func(horde.UserDataConfig) (string, error)
 }
@@ -59,8 +61,10 @@ Creates four resources in order:
   3. IAM Instance Profile — attaches the role to the EC2 instance
   4. EC2 Instance — runs the Horde coordinator using a user-provided AMI
 
-State is written after each resource so a partial failure is recoverable:
-re-running create will detect the already-provisioned module and exit cleanly.
+State is written after each resource, so an interrupted create leaves a
+recoverable record. Re-running create on a complete module exits cleanly; on
+a partial one it fails and names the missing resources plus the cleanup
+command to run first.
 
 A MongoDB password is generated and written to .fabrica/horde-credentials.yaml.
 With Docker compose AMIs, this password is validated but not applied by cloud-init
@@ -88,10 +92,13 @@ making any AWS calls.`,
 				costs:        fabricacost.Global,
 				confirm:      prompt.ConfirmExact,
 			}
-			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = fabricastate.WriteState
+			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
+			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			if rt.Provider != nil {
 				c.createResource = rt.Provider.Resources().Create
+				if insp, ok := rt.Provider.(cloud.ImageInspector); ok {
+					c.inspectImage = insp.DescribeImage
+				}
 			}
 			return c.run(cmd.Context())
 		},
@@ -132,22 +139,51 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("building create plan: %w", err)
 	}
 
+	rootDevice, err := c.inspectAMI(ctx, plan.AmiID)
+	if err != nil {
+		return err
+	}
+	if rootDevice == "" && !c.dryRun {
+		// Without the AMI's own root device there is no way to put the
+		// encrypted mapping on the real root; a guessed device would boot the
+		// root unencrypted from the snapshot (#507, #513). Fail before any write.
+		return fmt.Errorf("cannot read the root device of horde.amiId %s (the provider cannot inspect AMIs), so the root volume cannot be encrypted; refusing to launch", plan.AmiID)
+	}
+	plan.RootDeviceName = rootDevice
+
 	return provision.RunCreate(ctx, provision.CreateSpec[*horde.CreatePlan]{
-		ModuleName:      moduleName,
-		Account:         account,
-		Plan:            plan,
-		DryRun:          c.dryRun,
-		AssumeYes:       c.assumeYes,
-		Out:             c.out,
-		ExistingMessage: "Horde is already provisioned. Run 'fabrica horde status' to check health.\nUse 'fabrica horde destroy' to remove it first.\n",
-		Confirm:         c.confirm,
-		ReadState:       c.readState,
-		PrintDryRun:     c.printDryRun,
-		PrintApplyPlan:  c.printApplyPlan,
-		Apply:           c.applyCreate,
-		Runtime:         c.runtime,
-		Operation:       "horde create",
+		ModuleName:        moduleName,
+		Account:           account,
+		Plan:              plan,
+		DryRun:            c.dryRun,
+		AssumeYes:         c.assumeYes,
+		Out:               c.out,
+		ExistingMessage:   "Horde is already provisioned. Run 'fabrica horde status' to check health.\nUse 'fabrica horde destroy' to remove it first.\n",
+		ReadyStatuses:     []string{"ready"},
+		RequiredResources: plan.RequiredResources(),
+		CleanupCommand:    "fabrica horde destroy",
+		Confirm:           c.confirm,
+		ReadState:         c.readState,
+		PrintDryRun:       c.printDryRun,
+		PrintApplyPlan:    c.printApplyPlan,
+		Apply:             c.applyCreate,
+		Runtime:           c.runtime,
+		Operation:         "horde create",
 	})
+}
+
+// inspectAMI reads the AMI's root device so the encrypted root mapping lands
+// on the real root (#513). A provider that cannot inspect AMIs returns an
+// empty device; run refuses to apply in that case.
+func (c command) inspectAMI(ctx context.Context, amiID string) (string, error) {
+	if c.inspectImage == nil {
+		return "", nil
+	}
+	info, err := c.inspectImage(ctx, amiID)
+	if err != nil {
+		return "", fmt.Errorf("inspecting horde.amiId %s: %w", amiID, err)
+	}
+	return ec2state.RootDeviceFor("horde.amiId", amiID, info.RootDeviceName, info.RootDeviceType)
 }
 
 func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *horde.CreatePlan) error {
@@ -235,6 +271,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		Properties: map[string]string{
 			"instanceType": plan.InstanceType,
 			"volumeSize":   strconv.Itoa(plan.VolumeSize),
+			"rootDevice":   plan.RootDeviceName,
 		},
 		PostCreate: provision.TagVolumesPostCreate(c.runtime.Provider, "horde", plan.InstanceName),
 		// fail on writeState error (default)
@@ -248,6 +285,15 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 }
 
 func (c command) printDryRun(plan *horde.CreatePlan) {
+	extraFields := []provision.PlanField{
+		{Key: "AMI ID", Value: plan.AmiID},
+		{Key: "HTTP port", Value: fmt.Sprintf("%d", plan.Port)},
+		{Key: "gRPC port", Value: fmt.Sprintf("%d", plan.GRPCPort)},
+		{Key: "Allowed CIDR", Value: plan.AllowedCIDR},
+	}
+	if plan.RootDeviceName != "" {
+		extraFields = append(extraFields, provision.PlanField{Key: "Root volume", Value: plan.RootDeviceName + " (encrypted)"})
+	}
 	provision.DryRun(c.out, provision.DryRunSpec{
 		Title: "Horde build coordinator",
 		Info: provision.PlanInfo{
@@ -259,12 +305,7 @@ func (c command) printDryRun(plan *horde.CreatePlan) {
 			VPCID:        plan.VPCID,
 			DefaultVPC:   plan.DefaultVPC,
 		},
-		ExtraFields: []provision.PlanField{
-			{Key: "AMI ID", Value: plan.AmiID},
-			{Key: "HTTP port", Value: fmt.Sprintf("%d", plan.Port)},
-			{Key: "gRPC port", Value: fmt.Sprintf("%d", plan.GRPCPort)},
-			{Key: "Allowed CIDR", Value: plan.AllowedCIDR},
-		},
+		ExtraFields: extraFields,
 		Resources: append([]string{
 			"Security Group:   " + plan.SGName,
 			"IAM Role:         " + plan.RoleName,

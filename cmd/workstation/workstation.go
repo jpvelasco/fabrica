@@ -8,6 +8,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/workstation/ami"
 	"github.com/jpvelasco/fabrica/cmd/workstation/create"
 	"github.com/jpvelasco/fabrica/cmd/workstation/list"
+	"github.com/jpvelasco/fabrica/cmd/workstation/status"
 	"github.com/jpvelasco/fabrica/cmd/workstation/terminate"
 	"github.com/spf13/cobra"
 )
@@ -21,6 +22,7 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 
 Available operations:
   create     Provision a new cloud workstation on EC2
+  status     Show workstation health and DCV readiness
   list       Show provisioned workstations
   stop       Stop the workstation instance (pauses billing)
   start      Start a stopped workstation instance
@@ -29,6 +31,7 @@ Available operations:
   ami        Tools for building a NICE DCV workstation AMI`,
 	}
 	cmd.AddCommand(create.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(status.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(list.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(action.NewStop(runtimeSource, optionsSource, out))
 	cmd.AddCommand(action.NewStart(runtimeSource, optionsSource, out))

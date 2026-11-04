@@ -35,7 +35,7 @@ The AMI must meet all of the following:
 Fabrica writes a cloud-init script that:
 
 1. Writes the coordinator configuration to `/etc/horde/coordinator.conf` (INI format)
-2. Sets `HORDE_COORDINATOR_HOST` and `HORDE_COORDINATOR_PORT` environment variables
+2. Sets `HORDE_COORDINATOR_HOST`, `HORDE_COORDINATOR_PORT`, and `HORDE_COORDINATOR_GRPC_PORT` environment variables
 3. Attempts to start `horde-agent` via `systemctl start horde-agent` (native install)
 4. Falls back to `docker compose up -d agent` if Docker is available (trial mode only — see below)
 5. Touches the readiness sentinel `/var/lib/cloud/instance/horde-agent-ready`
@@ -55,13 +55,16 @@ Fabrica writes `/etc/horde/coordinator.conf` with the following INI format:
 [coordinator]
 host = <private-ip>
 port = <port>
+grpc_port = <grpc-port>
 ```
 
 The private IP is resolved from the coordinator instance at `fabrica horde agents create`
-time via Cloud Control. The port defaults to `5000` (configurable via `horde.port`).
+time via Cloud Control. The port defaults to `5000` (configurable via `horde.port`);
+`grpc_port` defaults to `5002` (configurable via `horde.grpcPort`).
 
 Your agent software must read this file (or the `HORDE_COORDINATOR_HOST` /
-`HORDE_COORDINATOR_PORT` environment variables) to discover the coordinator endpoint.
+`HORDE_COORDINATOR_PORT` / `HORDE_COORDINATOR_GRPC_PORT` environment variables)
+to discover the coordinator endpoints.
 
 ---
 
@@ -134,8 +137,9 @@ WantedBy=multi-user.target
 ```
 
 The agent binary reads `/etc/horde/coordinator.conf` (INI format) and/or
-`HORDE_COORDINATOR_HOST`/`HORDE_COORDINATOR_PORT` environment variables at
-startup. Fabrica's cloud-init writes the config file and exports the env vars
+`HORDE_COORDINATOR_HOST`/`HORDE_COORDINATOR_PORT`/`HORDE_COORDINATOR_GRPC_PORT`
+environment variables at startup. Fabrica's cloud-init writes the config file
+and exports the env vars
 before starting the service. Do **not** use `EnvironmentFile` — systemd's
 `EnvironmentFile` expects `KEY=VALUE` lines, but Fabrica writes INI format
 (`[coordinator]` / `host = ...` / `port = ...`). The agent binary parses the
@@ -184,12 +188,19 @@ cat /etc/horde/coordinator.conf
 #### Step 6: Create the AMI
 
 ```bash
+AMI_NAME="fabrica-horde-agent-$(date +%Y%m%d)"
 aws ec2 create-image \
   --instance-id <instance-id> \
-  --name "fabrica-horde-agent-$(date +%Y%m%d)" \
+  --name "$AMI_NAME" \
   --description "Dedicated Horde agent AMI — agent binary only, no coordinator stack" \
-  --no-reboot
+  --no-reboot \
+  --tag-specifications \
+    "ResourceType=image,Tags=[{Key=ManagedBy,Value=fabrica},{Key=FabricaModule,Value=horde},{Key=Name,Value=$AMI_NAME}]" \
+    "ResourceType=snapshot,Tags=[{Key=ManagedBy,Value=fabrica},{Key=FabricaModule,Value=horde},{Key=Name,Value=$AMI_NAME}]"
 ```
+
+The `snapshot` tag specification is required: without it the root snapshot is
+created untagged and stays invisible to `ManagedBy`-based sweeps and teardown.
 
 Note the resulting AMI ID.
 
@@ -237,6 +248,7 @@ services:
     environment:
       - HORDE_COORDINATOR_HOST=${HORDE_COORDINATOR_HOST}
       - HORDE_COORDINATOR_PORT=${HORDE_COORDINATOR_PORT}
+      - HORDE_COORDINATOR_GRPC_PORT=${HORDE_COORDINATOR_GRPC_PORT}
     restart: unless-stopped
 ```
 
@@ -446,6 +458,16 @@ fabrica horde agents create --ami-id ami-agent-456 --yes
 **Important:** `horde.amiId` and `horde.agents.amiId` are independent. Fabrica
 fails `agents create` with a clear error if `horde.agents.amiId` is not set —
 it does **not** silently fall back to the coordinator AMI.
+
+### Placement (VPC/subnet)
+
+The agent pool launches in the **same VPC and subnet as the coordinator** —
+Fabrica resolves the coordinator's live placement at create time (subnet from
+the coordinator instance, VPC from the coordinator security group). Set both
+`horde.agents.vpcId` and `horde.agents.subnetId` (see `fabrica.example.yaml`)
+to place the pool explicitly; the two keys must be set together. When
+neither is set and the coordinator's placement cannot be determined, the pool
+falls back to the account default VPC and `agents create` logs a warning.
 
 ---
 

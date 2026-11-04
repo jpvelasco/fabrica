@@ -183,24 +183,36 @@ func cfPolicyArns(v any) []string {
 	return nil
 }
 
-// cfBlockDevices converts block device mappings.
+// cfBlockDevices converts block device mappings. Encrypted and KmsKeyId are
+// carried through so generated templates preserve the module's EBS encryption
+// requirement (#541); KmsKeyId is emitted only when a non-empty key is set,
+// since an absent key means the account's default EBS key.
 func cfBlockDevices(v any) []map[string]any {
 	devs, ok := v.([]map[string]any)
 	if !ok {
 		return nil
 	}
-	out := make([]map[string]any, len(devs))
-	for i, dev := range devs {
-		if ebs, ok := dev["Ebs"].(map[string]any); ok {
-			out[i] = map[string]any{
-				"DeviceName": dev["DeviceName"],
-				"Ebs": map[string]any{
-					"VolumeSize":          ebs["VolumeSize"],
-					"VolumeType":          ebs["VolumeType"],
-					"DeleteOnTermination": ebs["DeleteOnTermination"],
-				},
-			}
+	out := make([]map[string]any, 0, len(devs))
+	for _, dev := range devs {
+		ebs, ok := dev["Ebs"].(map[string]any)
+		if !ok {
+			continue
 		}
+		ebsOut := map[string]any{
+			"VolumeSize":          ebs["VolumeSize"],
+			"VolumeType":          ebs["VolumeType"],
+			"DeleteOnTermination": ebs["DeleteOnTermination"],
+		}
+		if enc, ok := ebs["Encrypted"].(bool); ok {
+			ebsOut["Encrypted"] = enc
+		}
+		if kms, ok := ebs["KmsKeyId"].(string); ok && kms != "" {
+			ebsOut["KmsKeyId"] = kms
+		}
+		out = append(out, map[string]any{
+			"DeviceName": dev["DeviceName"],
+			"Ebs":        ebsOut,
+		})
 	}
 	return out
 }

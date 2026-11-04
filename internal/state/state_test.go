@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -10,20 +11,22 @@ import (
 	"testing"
 	"time"
 
+	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/oplog"
 )
 
 // recordingLockStore builds a LockStore over captured storage functions.
 type recordingLockStore struct {
-	mu          sync.Mutex
-	putCalls    int
-	delCalls    int
-	putErr      error
-	delErr      error
-	lastItem    map[string]string
-	lastCond    string
-	lastCondVal map[string]string
+	mu            sync.Mutex
+	putCalls      int
+	delCalls      int
+	putErr        error
+	delErr        error
+	renewFailures int // the next N put calls fail with a transient error
+	lastItem      map[string]string
+	lastCond      string
+	lastCondVal   map[string]string
 }
 
 func (r *recordingLockStore) put(_ context.Context, item map[string]string, condition string, condValues map[string]string) error {
@@ -32,6 +35,10 @@ func (r *recordingLockStore) put(_ context.Context, item map[string]string, cond
 	r.putCalls++
 	if r.putErr != nil {
 		return r.putErr
+	}
+	if r.renewFailures > 0 {
+		r.renewFailures--
+		return errors.New("transient throttled")
 	}
 	r.lastItem = item
 	r.lastCond = condition
@@ -173,33 +180,22 @@ func TestLockRenewFailedIsError(t *testing.T) {
 	}
 }
 
-// manualTicker returns a ticker seam whose ticks are sent by the test, so
-// heartbeat renewals happen exactly when the test says so, not when the
-// scheduler gets around to them.
-func manualTicker(ticks <-chan time.Time) TickerFunc {
-	return func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} }
+// useManualTimers replaces the heartbeat's tick source and lease timer with
+// test-owned channels: renewals happen only when the test sends a tick, and the
+// lease lapses only when the test sends on lease.
+func useManualTimers(ls *LockStore) (ticks, lease chan time.Time) {
+	ticks = make(chan time.Time)
+	lease = make(chan time.Time)
+	ls.SetTicker(func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} })
+	ls.SetTimer(func(time.Duration) (<-chan time.Time, Timer) { return lease, fakeTimer{} })
+	return ticks, lease
 }
 
-// acquireHeartbeatLock acquires the "res" lock and returns its token.
-func acquireHeartbeatLock(t *testing.T, ls *LockStore) string {
-	t.Helper()
-	token, err := ls.Acquire(context.Background(), "res", "holder")
-	if err != nil {
-		t.Fatalf("Acquire: %v", err)
-	}
-	return token
-}
+// fakeTimer reports that the lease has not yet fired, so re-arming succeeds.
+type fakeTimer struct{}
 
-// startHeartbeat runs Heartbeat in a goroutine and returns a channel closed
-// when it returns.
-func startHeartbeat(ctx context.Context, ls *LockStore, token string) <-chan struct{} {
-	done := make(chan struct{})
-	go func() {
-		ls.Heartbeat(ctx, "res", token, "holder")
-		close(done)
-	}()
-	return done
-}
+func (fakeTimer) Stop() bool               { return true }
+func (fakeTimer) Reset(time.Duration) bool { return true }
 
 // sendTick delivers one tick to the heartbeat loop. It fails the test instead
 // of blocking forever when the loop has already returned.
@@ -212,8 +208,19 @@ func sendTick(t *testing.T, ticks chan<- time.Time) {
 	}
 }
 
-// waitHeartbeatDone fails the test if the heartbeat has not returned within a
-// generous bound; the bound only guards against hangs, not timing.
+// startHeartbeatWithLost runs Heartbeat in a goroutine that reports loss on
+// lost. The returned channel is closed when the heartbeat returns.
+func startHeartbeatWithLost(ctx context.Context, ls *LockStore, token string, lost chan<- error) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		ls.Heartbeat(ctx, "res", token, "holder", func(err error) { lost <- err })
+		close(done)
+	}()
+	return done
+}
+
+// waitHeartbeatDone bounds the wait for the heartbeat goroutine; the bound only
+// guards against hangs, not timing.
 func waitHeartbeatDone(t *testing.T, done <-chan struct{}) {
 	t.Helper()
 	select {
@@ -223,21 +230,22 @@ func waitHeartbeatDone(t *testing.T, done <-chan struct{}) {
 	}
 }
 
-func TestLockHeartbeatRenewsOnEachTick(t *testing.T) {
+func TestLockHeartbeatRenewsUntilCancelled(t *testing.T) {
 	rec := &recordingLockStore{}
 	ls := NewFuncLockStore("t", 30*time.Millisecond, rec.put, rec.del)
-	token := acquireHeartbeatLock(t, ls)
-	ticks := make(chan time.Time)
-	ls.SetTicker(manualTicker(ticks))
+	token, err := ls.Acquire(context.Background(), "res", "holder")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	ticks, _ := useManualTimers(ls)
 
+	lost := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	done := startHeartbeat(ctx, ls, token)
+	done := startHeartbeatWithLost(ctx, ls, token, lost)
 
-	// Unbuffered sends: each send returns only once the loop has received the
-	// tick, and the loop renews before it selects again. After three sends,
-	// exactly three renewals have been issued (the cancel below stops the loop
-	// after its in-flight renewal completes).
+	// Unbuffered sends: each returns once the loop has received the tick, and
+	// the loop renews before it selects again. Three sends mean three renewals.
 	for range 3 {
 		sendTick(t, ticks)
 	}
@@ -247,40 +255,237 @@ func TestLockHeartbeatRenewsOnEachTick(t *testing.T) {
 	if got := rec.puts(); got != 4 {
 		t.Fatalf("putCalls = %d, want 4 (acquire + 3 renewals)", got)
 	}
-}
-
-func TestLockHeartbeatStopsOnRenewError(t *testing.T) {
-	rec := &recordingLockStore{}
-	ls := NewFuncLockStore("t", 30*time.Millisecond, rec.put, rec.del)
-	token := acquireHeartbeatLock(t, ls)
-	rec.mu.Lock()
-	rec.putErr = fmt.Errorf("taken over")
-	rec.mu.Unlock()
-
-	ticks := make(chan time.Time)
-	ls.SetTicker(manualTicker(ticks))
-	done := startHeartbeat(context.Background(), ls, token)
-
-	sendTick(t, ticks) // the renewal fails and the loop returns
-	waitHeartbeatDone(t, done)
-
 	select {
-	case ticks <- time.Time{}:
-		t.Fatal("heartbeat kept consuming ticks after a renew error")
+	case err := <-lost:
+		t.Fatalf("onLost fired while renewals succeed: %v", err)
 	default:
 	}
 }
 
-// TestLockHeartbeatDefaultTickerReturnsOnCancel exercises the production
-// ticker (no seam) and only asserts the one timing-independent property:
-// a cancelled context stops the loop.
-func TestLockHeartbeatDefaultTickerReturnsOnCancel(t *testing.T) {
+// TestLockHeartbeatTakeoverFiresOnLostAndStops verifies a confirmed takeover
+// (ErrLockHeld) fires onLost immediately and stops the loop — the row
+// belongs to someone else, so further renewals are pointless.
+func TestLockHeartbeatTakeoverFiresOnLostAndStops(t *testing.T) {
+	rec := &recordingLockStore{}
+	ls := NewFuncLockStore("t", 20*time.Millisecond, rec.put, rec.del)
+	token, err := ls.Acquire(context.Background(), "res", "holder")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	rec.mu.Lock()
+	rec.putErr = fabricac.ErrLockHeld
+	rec.mu.Unlock()
+
+	lost := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		ls.Heartbeat(context.Background(), "res", token, "holder", func(err error) { lost <- err })
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat did not stop after confirmed takeover")
+	}
+	select {
+	case err := <-lost:
+		if !errors.Is(err, fabricac.ErrLockHeld) {
+			t.Fatalf("onLost err = %v, want ErrLockHeld", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("onLost did not fire after confirmed takeover")
+	}
+}
+
+// TestLockHeartbeatTransientRetriesUntilLeaseLapse verifies transient renew
+// failures are retried, but the loop still aborts when the lease margin
+// lapses without a successful renewal.
+func TestLockHeartbeatTransientRetriesUntilLeaseLapse(t *testing.T) {
+	rec := &recordingLockStore{}
+	ls := NewFuncLockStore("t", 300*time.Millisecond, rec.put, rec.del)
+	token, err := ls.Acquire(context.Background(), "res", "holder")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	rec.mu.Lock()
+	rec.putErr = errors.New("throttled")
+	rec.mu.Unlock()
+	ticks, lease := useManualTimers(ls)
+
+	lost := make(chan error, 1)
+	done := startHeartbeatWithLost(context.Background(), ls, token, lost)
+
+	// Two failing renewals: the loop must keep retrying rather than abort.
+	sendTick(t, ticks)
+	sendTick(t, ticks)
+
+	// The lease lapses with no successful renewal: abort with the last error.
+	// The loop only reaches this case after finishing the last renewal, so the
+	// put count read below is settled.
+	lease <- time.Time{}
+	select {
+	case err := <-lost:
+		if !strings.Contains(err.Error(), "throttled") {
+			t.Fatalf("onLost err = %v, want the last transient error", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("onLost did not fire after the lease lapsed")
+	}
+	waitHeartbeatDone(t, done)
+	if got := rec.puts(); got != 3 {
+		t.Fatalf("putCalls = %d, want 3 (acquire + 2 retried renewals)", got)
+	}
+}
+
+// TestLockHeartbeatTransientRecoversWithinLease verifies a transient failure
+// followed by a successful renewal keeps the heartbeat alive — the lease
+// timer is only extended by successes, but a success before the margin
+// lapses resets it.
+func TestLockHeartbeatTransientRecoversWithinLease(t *testing.T) {
+	rec := &recordingLockStore{}
+	ls := NewFuncLockStore("t", 300*time.Millisecond, rec.put, rec.del)
+	token, err := ls.Acquire(context.Background(), "res", "holder")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	rec.mu.Lock()
+	rec.renewFailures = 1 // first renewal fails, the rest succeed
+	rec.mu.Unlock()
+	ticks, _ := useManualTimers(ls)
+
+	lost := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := startHeartbeatWithLost(ctx, ls, token, lost)
+
+	// Tick 1 fails (transient, lease not extended); tick 2 succeeds and re-arms
+	// the lease. The lease channel is never fired, so the loop can only end by
+	// cancellation: it survived the transient error.
+	sendTick(t, ticks)
+	sendTick(t, ticks)
+	cancel()
+	waitHeartbeatDone(t, done)
+
+	if got := rec.puts(); got != 3 {
+		t.Fatalf("putCalls = %d, want 3 (acquire + failed + recovered renewal)", got)
+	}
+	select {
+	case err := <-lost:
+		t.Fatalf("onLost fired despite recovery: %v", err)
+	default:
+	}
+}
+
+// TestLockHeartbeatZeroTTLFiresLeaseImmediately verifies the defensive
+// clamps: a non-positive ttl falls back to 1ms for tick interval and lease
+// margin, so the lease timer starts already lapsed and the loop reports loss.
+func TestLockHeartbeatZeroTTLFiresLeaseImmediately(t *testing.T) {
+	rec := &recordingLockStore{}
+	ls := NewFuncLockStore("t", time.Millisecond, rec.put, rec.del)
+	ls.ttl = 0
+	token, err := ls.Acquire(context.Background(), "res", "holder")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	lost := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		ls.Heartbeat(context.Background(), "res", token, "holder", func(err error) { lost <- err })
+		close(done)
+	}()
+	select {
+	case err := <-lost:
+		if !strings.Contains(err.Error(), "lock lease lapsed") {
+			t.Fatalf("onLost err = %v, want the lease-lapsed error", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("onLost did not fire for a zero-TTL lease")
+	}
+	<-done
+	if got := rec.puts(); got != 1 {
+		t.Errorf("putCalls = %d, want 1 (acquire only, no renewal)", got)
+	}
+}
+
+// TestLockHeartbeatNilOnLostIsSafe verifies a nil onLost callback is a no-op
+// guard, not a panic: the loop still stops on a confirmed takeover.
+func TestLockHeartbeatNilOnLostIsSafe(t *testing.T) {
 	rec := &recordingLockStore{}
 	ls := NewFuncLockStore("t", 30*time.Millisecond, rec.put, rec.del)
+	token, err := ls.Acquire(context.Background(), "res", "holder")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	rec.mu.Lock()
+	rec.putErr = fabricac.ErrLockHeld
+	rec.mu.Unlock()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	waitHeartbeatDone(t, startHeartbeat(ctx, ls, "tok"))
+	done := make(chan struct{})
+	go func() {
+		ls.Heartbeat(context.Background(), "res", token, "holder", nil)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat did not stop after confirmed takeover with nil onLost")
+	}
+}
+
+// TestLockHeartbeatBackwardClockJumpReportsLost verifies a clock that jumps
+// backward across the lease margin: the deadline lands in the past,
+// leaseDelay clamps to zero, and the heartbeat reports loss without re-arming.
+func TestLockHeartbeatBackwardClockJumpReportsLost(t *testing.T) {
+	rec := &recordingLockStore{}
+	ls := NewFuncLockStore("t", 100*time.Millisecond, rec.put, rec.del)
+	token, err := ls.Acquire(context.Background(), "res", "holder")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	// T0 serves Acquire and the heartbeat setup; every later read jumps 70ms
+	// backward, so the post-renewal deadline (now+ttl) has already lapsed.
+	t0 := time.Now()
+	var reads int
+	ls.SetClock(func() time.Time {
+		reads++
+		if reads > 2 {
+			return t0.Add(-70 * time.Millisecond)
+		}
+		return t0
+	})
+
+	lost := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		ls.Heartbeat(context.Background(), "res", token, "holder", func(err error) { lost <- err })
+		close(done)
+	}()
+	select {
+	case err := <-lost:
+		if !strings.Contains(err.Error(), "immediately after renewal") {
+			t.Fatalf("onLost err = %v, want the reschedule-abort error", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("onLost did not fire after the backward clock jump")
+	}
+	<-done
+	if got := rec.puts(); got != 2 {
+		t.Errorf("putCalls = %d, want 2 (acquire + one renewal)", got)
+	}
+}
+
+// TestRescheduleLeaseAlreadyExpiredAborts covers the defensive expired
+// branch: once the timer has expired (its value was observed on the
+// channel), re-arming would push the lease past a lapsed margin.
+func TestRescheduleLeaseAlreadyExpiredAborts(t *testing.T) {
+	timer := time.NewTimer(10 * time.Millisecond)
+	<-timer.C // Observe the expiry; the timer stays expired (Stop reports false).
+	if rescheduleLease(timer, time.Now().Add(100*time.Millisecond), 10*time.Millisecond) {
+		t.Fatal("rescheduleLease = true, want false for an expired lease timer")
+	}
 }
 
 func TestLockRelease(t *testing.T) {

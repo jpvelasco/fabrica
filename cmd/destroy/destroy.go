@@ -112,7 +112,7 @@ func runAll(ctx context.Context, rt globals.Runtime, opts globals.Options, out i
 	}
 	defer releaseLock()
 
-	st, err := provision.ReadState(rt)
+	st, err := provision.ReadState(ctx, rt)
 	if err != nil {
 		return fmt.Errorf("reading state: %w", err)
 	}

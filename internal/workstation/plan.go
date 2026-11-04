@@ -26,6 +26,9 @@ const (
 	// Programmer template defaults (c7i.xlarge — Intel Sapphire Rapids).
 	ProgrammerInstanceType = "c7i.xlarge"
 	ProgrammerVolumeSize   = 100
+
+	// DefaultSGName is the workstation security group name.
+	DefaultSGName = "fabrica-workstation-sg"
 )
 
 // CreatePlan holds everything needed to provision a workstation. No AWS SDK
@@ -80,6 +83,19 @@ type CreatePlan struct {
 	IAM config.IAM
 
 	CostResources []cost.Resource
+}
+
+// RequiredResources lists the resource TypeNames a complete Workstation
+// module records in state. Create retries compare a module's recorded
+// inventory against this list to separate a fully provisioned module (in any
+// transitional status) from a partial one.
+func (p CreatePlan) RequiredResources() []string {
+	return []string{
+		cloud.TypeAWSEC2SecurityGroup,
+		cloud.TypeAWSIAMRole,
+		cloud.TypeAWSIAMInstanceProfile,
+		cloud.TypeAWSEC2Instance,
+	}
 }
 
 // resolveSizing applies the sizing precedence per field: explicit config
@@ -157,7 +173,7 @@ func NewCreatePlan(ctx context.Context, cfg config.WorkstationConfig, account, r
 		DefaultVPC:          defaultVPC,
 		MountPerforce:       perforceAddr != "",
 		PerforceServerAddr:  perforceAddr,
-		SGName:              "fabrica-workstation-sg",
+		SGName:              DefaultSGName,
 		InstanceName:        "fabrica-workstation",
 		RoleName:            "fabrica-workstation-role",
 		InstanceProfileName: "fabrica-workstation-profile",

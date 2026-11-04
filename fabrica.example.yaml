@@ -10,9 +10,9 @@ cloud:
     accountId: ""             # Auto-detected on first `fabrica setup`; leave empty initially
     tags: {}                  # Extra tags merged with standard Fabrica tags on every resource
     # iam applies to EC2-module roles (workstation, horde including agents,
-    # lore, perforce, ddc). CI and Deploy ignore these keys. path must start
-    # and end with /. permissionsBoundary is an IAM policy ARN. Leave both
-    # unset to omit the Cloud Control properties.
+    # lore, perforce, ddc) and the CI CodeBuild role. Deploy ignores these
+    # keys. path must start and end with /. permissionsBoundary is an IAM
+    # policy ARN. Leave both unset to omit the Cloud Control properties.
     # iam:
     #   path: /fabrica/
     #   permissionsBoundary: arn:aws:iam::123456789012:policy/fabrica-boundary
@@ -56,6 +56,11 @@ perforce: {}
 #   allowedCidr: 172.31.0.0/16    # set to your VPC CIDR
 #   agents:
 #     spot: false                 # estimate-only discount; Fabrica does not request Spot capacity
+#     # Place the agent pool explicitly (set together). When both are empty
+#     # the pool follows the coordinator's placement, falling back to the
+#     # account default VPC.
+#     vpcId: ""
+#     subnetId: ""
 #     schedule:
 #       enabled: false
 #       timezone: UTC
@@ -127,6 +132,10 @@ ci:
   image: ""                   # Build image (default "aws/codebuild/amazonlinux2-x86_64-standard:5.0")
   buildTimeout: 0             # Build timeout in minutes (default 60)
   pipeline: false             # standing CodePipeline cost line only; V1 does not provision a pipeline
+  # iam overrides cloud.aws.iam for the CodeBuild role when a field is set:
+  # iam:
+  #   path: /ci/
+  #   permissionsBoundary: arn:aws:iam::123456789012:policy/fabrica-boundary
 
 # Deploy module — GameLift fleet deployment of CI/Horde server builds.
 deploy:
@@ -137,8 +146,13 @@ deploy:
   buildOs: AMAZON_LINUX_2   # build operating system
   fromPort: 7777            # inbound UDP port range start
   toPort: 7777              # inbound UDP port range end
-  desiredInstances: 1       # instances per fleet (cost estimate only in V1)
-  activationTimeoutMinutes: 45   # how long 'promote' waits for a fleet to become ACTIVE
+  desiredInstances: 1       # EC2 instances the fleet is requested to run (sent as LocationCapacity)
+  # minimumInstances / maximumInstances bound the fleet's instance count
+  # (GameLift LocationCapacity). minimumInstances defaults to 0;
+  # maximumInstances defaults to desiredInstances.
+  # minimumInstances: 0
+  # maximumInstances: 0
+  activationTimeoutMinutes: 45   # how long 'promote' waits for a fleet to become ACTIVE at the requested capacity
   # Inbound CIDR granted UDP access to fromPort..toPort on the fleet.
   # Defaults to 0.0.0.0/0 (public) — multiplayer clients connect over the
   # internet. Set a tighter CIDR for private or partner-only deployments;

@@ -36,6 +36,11 @@ func newTestCommand(out *bytes.Buffer, provider cloud.Provider, st *fabricastate
 	c.resolveAMI = func(_ context.Context, _ string) (string, error) { return "ami-fake-ubuntu", nil }
 	if provider != nil {
 		c.createResource = provider.Resources().Create
+		// Same wiring New() does: providers that can inspect AMIs supply the
+		// root device for the encrypted root mapping (#513).
+		if insp, ok := provider.(cloud.ImageInspector); ok {
+			c.inspectImage = insp.DescribeImage
+		}
 	}
 	return c
 }
@@ -89,7 +94,7 @@ func TestCreateProceedingWithoutConfirmMessage(t *testing.T) {
 	var out bytes.Buffer
 	// already provisioned exits early after assumeYes path isn't hit;
 	// exercise assumeYes message via create on empty state
-	c := newTestCommand(&out, &testutil.TestProvider{}, testutil.NewTestState())
+	c := newTestCommand(&out, &testutil.InspectorProvider{}, testutil.NewTestState())
 	c.assumeYes = true
 	if err := c.run(context.Background()); err != nil {
 		t.Fatal(err)
@@ -156,26 +161,6 @@ func TestCreateDryRunOutputFields(t *testing.T) {
 	}
 }
 
-// TestCreateAlreadyExists verifies clean exit when module is already in state.
-func TestCreateAlreadyExists(t *testing.T) {
-	var out bytes.Buffer
-	provider := &testutil.TestProvider{}
-	st := testutil.NewTestState()
-	st.UpsertModule("perforce", "2024.2", "provisioning", []fabricastate.ModuleResource{
-		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-existing"},
-		{TypeName: "AWS::EC2::Instance", Identifier: "i-existing"},
-	})
-	c := newTestCommand(&out, provider, st)
-
-	if err := c.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if provider.CreateCalls != 0 {
-		t.Fatalf("already-exists: made %d create calls, want 0", provider.CreateCalls)
-	}
-	assert.Contains(t, out.String(), "already provisioned")
-}
-
 // TestCreateIdentityFailureAbortsEarly verifies no AWS calls on identity error.
 func TestCreateIdentityFailureAbortsEarly(t *testing.T) {
 	var out bytes.Buffer
@@ -196,7 +181,7 @@ func TestCreateIdentityFailureAbortsEarly(t *testing.T) {
 // TestCreateHappyPathOrderAndState verifies SG created before instance, both in state.
 func TestCreateHappyPathOrderAndState(t *testing.T) {
 	var out bytes.Buffer
-	provider := &testutil.TestProvider{}
+	provider := &testutil.InspectorProvider{}
 	st := testutil.NewTestState()
 	capture := &testutil.StateWriteCapture{}
 	c := newTestCommand(&out, provider, st)
@@ -267,7 +252,7 @@ func TestCreateWriteStateFailsAfterRole(t *testing.T) {
 }
 
 func TestCreateWriteStateFailsAfterInstance(t *testing.T) {
-	provider := &testutil.TestProvider{}
+	provider := &testutil.InspectorProvider{}
 	st := testutil.NewTestState()
 	c := newTestCommand(&bytes.Buffer{}, provider, st)
 	c.assumeYes = true
@@ -324,7 +309,7 @@ func TestCreateProfileFailureAfterRole(t *testing.T) {
 // TestCreateInstanceFailurePreservesPartialState verifies SG is in state even on instance error.
 func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
 	var out bytes.Buffer
-	provider := &testutil.TestProvider{CreateErr: map[string]error{cloud.TypeAWSEC2Instance: errors.New("quota exceeded")}}
+	provider := &testutil.InspectorProvider{TestProvider: testutil.TestProvider{CreateErr: map[string]error{cloud.TypeAWSEC2Instance: errors.New("quota exceeded")}}}
 	st := testutil.NewTestState()
 	capture := &testutil.StateWriteCapture{}
 	c := newTestCommand(&out, provider, st)
@@ -544,6 +529,57 @@ func TestCreateVersionFromConfig(t *testing.T) {
 	assert.Contains(t, out.String(), "2025.1")
 }
 
+// TestCreateAlreadyProvisioned verifies clean exit when a complete module is
+// already in state, even while its status is still transitional.
+func TestCreateAlreadyProvisioned(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
+	st.UpsertModule("perforce", "2025.2", "provisioning", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-existing"},
+		{TypeName: "AWS::IAM::Role", Identifier: "fabrica-perforce-role"},
+		{TypeName: "AWS::IAM::InstanceProfile", Identifier: "fabrica-perforce-profile"},
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-existing"},
+	})
+	c := newTestCommand(&out, provider, st)
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if provider.CreateCalls != 0 {
+		t.Fatalf("already-exists: made %d create calls, want 0", provider.CreateCalls)
+	}
+	assert.Contains(t, out.String(), "already provisioned")
+}
+
+// TestCreatePartialModuleFails verifies a partially provisioned module (an
+// interrupted create) is refused with recovery guidance instead of reported
+// as already provisioned.
+func TestCreatePartialModuleFails(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
+	st.UpsertModule("perforce", "2025.2", "provisioning", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-existing"},
+	})
+	c := newTestCommand(&out, provider, st)
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("run: expected error for partial module, got nil")
+	}
+	for _, want := range []string{
+		`status "provisioning"`,
+		"AWS::EC2::Instance",
+		"fabrica perforce destroy",
+	} {
+		assert.Contains(t, err.Error(), want)
+	}
+	if provider.CreateCalls != 0 {
+		t.Fatalf("partial module: made %d create calls, want 0", provider.CreateCalls)
+	}
+}
+
 // TestCreateWriteStateError verifies that a writeState failure after SG is surfaced.
 func TestCreateWriteStateError(t *testing.T) {
 	var out bytes.Buffer
@@ -564,7 +600,7 @@ func TestCreateWriteStateError(t *testing.T) {
 // instance Properties (not the version string), so drift and export work correctly.
 func TestCreateAMIRecordedInState(t *testing.T) {
 	var out bytes.Buffer
-	provider := &testutil.TestProvider{}
+	provider := &testutil.InspectorProvider{}
 	st := testutil.NewTestState()
 	capture := &testutil.StateWriteCapture{}
 	c := newTestCommand(&out, provider, st)
@@ -599,5 +635,106 @@ func TestCreateAMIRecordedInState(t *testing.T) {
 	// Must NOT be the version string.
 	if inst.Properties["imageId"] == "2024.2" {
 		t.Error("Properties.imageId must not be the version string")
+	}
+	if inst.Properties["rootDevice"] != "/dev/sda1" {
+		t.Errorf("Properties.rootDevice = %q, want the AMI's root device /dev/sda1", inst.Properties["rootDevice"])
+	}
+}
+
+// #513: the encrypted root mapping lands on the AMI's real root device, so a
+// provider that cannot inspect AMIs refuses the launch rather than guessing
+// a device name.
+
+func TestCreateRefusesWithoutImageInspector(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "refusing to launch") {
+		t.Fatalf("expected a refuse-to-launch error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "cannot inspect AMIs") {
+		t.Errorf("err = %v, want the inspector boundary named", err)
+	}
+	// The refuse lands after SG/role/profile creation: three creates, no instance.
+	if provider.CreateCalls != 3 {
+		t.Errorf("CreateCalls = %d, want 3 (SG, role, profile)", provider.CreateCalls)
+	}
+}
+
+func TestCreateRefusesMalformedAMIRootDevice(t *testing.T) {
+	tests := []struct {
+		name    string
+		rootDev string
+		devType string
+		want    string
+	}{
+		{"no root device name", "", "ebs", "reports no root device name"},
+		{"malformed root device name", "/dev/ram0", "ebs", "not an EC2 device name"},
+		{"non-EBS root", "/dev/sda1", "instance-store", "needs an EBS-backed AMI"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			var out bytes.Buffer
+			c := newTestCommand(&out, &testutil.TestProvider{}, testutil.NewTestState())
+			c.assumeYes = true
+			c.inspectImage = func(_ context.Context, _ string) (cloud.ImageInfo, error) {
+				return cloud.ImageInfo{RootDeviceName: tc.rootDev, RootDeviceType: tc.devType}, nil
+			}
+			err := c.run(context.Background())
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestCreateInspectAMIErrorsWrap(t *testing.T) {
+	t.Chdir(t.TempDir())
+	c := newTestCommand(&bytes.Buffer{}, &testutil.TestProvider{}, testutil.NewTestState())
+	c.assumeYes = true
+	c.inspectImage = func(_ context.Context, _ string) (cloud.ImageInfo, error) {
+		return cloud.ImageInfo{}, errors.New("describe denied")
+	}
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "inspecting perforce AMI ami-fake-ubuntu") {
+		t.Fatalf("expected the inspect error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "describe denied") {
+		t.Errorf("err = %v, want the wrapped cause", err)
+	}
+}
+
+func TestCreateEmptyAMIResolveRefuses(t *testing.T) {
+	t.Chdir(t.TempDir())
+	c := newTestCommand(&bytes.Buffer{}, &testutil.InspectorProvider{}, testutil.NewTestState())
+	c.assumeYes = true
+	c.resolveAMI = nil // the provider is not an AMI resolver: no AMI in the region
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "no Ubuntu AMI could be resolved in us-east-1") {
+		t.Fatalf("expected an empty-AMI error, got %v", err)
+	}
+}
+
+// TestCreateInspectsTheResolvedAMI pins that the inspection targets the
+// resolved Ubuntu AMI, not a canned or guessed ID.
+func TestCreateInspectsTheResolvedAMI(t *testing.T) {
+	t.Chdir(t.TempDir())
+	provider := &testutil.InspectorProvider{}
+	st := testutil.NewTestState()
+	c := newTestCommand(&bytes.Buffer{}, provider, st)
+	c.assumeYes = true
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if provider.LastImageID != "ami-fake-ubuntu" {
+		t.Errorf("LastImageID = %q, want the resolved AMI", provider.LastImageID)
+	}
+	if len(provider.DescribeImageIDs) != 1 || provider.DescribeImageIDs[0] != "ami-fake-ubuntu" {
+		t.Errorf("DescribeImageIDs = %v, want one call for the resolved AMI", provider.DescribeImageIDs)
 	}
 }

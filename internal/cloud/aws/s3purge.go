@@ -53,11 +53,20 @@ func (p *awsProvider) PurgeBucket(ctx context.Context, bucket string) error {
 			objects = append(objects, s3types.ObjectIdentifier{Key: m.Key, VersionId: m.VersionId})
 		}
 		if len(objects) > 0 {
-			if _, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+			out, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 				Bucket: aws.String(bucket),
 				Delete: &s3types.Delete{Objects: objects},
-			}); err != nil {
+			})
+			if err != nil {
 				return fmt.Errorf("deleting %d versions from bucket %s: %w", len(objects), bucket, err)
+			}
+			// S3 batch delete returns a success response even when
+			// individual deletions are denied (e.g. AccessDenied). Without
+			// this check the loop above revisits the same undeletable
+			// versions forever instead of making progress.
+			if len(out.Errors) > 0 {
+				return fmt.Errorf("deleting %d versions from bucket %s: %s; resolve the S3 errors and retry the purge",
+					len(objects), bucket, summarizeDeleteErrors(out.Errors, len(objects)))
 			}
 		}
 
@@ -72,4 +81,20 @@ func (p *awsProvider) purgeClient(cfg aws.Config) purgeS3Client {
 		return p.newPurgeS3Client(cfg)
 	}
 	return s3.NewFromConfig(cfg)
+}
+
+// summarizeDeleteErrors renders S3 batch-delete per-key failures as a
+// compact operator summary: the first few keys with their S3 error codes,
+// then a count for the rest, so a large denied batch stays readable.
+func summarizeDeleteErrors(errs []s3types.Error, total int) string {
+	const shown = 5
+	parts := make([]string, 0, len(errs))
+	for i, e := range errs {
+		if i == shown {
+			parts = append(parts, fmt.Sprintf("+%d more", len(errs)-shown))
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s)", aws.ToString(e.Key), aws.ToString(e.Code)))
+	}
+	return fmt.Sprintf("%d of %d failed: %s", len(errs), total, strings.Join(parts, ", "))
 }

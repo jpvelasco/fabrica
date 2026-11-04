@@ -46,23 +46,16 @@ func FormatPerforce(adminPassword string) string {
 	return fmt.Sprintf("# Perforce admin credentials — keep secret\nadmin_password: %q\n", adminPassword)
 }
 
-// ReadPerforceAdminPassword reads a Perforce credential file and returns its
-// admin password.
-func ReadPerforceAdminPassword(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("reading credentials %s: %w", path, err)
-	}
-	return parsePerforceAdminPassword(string(data))
-}
-
-func parsePerforceAdminPassword(content string) (string, error) {
+// credentialValue reads one "key: value" pair from a line-based credential
+// file: comments and blank lines are skipped, the first matching key wins,
+// and surrounding single or double quotes are stripped. ok is false when the
+// key is absent.
+func credentialValue(content, key string) (string, bool) {
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		const key = "admin_password:"
 		if !strings.HasPrefix(line, key) {
 			continue
 		}
@@ -70,12 +63,41 @@ func parsePerforceAdminPassword(content string) (string, error) {
 		if len(val) >= 2 && ((val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'')) {
 			val = val[1 : len(val)-1]
 		}
+		return val, true
+	}
+	return "", false
+}
+
+// ReadPerforceAdminPassword reads a Perforce credential file and returns its
+// admin password.
+func ReadPerforceAdminPassword(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading credentials %s: %w", path, err)
+	}
+	if val, ok := credentialValue(string(data), "admin_password:"); ok {
 		if val == "" {
 			return "", fmt.Errorf("admin_password is empty in credentials file")
 		}
 		return val, nil
 	}
 	return "", fmt.Errorf("admin_password not found in credentials file — re-run 'fabrica perforce create' or restore .fabrica/perforce-credentials.yaml")
+}
+
+// ReadHordeMongoPassword reads a Horde credential file and returns its
+// MongoDB password.
+func ReadHordeMongoPassword(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading credentials %s: %w", path, err)
+	}
+	if val, ok := credentialValue(string(data), "mongodb_password:"); ok {
+		if val == "" {
+			return "", fmt.Errorf("mongodb_password is empty in credentials file")
+		}
+		return val, nil
+	}
+	return "", fmt.Errorf("mongodb_password not found in credentials file — re-run 'fabrica horde create' or restore .fabrica/horde-credentials.yaml")
 }
 
 // FormatWorkstation returns the YAML content for a Workstation DCV credential file.

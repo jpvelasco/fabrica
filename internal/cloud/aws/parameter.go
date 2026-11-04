@@ -12,6 +12,7 @@ import (
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/aws/smithy-go"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
+	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // Parameter Store rejects Tags together with Overwrite, so a re-create of a
@@ -111,7 +112,7 @@ func parameterTags(extra map[string]string) []ssmtypes.Tag {
 	}}
 	keys := make([]string, 0, len(extra))
 	for k := range extra {
-		if k == "" || k == "ManagedBy" {
+		if k == "" || fabricatags.IdentityKey(k) {
 			continue
 		}
 		keys = append(keys, k)

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -43,8 +45,8 @@ func newTestCommand(out *bytes.Buffer, st *fabricastate.State, deleteErr map[str
 		Out:     out,
 		Confirm: func(_, _ string) bool { return true },
 	}
-	c.ReadState = func() (*fabricastate.State, error) { return st, nil }
-	c.WriteState = func(s *fabricastate.State) error { return nil }
+	c.ReadState = func(_ context.Context) (*fabricastate.State, error) { return st, nil }
+	c.WriteState = func(_ context.Context, s *fabricastate.State) error { return nil }
 	fake := &fakeResourceClient{deleteErr: deleteErr}
 	c.DeleteResource = fake.Delete
 	c.GetResource = fake.Get
@@ -149,7 +151,7 @@ func TestRunHappyPathModuleRemovedFromState(t *testing.T) {
 	var lastState *fabricastate.State
 	c := newTestCommand(&out, st, nil)
 	c.AssumeYes = true
-	c.WriteState = func(s *fabricastate.State) error {
+	c.WriteState = func(_ context.Context, s *fabricastate.State) error {
 		cp := *s
 		lastState = &cp
 		return nil
@@ -178,7 +180,7 @@ func TestRunPartialStateWrittenAfterEachDelete(t *testing.T) {
 	var snapshots []snapshot
 	c := newTestCommand(&out, st, nil)
 	c.AssumeYes = true
-	c.WriteState = func(s *fabricastate.State) error {
+	c.WriteState = func(_ context.Context, s *fabricastate.State) error {
 		m := s.GetModule("perforce")
 		snap := snapshot{moduleExists: m != nil}
 		if m != nil {
@@ -250,7 +252,7 @@ func TestRunSGFailureAfterInstanceSuccess(t *testing.T) {
 		"AWS::EC2::SecurityGroup": errors.New("sg in use"),
 	})
 	c.AssumeYes = true
-	c.WriteState = func(s *fabricastate.State) error {
+	c.WriteState = func(_ context.Context, s *fabricastate.State) error {
 		cp := *s
 		lastState = &cp
 		return nil
@@ -344,7 +346,7 @@ func TestRunConfirmationPhrase(t *testing.T) {
 func TestRunReadStateError(t *testing.T) {
 	var out bytes.Buffer
 	c := newTestCommand(&out, nil, nil)
-	c.ReadState = func() (*fabricastate.State, error) {
+	c.ReadState = func(_ context.Context) (*fabricastate.State, error) {
 		return nil, errors.New("disk read failure")
 	}
 	deleteCalled := false
@@ -382,7 +384,7 @@ func TestRunWriteStateErrorSurfacedAsWarning(t *testing.T) {
 	st := moduleState("provisioning", true)
 	c := newTestCommand(&out, st, nil)
 	c.AssumeYes = true
-	c.WriteState = func(_ *fabricastate.State) error {
+	c.WriteState = func(_ context.Context, _ *fabricastate.State) error {
 		return errors.New("disk full")
 	}
 
@@ -836,8 +838,8 @@ func TestRunSkipConfirmBypassesConfirmation(t *testing.T) {
 			t.Fatal("Confirm must not be called when SkipConfirm is true")
 			return false
 		},
-		ReadState:  func() (*fabricastate.State, error) { return st, nil },
-		WriteState: func(*fabricastate.State) error { written = true; return nil },
+		ReadState:  func(_ context.Context) (*fabricastate.State, error) { return st, nil },
+		WriteState: func(_ context.Context, _ *fabricastate.State) error { written = true; return nil },
 		DeleteResource: func(_ context.Context, r *cloud.Resource) error {
 			deleted = append(deleted, r.Identifier)
 			return nil
@@ -999,8 +1001,8 @@ func TestSDKDeleteFuncErrNotHandledFallsBackToCloudControl(t *testing.T) {
 		},
 		SkipConfirm: true,
 		Out:         &bytes.Buffer{},
-		ReadState:   func() (*fabricastate.State, error) { return st, nil },
-		WriteState:  func(*fabricastate.State) error { return nil },
+		ReadState:   func(_ context.Context) (*fabricastate.State, error) { return st, nil },
+		WriteState:  func(_ context.Context, _ *fabricastate.State) error { return nil },
 		SDKDeleteFunc: func(ctx context.Context, typeName, identifier string) error {
 			if typeName == "AWS::Custom::SDKResource" {
 				sdkDeleted = append(sdkDeleted, identifier)
@@ -1083,6 +1085,43 @@ func TestNewStandaloneWithProvider(t *testing.T) {
 	}
 }
 
+// TestNewStandaloneRunPersistsState drives a real (non-dry-run) Run through
+// NewStandalone's production seams: ReadState loads the seeded state file,
+// every delete succeeds, and WriteState persists the module removal.
+func TestNewStandaloneRunPersistsState(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, testutil.NewProvisionedStateJSON(testutil.StateModule{
+		Name:    "perforce",
+		Version: "2024.2",
+		Status:  "ready",
+		Resources: []testutil.StateResource{
+			{TypeName: "AWS::EC2::Instance", Identifier: "i-abc123"},
+			{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-abc123"},
+		},
+	}))
+	provider := &testutil.TestProvider{}
+	rt, err := testutil.NewTestRuntime(provider)()
+	if err != nil {
+		t.Fatalf("runtime: %v", err)
+	}
+	var out bytes.Buffer
+	tc := NewStandalone(testSpec, rt, &out, false, true, true)
+	if err := tc.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if provider.DeleteCalls != 2 {
+		t.Fatalf("DeleteCalls = %d, want 2", provider.DeleteCalls)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".fabrica", "state.json"))
+	if err != nil {
+		t.Fatalf("reading state file: %v", err)
+	}
+	if strings.Contains(string(data), "perforce") {
+		t.Fatalf("state file still contains the perforce module: %s", data)
+	}
+}
+
 func TestNewStandaloneCommandResolvesDependenciesAtExecution(t *testing.T) {
 	t.Chdir(t.TempDir())
 
@@ -1145,7 +1184,8 @@ func TestAttemptDeleteSDKPath(t *testing.T) {
 }
 
 // TestAttemptDeleteSDKErrorPropagates verifies a non-ErrNotHandled SDK error
-// is returned as-is without falling back to Cloud Control.
+// propagates (wrapped with the resource context) without falling back to
+// Cloud Control.
 func TestAttemptDeleteSDKErrorPropagates(t *testing.T) {
 	wantErr := errors.New("project still in use")
 	c := Command{
@@ -1310,7 +1350,7 @@ func TestCommandDeleteResourcesWrapper(t *testing.T) {
 	tc := Command{
 		Spec:           Spec{ModuleName: "perforce"},
 		DeleteResource: func(_ context.Context, r *cloud.Resource) error { deleted = append(deleted, r.Identifier); return nil },
-		WriteState:     func(*fabricastate.State) error { return nil },
+		WriteState:     func(_ context.Context, _ *fabricastate.State) error { return nil },
 		Out:            io.Discard,
 	}
 	st := fabricastate.NewState("123456789012", "us-east-1")
@@ -1370,5 +1410,126 @@ func TestRunLockAcquiredAndReleased(t *testing.T) {
 	}
 	if provider.Acquires != 1 {
 		t.Errorf("acquires = %d, want 1", provider.Acquires)
+	}
+}
+
+// TestRunRemovesLocalCleanupFileOnSuccess: a spec LocalCleanupFile is deleted
+// after a fully successful teardown, through the real os.Remove (no seam
+// injected — the nil seam falls back to os.Remove).
+func TestRunRemovesLocalCleanupFileOnSuccess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credentials.yaml")
+	if err := os.WriteFile(path, []byte("dcv_session_password: \"x\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	st := moduleState("ready", true)
+	c := newTestCommand(&out, st, nil)
+	c.AssumeYes = true
+	c.Spec.LocalCleanupFile = path
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cleanup file still exists after teardown: %v", err)
+	}
+	assert.Contains(t, out.String(), "Removed: "+path)
+}
+
+// TestRunLocalCleanupFileMissingIsNoOp: an already-gone file is a silent
+// no-op, not a warning (nothing left over to clean up).
+func TestRunLocalCleanupFileMissingIsNoOp(t *testing.T) {
+	var out bytes.Buffer
+	st := moduleState("ready", true)
+	c := newTestCommand(&out, st, nil)
+	c.AssumeYes = true
+	c.Spec.LocalCleanupFile = filepath.Join(t.TempDir(), "absent.yaml")
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(out.String(), "Warning:") {
+		t.Fatalf("missing cleanup file should be a silent no-op:\n%s", out.String())
+	}
+}
+
+// TestRunLocalCleanupFileWarningOnRemoveError: a removal failure never fails
+// the teardown — the cloud resources are already gone — and is reported as a
+// warning that names the file and the fix.
+func TestRunLocalCleanupFileWarningOnRemoveError(t *testing.T) {
+	var out bytes.Buffer
+	st := moduleState("ready", true)
+	c := newTestCommand(&out, st, nil)
+	c.AssumeYes = true
+	c.Spec.LocalCleanupFile = ".fabrica/workstation-credentials.yaml"
+	c.RemoveLocalFile = func(_ string) error { return errors.New("permission denied") }
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	assert.Contains(t, out.String(), "Warning: could not remove .fabrica/workstation-credentials.yaml: permission denied — delete it manually")
+}
+
+// TestRunLocalCleanupNotCalledWhenDeleteFails: a failed teardown keeps the
+// local credentials file — the operator still needs it to retry against the
+// resources that survived.
+func TestRunLocalCleanupNotCalledWhenDeleteFails(t *testing.T) {
+	var out bytes.Buffer
+	st := moduleState("ready", true)
+	// The fake keys deleteErr by type name, so fail the instance delete.
+	c := newTestCommand(&out, st, map[string]error{"AWS::EC2::Instance": errors.New("delete boom")})
+	c.AssumeYes = true
+	c.Spec.LocalCleanupFile = ".fabrica/workstation-credentials.yaml"
+	called := false
+	c.RemoveLocalFile = func(_ string) error { called = true; return nil }
+
+	if err := c.Run(context.Background()); err == nil {
+		t.Fatal("Run: expected a delete failure")
+	}
+	if called {
+		t.Error("local cleanup ran despite a failed teardown")
+	}
+}
+
+// TestRunDryRunSkipsLocalCleanup: --dry-run makes no disk changes.
+func TestRunDryRunSkipsLocalCleanup(t *testing.T) {
+	var out bytes.Buffer
+	st := moduleState("ready", true)
+	c := newTestCommand(&out, st, nil)
+	c.DryRun = true
+	c.Spec.LocalCleanupFile = ".fabrica/workstation-credentials.yaml"
+	called := false
+	c.RemoveLocalFile = func(_ string) error { called = true; return nil }
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if called {
+		t.Error("dry-run removed the local credentials file")
+	}
+}
+
+// TestRunLocalCleanupRunsInJSONMode: cleanup happens under --json too; the
+// human confirmation line is suppressed, the file is still deleted.
+func TestRunLocalCleanupRunsInJSONMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credentials.yaml")
+	if err := os.WriteFile(path, []byte("dcv_session_password: \"x\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	st := moduleState("ready", true)
+	c := newTestCommand(&out, st, nil)
+	c.AssumeYes = true
+	c.JSONOut = true
+	c.Spec.LocalCleanupFile = path
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cleanup file still exists after teardown: %v", err)
+	}
+	if strings.Contains(out.String(), "Removed:") {
+		t.Fatalf("JSON output must not carry the human Removed line:\n%s", out.String())
 	}
 }

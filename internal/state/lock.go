@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
+	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/oplog"
 )
 
@@ -38,17 +41,34 @@ type LockStore struct {
 	ttl       time.Duration
 	now       func() time.Time
 	newTicker TickerFunc
+	newTimer  TimerFunc
 	put       PutItemFunc
 	del       DeleteItemFunc
 }
 
+// Timer is the lease-timer surface Heartbeat re-arms; *time.Timer satisfies it.
+type Timer interface {
+	Stop() bool
+	Reset(d time.Duration) bool
+}
+
 // TickerFunc starts a periodic tick source of period d and returns its channel
-// and a stop function. It is the seam that lets tests drive heartbeats exactly.
-type TickerFunc func(d time.Duration) (ticks <-chan time.Time, stop func())
+// and a stop function. TimerFunc starts a one-shot timer of duration d and
+// returns its channel and handle. Both are the seams that let tests drive
+// heartbeat renewals and lease expiry exactly, instead of racing the scheduler.
+type (
+	TickerFunc func(d time.Duration) (ticks <-chan time.Time, stop func())
+	TimerFunc  func(d time.Duration) (fire <-chan time.Time, t Timer)
+)
 
 func realTicker(d time.Duration) (<-chan time.Time, func()) {
 	t := time.NewTicker(d)
 	return t.C, t.Stop
+}
+
+func realTimer(d time.Duration) (<-chan time.Time, Timer) {
+	t := time.NewTimer(d)
+	return t.C, t
 }
 
 // NewFuncLockStore builds a LockStore over injected storage functions.
@@ -62,6 +82,7 @@ func NewFuncLockStore(table string, ttl time.Duration, put PutItemFunc, del Dele
 		ttl:       ttl,
 		now:       time.Now,
 		newTicker: realTicker,
+		newTimer:  realTimer,
 		put:       put,
 		del:       del,
 	}
@@ -70,8 +91,11 @@ func NewFuncLockStore(table string, ttl time.Duration, put PutItemFunc, del Dele
 // SetClock overrides the time source (tests).
 func (s *LockStore) SetClock(now func() time.Time) { s.now = now }
 
-// SetTicker overrides the heartbeat tick source (tests).
+// SetTicker overrides the heartbeat renewal tick source (tests).
 func (s *LockStore) SetTicker(newTicker TickerFunc) { s.newTicker = newTicker }
+
+// SetTimer overrides the heartbeat lease timer (tests).
+func (s *LockStore) SetTimer(newTimer TimerFunc) { s.newTimer = newTimer }
 
 // Acquire attempts to acquire a lock for resourceID held by holder.
 // Succeeds when the lock row is absent OR older than the TTL (stale takeover).
@@ -105,7 +129,9 @@ func (s *LockStore) Acquire(ctx context.Context, resourceID, holder string) (str
 }
 
 // Renew bumps AcquiredAt so a live holder is not treated as stale. Only the
-// current token can renew; a failed conditional means another run took over.
+// current token can renew. The error is wrapped with %w, so callers can
+// detect a confirmed takeover via errors.Is(err, fabricac.ErrLockHeld) and
+// distinguish it from transient storage failures.
 func (s *LockStore) Renew(ctx context.Context, resourceID, token, holder string) error {
 	now := s.now().UTC()
 	item := map[string]string{
@@ -123,25 +149,97 @@ func (s *LockStore) Renew(ctx context.Context, resourceID, token, holder string)
 	return nil
 }
 
-// Heartbeat renews the lock on an interval of ttl/3 until ctx is cancelled.
-// A failed renew (takeover or storage error) stops the loop.
-func (s *LockStore) Heartbeat(ctx context.Context, resourceID, token, holder string) {
+// Heartbeat renews the lock every ttl/3 until ctx is cancelled, propagating
+// lock loss to onLost so the caller can abort in-flight work. A confirmed
+// takeover (fabricac.ErrLockHeld) fires onLost immediately — the row belongs
+// to someone else and further renewals will never work. Transient storage
+// errors are retried on the next tick, but the lease is only extended by
+// successful renewals: if the lease (last successful renewal + ttl, minus a
+// ttl/10 margin) lapses without one, onLost fires with the last error.
+// onLost fires at most once and may be nil.
+func (s *LockStore) Heartbeat(ctx context.Context, resourceID, token, holder string, onLost func(error)) {
+	lost := &sync.Once{}
+	fireLost := func(err error) {
+		if onLost == nil {
+			return
+		}
+		lost.Do(func() { onLost(err) })
+	}
+
 	interval := s.ttl / 3
 	if interval <= 0 {
 		interval = time.Millisecond
 	}
 	ticks, stop := s.newTicker(interval)
 	defer stop()
+
+	// margin keeps the abort ahead of the real expiry so the row is still
+	// ours (or at least ambiguous) when the caller stops mutating.
+	margin := s.ttl / 10
+	if margin <= 0 {
+		margin = time.Millisecond
+	}
+	deadline := s.now().Add(s.ttl)
+	leaseFired, leaseTimer := s.newTimer(leaseDelay(deadline, margin))
+	defer leaseTimer.Stop()
+	var lastErr error
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-leaseFired:
+			if lastErr == nil {
+				lastErr = fmt.Errorf("lock lease lapsed without a successful renewal")
+			}
+			fireLost(lastErr)
+			return
 		case <-ticks:
-			if err := s.Renew(ctx, resourceID, token, holder); err != nil {
+			err := s.Renew(ctx, resourceID, token, holder)
+			switch {
+			case err == nil:
+				lastErr = nil
+				deadline = s.now().Add(s.ttl)
+				if !rescheduleLease(leaseTimer, deadline, margin) {
+					fireLost(fmt.Errorf("lock lease margin lapsed immediately after renewal"))
+					return
+				}
+			case errors.Is(err, fabricac.ErrLockHeld):
+				fireLost(err)
 				return
+			default:
+				lastErr = err
 			}
 		}
 	}
+}
+
+// leaseDelay is the wait until the lease margin (deadline minus margin)
+// lapses, clamped to zero.
+func leaseDelay(deadline time.Time, margin time.Duration) time.Duration {
+	d := time.Until(deadline) - margin
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
+// rescheduleLease moves the lease timer to margin before the new deadline,
+// reporting false when the margin has already lapsed (backward clock jump or
+// already-expired timer), in which case the caller must abort. Since Go 1.23
+// timer channels are unbuffered and the value reaches only the heartbeat's
+// own lease case — which aborts first — the expired branch is defensive.
+func rescheduleLease(leaseTimer Timer, deadline time.Time, margin time.Duration) bool {
+	d := leaseDelay(deadline, margin)
+	if d == 0 {
+		return false
+	}
+	if !leaseTimer.Stop() {
+		// Expired or stopped: re-arming would mutate past a lapsed lease.
+		return false
+	}
+	leaseTimer.Reset(d)
+	return true
 }
 
 // Release releases a previously acquired lock. Only the holder with the

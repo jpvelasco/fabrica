@@ -49,7 +49,7 @@ affected.
 | `horde` | `create`, `status`, `submit`, `destroy`, `ami build`, `agents schedule`, `agents metrics` | Complete |
 | `lore` | `create`, `status`, `destroy`, `ami build` | Complete (AMI-first; local-store private path proven; S3 store provisioned, not re-verified on a known-good AMI) |
 | `ddc` | `setup`, `status`, `destroy`, `region add`, `ami build`, `topology` | Complete (V1, home + edge regions) |
-| `workstation` | `create`, `list`, `stop`, `start`, `schedule`, `terminate`, `ami build` | Complete |
+| `workstation` | `create`, `status`, `list`, `stop`, `start`, `schedule`, `terminate`, `ami build` | Complete |
 | `ci` | `setup`, `trigger`, `status`, `logs`, `pipeline`, `destroy` | Complete |
 | `deploy` | `setup`, `promote`, `rollback`, `status`, `destroy` | Complete |
 | `cost` | `report`, `forecast`, `alerts` | Complete (offline, static price table) |
@@ -214,7 +214,7 @@ fabrica deploy status
 
 #### `fabrica doctor`
 
-Checks your environment: Go version, AWS credentials, region, S3 state bucket, DynamoDB lock table, and Perforce CIDR (perforce does not auto-resolve the VPC CIDR the way lore and horde do — port 1666 opens only to `10.0.0.0/8` unless `perforce.allowedCidr` is set).
+Checks your environment: Go version, AWS credentials, region, S3 state bucket, DynamoDB lock table, and Perforce CIDR (runs when any `perforce.*` key is configured; perforce does not auto-resolve the VPC CIDR the way lore and horde do — port 1666 opens only to `10.0.0.0/8` unless `perforce.allowedCidr` is set).
 
 #### `fabrica setup`
 
@@ -230,7 +230,7 @@ Read-only aggregate overview of every provisioned module plus the state backend:
 
 #### `fabrica drift`
 
-Drift detection: compares recorded state (`.fabrica/state.json`) against live AWS resources and reports whether each resource is in sync, missing, extra (live but not in state), or has attribute mismatches. Checks the state backend (S3 bucket, DynamoDB table), EC2 instances (existence, state, instance type, AMI), security groups, IAM roles, and CodeBuild projects. Extra detection uses `ResourceClient.List` to enumerate live resources and diff against recorded state — CodeBuild projects are excluded since they have no List API. `--json` for machine-readable output.
+Drift detection: compares recorded state (the profile's local state cache under `.fabrica/`, `.fabrica/state.json` for the default config) against live AWS resources and reports whether each resource is in sync, missing, extra (live but not in state), or has attribute mismatches. Checks the state backend (S3 bucket, DynamoDB table), EC2 instances (existence, state, instance type, AMI), security groups, IAM roles, and CodeBuild projects. Extra detection uses `ResourceClient.List` to enumerate live resources and diff against recorded state, reporting only resources Fabrica owns (the `ManagedBy=fabrica` identity tag — list results without tags are fetched once to resolve ownership, and unattributable results are skipped); CodeBuild projects are excluded since they have no List API. `--json` for machine-readable output.
 
 By default `fabrica drift` is read-only. Add `--fix` to enable auto-remediation: missing managed resources (EC2 instances, security groups) are recreated from recorded state. `--fix --dry-run` shows the remediation plan without applying changes. Mismatch and Extra resources are report-only and skipped during remediation.
 
@@ -303,7 +303,8 @@ Reads live state and TCP-probes port 5000. Reports the Horde web UI URL and gRPC
 Parses a BuildGraph XML file and POSTs the job to the Horde REST API via the coordinator's private IP. The target is resolved from the XML (first `<Agent>`'s first `<Node>` name). Use `examples/BuildGraph.sample.xml` as a starting point. Options:
 
 ```
---wait         Poll until the job completes
+--wait         Poll until the job completes (exits non-zero if the job errors, the wait times out, or polling is cancelled)
+--dry-run      Preview the job and coordinator address without submitting
 ```
 
 Requires VPN or same-VPC access; no public IP is assigned in V1.
@@ -417,7 +418,7 @@ Deletes edge nodes first (each in its region), then home resources (instances �
 
 ### Workstation
 
-> **AMI requirement:** `fabrica workstation create` is AMI-first. Your AMI must already have NICE DCV installed. Stock Ubuntu is rejected at create time. Generate bake artifacts with `fabrica workstation ami build` (see [docs/workstation-ami.md](docs/workstation-ami.md)). Fabrica only configures and starts the DCV session via cloud-init. Port 8443 (NICE DCV HTTPS) is opened inbound; restrict `workstation.allowedCidr` in `fabrica.yaml` for production. Verify private instances via SSM ([docs/ssm-private.md](docs/ssm-private.md)). Accounts that require an IAM path, a permissions boundary, or a volume request tag use `cloud.aws.iam` and `cloud.aws.volumeRequestTags` ([docs/guardrailed-accounts.md](docs/guardrailed-accounts.md)).
+> **AMI requirement:** `fabrica workstation create` is AMI-first. Your AMI must already have NICE DCV installed. Stock Ubuntu is rejected at create time. Generate bake artifacts with `fabrica workstation ami build` (see [docs/workstation-ami.md](docs/workstation-ami.md)). Fabrica only configures and starts the DCV session via cloud-init. Port 8443 (NICE DCV HTTPS) is opened inbound; restrict `workstation.allowedCidr` in `fabrica.yaml` for production, deploy in a private subnet with SSM VPC endpoints and no public IP, and never open 8443 to `0.0.0.0/0` (DCV binds every interface, so the security group is the only access control — see the private-subnet section of [docs/workstation-ami.md](docs/workstation-ami.md)). Verify private instances via SSM ([docs/ssm-private.md](docs/ssm-private.md)). Accounts that require an IAM path, a permissions boundary, or a volume request tag use `cloud.aws.iam` and `cloud.aws.volumeRequestTags` ([docs/guardrailed-accounts.md](docs/guardrailed-accounts.md)).
 
 #### `fabrica workstation ami build`
 
@@ -425,7 +426,7 @@ Writes Image Builder component + recipe + build guide locally (no AWS calls). Th
 
 #### `fabrica workstation create`
 
-Provisions a NICE DCV cloud workstation: stores the DCV session password in a per-create SSM SecureString (`/fabrica/workstation/<create-nonce>/dcv-password`, never EC2 UserData), creates an EC2 security group (port 8443), an IAM role (`AmazonSSMManagedInstanceCore`, `fabrica-ssm-output`, and `ssm:GetParameter` on that one parameter ARN only) with instance profile, and launches an EC2 instance attached to the profile. The parameter name is recorded in state on the instance (`sessionPasswordParameter`). Cloud-init reads exactly that name with `aws ssm get-parameter` and feeds it to `chpasswd` via a heredoc. The operator source of truth stays `.fabrica/workstation-credentials.yaml` (mode 0600). Terminate deletes exactly the recorded name and skips when none is recorded. A create that fails before the instance exists deletes it too; once the instance exists the parameter stays until terminate.
+Provisions a NICE DCV cloud workstation: stores the DCV session password in a per-create SSM SecureString (`/fabrica/workstation/<create-nonce>/dcv-password`, never EC2 UserData), creates an EC2 security group (port 8443), an IAM role (`AmazonSSMManagedInstanceCore`, `fabrica-ssm-output`, and `ssm:GetParameter` on that one parameter ARN only) with instance profile, and launches an EC2 instance attached to the profile. The parameter name is recorded in state on the instance (`sessionPasswordParameter`). Cloud-init reads exactly that name with `aws ssm get-parameter` and feeds it to `chpasswd` via a heredoc. The operator source of truth stays `.fabrica/workstation-credentials.yaml` (mode 0600). Terminate deletes exactly the recorded name and skips when none is recorded. A create that fails before the instance exists deletes it too; once the instance exists the parameter stays until terminate. After a fully successful teardown, terminate also removes the local credentials file and warns if it cannot.
 
 Key flags:
 
@@ -437,6 +438,10 @@ Key flags:
 ```
 
 When `--mount-perforce` is set, `create` reads the Perforce server's private IP from local state (requires `fabrica perforce create` to have run first) and writes `~/.p4config` on the workstation with `P4PORT` set. The developer still runs `p4 sync` manually.
+
+#### `fabrica workstation status`
+
+Shows the current status of the workstation: reads local state, queries the instance via Cloud Control for live details (instance type, private IP, EC2 state), and probes TCP 8443 to verify the DCV server is accepting connections. When the workstation transitions from `provisioning` to `ready` for the first time, status updates the local state file (which is what `list` and the aggregate `status` report from then on). `--wait` / `-w` polls every 15 seconds until the DCV server responds, timing out after 10 minutes. Instances reachable only from inside the VPC report "unreachable from this machine" — verify them via SSM ([docs/ssm-private.md](docs/ssm-private.md)). Supports `--json`.
 
 #### `fabrica workstation list`
 
@@ -456,7 +461,7 @@ Prints `workstation.spot` and the weekly on/off window. Cost report discounts co
 
 #### `fabrica workstation terminate`
 
-Permanently terminates the workstation EC2 instance, IAM instance profile, IAM role, and security group (in reverse-creation order). Idempotent — already-terminated instances are skipped. Supports `--dry-run`, `--yes`, `--json`.
+Permanently terminates the workstation EC2 instance, IAM instance profile, IAM role, and security group, deleting the per-create DCV session-password SecureString first so a failed run cannot orphan it. Idempotent — already-terminated instances are skipped. Supports `--dry-run`, `--yes`, `--json`.
 
 ### CI
 
@@ -470,7 +475,7 @@ By default the CodeBuild project is placed inside the account's default VPC (or 
 
 #### `fabrica ci trigger <buildgraph.xml>`
 
-Starts a build run. Parses the BuildGraph XML for the job name and target (first `<Agent>`'s first `<Node>` name), resolves the Horde coordinator's address from local state, and starts the CodeBuild project with those values as environment overrides; the build submits the job to Horde. Requires `fabrica ci setup` and a provisioned, reachable Horde coordinator. Use `--wait` to poll until the build reaches a terminal state.
+Starts a build run. Parses the BuildGraph XML for the job name and target (first `<Agent>`'s first `<Node>` name), resolves the Horde coordinator's address from local state, and starts the CodeBuild project with those values as environment overrides; the build submits the job to Horde. Requires `fabrica ci setup` and a provisioned, reachable Horde coordinator. Use `--wait` to poll until the build reaches a terminal state, or `--dry-run` to preview the job, project, and Horde URL without starting a build.
 
 If the BuildGraph has no `<Agent>`/`<Node>` elements, the command fails fast with an actionable error pointing to `examples/BuildGraph.sample.xml`.
 
@@ -515,11 +520,11 @@ Provisions the deploy infrastructure: an IAM role GameLift assumes to read build
 
 #### `fabrica deploy promote <build-version>`
 
-Registers a packaged server build from S3 as a GameLift build, creates a new fleet for it, waits until the fleet is `ACTIVE` (printing phase transitions), then flips the alias to the new fleet. The previously-active fleet is retained for rollback. By default the build is read from `s3://<deploy.buildBucket>/builds/<version>/server.zip` (override with `--s3-bucket`/`--s3-key`). Use `--no-wait` to start fleet creation without blocking (skips the alias flip). On fleet `ERROR` or timeout the alias is left untouched and the failure events are shown.
+Registers a packaged server build from S3 as a GameLift build, creates a new fleet for it, waits until the fleet is `ACTIVE` (printing phase transitions), then flips the alias to the new fleet. The previously-active fleet is retained for rollback and recorded on the new fleet as its explicit rollback target. By default the build is read from `s3://<deploy.buildBucket>/builds/<version>/server.zip` (override with `--s3-bucket`/`--s3-key`). Use `--no-wait` to start fleet creation without blocking (skips the alias flip). Re-running the same `promote <build-version>` while its build and fleet are recorded but not yet active **resumes** that pending deployment — it polls the existing fleet and flips the alias without registering a second build or creating a second fleet (this is the documented recovery after `--no-wait` and after a failure during polling or the alias flip). Recorded pending state that is ambiguous (two pending fleets, a pending fleet for another version, or a missing/duplicate build record) fails with a loud error naming the records. On fleet `ERROR` or timeout the alias is left untouched, the failure events are shown, and the error names the resume command.
 
 #### `fabrica deploy rollback`
 
-Flips the alias back to the most-recent retained ("superseded") fleet — an instant blue/green rollback with no re-provisioning. Verifies the target fleet is still `ACTIVE` first, shows current → target, and prompts before flipping (`--yes` to skip).
+Flips the alias back to the fleet that served immediately before the current one. Each promote records that predecessor as the new fleet's explicit rollback target, so the target stays correct across repeated promote/rollback cycles. An instant blue/green rollback with no re-provisioning. Verifies the target fleet is still `ACTIVE` first, shows current → target, and prompts before flipping (`--yes` to skip, `--dry-run` to preview without changing anything). After a successful flip the module version is updated to the rolled-back build, so `fabrica status` reports the version that actually serves. State written by older fabrica versions has no recorded target and falls back to the most-recent retained fleet, with a warning.
 
 #### `fabrica deploy status`
 
@@ -550,11 +555,11 @@ fabrica deploy destroy
 
 ### Cost
 
-> **Offline cost visibility:** `fabrica cost` estimates monthly cost for the modules present in local state, preferring the deployed shape recorded in state (instance type, volume/fleet size) and falling back to your current `fabrica.yaml` for anything not recorded. Fully offline — a static **us-east-1** Linux on-demand price table (2024-Q4/2025), not live Pricing or Cost Explorer. Totals can differ by region and over time. Spot/schedule factors are planning discounts only. Run `<module> status` to reconcile if state and reality have drifted.
+> **Offline cost visibility:** `fabrica cost` estimates monthly cost for the modules present in local state, preferring the deployed shape recorded in state (instance type, volume/fleet size) and falling back to your current `fabrica.yaml` for anything not recorded. Recorded DDC edge nodes each add a compute and a volume line at their recorded shape; edges share the home blob bucket, so the S3 line is not duplicated. Recorded workstation sizing keeps its configured Spot/schedule planning discount (an invalid schedule keeps the estimate-undiscounted naming). Fully offline — a static **us-east-1** Linux on-demand price table (2024-Q4/2025), not live Pricing or Cost Explorer. Totals can differ by region and over time. Spot/schedule factors are planning discounts only. Run `<module> status` to reconcile if state and reality have drifted.
 
 #### `fabrica cost report`
 
-Shows the estimated monthly cost broken down by provisioned module and resource, with a grand total and confidence level. Reads the deployed shape from local state where recorded, falling back to `fabrica.yaml` for cost inputs not yet in state. `--json` for machine-readable output.
+Shows the estimated monthly cost broken down by provisioned module and resource, with a grand total and confidence level. Reads the deployed shape from local state where recorded, falling back to `fabrica.yaml` for cost inputs not yet in state. For deploy, every recorded GameLift fleet is priced by its own recorded shape — the active fleet, retained fleets kept for rollback, and pending fleets still acquiring capacity — so the total reflects the capacity actually running in the account. For workstation, recorded sizing is priced through the module's cost path, so the configured Spot/schedule planning discount is preserved. `--json` for machine-readable output.
 
 #### `fabrica cost forecast`
 
@@ -601,7 +606,7 @@ Prints version, commit hash, Go toolchain version, and platform.
 
 #### `fabrica export`
 
-Generates infrastructure-as-code templates from Fabrica's recorded local state and configuration. Reads `.fabrica/state.json` and `fabrica.yaml`, then produces CloudFormation YAML or Terraform HCL for the resources Fabrica manages. No live AWS calls — all data comes from local state.
+Generates infrastructure-as-code templates from Fabrica's recorded local state and configuration. Reads the profile's local state cache under `.fabrica/` (`.fabrica/state.json` for the default config) and the config file (`fabrica.yaml` or `fabrica-<profile>.yaml`), then produces CloudFormation YAML or Terraform HCL for the resources Fabrica manages. No live AWS calls — all data comes from local state.
 
 V2 covers all modules: state backend (S3 bucket, DynamoDB table), Horde, Perforce, Lore, DDC (home + edge regions), Workstation, CI, and Deploy.
 
@@ -672,6 +677,8 @@ ci:
 deploy:
   buildBucket: my-studio-builds   # S3 bucket where packaged server builds land
 ```
+
+`cloud.aws.tags` adds your attribution tags (for example `project: my-project`) to every resource Fabrica creates, including the surfaces Cloud Control cannot tag through desired state: IAM instance profiles (tagged after create with `iam:TagInstanceProfile`), the workstation DCV session-password SSM parameter, and security-group ingress rules (tagged with `ec2:CreateTags` on the rule IDs, matched against `DescribeSecurityGroupRules` by protocol, ports, and address). The Fabrica identity tags (`ManagedBy`, `FabricaModule`, `FabricaVersion`, `FabricaCreateNonce`) are owned by Fabrica: `cloud.aws.tags` entries under those key names are ignored, so tag-scoped sweeps keep their attribution.
 
 Accounts that require an IAM path and permissions boundary, or a project tag on both the instance and its root volume, set `cloud.aws.iam` and `cloud.aws.volumeRequestTags`. See [docs/guardrailed-accounts.md](docs/guardrailed-accounts.md).
 

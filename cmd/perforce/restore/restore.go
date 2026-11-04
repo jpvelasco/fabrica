@@ -58,8 +58,8 @@ Confirmation phrase: restore perforce <account-id>`,
 				confirm:   prompt.ConfirmExact,
 				probeTCP:  modstatus.DefaultProbeTCP,
 			}
-			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = fabricastate.WriteState
+			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
+			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			c.readCreds = func() (string, error) {
 				return credentials.ReadPerforceAdminPassword(credFile)
 			}
@@ -94,6 +94,18 @@ type command struct {
 }
 
 func (c command) run(ctx context.Context) error {
+	if err := perforce.ValidateBackupID(c.backupID); err != nil {
+		return err
+	}
+	// A restore replaces server data from a backup, so take the shared
+	// account lock before the state read; the lock is held across the
+	// interactive confirm and the SSM script. Dry runs never contend.
+	ctx, release, err := provision.AcquireStateLockUnlessDryRun(ctx, c.runtime, "perforce restore", c.dryRun)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	target, err := perforceprovisioning.Resolve(c.readState)
 	if err != nil {
 		return err
@@ -104,8 +116,7 @@ func (c command) run(ctx context.Context) error {
 
 	backupRoot := c.resolveBackupRoot()
 	if c.dryRun {
-		c.printDryRun(backupRoot)
-		return nil
+		return c.printDryRun(backupRoot)
 	}
 
 	if err := c.checkRemoteSupport(); err != nil {
@@ -148,13 +159,18 @@ func (c command) resolveBackupRoot() string {
 	return perforce.ResolveBackupPath(cfg.Path)
 }
 
-func (c command) printDryRun(backupRoot string) {
+func (c command) printDryRun(backupRoot string) error {
 	fmt.Fprintln(c.out, "Perforce restore (dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "  Backup ID: %s\n", c.backupID)
-	fmt.Fprintf(c.out, "  Source:    %s\n", perforce.BackupDir(backupRoot, c.backupID))
+	src, err := perforce.BackupDir(backupRoot, c.backupID)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(c.out, "  Source:    %s\n", src)
 	fmt.Fprintln(c.out, "  Steps:     stop helix-p4d → restore checkpoint → start helix-p4d")
 	fmt.Fprintln(c.out, "Run without --dry-run to proceed.")
+	return nil
 }
 
 func (c command) checkRemoteSupport() error {
@@ -176,6 +192,9 @@ func (c command) readBackupMetadata(ctx context.Context, instanceID string, back
 	meta, err := perforce.ParseBackupMeta([]byte(strings.TrimSpace(metaRes.Stdout)))
 	if err != nil {
 		return perforce.BackupMeta{}, err
+	}
+	if meta.ID != c.backupID {
+		return perforce.BackupMeta{}, fmt.Errorf("metadata id %q does not match backup id %q — the metadata file is corrupt or was modified; run 'fabrica perforce backup list' to inspect", meta.ID, c.backupID)
 	}
 	if meta.Status != perforce.BackupStatusComplete {
 		return perforce.BackupMeta{}, fmt.Errorf("backup %s status is %q; only complete backups can be restored", c.backupID, meta.Status)

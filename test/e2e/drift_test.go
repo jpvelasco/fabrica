@@ -263,11 +263,13 @@ func TestDriftExtraResource(t *testing.T) {
 		t.Fatalf("horde create: %v\n%s", err, out)
 	}
 
-	// Inject an extra EC2 instance into the fake store that is not in state.
+	// Inject an extra EC2 instance into the fake store that is not in state
+	// but carries the Fabrica identity tag.
 	store.resources["i-extra-999"] = &storedResource{
 		typeName:   "AWS::EC2::Instance",
 		identifier: "i-extra-999",
 		ec2Status:  "running",
+		tags:       map[string]string{"ManagedBy": "fabrica"},
 	}
 
 	out, err := runCLI(t, "drift", "--json")

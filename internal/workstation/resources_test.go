@@ -247,8 +247,8 @@ func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 	if !ok {
 		t.Fatal("Policies not found in role")
 	}
-	if len(policies) != 2 {
-		t.Fatalf("Policies len = %d, want 2 (SSM output + DCV password)", len(policies))
+	if len(policies) != 3 {
+		t.Fatalf("Policies len = %d, want 3 (SSM output + DCV password + DCV license)", len(policies))
 	}
 	if pm := policies[0].(map[string]any); pm["PolicyName"] != "fabrica-ssm-output" {
 		t.Errorf("Policies[0] = %v, want fabrica-ssm-output", pm["PolicyName"])
@@ -267,6 +267,25 @@ func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 	}
 	if strings.Contains(string(docJSON), "\"*\"") || strings.Contains(string(docJSON), "parameter/*") {
 		t.Errorf("password policy must be the one parameter ARN, got %s", docJSON)
+	}
+	licensePolicy := policies[2].(map[string]any)
+	if licensePolicy["PolicyName"] != DCVLicensePolicyName {
+		t.Errorf("Policies[2] = %v, want %s", licensePolicy["PolicyName"], DCVLicensePolicyName)
+	}
+	licenseDoc := licensePolicy["PolicyDocument"].(map[string]any)
+	licenseStmts, ok := licenseDoc["Statement"].([]any)
+	if !ok || len(licenseStmts) != 1 {
+		t.Fatalf("license policy statements = %v, want 1 entry", licenseDoc["Statement"])
+	}
+	licenseStmt := licenseStmts[0].(map[string]any)
+	licenseActions, ok := licenseStmt["Action"].([]any)
+	if !ok || len(licenseActions) != 1 || licenseActions[0] != "s3:GetObject" {
+		t.Errorf("license policy actions = %v, want [s3:GetObject]", licenseStmt["Action"])
+	}
+	licenseResources, ok := licenseStmt["Resource"].([]any)
+	wantLicenseARN := "arn:aws:s3:::" + DCVLicenseBucket("us-east-1") + "/*"
+	if !ok || len(licenseResources) != 1 || licenseResources[0] != wantLicenseARN {
+		t.Errorf("license policy resources = %v, want %v", licenseStmt["Resource"], wantLicenseARN)
 	}
 
 	if got := ec2state.ParseTags(t, doc["Tags"].([]any))["FabricaModule"]; got != "workstation" {

@@ -22,6 +22,7 @@ type TestProvider struct {
 	CreateErr    map[string]error // per-type error map for Create failures
 	CreateCalls  int
 	CreatedTypes []string
+	DeleteErr    map[string]error // per-type error map for Delete failures (mirrors CreateErr)
 	DeleteCalls  int
 	UpdateCalls  int
 	GetResources map[string]cloud.Resource
@@ -41,9 +42,20 @@ type TestProvider struct {
 	PutParameterErr    error
 	DeletedParameters  []string
 	DeleteParameterErr error
+
+	// Remote state document seam (cloud.StateStore). StateDocuments maps
+	// "bucket/key" to the stored document; a missing entry reports
+	// cloud.ErrStateDocumentMissing. StateStoreGetErr and StateStorePutErr
+	// inject failures on the respective calls.
+	StateDocuments   map[string]string
+	StateStoreGetErr error
+	StateStorePutErr error
 }
 
-var _ cloud.ParameterStore = (*TestProvider)(nil)
+var (
+	_ cloud.ParameterStore = (*TestProvider)(nil)
+	_ cloud.StateStore     = (*TestProvider)(nil)
+)
 
 func (f *TestProvider) Name() string { return "fake" }
 
@@ -86,6 +98,30 @@ func (f *TestProvider) DeleteParameter(_ context.Context, name string) error {
 	return nil
 }
 
+// GetStateDocument returns the stored document for bucket/key, or
+// cloud.ErrStateDocumentMissing when nothing was written.
+func (f *TestProvider) GetStateDocument(_ context.Context, bucket, key string) ([]byte, error) {
+	if f.StateStoreGetErr != nil {
+		return nil, f.StateStoreGetErr
+	}
+	if doc, ok := f.StateDocuments[bucket+"/"+key]; ok {
+		return []byte(doc), nil
+	}
+	return nil, cloud.ErrStateDocumentMissing
+}
+
+// PutStateDocument stores the document under bucket/key.
+func (f *TestProvider) PutStateDocument(_ context.Context, bucket, key string, data []byte) error {
+	if f.StateStorePutErr != nil {
+		return f.StateStorePutErr
+	}
+	if f.StateDocuments == nil {
+		f.StateDocuments = map[string]string{}
+	}
+	f.StateDocuments[bucket+"/"+key] = string(data)
+	return nil
+}
+
 // DescribeASG satisfies cloud.ASGManager for tests that need live ASG lifecycle
 // data. When ASGInfo is nil, returns cloud.ErrResourceNotFound.
 func (f *TestProvider) DescribeASG(_ context.Context, _ string) (cloud.ASGInfo, error) {
@@ -97,12 +133,24 @@ func (f *TestProvider) DescribeASG(_ context.Context, _ string) (cloud.ASGInfo, 
 
 // WithRegion satisfies cloud.RegionProvider for multi-region command tests:
 // the fake store is region-agnostic, so every region shares the same fake
-// client; the resolver is a dedicated TestVPCResolver.
+// client; the resolver is a dedicated TestVPCResolver and the inspector
+// reports a canned Ubuntu root device.
 func (f *TestProvider) WithRegion(_ context.Context, _ string) (cloud.RegionView, error) {
 	return cloud.RegionView{
 		Resources: &FakeResourceClient{provider: f},
 		VPCs:      &TestVPCResolver{VPCID: "vpc-fake", SubnetID: "subnet-fake"},
+		Images:    &fakeImageInspector{},
 	}, nil
+}
+
+// fakeImageInspector is the canned AMI inspector WithRegion bundles into its
+// RegionView so edge-region commands can read a root device.
+type fakeImageInspector struct{}
+
+var _ cloud.ImageInspector = (*fakeImageInspector)(nil)
+
+func (*fakeImageInspector) DescribeImage(_ context.Context, imageID string) (cloud.ImageInfo, error) {
+	return cannedImageInfo(imageID, "", ""), nil
 }
 
 // FakeResourceClient is a fake ResourceClient backed by TestProvider.
@@ -162,8 +210,13 @@ func (r *FakeResourceClient) Update(_ context.Context, _ *cloud.Resource) error 
 	return nil
 }
 
-func (r *FakeResourceClient) Delete(_ context.Context, _ *cloud.Resource) error {
+func (r *FakeResourceClient) Delete(_ context.Context, res *cloud.Resource) error {
 	r.provider.DeleteCalls++
+	if r.provider.DeleteErr != nil {
+		if err, ok := r.provider.DeleteErr[res.TypeName]; ok {
+			return err
+		}
+	}
 	return nil
 }
 

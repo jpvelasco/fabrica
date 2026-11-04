@@ -60,6 +60,14 @@ source "amazon-ebs" "lore" {
     LoreVersion = var.lore_version
     Name        = local.ami_name
   }
+
+  # The snapshots the bake takes keep the AMI tag set, so ManagedBy sweeps
+  # find them (`tags` alone tags the AMI only).
+  snapshot_tags = {
+    ManagedBy   = "fabrica"
+    LoreVersion = var.lore_version
+    Name        = local.ami_name
+  }
 }
 
 build {

@@ -9,11 +9,11 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/costsource"
 	"github.com/jpvelasco/fabrica/cmd/internal/doctorchecks"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/cmd/internal/statusreport"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/drift"
-	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	fabricav "github.com/jpvelasco/fabrica/internal/version"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.yaml.in/yaml/v3"
@@ -160,7 +160,7 @@ func handleOptions(src globals.OptionsSource) func(context.Context, *mcp.CallToo
 
 func handleCostForecast(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, CostForecastResult, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, CostForecastResult, error) {
-		st, err := fabricastate.ReadStateOrNew(rt.Config.Cloud.AWS.AccountID, rt.Config.Cloud.AWS.Region)
+		st, err := provision.ReadState(ctx, rt)
 		if err != nil {
 			return nil, CostForecastResult{}, fmt.Errorf("reading state: %w", err)
 		}
@@ -218,7 +218,7 @@ func handleDoctor(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest
 
 func handleStatus(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, StatusResult, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, StatusResult, error) {
-		st, err := fabricastate.ReadStateOrNew(rt.Config.Cloud.AWS.AccountID, rt.Config.Cloud.AWS.Region)
+		st, err := provision.ReadState(ctx, rt)
 		if err != nil {
 			return nil, StatusResult{}, fmt.Errorf("reading state: %w", err)
 		}
@@ -239,7 +239,7 @@ func handleDrift(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest,
 			return nil, DriftResult{}, fmt.Errorf("provider not available — check your AWS credentials")
 		}
 
-		st, err := fabricastate.ReadStateOrNew(rt.Config.Cloud.AWS.AccountID, rt.Config.Cloud.AWS.Region)
+		st, err := provision.ReadState(ctx, rt)
 		if err != nil {
 			return nil, DriftResult{}, fmt.Errorf("reading state: %w", err)
 		}
@@ -271,7 +271,7 @@ func handleDrift(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest,
 
 func handleCostReport(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, CostReportResult, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, CostReportResult, error) {
-		st, err := fabricastate.ReadStateOrNew(rt.Config.Cloud.AWS.AccountID, rt.Config.Cloud.AWS.Region)
+		st, err := provision.ReadState(ctx, rt)
 		if err != nil {
 			return nil, CostReportResult{}, fmt.Errorf("reading state: %w", err)
 		}

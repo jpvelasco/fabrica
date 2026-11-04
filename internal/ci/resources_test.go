@@ -40,6 +40,36 @@ func TestRoleDesiredState(t *testing.T) {
 	if !strings.Contains(s, "ec2:DescribeInstances") {
 		t.Errorf("inline policy missing ec2 describe: %s", s)
 	}
+	if _, ok := doc["Path"]; ok {
+		t.Errorf("Path = %v, want absent when no IAM constraints are set", doc["Path"])
+	}
+	if _, ok := doc["PermissionsBoundary"]; ok {
+		t.Errorf("PermissionsBoundary = %v, want absent when no IAM constraints are set", doc["PermissionsBoundary"])
+	}
+}
+
+// TestRoleDesiredStateWithIAMGuardrails pins #557: the resolved IAM path and
+// permissions boundary land on the CodeBuild role document.
+func TestRoleDesiredStateWithIAMGuardrails(t *testing.T) {
+	plan := testPlan()
+	plan.IAM = config.IAM{
+		Path:                "/ci/",
+		PermissionsBoundary: "arn:aws:iam::123456789012:policy/fabrica-boundary",
+	}
+	raw, err := RoleDesiredState(plan)
+	if err != nil {
+		t.Fatalf("RoleDesiredState: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if doc["Path"] != "/ci/" {
+		t.Errorf("Path = %v, want /ci/", doc["Path"])
+	}
+	if doc["PermissionsBoundary"] != "arn:aws:iam::123456789012:policy/fabrica-boundary" {
+		t.Errorf("PermissionsBoundary = %v, want the boundary ARN", doc["PermissionsBoundary"])
+	}
 }
 
 func TestProjectSpec(t *testing.T) {
@@ -110,8 +140,8 @@ func TestSGDesiredState(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if doc["GroupName"] != defaultSGName {
-		t.Errorf("GroupName = %v, want %q", doc["GroupName"], defaultSGName)
+	if doc["GroupName"] != DefaultSGName {
+		t.Errorf("GroupName = %v, want %q", doc["GroupName"], DefaultSGName)
 	}
 	if _, ok := doc["SecurityGroupIngress"]; !ok {
 		t.Errorf("SecurityGroupIngress missing from desired state: %s", raw)

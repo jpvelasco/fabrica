@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/hcl/v2/hclparse"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/ddc"
 	"github.com/jpvelasco/fabrica/internal/iamrole"
@@ -942,6 +943,96 @@ func TestTerraformLoreStoreTableOutputs(t *testing.T) {
 	}
 }
 
+// TestTerraformLoreStoreTableSchema asserts the export renders the Lore S3
+// store tables' full DynamoDB schema provider-natively: the locks table's
+// hash+range keys, every key attribute declared (primary + GSI keys), and
+// one global_secondary_index block per GSI; the hash-only metadata table
+// omits range_key and declares exactly one attribute.
+func TestTerraformLoreStoreTableSchema(t *testing.T) {
+	ms := loreS3StoreModuleState()
+	cfg := config.Defaults()
+	cfg.Lore.AmiID = "ami-lore123"
+
+	mod := buildModule(ms, cfg, exportAccount, exportRegion)
+
+	// Property level: the locks table declares all six key attributes and
+	// carries the three GSI specs in canonical (nested Projection) form.
+	var locksProps map[string]any
+	for _, r := range mod.Resources {
+		if r.Identifier == "fabrica-lore-store-123456789012-us-east-1-locks" {
+			locksProps = r.Properties
+			break
+		}
+	}
+	if locksProps == nil {
+		t.Fatal("locks table resource missing from export module")
+	}
+	attrs, ok := locksProps["AttributeDefinitions"].([]map[string]any)
+	if !ok || len(attrs) != 6 {
+		t.Fatalf("locks AttributeDefinitions = %d entries, want 6: %v", len(attrs), locksProps["AttributeDefinitions"])
+	}
+	attrNames := map[string]bool{}
+	for _, a := range attrs {
+		attrNames[a["AttributeName"].(string)] = true
+	}
+	for _, want := range []string{"hash", "repositoryBranch", "ownerId", "repository", "branch", "description"} {
+		if !attrNames[want] {
+			t.Errorf("locks AttributeDefinitions missing %q", want)
+		}
+	}
+	gsis, ok := locksProps["GlobalSecondaryIndexes"].([]map[string]any)
+	if !ok || len(gsis) != 3 {
+		t.Fatalf("locks GlobalSecondaryIndexes = %v, want 3", locksProps["GlobalSecondaryIndexes"])
+	}
+	if _, ok := gsis[0]["Projection"].(map[string]any); !ok {
+		t.Errorf("locks GSI projection is not the nested map form: %v", gsis[0]["Projection"])
+	}
+
+	gen := &terraformGenerator{}
+	out, err := gen.Generate([]ExportModule{mod})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	s := string(out)
+
+	locks := extractTFBlock(t, s, "aws_dynamodb_table", "lore_table_l_o_c_k_s")
+	if !strings.Contains(locks, `hash_key = "hash"`) || !strings.Contains(locks, `range_key = "repositoryBranch"`) {
+		t.Errorf("locks table missing table key:\n%s", locks)
+	}
+	if got := strings.Count(locks, "attribute {"); got != 6 {
+		t.Errorf("locks attribute blocks = %d, want 6:\n%s", got, locks)
+	}
+	if got := strings.Count(locks, "global_secondary_index {"); got != 3 {
+		t.Errorf("locks GSI blocks = %d, want 3:\n%s", got, locks)
+	}
+	for _, want := range []string{
+		`name = "owner-repo-branch"`,
+		`name = "repo-branch"`,
+		`name = "repo-branch-description"`,
+	} {
+		if !strings.Contains(locks, want) {
+			t.Errorf("locks table missing GSI %s:\n%s", want, locks)
+		}
+	}
+	if got := strings.Count(locks, `projection_type = "ALL"`); got != 3 {
+		t.Errorf("locks projection_type ALL lines = %d, want 3:\n%s", got, locks)
+	}
+
+	metadata := extractTFBlock(t, s, "aws_dynamodb_table", "lore_table_m_e_t_a_d_a_t_a")
+	if !strings.Contains(metadata, `hash_key = "hash"`) {
+		t.Errorf("metadata table missing hash_key:\n%s", metadata)
+	}
+	if strings.Contains(metadata, "range_key") {
+		t.Errorf("metadata table must omit range_key:\n%s", metadata)
+	}
+	if got := strings.Count(metadata, "attribute {"); got != 1 {
+		t.Errorf("metadata attribute blocks = %d, want 1:\n%s", got, metadata)
+	}
+	if strings.Contains(metadata, "global_secondary_index") {
+		t.Errorf("metadata table must have no GSIs:\n%s", metadata)
+	}
+}
+
 func TestGenerateOutputLoreS3Store(t *testing.T) {
 	// End-to-end: recorded s3-backed Lore state produces an export in both
 	// formats that includes all four DynamoDB store tables.
@@ -1696,17 +1787,86 @@ func TestCloudFormationBlockDevicesEdgeCases(t *testing.T) {
 	if out != nil {
 		t.Error("cfBlockDevices(nil) should return nil")
 	}
-	// Device without EBS — returns slice with nil entry
+	// Device without an Ebs block is skipped — emitting it would yield an
+	// invalid (nil) entry in the CloudFormation block device list.
 	devs := []map[string]any{{"DeviceName": "/dev/sda1"}}
 	out = cfBlockDevices(devs)
-	if out == nil || len(out) != 1 {
-		t.Error("cfBlockDevices should return slice for device without EBS")
+	if len(out) != 0 {
+		t.Errorf("cfBlockDevices should skip a device without Ebs, got %d entries", len(out))
 	}
 	// Device with EBS but no DeleteOnTermination
 	devs2 := []map[string]any{{"DeviceName": "/dev/sda1", "Ebs": map[string]any{"VolumeSize": float64(100)}}}
 	out = cfBlockDevices(devs2)
 	if out == nil || len(out) != 1 {
 		t.Error("cfBlockDevices should handle EBS without DeleteOnTermination")
+	}
+}
+
+// TestCloudFormationBlockDevicesEncryption covers cfBlockDevices carrying the
+// EBS encryption settings through to the generated template (#541).
+func TestCloudFormationBlockDevicesEncryption(t *testing.T) {
+	// Encrypted mapping with no KMS key: Encrypted present, KmsKeyId absent.
+	devs := []map[string]any{{
+		"DeviceName": "/dev/sda1",
+		"Ebs": map[string]any{
+			"VolumeSize":          float64(200),
+			"VolumeType":          "gp3",
+			"DeleteOnTermination": true,
+			"Encrypted":           true,
+		},
+	}}
+	out := cfBlockDevices(devs)
+	if len(out) != 1 {
+		t.Fatalf("cfBlockDevices should return one mapping, got %d", len(out))
+	}
+	ebs := out[0]["Ebs"].(map[string]any)
+	if enc, ok := ebs["Encrypted"].(bool); !ok || !enc {
+		t.Errorf("cfBlockDevices should carry Encrypted=true, got %v", ebs["Encrypted"])
+	}
+	if _, present := ebs["KmsKeyId"]; present {
+		t.Errorf("cfBlockDevices should omit KmsKeyId when no key is set, got %v", ebs["KmsKeyId"])
+	}
+
+	// Encrypted mapping with an explicit KMS key: both carried through.
+	devs = []map[string]any{{
+		"DeviceName": "/dev/sdf",
+		"Ebs": map[string]any{
+			"VolumeSize":          float64(500),
+			"VolumeType":          "gp3",
+			"DeleteOnTermination": false,
+			"Encrypted":           true,
+			"KmsKeyId":            "arn:aws:kms:us-east-1:123456789012:key/abc",
+		},
+	}}
+	out = cfBlockDevices(devs)
+	if len(out) != 1 {
+		t.Fatalf("cfBlockDevices should return one mapping, got %d", len(out))
+	}
+	ebs = out[0]["Ebs"].(map[string]any)
+	if enc, ok := ebs["Encrypted"].(bool); !ok || !enc {
+		t.Errorf("cfBlockDevices should carry Encrypted=true, got %v", ebs["Encrypted"])
+	}
+	if kms, ok := ebs["KmsKeyId"].(string); !ok || kms == "" {
+		t.Errorf("cfBlockDevices should carry KmsKeyId, got %v", ebs["KmsKeyId"])
+	}
+
+	// Unencrypted mapping: Encrypted carried as false, no KmsKeyId.
+	devs = []map[string]any{{
+		"DeviceName": "/dev/sda1",
+		"Ebs": map[string]any{
+			"VolumeSize":          float64(100),
+			"VolumeType":          "gp3",
+			"DeleteOnTermination": true,
+			"Encrypted":           false,
+		},
+	}}
+	out = cfBlockDevices(devs)
+	if len(out) != 1 {
+		t.Fatalf("cfBlockDevices should return one mapping, got %d", len(out))
+	}
+	ebs = out[0]["Ebs"].(map[string]any)
+	if enc, ok := ebs["Encrypted"].(bool); !ok || enc {
+		t.Errorf("cfBlockDevices should carry Encrypted=false, got %v", ebs["Encrypted"])
 	}
 }
 
@@ -1796,13 +1956,28 @@ func TestHclRolesWithSlice(t *testing.T) {
 	}
 }
 
-// TestHclKeySchemaWithValid covers hclKeySchema with valid input.
+// TestHclKeySchemaWithValid covers hclKeySchema with valid input: the
+// provider-native hash_key and range_key arguments, and a hash-only key
+// schema that omits range_key.
 func TestHclKeySchemaWithValid(t *testing.T) {
 	gen := &terraformGenerator{}
-	ks := []map[string]any{{"AttributeName": "UserId"}}
+	ks := []map[string]any{
+		{"AttributeName": "UserId", "KeyType": "HASH"},
+		{"AttributeName": "GameSession", "KeyType": "RANGE"},
+	}
 	out := gen.hclKeySchema(ks)
-	if !strings.Contains(out, "UserId") {
-		t.Error("hclKeySchema should output attribute name")
+	if !strings.Contains(out, `hash_key = "UserId"`) {
+		t.Errorf("hclKeySchema missing hash_key:\n%s", out)
+	}
+	if !strings.Contains(out, `range_key = "GameSession"`) {
+		t.Errorf("hclKeySchema missing range_key:\n%s", out)
+	}
+	hashOnly := gen.hclKeySchema([]map[string]any{{"AttributeName": "LockID", "KeyType": "HASH"}})
+	if !strings.Contains(hashOnly, `hash_key = "LockID"`) {
+		t.Errorf("hclKeySchema hash-only missing hash_key:\n%s", hashOnly)
+	}
+	if strings.Contains(hashOnly, "range_key") {
+		t.Errorf("hclKeySchema hash-only must omit range_key:\n%s", hashOnly)
 	}
 }
 
@@ -1877,16 +2052,86 @@ func TestHclEncryptionWithValid(t *testing.T) {
 	}
 }
 
-// TestHclAttrDefsWithValid covers hclAttrDefs with valid input.
+// TestHclAttrDefsWithValid covers hclAttrDefs with valid input: one
+// repeatable attribute block per definition.
 func TestHclAttrDefsWithValid(t *testing.T) {
 	gen := &terraformGenerator{}
-	ad := []map[string]any{{"AttributeName": "UserId", "AttributeType": "S"}}
-	out := gen.hclAttrDefs(ad)
-	if !strings.Contains(out, "UserId") {
-		t.Error("hclAttrDefs should output attribute name")
+	ad := []map[string]any{
+		{"AttributeName": "UserId", "AttributeType": "S"},
+		{"AttributeName": "GameSession", "AttributeType": "N"},
 	}
-	if !strings.Contains(out, "S") {
-		t.Error("hclAttrDefs should output attribute type")
+	out := gen.hclAttrDefs(ad)
+	if got := strings.Count(out, "attribute {"); got != 2 {
+		t.Errorf("hclAttrDefs attribute blocks = %d, want 2:\n%s", got, out)
+	}
+	if !strings.Contains(out, `name = "UserId"`) || !strings.Contains(out, `type = "S"`) {
+		t.Errorf("hclAttrDefs missing first attribute:\n%s", out)
+	}
+	if !strings.Contains(out, `name = "GameSession"`) || !strings.Contains(out, `type = "N"`) {
+		t.Errorf("hclAttrDefs missing second attribute:\n%s", out)
+	}
+	// Empty definitions render nothing (an empty attribute block would be
+	// invalid HCL).
+	if got := gen.hclAttrDefs([]map[string]any{}); got != "" {
+		t.Errorf("hclAttrDefs(empty) = %q, want empty", got)
+	}
+}
+
+// TestHclGlobalSecondaryIndexes covers hclGSIs: one repeatable
+// global_secondary_index block per index with hash/range keys and the
+// projection type, INCLUDE projections with non-key attributes, hash-only
+// GSI keys, the flat ProjectionType fallback, and the untyped/empty guards.
+func TestHclGlobalSecondaryIndexes(t *testing.T) {
+	gen := &terraformGenerator{}
+	out := gen.hclGSIs([]map[string]any{
+		{
+			"IndexName": "owner-repo-branch",
+			"KeySchema": []map[string]any{
+				{"AttributeName": "ownerId", "KeyType": "HASH"},
+				{"AttributeName": "repositoryBranch", "KeyType": "RANGE"},
+			},
+			"Projection": map[string]any{"ProjectionType": "ALL"},
+		},
+		{
+			"IndexName": "include-idx",
+			"KeySchema": []map[string]any{
+				{"AttributeName": "hash", "KeyType": "HASH"},
+			},
+			"Projection": map[string]any{
+				"ProjectionType":   "INCLUDE",
+				"NonKeyAttributes": []string{"extra", "more"},
+			},
+		},
+	})
+	if got := strings.Count(out, "global_secondary_index {"); got != 2 {
+		t.Errorf("hclGSIs index blocks = %d, want 2:\n%s", got, out)
+	}
+	for _, want := range []string{
+		`name = "owner-repo-branch"`,
+		`hash_key = "ownerId"`,
+		`range_key = "repositoryBranch"`,
+		`projection_type = "ALL"`,
+		`name = "include-idx"`,
+		`projection_type = "INCLUDE"`,
+		`projection = ["extra", "more"]`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("hclGSIs missing %q:\n%s", want, out)
+		}
+	}
+	if got := strings.Count(out, "range_key"); got != 1 {
+		t.Errorf("hclGSIs range_key lines = %d, want 1 (hash-only GSI omits it):\n%s", got, out)
+	}
+	// Flat ProjectionType fallback for state recorded before the nested
+	// Projection normalization.
+	flat := gen.hclGSIs([]map[string]any{{"IndexName": "legacy", "ProjectionType": "ALL"}})
+	if !strings.Contains(flat, `projection_type = "ALL"`) {
+		t.Errorf("hclGSIs flat ProjectionType fallback missing:\n%s", flat)
+	}
+	for _, in := range []any{nil, "not-a-list", []map[string]any{}} {
+		if got := gen.hclGSIs(in); got != "" {
+			t.Errorf("hclGSIs(%v) = %q, want empty", in, got)
+		}
 	}
 }
 
@@ -1909,6 +2154,142 @@ func TestHclBlockDevicesWithValid(t *testing.T) {
 	}
 	if !strings.Contains(out, "gp3") {
 		t.Error("hclBlockDevices should output volume type")
+	}
+}
+
+// TestHclBlockDevicesEncryption covers hclBlockDevices carrying the EBS
+// encryption settings through to the generated module (#541): encrypted is
+// emitted when set, kms_key_id only when a non-empty key is present, and one
+// ebs_block_device block is emitted per mapping.
+func TestHclBlockDevicesEncryption(t *testing.T) {
+	gen := &terraformGenerator{}
+
+	// Two mappings (perforce data + root shape): both blocks emitted, each
+	// with its own encrypted flag and its own device.
+	devs := []map[string]any{
+		{
+			"DeviceName": "/dev/sdf",
+			"Ebs": map[string]any{
+				"VolumeSize":          float64(500),
+				"VolumeType":          "gp3",
+				"DeleteOnTermination": false,
+				"Encrypted":           true,
+			},
+		},
+		{
+			"DeviceName": "/dev/sda1",
+			"Ebs": map[string]any{
+				"VolumeSize":          float64(100),
+				"VolumeType":          "gp3",
+				"DeleteOnTermination": true,
+				"Encrypted":           true,
+				"KmsKeyId":            "arn:aws:kms:us-east-1:123456789012:key/abc",
+			},
+		},
+	}
+	out := gen.hclBlockDevices(devs)
+	if got := strings.Count(out, "ebs_block_device {"); got != 2 {
+		t.Errorf("hclBlockDevices should emit one ebs_block_device block per mapping, got %d", got)
+	}
+	if !strings.Contains(out, `device_name = "/dev/sdf"`) {
+		t.Error("hclBlockDevices should output the first device name")
+	}
+	if !strings.Contains(out, `device_name = "/dev/sda1"`) {
+		t.Error("hclBlockDevices should output the second device name")
+	}
+	if got := strings.Count(out, "encrypted = true"); got != 2 {
+		t.Errorf("hclBlockDevices should emit encrypted = true per encrypted mapping, got %d", got)
+	}
+	if !strings.Contains(out, `kms_key_id = "arn:aws:kms:us-east-1:123456789012:key/abc"`) {
+		t.Error("hclBlockDevices should carry kms_key_id when a non-empty key is set")
+	}
+	// The first mapping has no key, so exactly one kms_key_id line overall.
+	if got := strings.Count(out, "kms_key_id"); got != 1 {
+		t.Errorf("hclBlockDevices should emit kms_key_id once (only where a key is set), got %d", got)
+	}
+
+	// Explicitly unencrypted single mapping: encrypted carried as false, no
+	// kms_key_id (fidelity to the recorded flag).
+	devsPlain := []map[string]any{{
+		"DeviceName": "/dev/sda1",
+		"Ebs": map[string]any{
+			"VolumeSize":          float64(100),
+			"VolumeType":          "gp3",
+			"DeleteOnTermination": true,
+			"Encrypted":           false,
+		},
+	}}
+	outPlain := gen.hclBlockDevices(devsPlain)
+	if !strings.Contains(outPlain, "encrypted = false") {
+		t.Errorf("hclBlockDevices should carry encrypted = false for an explicit unencrypted mapping, got:\n%s", outPlain)
+	}
+	if strings.Contains(outPlain, "kms_key_id") {
+		t.Error("hclBlockDevices should not emit kms_key_id when no key is set")
+	}
+
+	// Absent Encrypted flag: no encrypted line at all (account default applies).
+	devsNoFlag := []map[string]any{{
+		"DeviceName": "/dev/sda1",
+		"Ebs": map[string]any{
+			"VolumeSize":          float64(100),
+			"VolumeType":          "gp3",
+			"DeleteOnTermination": true,
+		},
+	}}
+	outNoFlag := gen.hclBlockDevices(devsNoFlag)
+	if strings.Contains(outNoFlag, "encrypted") {
+		t.Errorf("hclBlockDevices should omit the encrypted attribute when the flag is absent, got:\n%s", outNoFlag)
+	}
+
+	// Non-EBS device is skipped (no invalid block emitted).
+	devsNoEbs := []map[string]any{{"DeviceName": "/dev/sda1"}}
+	if outNoEbs := gen.hclBlockDevices(devsNoEbs); outNoEbs != "" {
+		t.Errorf("hclBlockDevices should skip a device without Ebs, got %q", outNoEbs)
+	}
+}
+
+// TestExportWorkstationBlockDevicesEncrypted is an end-to-end check that a
+// workstation's root volume reaches both IaC formats with its encryption
+// requirement intact (#541). The volumeSize-only state triggers the default
+// block-mapping reconstruction, which must carry Encrypted=true.
+func TestExportWorkstationBlockDevicesEncrypted(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	st.UpsertModule("workstation", "ami-0123456789", "ready", []state.ModuleResource{
+		{
+			TypeName:   "AWS::EC2::Instance",
+			Identifier: "i-ws",
+			Properties: map[string]string{
+				"instanceType": "g4dn.xlarge",
+				"imageId":      "ami-0123456789",
+				"volumeSize":   "200",
+			},
+		},
+	})
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = "123456789012"
+
+	cfnOut, err := GenerateOutput(CloudFormation, st, cfg)
+	if err != nil {
+		t.Fatalf("CloudFormation export: %v", err)
+	}
+	cfn := string(cfnOut)
+	if !strings.Contains(cfn, "Encrypted: true") {
+		t.Errorf("CloudFormation export should carry Encrypted: true for the workstation root volume, got:\n%s", cfn)
+	}
+	if !strings.Contains(cfn, "/dev/sda1") {
+		t.Errorf("CloudFormation export should carry the workstation root device /dev/sda1, got:\n%s", cfn)
+	}
+
+	tfOut, err := GenerateOutput(Terraform, st, cfg)
+	if err != nil {
+		t.Fatalf("Terraform export: %v", err)
+	}
+	tf := string(tfOut)
+	if !strings.Contains(tf, "encrypted = true") {
+		t.Errorf("Terraform export should carry encrypted = true for the workstation root volume, got:\n%s", tf)
+	}
+	if !strings.Contains(tf, `device_name = "/dev/sda1"`) {
+		t.Errorf("Terraform export should carry the workstation root device /dev/sda1, got:\n%s", tf)
 	}
 }
 
@@ -3787,7 +4168,7 @@ func TestIAMRoleInlinePoliciesPerModule(t *testing.T) {
 			want: []map[string]any{iamrole.DeployS3ReadPolicy("fabrica-deploy-bucket")},
 		},
 		{
-			name:   "workstation: SSM output + DCV password parameter (per-create name from state)",
+			name:   "workstation: SSM output + DCV password parameter + DCV license (per-create name from state)",
 			module: "workstation",
 			state: state.ModuleState{
 				Name:   "workstation",
@@ -3806,6 +4187,7 @@ func TestIAMRoleInlinePoliciesPerModule(t *testing.T) {
 				return []map[string]any{
 					iamrole.SSMOutputPolicy(exportRegion, exportAccount),
 					iamrole.SSMParameterReadPolicy(workstation.SessionPasswordPolicyName, arn),
+					iamrole.S3ObjectReadPolicy(workstation.DCVLicensePolicyName, workstation.DCVLicenseBucket(exportRegion)),
 				}
 			}(),
 		},
@@ -3954,22 +4336,26 @@ func TestCloudFormationEmitsInlinePoliciesOnRole(t *testing.T) {
 
 func TestWorkstationInlinePoliciesSkipParameterWhenUnscoped(t *testing.T) {
 	got := inlinePoliciesForRole("workstation", config.Defaults(), exportAccount, exportRegion, "")
-	if len(got) != 1 {
-		t.Fatalf("policy count = %d, want the SSM output policy only", len(got))
+	if len(got) != 2 {
+		t.Fatalf("policy count = %d, want the SSM output + DCV license policies", len(got))
 	}
 	if got[0]["PolicyName"] != "fabrica-ssm-output" {
 		t.Fatalf("policy = %v", got[0]["PolicyName"])
+	}
+	if got[1]["PolicyName"] != workstation.DCVLicensePolicyName {
+		t.Fatalf("policy[1] = %v", got[1]["PolicyName"])
 	}
 }
 
 // TestWorkstationInlinePoliciesScopeToRecordedParameter pins the happy path:
 // a recorded per-create session-password name yields the SSM output policy plus
-// the exact-ARN ssm:GetParameter read policy, and a malformed recorded name
-// falls back to the output policy only (the ARN helper rejects it).
+// the exact-ARN ssm:GetParameter read policy (the DCV license grant rides along
+// in both paths), and a malformed recorded name drops the parameter policy
+// (the ARN helper rejects it) while keeping the license grant.
 func TestWorkstationInlinePoliciesScopeToRecordedParameter(t *testing.T) {
 	got := inlinePoliciesForRole("workstation", config.Defaults(), exportAccount, exportRegion, testWSParamName)
-	if len(got) != 2 {
-		t.Fatalf("policy count = %d, want the SSM output + parameter read policies", len(got))
+	if len(got) != 3 {
+		t.Fatalf("policy count = %d, want the SSM output + parameter read + DCV license policies", len(got))
 	}
 	if got[0]["PolicyName"] != "fabrica-ssm-output" {
 		t.Fatalf("policy[0] = %v", got[0]["PolicyName"])
@@ -3977,13 +4363,19 @@ func TestWorkstationInlinePoliciesScopeToRecordedParameter(t *testing.T) {
 	if got[1]["PolicyName"] != workstation.SessionPasswordPolicyName {
 		t.Fatalf("policy[1] = %v", got[1]["PolicyName"])
 	}
+	if got[2]["PolicyName"] != workstation.DCVLicensePolicyName {
+		t.Fatalf("policy[2] = %v", got[2]["PolicyName"])
+	}
 
 	fallback := inlinePoliciesForRole("workstation", config.Defaults(), exportAccount, exportRegion, "not-a-per-create-name")
-	if len(fallback) != 1 {
-		t.Fatalf("malformed recorded name: policy count = %d, want the SSM output policy only", len(fallback))
+	if len(fallback) != 2 {
+		t.Fatalf("malformed recorded name: policy count = %d, want the SSM output + DCV license policies", len(fallback))
 	}
 	if fallback[0]["PolicyName"] != "fabrica-ssm-output" {
 		t.Fatalf("fallback policy = %v", fallback[0]["PolicyName"])
+	}
+	if fallback[1]["PolicyName"] != workstation.DCVLicensePolicyName {
+		t.Fatalf("fallback policy[1] = %v", fallback[1]["PolicyName"])
 	}
 }
 
@@ -4004,8 +4396,8 @@ func TestHclInlinePoliciesEmptyOrUntypedGuards(t *testing.T) {
 }
 
 // TestTerraformEmitsInlinePolicyPerModule renders every SSM module role to
-// Terraform and asserts the aws_iam_role block carries an inline_policy map
-// with one entry per shared-helper policy document.
+// Terraform and asserts the aws_iam_role block carries one inline_policy
+// block per shared-helper policy document.
 func TestTerraformEmitsInlinePolicyPerModule(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -4036,7 +4428,7 @@ func TestTerraformEmitsInlinePolicyPerModule(t *testing.T) {
 				{TypeName: "AWS::EC2::Instance", Identifier: "i-ws0", Properties: map[string]string{"sessionPasswordParameter": testWSParamName}},
 			},
 		}, cfg: config.Defaults(),
-			polNames: []string{"fabrica-ssm-output", "fabrica-workstation-dcv-password"}},
+			polNames: []string{"fabrica-ssm-output", "fabrica-workstation-dcv-password", "fabrica-workstation-dcv-license"}},
 	}
 
 	ssmName := iamrole.SSMOutputPolicy(exportRegion, exportAccount)["PolicyName"].(string)
@@ -4062,8 +4454,8 @@ func TestTerraformEmitsInlinePolicyPerModule(t *testing.T) {
 				t.Fatalf("Generate: %v", err)
 			}
 			block := extractTFBlock(t, string(out), "aws_iam_role", tfRoleName)
-			if !strings.Contains(block, "inline_policy") {
-				t.Fatalf("aws_iam_role.%s missing inline_policy:\n%s", tfRoleName, block)
+			if got := strings.Count(block, "inline_policy {"); got != len(tc.polNames) {
+				t.Fatalf("aws_iam_role.%s inline_policy blocks = %d, want %d:\n%s", tfRoleName, got, len(tc.polNames), block)
 			}
 			for _, name := range tc.polNames {
 				if !strings.Contains(block, name) {
@@ -4077,6 +4469,35 @@ func TestTerraformEmitsInlinePolicyPerModule(t *testing.T) {
 				t.Errorf("inline_policy SSM output document does not match iamrole.SSMOutputPolicy output:\ngot  %s\nwant %s", gotDoc, ssmWantDoc)
 			}
 		})
+	}
+}
+
+// TestTerraformOutputParsesAsHCL is the end-to-end HCL gate: the full
+// Terraform export of the richest recorded state (Lore S3 store — four
+// DynamoDB tables with the locks table's three GSIs, inline policies, plus
+// the state lock table) must parse as valid HCL. Schema-level validation
+// against the AWS provider schema needs the terraform CLI and stays a
+// manual CI step.
+func TestTerraformOutputParsesAsHCL(t *testing.T) {
+	st := state.NewState(exportAccount, exportRegion)
+	st.UpsertModule("lore", "ami-lore123", "ready", loreS3StoreModuleState().Resources)
+	cfg := config.Defaults()
+	cfg.Lore.AmiID = "ami-lore123"
+
+	out, err := GenerateOutput(Terraform, st, cfg)
+	if err != nil {
+		t.Fatalf("GenerateOutput(Terraform): %v", err)
+	}
+	assertHCLParses(t, out, "full terraform export")
+}
+
+// assertHCLParses fails the test when the generated HCL does not parse.
+func assertHCLParses(t *testing.T, out []byte, label string) {
+	t.Helper()
+	p := hclparse.NewParser()
+	_, diags := p.ParseHCL(out, "fabrica.tf")
+	if diags.HasErrors() {
+		t.Fatalf("%s does not parse as HCL:\n%s\n---\n%s", label, diags.Error(), out)
 	}
 }
 
@@ -4410,16 +4831,31 @@ func containsAny(s string, subs []string) bool {
 
 // extractTFBlock returns the body of a Terraform resource block.
 // inlinePolicyDocInHCL returns the raw JSON document of one named policy from
-// the inline_policy block of an aws_iam_role resource, unwrapping the HCL %q
-// outer quotes. The entry shape is:  <name> = "<doc>"
+// the inline_policy blocks of an aws_iam_role resource, unwrapping the HCL %q
+// outer quotes. The block shape is:
+//
+//	inline_policy {
+//	  name   = "<name>"
+//	  policy = "<doc>"
+//	}
+//
+// JSON documents are %q-emitted, so the unquoted marker text below cannot
+// match inside a document body.
 func inlinePolicyDocInHCL(t *testing.T, block, policyName string) string {
 	t.Helper()
-	marker := policyName + " = \""
+	marker := fmt.Sprintf("name   = %q", policyName)
 	idx := strings.Index(block, marker)
 	if idx < 0 {
 		t.Fatalf("inline_policy block missing %q", policyName)
 	}
 	rest := block[idx+len(marker):]
+	// The next policy line belongs to this block (name precedes policy in
+	// each block).
+	polIdx := strings.Index(rest, `policy = "`)
+	if polIdx < 0 {
+		t.Fatalf("inline_policy %q missing policy line", policyName)
+	}
+	rest = rest[polIdx+len(`policy = "`):]
 	// The value is %q-emitted: JSON double-quotes are escaped as \", so the
 	// first unescaped " ends the HCL string.
 	var doc strings.Builder

@@ -28,19 +28,11 @@ func Path(explicit, profile string) string {
 // Save writes the config to a YAML file at the given path.
 // If path is empty, defaults to fabrica.yaml.
 func (c *Config) Save(path string) error {
-	if path == "" {
-		path = DefaultFile
-	}
-
 	data, err := c.YAML()
 	if err != nil {
 		return err
 	}
-	// fabrica.yaml is non-secret project config (not credentials).
-	if err := os.WriteFile(path, data, 0644); err != nil { // #nosec G306 -- project config file, not secrets
-		return fmt.Errorf("writing config %s: %w", path, err)
-	}
-	return nil
+	return writeConfigFile(configFilePath(path), data)
 }
 
 // YAML renders the config in the on-disk schema used by fabrica.yaml.
@@ -113,14 +105,19 @@ type HordeConfig struct {
 // Used by `fabrica horde agents create` to provision an Auto Scaling Group
 // of Horde build agents.
 type HordeAgentsConfig struct {
-	AmiID           string                   `mapstructure:"amiId"           yaml:"amiId"`
-	InstanceType    string                   `mapstructure:"instanceType"    yaml:"instanceType"`
-	MinSize         int                      `mapstructure:"minSize"         yaml:"minSize"`
-	DesiredCapacity int                      `mapstructure:"desiredCapacity" yaml:"desiredCapacity"`
-	MaxSize         int                      `mapstructure:"maxSize"         yaml:"maxSize"`
-	Spot            bool                     `mapstructure:"spot"            yaml:"spot"`
-	Schedule        CapacitySchedule         `mapstructure:"schedule"        yaml:"schedule"`
-	Scaling         HordeAgentsScalingConfig `mapstructure:"scaling"        yaml:"scaling"`
+	AmiID           string `mapstructure:"amiId"           yaml:"amiId"`
+	InstanceType    string `mapstructure:"instanceType"    yaml:"instanceType"`
+	MinSize         int    `mapstructure:"minSize"         yaml:"minSize"`
+	DesiredCapacity int    `mapstructure:"desiredCapacity" yaml:"desiredCapacity"`
+	MaxSize         int    `mapstructure:"maxSize"         yaml:"maxSize"`
+	// VPCID and SubnetID place the agent pool explicitly. They must be set
+	// together; when both are omitted the pool follows the coordinator's
+	// placement, falling back to the account default VPC.
+	VPCID    string                   `mapstructure:"vpcId"           yaml:"vpcId"`
+	SubnetID string                   `mapstructure:"subnetId"        yaml:"subnetId"`
+	Spot     bool                     `mapstructure:"spot"            yaml:"spot"`
+	Schedule CapacitySchedule         `mapstructure:"schedule"        yaml:"schedule"`
+	Scaling  HordeAgentsScalingConfig `mapstructure:"scaling"        yaml:"scaling"`
 }
 
 // HordeAgentsScalingConfig holds queue-based autoscaling settings for the
@@ -184,23 +181,32 @@ type CIConfig struct {
 	VPCId        string `mapstructure:"vpcId"        yaml:"vpcId"`
 	SubnetId     string `mapstructure:"subnetId"     yaml:"subnetId"`
 	Pipeline     bool   `mapstructure:"pipeline"     yaml:"pipeline"`
+	// IAM overrides cloud.aws.iam for the CodeBuild role when a field is set.
+	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
 }
 
 // DeployConfig holds the deploy: section of fabrica.yaml. Defaults are applied
 // in the deploy plan layer (internal/deploy), matching the CI/Horde pattern.
 type DeployConfig struct {
-	AliasName                string `mapstructure:"aliasName"                yaml:"aliasName"`
-	RoleName                 string `mapstructure:"roleName"                 yaml:"roleName"`
-	FleetName                string `mapstructure:"fleetName"                yaml:"fleetName"`
-	InstanceType             string `mapstructure:"instanceType"             yaml:"instanceType"`
-	FleetType                string `mapstructure:"fleetType"                yaml:"fleetType"`
-	LaunchPath               string `mapstructure:"launchPath"               yaml:"launchPath"`
-	BuildBucket              string `mapstructure:"buildBucket"              yaml:"buildBucket"`
-	BuildOS                  string `mapstructure:"buildOs"                  yaml:"buildOs"`
-	FromPort                 int    `mapstructure:"fromPort"                 yaml:"fromPort"`
-	ToPort                   int    `mapstructure:"toPort"                   yaml:"toPort"`
-	DesiredInstances         int    `mapstructure:"desiredInstances"         yaml:"desiredInstances"`
-	ActivationTimeoutMinutes int    `mapstructure:"activationTimeoutMinutes" yaml:"activationTimeoutMinutes"`
+	AliasName        string `mapstructure:"aliasName"                yaml:"aliasName"`
+	RoleName         string `mapstructure:"roleName"                 yaml:"roleName"`
+	FleetName        string `mapstructure:"fleetName"                yaml:"fleetName"`
+	InstanceType     string `mapstructure:"instanceType"             yaml:"instanceType"`
+	FleetType        string `mapstructure:"fleetType"                yaml:"fleetType"`
+	LaunchPath       string `mapstructure:"launchPath"               yaml:"launchPath"`
+	BuildBucket      string `mapstructure:"buildBucket"              yaml:"buildBucket"`
+	BuildOS          string `mapstructure:"buildOs"                  yaml:"buildOs"`
+	FromPort         int    `mapstructure:"fromPort"                 yaml:"fromPort"`
+	ToPort           int    `mapstructure:"toPort"                   yaml:"toPort"`
+	DesiredInstances int    `mapstructure:"desiredInstances"         yaml:"desiredInstances"`
+	// MinimumInstances bounds the fleet's EC2 count from below
+	// (LocationCapacity.MinimumNumberOfInstances). Zero means no lower bound.
+	MinimumInstances int `mapstructure:"minimumInstances" yaml:"minimumInstances"`
+	// MaximumInstances bounds the fleet's EC2 count from above
+	// (LocationCapacity.MaximumNumberOfInstances). Zero defaults to
+	// DesiredInstances, so the fleet comes up exactly at the planned size.
+	MaximumInstances         int `mapstructure:"maximumInstances" yaml:"maximumInstances"`
+	ActivationTimeoutMinutes int `mapstructure:"activationTimeoutMinutes" yaml:"activationTimeoutMinutes"`
 	// AllowedCIDR is the inbound CIDR granted UDP access to the fleet's
 	// server port(s). Empty defaults to 0.0.0.0/0 (public UDP).
 	AllowedCIDR string `mapstructure:"allowedCidr" yaml:"allowedCidr"`
@@ -325,7 +331,7 @@ type AWS struct {
 	AccountID string            `mapstructure:"accountId" yaml:"accountId"`
 	Tags      map[string]string `mapstructure:"tags" yaml:"tags"`
 	// IAM applies to EC2-module roles (workstation, horde including agents,
-	// lore, perforce, ddc). CI and Deploy ignore it.
+	// lore, perforce, ddc) and the CI CodeBuild role. Deploy ignores it.
 	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
 	// VolumeRequestTags must be present on the RunInstances request for both
 	// the instance and the root volume. Cloud Control cannot tag the volume
@@ -425,9 +431,10 @@ func Load(path string) (*Config, error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
-	// Viper lowercases map keys. Request-tag conditions compare the key
-	// exactly, so re-read this map from YAML and keep the written case.
-	if err := restoreVolumeRequestTagCase(v.ConfigFileUsed(), cfg); err != nil {
+	// Viper lowercases map keys. Request-tag policies and tag conditions
+	// compare the key exactly, so re-read the AWS tag maps from YAML and
+	// keep the case the operator wrote.
+	if err := restoreAWSTagMaps(v.ConfigFileUsed(), cfg); err != nil {
 		return nil, err
 	}
 	cfg.normalize()
@@ -435,34 +442,44 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// restoreVolumeRequestTagCase copies cloud.aws.volumeRequestTags from the
-// config file with their original key case. A missing file or a missing key
-// leaves the unmarshaled value in place.
-func restoreVolumeRequestTagCase(path string, cfg *Config) error {
+// readConfigFile is the file reader restoreAWSTagMaps uses. It is a test
+// seam: Viper's successful first read makes a re-read failure unreachable
+// otherwise, so tests swap it to exercise that error path.
+var readConfigFile = os.ReadFile
+
+// restoreAWSTagMaps re-reads cloud.aws.tags and cloud.aws.volumeRequestTags
+// from the config file with their original key case. Viper lowercases map
+// keys on unmarshal, and case-sensitive tag keys (for example Project) would
+// otherwise fail request-tag policies and conditions. A missing file or a
+// missing key leaves the unmarshaled value in place.
+func restoreAWSTagMaps(path string, cfg *Config) error {
 	if path == "" || cfg == nil {
 		return nil
 	}
-	data, err := os.ReadFile(path)
+	data, err := readConfigFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("reading volume request tags: %w", err)
+		return fmt.Errorf("reading AWS tag maps: %w", err)
 	}
 	var raw struct {
 		Cloud struct {
 			AWS struct {
+				Tags              map[string]string `yaml:"tags"`
 				VolumeRequestTags map[string]string `yaml:"volumeRequestTags"`
 			} `yaml:"aws"`
 		} `yaml:"cloud"`
 	}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("parsing volume request tags: %w", err)
+		return fmt.Errorf("parsing AWS tag maps: %w", err)
 	}
-	if raw.Cloud.AWS.VolumeRequestTags == nil {
-		return nil
+	if raw.Cloud.AWS.Tags != nil {
+		cfg.Cloud.AWS.Tags = raw.Cloud.AWS.Tags
 	}
-	cfg.Cloud.AWS.VolumeRequestTags = raw.Cloud.AWS.VolumeRequestTags
+	if raw.Cloud.AWS.VolumeRequestTags != nil {
+		cfg.Cloud.AWS.VolumeRequestTags = raw.Cloud.AWS.VolumeRequestTags
+	}
 	return nil
 }
 
@@ -482,9 +499,10 @@ func (c *Config) normalize() {
 }
 
 // Validate checks a path and permissions boundary. An empty IAM is valid.
-// Path must start and end with "/" (for example "/fabrica/") and must not
-// contain an empty segment. The boundary must be a customer or AWS managed
-// policy ARN in the commercial, GovCloud, or China partition.
+// Path is the AWS root "/" or must start and end with "/" (for example
+// "/fabrica/") and must not contain an empty segment. The boundary must be
+// a customer or AWS managed policy ARN in the commercial, GovCloud, or
+// China partition.
 func (i IAM) Validate() error {
 	if err := validateIAMPath(i.Path); err != nil {
 		return err
@@ -493,10 +511,10 @@ func (i IAM) Validate() error {
 }
 
 func validateIAMPath(path string) error {
-	if path == "" {
+	if path == "" || path == "/" {
 		return nil
 	}
-	if len(path) < 2 || !strings.HasPrefix(path, "/") || !strings.HasSuffix(path, "/") || strings.Contains(path, "//") {
+	if !strings.HasPrefix(path, "/") || !strings.HasSuffix(path, "/") || strings.Contains(path, "//") {
 		return fmt.Errorf("iam.path %q must start and end with /", path)
 	}
 	return nil
@@ -532,7 +550,7 @@ func iamPolicyARN(arn string) bool {
 }
 
 // ResolveIAM returns the constraints to put on a role. A non-empty module
-// field replaces the global cloud.aws.iam value. CI and Deploy do not call this.
+// field replaces the global cloud.aws.iam value. Deploy does not call this.
 func ResolveIAM(global, module IAM) (IAM, error) {
 	out := global
 	if module.Path != "" {

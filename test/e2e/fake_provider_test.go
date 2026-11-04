@@ -8,7 +8,10 @@ import (
 	"sync"
 	"testing"
 
+	ec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
+
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/cloud/aws"
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
@@ -47,6 +50,29 @@ type storedResource struct {
 	identifier string
 	desired    json.RawMessage
 	ec2Status  string // for EC2 instances: "running" / "stopped"
+	// tags ride along in the actual-state properties so ownership checks
+	// (drift Extra) behave like the real Cloud Control API.
+	tags map[string]string
+}
+
+// actualStateFor builds the Cloud Control properties document a stored
+// resource reports: EC2 instances carry their lifecycle state so teardown
+// and drift see a terminal state, and any seeded tags ride along.
+func actualStateFor(sr *storedResource) json.RawMessage {
+	props := map[string]any{}
+	if sr.typeName == "AWS::EC2::Instance" {
+		props["State"] = map[string]any{"Name": sr.ec2Status}
+		props["PrivateIpAddress"] = "10.0.0.10"
+	}
+	if len(sr.tags) > 0 {
+		tagList := make([]map[string]string, 0, len(sr.tags))
+		for k, v := range sr.tags {
+			tagList = append(tagList, map[string]string{"Key": k, "Value": v})
+		}
+		props["Tags"] = tagList
+	}
+	b, _ := json.Marshal(props)
+	return json.RawMessage(b)
 }
 
 type remoteCall struct {
@@ -65,6 +91,15 @@ type fakeStore struct {
 	projects   map[string]bool
 	parameters map[string]string
 
+	// stateDocs holds the canonical remote state document per "bucket/key".
+	// A document is only readable when the bucket exists, mirroring S3.
+	stateDocs map[string]string
+
+	// stateStoreGetErr / stateStorePutErr inject S3 storage failures on the
+	// StateStore seam.
+	stateStoreGetErr error
+	stateStorePutErr error
+
 	// failDeleteType, when non-empty, makes ResourceClient.Delete return an
 	// error for resources of that TypeName (drives the destroy-all failure case).
 	failDeleteType string
@@ -75,6 +110,20 @@ type fakeStore struct {
 	// local state). failCreateID is the identifier returned to the caller.
 	failCreateType string
 	failCreateID   string
+
+	// imageRootDevice, when set, overrides the root device DescribeImage
+	// reports (default /dev/sda1).
+	imageRootDevice string
+
+	// volumeTagDeny makes an AWS::EC2::Instance Create simulate the AWS
+	// provider's volume-tag deny fallback: the request the fallback would
+	// send is built with the provider's real builder and recorded in
+	// lastRunInstances.
+	volumeTagDeny bool
+
+	// lastRunInstances is the RunInstances request the fallback simulation
+	// built for the most recent instance create.
+	lastRunInstances *ec2.RunInstancesInput
 
 	remoteCalls   []remoteCall
 	remoteHandler func(instanceID string, commands []string) (cloud.RemoteResult, error)
@@ -89,6 +138,7 @@ func newFakeStore() *fakeStore {
 		tables:     make(map[string]bool),
 		projects:   make(map[string]bool),
 		parameters: make(map[string]string),
+		stateDocs:  make(map[string]string),
 	}
 }
 
@@ -118,12 +168,28 @@ func (p *fakeProvider) Identity(context.Context) (string, string, string, error)
 
 func (p *fakeProvider) Resources() cloud.ResourceClient { return &fakeRC{store: p.store} }
 
-var _ cloud.ImageInspector = (*fakeProvider)(nil)
+var (
+	_ cloud.ImageInspector = (*fakeProvider)(nil)
+	_ cloud.AMIResolver    = (*fakeProvider)(nil)
+)
 
-// DescribeImage reports a DCV AMI with an EBS root on /dev/sda1: workstation
-// create reads the root device from the AMI and refuses to launch without it.
+// DescribeImage reports a DCV AMI with an EBS root: workstation create reads
+// the root device from the AMI and refuses to launch without it. The store
+// can override the root device (default /dev/sda1) for tests that exercise
+// other device names.
 func (p *fakeProvider) DescribeImage(_ context.Context, id string) (cloud.ImageInfo, error) {
-	return cloud.ImageInfo{ID: id, Name: "fabrica-workstation-dcv", RootDeviceName: "/dev/sda1", RootDeviceType: "ebs"}, nil
+	root := p.store.imageRootDevice
+	if root == "" {
+		root = "/dev/sda1"
+	}
+	return cloud.ImageInfo{ID: id, Name: "fabrica-workstation-dcv", RootDeviceName: root, RootDeviceType: "ebs"}, nil
+}
+
+// ResolveUbuntuAMI gives perforce create the Ubuntu AMI its apply path
+// requires; the e2e store is region-agnostic, so every region resolves the
+// same id.
+func (p *fakeProvider) ResolveUbuntuAMI(_ context.Context, _ string) (string, error) {
+	return "ami-fake-ubuntu", nil
 }
 
 var _ cloud.ParameterStore = (*fakeProvider)(nil)
@@ -151,6 +217,7 @@ func (p *fakeProvider) WithRegion(_ context.Context, _ string) (cloud.RegionView
 	return cloud.RegionView{
 		Resources: &fakeRC{store: p.store},
 		VPCs:      &fakeVPCResolver{},
+		Images:    p,
 	}, nil
 }
 
@@ -175,6 +242,18 @@ func (c *fakeRC) Create(_ context.Context, r *cloud.Resource) error {
 		return nil
 	}
 
+	// Simulate the Cloud Control volume-tag deny: the AWS provider falls back
+	// to a direct RunInstances built from the same desired state. Build that
+	// request with the provider's real builder and record it so the test can
+	// assert the fallback's shape (#515).
+	if c.store.volumeTagDeny && r.TypeName == "AWS::EC2::Instance" {
+		in, err := aws.BuildRunInstancesInput(r.DesiredState, nil, "")
+		if err != nil {
+			return err
+		}
+		c.store.lastRunInstances = in
+	}
+
 	slug := typeSlug(r.TypeName)
 	c.store.counters[slug]++
 	id := fmt.Sprintf("fake-%s-%d", slug, c.store.counters[slug])
@@ -196,11 +275,7 @@ func (c *fakeRC) Get(_ context.Context, r *cloud.Resource) error {
 	}
 	// Provide a minimal actual state; EC2 instances report their status so the
 	// teardown engine's transitional-state check sees a terminal state.
-	if sr.typeName == "AWS::EC2::Instance" {
-		r.ActualState = json.RawMessage(fmt.Sprintf(`{"State":{"Name":%q},"PrivateIpAddress":"10.0.0.10"}`, sr.ec2Status))
-	} else {
-		r.ActualState = json.RawMessage(`{}`)
-	}
+	r.ActualState = actualStateFor(sr)
 	return nil
 }
 
@@ -225,7 +300,7 @@ func (c *fakeRC) List(_ context.Context, typeName string) ([]cloud.Resource, err
 	var out []cloud.Resource
 	for _, sr := range c.store.resources {
 		if sr.typeName == typeName {
-			out = append(out, cloud.Resource{TypeName: sr.typeName, Identifier: sr.identifier})
+			out = append(out, cloud.Resource{TypeName: sr.typeName, Identifier: sr.identifier, ActualState: actualStateFor(sr)})
 		}
 	}
 	return out, nil
@@ -335,6 +410,36 @@ func (p *fakeProvider) DeleteStateLockTable(_ context.Context, table string) (cl
 	return cloud.StateBackendDeleteResult{Identifier: table, Deleted: existed, Missing: !existed}, nil
 }
 
+// --- StateStore ---
+
+func (p *fakeProvider) GetStateDocument(_ context.Context, bucket, key string) ([]byte, error) {
+	p.store.mu.Lock()
+	defer p.store.mu.Unlock()
+	if p.store.stateStoreGetErr != nil {
+		return nil, p.store.stateStoreGetErr
+	}
+	if !p.store.buckets[bucket] {
+		return nil, cloud.ErrStateDocumentMissing // missing bucket == missing document
+	}
+	if doc, ok := p.store.stateDocs[bucket+"/"+key]; ok {
+		return []byte(doc), nil
+	}
+	return nil, cloud.ErrStateDocumentMissing
+}
+
+func (p *fakeProvider) PutStateDocument(_ context.Context, bucket, key string, data []byte) error {
+	p.store.mu.Lock()
+	defer p.store.mu.Unlock()
+	if p.store.stateStorePutErr != nil {
+		return p.store.stateStorePutErr
+	}
+	if !p.store.buckets[bucket] {
+		return fmt.Errorf("s3://%s: %w", bucket, cloud.ErrStateBackendAbsent)
+	}
+	p.store.stateDocs[bucket+"/"+key] = string(data)
+	return nil
+}
+
 // --- CodeBuildRunner ---
 
 func (p *fakeProvider) EnsureProject(_ context.Context, spec cloud.CodeBuildProjectSpec) (bool, error) {
@@ -390,6 +495,7 @@ var (
 	_ cloud.StateBackendChecker      = (*fakeProvider)(nil)
 	_ cloud.StateBackendBootstrapper = (*fakeProvider)(nil)
 	_ cloud.StateBackendDestroyer    = (*fakeProvider)(nil)
+	_ cloud.StateStore               = (*fakeProvider)(nil)
 	_ cloud.CodeBuildRunner          = (*fakeProvider)(nil)
 	_ cloud.GameLiftManager          = (*fakeProvider)(nil)
 	_ cloud.RemoteRunner             = (*fakeProvider)(nil)

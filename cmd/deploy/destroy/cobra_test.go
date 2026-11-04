@@ -2,6 +2,9 @@ package destroy_test
 
 import (
 	"bytes"
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/deploy/destroy"
@@ -68,6 +71,59 @@ func TestNewTeardownWiring(t *testing.T) {
 	if tc.Spec.ModuleName != "deploy" {
 		t.Errorf("module name = %q, want deploy", tc.Spec.ModuleName)
 	}
+}
+
+// TestNewTeardownFullRunPersistsState drives a real Run through NewTeardown's
+// production seams: ReadState loads the seeded state file, every resource
+// deletes, and WriteState persists the module removal.
+func TestNewTeardownFullRunPersistsState(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, deployStateJSON())
+
+	provider := &testutil.TestProvider{}
+	rt, err := testutil.NewTestRuntime(provider)()
+	if err != nil {
+		t.Fatalf("runtime: %v", err)
+	}
+	var out bytes.Buffer
+	tc := destroy.NewTeardown(rt, &out)
+	if err := tc.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if provider.DeleteCalls != 4 {
+		t.Fatalf("DeleteCalls = %d, want 4", provider.DeleteCalls)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".fabrica", "state.json"))
+	if err != nil {
+		t.Fatalf("reading state file: %v", err)
+	}
+	testutil.AssertNotContains(t, string(data), "deploy")
+}
+
+// TestDestroyCobraFullRunPersistsState drives the cobra RunE path with
+// --all --yes: the command builds its own teardown controller, deletes every
+// resource (fleets, builds, alias, role), and persists the module removal
+// through the production WriteState seam.
+func TestDestroyCobraFullRunPersistsState(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, deployStateJSON())
+
+	provider := &testutil.TestProvider{}
+	got, err := runDestroy(t, testutil.NewTestRuntime(provider), "--all", "--yes")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	testutil.AssertContains(t, got, "destroyed")
+	if provider.DeleteCalls != 4 {
+		t.Fatalf("DeleteCalls = %d, want 4", provider.DeleteCalls)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".fabrica", "state.json"))
+	if err != nil {
+		t.Fatalf("reading state file: %v", err)
+	}
+	testutil.AssertNotContains(t, string(data), "deploy")
 }
 
 // ---- helpers ----

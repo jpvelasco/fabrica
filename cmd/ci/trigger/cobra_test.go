@@ -96,6 +96,28 @@ func TestTriggerCobraHappyPath(t *testing.T) {
 	}
 }
 
+// TestTriggerCobraDryRunNoStart verifies --dry-run renders the preview and
+// makes no StartBuild call (regression: the flag was previously ignored).
+func TestTriggerCobraDryRunNoStart(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, provisionedStateJSON())
+	bg := writeBuildGraph(t, dir)
+
+	provider := newTriggerProvider("fabrica-ci:dry0000")
+	got, err := runCITrigger(t, testutil.NewTestRuntime(provider), bg, "--dry-run")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	testutil.AssertContains(t, got, "dry run")
+	testutil.AssertContains(t, got, "fabrica-ci")
+	testutil.AssertContains(t, got, "Compile")
+	testutil.AssertContains(t, got, "http://10.0.1.42:5000")
+	if provider.StartBuildCalls != 0 {
+		t.Errorf("dry run must not start a build, got %d calls", provider.StartBuildCalls)
+	}
+}
+
 // TestTriggerCobraNotProvisioned fails cleanly when CI state is missing.
 func TestTriggerCobraNotProvisioned(t *testing.T) {
 	dir := t.TempDir()

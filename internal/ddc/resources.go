@@ -74,18 +74,22 @@ func InstanceProfileDesiredState(plan *SetupPlan) (json.RawMessage, error) {
 }
 
 // InstanceDesiredState returns Cloud Control desired-state for the DDC (Jupiter) EC2 instance.
+// The root volume mapping goes on the AMI's own root device (plan.RootDeviceName)
+// and is encrypted at launch (#513).
 func InstanceDesiredState(plan *SetupPlan, sgID, userData, instanceProfileName string) (json.RawMessage, error) {
 	return ec2DesiredState(
 		plan.AmiID, plan.InstanceType, plan.SubnetID, sgID, userData, instanceProfileName,
-		plan.VolumeSize, plan.InstanceName,
+		plan.VolumeSize, plan.InstanceName, plan.RootDeviceName,
 	)
 }
 
 // ScyllaInstanceDesiredState returns desired-state for the optional 1-node Scylla EC2.
+// The root volume mapping goes on the Scylla AMI's own root device
+// (plan.ScyllaRootDeviceName) and is encrypted at launch (#513).
 func ScyllaInstanceDesiredState(plan *SetupPlan, sgID, userData, instanceProfileName string) (json.RawMessage, error) {
 	return ec2DesiredState(
 		plan.ScyllaAmiID, plan.ScyllaInstanceType, plan.SubnetID, sgID, userData, instanceProfileName,
-		plan.ScyllaVolumeSize, plan.ScyllaInstanceName,
+		plan.ScyllaVolumeSize, plan.ScyllaInstanceName, plan.ScyllaRootDeviceName,
 	)
 }
 
@@ -106,7 +110,8 @@ func EdgeSGDesiredState(plan *EdgePlan) (json.RawMessage, error) {
 
 // EdgeInstanceDesiredState returns desired-state for the edge region's DDC EC2
 // instance. It reuses the home instance profile (IAM is global) and the shared
-// blob bucket via cloud-init.
+// blob bucket via cloud-init. The root volume mapping goes on the edge AMI's
+// own root device (plan.RootDeviceName) and is encrypted at launch (#513).
 func EdgeInstanceDesiredState(plan *EdgePlan, sgID, userData string) (json.RawMessage, error) {
 	spec := ec2state.InstanceSpec{
 		ImageID:         plan.AmiID,
@@ -118,6 +123,8 @@ func EdgeInstanceDesiredState(plan *EdgePlan, sgID, userData string) (json.RawMe
 		InstanceName:    plan.InstanceName,
 	}
 	dsOpts := []ec2state.DesiredStateOption{
+		ec2state.WithDeviceName(plan.RootDeviceName),
+		ec2state.WithEncryptedVolume(),
 		ec2state.WithExtraTags("FabricaModule", "ddc"),
 		ec2state.WithExtraTags("FabricaRole", "edge"),
 		ec2state.WithIAMProfile(plan.InstanceProfileName),
@@ -125,7 +132,10 @@ func EdgeInstanceDesiredState(plan *EdgePlan, sgID, userData string) (json.RawMe
 	return ec2state.Build(spec, dsOpts...)
 }
 
-func ec2DesiredState(amiID, instanceType, subnetID, sgID, userData, profileName string, volumeSize int, name string) (json.RawMessage, error) {
+// ec2DesiredState builds the home-region DDC / Scylla instance desired-state.
+// The root volume mapping goes on the AMI's own root device (rootDevice, read
+// from the AMI at create time) and is encrypted at launch (#513).
+func ec2DesiredState(amiID, instanceType, subnetID, sgID, userData, profileName string, volumeSize int, name, rootDevice string) (json.RawMessage, error) {
 	spec := ec2state.InstanceSpec{
 		ImageID:         amiID,
 		InstanceType:    instanceType,
@@ -136,6 +146,8 @@ func ec2DesiredState(amiID, instanceType, subnetID, sgID, userData, profileName 
 		InstanceName:    name,
 	}
 	dsOpts := []ec2state.DesiredStateOption{
+		ec2state.WithDeviceName(rootDevice),
+		ec2state.WithEncryptedVolume(),
 		ec2state.WithExtraTags("FabricaModule", "ddc"),
 	}
 	if profileName != "" {

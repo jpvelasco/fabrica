@@ -31,16 +31,15 @@ operator runbook: list, inspect metadata, then restore.`,
 }
 
 func runVerify(rt globals.Runtime, backupID string, jsonOut bool, out io.Writer) error {
-	id := perforce.SanitizeBackupName(backupID)
-	if id == "" {
-		return fmt.Errorf("backup id is empty after sanitizing %q — use an id from `fabrica perforce backup list`", backupID)
+	if err := perforce.ValidateBackupID(backupID); err != nil {
+		return err
 	}
 	path := perforce.ResolveBackupPath(rt.Config.Perforce.Backup.Path)
 	doc := map[string]string{
-		"backupId": id,
-		"path":     path + "/" + id,
+		"backupId": backupID,
+		"path":     path + "/" + backupID,
 		"list":     "fabrica perforce backup list",
-		"restore":  "fabrica perforce restore " + id,
+		"restore":  "fabrica perforce restore " + backupID,
 		"note":     "Confirm metadata.json exists on the instance (or S3), then restore. Verify does not mutate state.",
 	}
 	if jsonOut {
@@ -51,7 +50,7 @@ func runVerify(rt globals.Runtime, backupID string, jsonOut bool, out io.Writer)
 		fmt.Fprintln(out, string(data))
 		return nil
 	}
-	fmt.Fprintf(out, "Verify backup %s\n", id)
+	fmt.Fprintf(out, "Verify backup %s\n", backupID)
 	fmt.Fprintf(out, "  path:    %s\n", doc["path"])
 	fmt.Fprintf(out, "  list:    %s\n", doc["list"])
 	fmt.Fprintf(out, "  restore: %s\n", doc["restore"])

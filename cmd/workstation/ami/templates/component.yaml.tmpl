@@ -102,7 +102,7 @@ phases:
               # must equal the archive's ar members exactly, in order.
               verify_deb() {
                 local d="$1"
-                local abs work manifest line rest md5 sha1 size name filesseen=0
+                local abs work manifest line rest md5 sha1 size name filesseen=0 vcount
                 case "$d" in /*) abs="$d";; *) abs="$(pwd)/$d";; esac
                 work="$(mktemp -d /tmp/chk.XXXXXX)"
                 # Exact member binding, checked BEFORE extraction so a
@@ -160,9 +160,10 @@ phases:
                   echo "ERROR: bad gpg signature status in $d: $(grep -E '^\[GNUPG:\] (BADSIG|ERRSIG|EXPKEYSIG|REVKEYSIG|NO_PUBKEY) ' "$vstat" | head -n1 | cut -c13-80)"
                   return 1
                 fi
-                if [ "$(grep -Ec '^\[GNUPG:\] VALIDSIG ' "$vstat")" -ne 1 ]; then
+                vcount="$(grep -Ec '^\[GNUPG:\] VALIDSIG ' "$vstat")"
+                if [ "$vcount" -ne 1 ]; then
                   rm -rf "$work"
-                  echo "ERROR: expected exactly one VALIDSIG status line for $d (got $(grep -Ec '^\[GNUPG:\] VALIDSIG ' "$vstat"))"
+                  echo "ERROR: expected exactly one VALIDSIG status line for $d (got $vcount)"
                   return 1
                 fi
                 # The first field of a VALIDSIG line is the signing
@@ -271,6 +272,11 @@ phases:
                   echo "ERROR: digest check covered $filesseen members in $d (want 3)"
                   return 1
                 fi
+                # Bake-log summary: the evidence the signature gate saw, for
+                # the record (the gate above proved the count is one and the
+                # fingerprint equals the pinned NICE key). Public material
+                # only — no key material beyond the fingerprint.
+                echo "verified $d: $vcount VALIDSIG line, signing key fingerprint $validsig_fpr"
                 rm -rf "$work"
               }
               for deb in *.deb; do

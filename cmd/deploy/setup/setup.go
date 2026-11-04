@@ -73,8 +73,8 @@ With --dry-run, shows the planned resources and estimated monthly cost.`,
 				assumeYes:  opts.AssumeYes,
 				out:        out,
 				costs:      fabricacost.Global,
-				readState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-				writeState: fabricastate.WriteState,
+				readState:  func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
+				writeState: provision.StateWriter(cmd.Context(), rt),
 				confirm:    prompt.Confirm,
 			}
 			if rt.Provider != nil {

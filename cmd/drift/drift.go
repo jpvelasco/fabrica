@@ -32,10 +32,14 @@ type command struct {
 	writeState     func(*fabricastate.State) error
 	getResource    func(ctx context.Context, r *cloud.Resource) error
 	listResources  func(ctx context.Context, typeName string) ([]cloud.Resource, error)
-	createResource func(ctx context.Context, r *cloud.Resource) error
+	createResource func(ctx context.Context, a *drift.RemediationAction) error
 	backend        cloud.StateBackendChecker
 	codebuild      cloud.CodeBuildRunner
 	confirm        func(string) bool
+	// withRegion resolves a region-scoped resource client for resources
+	// recorded outside the home region (DDC edges). Nil when the provider
+	// does not support additional regions.
+	withRegion func(ctx context.Context, region string) (cloud.RegionView, error)
 }
 
 // New returns the "fabrica drift" command.
@@ -80,19 +84,25 @@ and CodeBuild projects.`,
 				fixMode:    fixMode,
 				assumeYes:  opts.AssumeYes,
 				out:        out,
-				readState:  func() (*fabricastate.State, error) { return provision.ReadState(rt) },
-				writeState: fabricastate.WriteState,
+				readState:  func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
+				writeState: provision.StateWriter(cmd.Context(), rt),
 				confirm:    prompt.Confirm,
 			}
 			if rt.Provider != nil {
-				c.getResource = rt.Provider.Resources().Get
-				c.listResources = rt.Provider.Resources().List
-				c.createResource = rt.Provider.Resources().Create
+				homeRC := rt.Provider.Resources()
+				c.getResource = homeRC.Get
+				c.listResources = homeRC.List
+				c.createResource = func(ctx context.Context, a *drift.RemediationAction) error {
+					return c.createInRegion(ctx, homeRC, a)
+				}
 				if b, ok := rt.Provider.(cloud.StateBackendChecker); ok {
 					c.backend = b
 				}
 				if cb, ok := rt.Provider.(cloud.CodeBuildRunner); ok {
 					c.codebuild = cb
+				}
+				if rp, ok := rt.Provider.(cloud.RegionProvider); ok {
+					c.withRegion = rp.WithRegion
 				}
 			}
 			return c.run(cmd.Context(), opts.DryRun)
@@ -103,6 +113,18 @@ and CodeBuild projects.`,
 }
 
 func (c *command) run(ctx context.Context, dryRun bool) error {
+	// --fix rewrites state, so it takes the shared account lock before the
+	// state read; read-only and dry-run scans never contend.
+	release := func() {}
+	if c.fixMode {
+		var err error
+		ctx, release, err = provision.AcquireStateLockUnlessDryRun(ctx, c.runtime, "drift --fix", dryRun)
+		if err != nil {
+			return err
+		}
+	}
+	defer release()
+
 	st, err := c.readState()
 	if err != nil {
 		return fmt.Errorf("reading state: %w", err)
@@ -124,6 +146,10 @@ func (c *command) run(ctx context.Context, dryRun bool) error {
 
 	report := engine.Run(ctx)
 
+	if c.withRegion != nil {
+		engine.RegionResource = c.regionResource
+	}
+
 	// Fix mode: plan remediation and optionally apply.
 	if c.fixMode {
 		return c.runFix(ctx, dryRun, st, report)
@@ -137,8 +163,52 @@ func (c *command) run(ctx context.Context, dryRun bool) error {
 	return nil
 }
 
+// createInRegion routes a remediation create to the region the action
+// targets: the home-region client for home actions (empty region) and the
+// region-scoped client from the RegionProvider seam for edge actions.
+func (c *command) createInRegion(ctx context.Context, homeRC cloud.ResourceClient, a *drift.RemediationAction) error {
+	if a.Region == "" || a.Region == c.runtime.Config.Cloud.AWS.Region {
+		return homeRC.Create(ctx, a.Resource)
+	}
+	if c.withRegion == nil {
+		return fmt.Errorf("cannot create %s in region %s: provider does not support additional regions", a.TypeName, a.Region)
+	}
+	view, err := c.withRegion(ctx, a.Region)
+	if err != nil {
+		return fmt.Errorf("resolving region %s: %w", a.Region, err)
+	}
+	return view.Resources.Create(ctx, a.Resource)
+}
+
+// regionResource resolves a region-scoped resource client for the drift
+// engine's reads and enumeration of resources recorded outside the home
+// region.
+func (c *command) regionResource(ctx context.Context, region string) (cloud.ResourceClient, error) {
+	view, err := c.withRegion(ctx, region)
+	if err != nil {
+		return nil, err
+	}
+	return view.Resources, nil
+}
+
+// planActionAttrs builds the oplog attributes for a remediation plan action,
+// adding the target region when the action is edge-scoped.
+func planActionAttrs(a drift.RemediationAction) []any {
+	attrs := []any{"module", a.Module, "type", a.TypeName, "id", a.Identifier, "kind", a.Kind, "reason", a.Reason}
+	if a.Region != "" {
+		attrs = append(attrs, "region", a.Region)
+	}
+	return attrs
+}
+
 func (c *command) runFix(ctx context.Context, dryRun bool, st *fabricastate.State, report *drift.DriftReport) error {
-	plan := drift.PlanRemediation(report, st, c.runtime.Config)
+	var opts []drift.PlanOption
+	// Workstation rebuilds need the AMI's root device; providers that can
+	// inspect AMIs supply the capability, others fail those rebuilds closed.
+	if insp, ok := c.runtime.Provider.(cloud.ImageInspector); ok {
+		opts = append(opts, drift.WithImageInspector(insp.DescribeImage))
+	}
+	plan := drift.PlanRemediation(ctx, report, st, c.runtime.Config, opts...)
 
 	if len(plan.Actions) == 0 {
 		oplog.WithModule("drift").Debug("no drift found, nothing to fix")
@@ -152,7 +222,7 @@ func (c *command) runFix(ctx context.Context, dryRun bool, st *fabricastate.Stat
 	if dryRun {
 		oplog.WithModule("drift").Debug("drift fix dry-run, showing plan", "actions", len(plan.Actions))
 		for _, a := range plan.Actions {
-			oplog.WithModule("drift").Debug("plan action", "module", a.Module, "type", a.TypeName, "id", a.Identifier, "kind", a.Kind, "reason", a.Reason)
+			oplog.WithModule("drift").Debug("plan action", planActionAttrs(a)...)
 		}
 		if c.jsonOut {
 			return c.printFixJSON(nil, plan, nil)
@@ -327,8 +397,13 @@ func (c *command) printFixPlan(plan *drift.RemediationPlan) {
 		a := &plan.Actions[i]
 		switch a.Kind {
 		case drift.ActionCreate:
-			fmt.Fprintf(c.out, "  [FIX]  %s/%s %s — will recreate from recorded state\n",
-				a.Module, a.TypeName, a.Identifier)
+			if a.Region != "" {
+				fmt.Fprintf(c.out, "  [FIX]  %s/%s %s (region %s) — will recreate from recorded state\n",
+					a.Module, a.TypeName, a.Identifier, a.Region)
+			} else {
+				fmt.Fprintf(c.out, "  [FIX]  %s/%s %s — will recreate from recorded state\n",
+					a.Module, a.TypeName, a.Identifier)
+			}
 		case drift.ActionSkip:
 			fmt.Fprintf(c.out, "  [SKIP] %s/%s %s — %s\n",
 				a.Module, a.TypeName, a.Identifier, a.Reason)

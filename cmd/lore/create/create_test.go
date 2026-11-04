@@ -33,6 +33,11 @@ func newTestCommand(out *bytes.Buffer, provider cloud.Provider, st *fabricastate
 	c.writeState = testutil.StateWriteNever()
 	if provider != nil {
 		c.createResource = provider.Resources().Create
+		// Same wiring New() does: providers that can inspect AMIs supply the
+		// root device for the encrypted root mapping (#513).
+		if insp, ok := provider.(cloud.ImageInspector); ok {
+			c.inspectImage = insp.DescribeImage
+		}
 	}
 	return c
 }
@@ -53,8 +58,10 @@ func TestCreateDryRunNoAWSCalls(t *testing.T) {
 }
 
 func TestCreateDryRunOutputFields(t *testing.T) {
+	// InspectorProvider supplies the canned /dev/sda1 root device so the
+	// dry-run output includes the encrypted root volume line (#513).
 	var out bytes.Buffer
-	provider := &testutil.TestProvider{}
+	provider := &testutil.InspectorProvider{}
 	st := testutil.NewTestState()
 	c := newTestCommand(&out, provider, st)
 	c.dryRun = true
@@ -71,6 +78,7 @@ func TestCreateDryRunOutputFields(t *testing.T) {
 		"41337",
 		"41339",
 		"TLS:              disabled",
+		"/dev/sda1 (encrypted)",
 		"Cost estimate:",
 	} {
 		assert.Contains(t, got, want)
@@ -79,10 +87,12 @@ func TestCreateDryRunOutputFields(t *testing.T) {
 
 func TestCreateAlreadyProvisioned(t *testing.T) {
 	var out bytes.Buffer
-	provider := &testutil.TestProvider{}
+	provider := &testutil.InspectorProvider{}
 	st := testutil.NewTestState()
 	st.UpsertModule("lore", "ami-existing", "provisioning", []fabricastate.ModuleResource{
 		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-existing"},
+		{TypeName: "AWS::IAM::Role", Identifier: "fabrica-lore-role"},
+		{TypeName: "AWS::IAM::InstanceProfile", Identifier: "fabrica-lore-profile"},
 		{TypeName: "AWS::EC2::Instance", Identifier: "i-existing"},
 	})
 	c := newTestCommand(&out, provider, st)
@@ -94,6 +104,34 @@ func TestCreateAlreadyProvisioned(t *testing.T) {
 		t.Fatalf("already-exists: made %d create calls, want 0", provider.CreateCalls)
 	}
 	assert.Contains(t, out.String(), "already provisioned")
+}
+
+// TestCreatePartialModuleFails verifies a partially provisioned module (an
+// interrupted create) is refused with recovery guidance instead of reported
+// as already provisioned.
+func TestCreatePartialModuleFails(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{}
+	st := testutil.NewTestState()
+	st.UpsertModule("lore", "ami-existing", "provisioning", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-existing"},
+	})
+	c := newTestCommand(&out, provider, st)
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("run: expected error for partial module, got nil")
+	}
+	for _, want := range []string{
+		`status "provisioning"`,
+		"AWS::EC2::Instance",
+		"fabrica lore destroy",
+	} {
+		assert.Contains(t, err.Error(), want)
+	}
+	if provider.CreateCalls != 0 {
+		t.Fatalf("partial module: made %d create calls, want 0", provider.CreateCalls)
+	}
 }
 
 func TestCreateMissingAmiID(t *testing.T) {
@@ -117,7 +155,7 @@ func TestCreateMissingAmiID(t *testing.T) {
 func TestCreateHappyPathOrderAndState(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var out bytes.Buffer
-	provider := &testutil.TestProvider{}
+	provider := &testutil.InspectorProvider{}
 	st := testutil.NewTestState()
 	capture := &testutil.StateWriteCapture{}
 	c := newTestCommand(&out, provider, st)
@@ -157,7 +195,7 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var out bytes.Buffer
-	provider := &testutil.TestProvider{CreateErr: map[string]error{cloud.TypeAWSEC2Instance: errors.New("quota exceeded")}}
+	provider := &testutil.InspectorProvider{TestProvider: testutil.TestProvider{CreateErr: map[string]error{cloud.TypeAWSEC2Instance: errors.New("quota exceeded")}}}
 	st := testutil.NewTestState()
 	capture := &testutil.StateWriteCapture{}
 	c := newTestCommand(&out, provider, st)
@@ -180,7 +218,7 @@ func TestCreateInstanceFailurePreservesPartialState(t *testing.T) {
 
 func TestCreateConfirmationRejected(t *testing.T) {
 	var out bytes.Buffer
-	provider := &testutil.TestProvider{}
+	provider := &testutil.InspectorProvider{}
 	st := testutil.NewTestState()
 	c := newTestCommand(&out, provider, st)
 	c.confirm = func(_, _ string) bool { return false }
@@ -246,7 +284,7 @@ func TestCreateIdentityFailureAbortsEarly(t *testing.T) {
 func TestCreateSGFailureNoStateWritten(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var out bytes.Buffer
-	provider := &testutil.TestProvider{CreateErr: map[string]error{cloud.TypeAWSEC2SecurityGroup: errors.New("sg quota")}}
+	provider := &testutil.InspectorProvider{TestProvider: testutil.TestProvider{CreateErr: map[string]error{cloud.TypeAWSEC2SecurityGroup: errors.New("sg quota")}}}
 	st := testutil.NewTestState()
 	stateWritten := false
 	c := newTestCommand(&out, provider, st)
@@ -344,7 +382,7 @@ func TestCreateS3StoreDryRun(t *testing.T) {
 func TestCreateS3StoreHappyPath(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var out bytes.Buffer
-	provider := &testutil.TestProvider{}
+	provider := &testutil.InspectorProvider{}
 	st := testutil.NewTestState()
 	capture := &testutil.StateWriteCapture{}
 	c := newTestCommand(&out, provider, st)
@@ -411,7 +449,7 @@ func TestCreateS3StoreHappyPath(t *testing.T) {
 func TestCreateS3StoreTableFailurePreservesPartialState(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var out bytes.Buffer
-	provider := &testutil.TestProvider{CreateErr: map[string]error{cloud.TypeAWSDynamoDBTable: errors.New("ddb quota")}}
+	provider := &testutil.InspectorProvider{TestProvider: testutil.TestProvider{CreateErr: map[string]error{cloud.TypeAWSDynamoDBTable: errors.New("ddb quota")}}}
 	st := testutil.NewTestState()
 	capture := &testutil.StateWriteCapture{}
 	c := newTestCommand(&out, provider, st)
@@ -445,7 +483,7 @@ func TestCreateS3StoreTableFailurePreservesPartialState(t *testing.T) {
 func TestCreateS3StoreBucketFailurePreservesPartialState(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var out bytes.Buffer
-	provider := &testutil.TestProvider{CreateErr: map[string]error{cloud.TypeAWSS3Bucket: errors.New("bucket name taken")}}
+	provider := &testutil.InspectorProvider{TestProvider: testutil.TestProvider{CreateErr: map[string]error{cloud.TypeAWSS3Bucket: errors.New("bucket name taken")}}}
 	st := testutil.NewTestState()
 	capture := &testutil.StateWriteCapture{}
 	c := newTestCommand(&out, provider, st)
@@ -465,5 +503,89 @@ func TestCreateS3StoreBucketFailurePreservesPartialState(t *testing.T) {
 	_, hasSG := capture.Last().GetModuleResource("lore", "AWS::EC2::SecurityGroup")
 	if !hasSG {
 		t.Error("SG resource not recorded in state after bucket failure")
+	}
+}
+
+// #513: the encrypted root mapping lands on the AMI's real root device, so a
+// provider that cannot inspect AMIs refuses the launch rather than guessing
+// a device name. The refuse happens before RunCreate, so nothing is created.
+
+func TestCreateRefusesWithoutImageInspector(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.TestProvider{}
+	st := testutil.NewTestState()
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected a refuse-to-launch error")
+	}
+	assert.Contains(t, err.Error(), "refusing to launch")
+	assert.Contains(t, err.Error(), "cannot inspect AMIs")
+	assert.Contains(t, err.Error(), "lore.amiId ami-test123")
+	if provider.CreateCalls != 0 {
+		t.Errorf("CreateCalls = %d, want 0 (refuse precedes any write)", provider.CreateCalls)
+	}
+}
+
+func TestCreateRefusesMalformedAMIRootDevice(t *testing.T) {
+	tests := []struct {
+		name    string
+		rootDev string
+		devType string
+		want    string
+	}{
+		{"no root device name", "", "ebs", "reports no root device name"},
+		{"malformed root device name", "/dev/ram0", "ebs", "not an EC2 device name"},
+		{"non-EBS root", "/dev/sda1", "instance-store", "needs an EBS-backed AMI"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			c := newTestCommand(&out, &testutil.TestProvider{}, testutil.NewTestState())
+			c.assumeYes = true
+			c.inspectImage = func(_ context.Context, _ string) (cloud.ImageInfo, error) {
+				return cloud.ImageInfo{RootDeviceName: tc.rootDev, RootDeviceType: tc.devType}, nil
+			}
+			err := c.run(context.Background())
+			if err == nil {
+				t.Fatalf("expected a refusal for %q", tc.rootDev)
+			}
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+
+func TestCreateInspectAMIErrorsWrap(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCommand(&out, &testutil.TestProvider{}, testutil.NewTestState())
+	c.assumeYes = true
+	c.inspectImage = func(_ context.Context, _ string) (cloud.ImageInfo, error) {
+		return cloud.ImageInfo{}, errors.New("describe denied")
+	}
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected an inspect error")
+	}
+	assert.Contains(t, err.Error(), "inspecting lore.amiId ami-test123")
+	assert.Contains(t, err.Error(), "describe denied")
+}
+
+// TestCreateInspectsTheConfiguredAMI pins that the inspection targets
+// lore.amiId as configured, not a guessed ID.
+func TestCreateInspectsTheConfiguredAMI(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{}
+	st := testutil.NewTestState()
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if provider.LastImageID != "ami-test123" {
+		t.Errorf("LastImageID = %q, want the configured lore.amiId", provider.LastImageID)
+	}
+	if len(provider.DescribeImageIDs) != 1 || provider.DescribeImageIDs[0] != "ami-test123" {
+		t.Errorf("DescribeImageIDs = %v, want one call for the configured AMI", provider.DescribeImageIDs)
 	}
 }

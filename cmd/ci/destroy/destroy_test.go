@@ -73,7 +73,7 @@ func TestRunNotProvisioned(t *testing.T) {
 			NotProvisioned: "CI is not provisioned. Nothing to destroy.",
 		},
 		Out:       &out,
-		ReadState: func() (*fabricastate.State, error) { return st, nil },
+		ReadState: func(_ context.Context) (*fabricastate.State, error) { return st, nil },
 	}
 
 	if err := tc.Run(context.Background()); err != nil {
@@ -242,8 +242,8 @@ func buildTeardownForTest(st *fabricastate.State, rt *globals.Runtime, sdkDelete
 		Runtime:     runtime,
 		SkipConfirm: true,
 		Out:         &bytes.Buffer{},
-		ReadState:   func() (*fabricastate.State, error) { return st, nil },
-		WriteState:  func(*fabricastate.State) error { return nil },
+		ReadState:   func(_ context.Context) (*fabricastate.State, error) { return st, nil },
+		WriteState:  func(_ context.Context, _ *fabricastate.State) error { return nil },
 	}
 	if sdkDelete != nil {
 		tc.SDKDeleteFunc = sdkDelete

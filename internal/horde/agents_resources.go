@@ -33,22 +33,35 @@ func AgentSGDesiredState(plan *AgentsCreatePlan) (json.RawMessage, error) {
 	return json.Marshal(doc)
 }
 
-// AgentToCoordinatorIngressDesiredState returns Cloud Control desired-state for
-// a standalone ingress rule authorizing agent-initiated connections to the
-// coordinator. Agents dial the coordinator, so the rule belongs ON the
-// coordinator security group WITH the agent security group as source. The rule
-// is tracked as its own resource (AWS::EC2::SecurityGroupIngress) and deleted
-// before either SG during teardown.
-func AgentToCoordinatorIngressDesiredState(plan *AgentsCreatePlan, agentSGID string) (json.RawMessage, error) {
+// agentToCoordinatorIngress returns Cloud Control desired-state for a
+// standalone ingress rule on the coordinator security group authorizing
+// agent-initiated connections from the agent security group on one port.
+// Cloud Control allows one port range per rule, so each coordinator port an
+// agent needs is its own resource, tracked as its own state entry and
+// deleted before either SG during teardown.
+func agentToCoordinatorIngress(plan *AgentsCreatePlan, agentSGID string, port int, description string) (json.RawMessage, error) {
 	doc := map[string]any{
 		"GroupId":               plan.CoordinatorSGID,
 		"SourceSecurityGroupId": agentSGID,
 		"IpProtocol":            "tcp",
-		"FromPort":              plan.CoordinatorPort,
-		"ToPort":                plan.CoordinatorPort,
-		"Description":           "Horde agents to coordinator (Fabrica-managed)",
+		"FromPort":              port,
+		"ToPort":                port,
+		"Description":           description,
 	}
 	return json.Marshal(doc)
+}
+
+// AgentToCoordinatorIngressDesiredState authorizes the coordinator's HTTP
+// port (web UI / API) for agent-initiated connections.
+func AgentToCoordinatorIngressDesiredState(plan *AgentsCreatePlan, agentSGID string) (json.RawMessage, error) {
+	return agentToCoordinatorIngress(plan, agentSGID, plan.CoordinatorPort, "Horde agents to coordinator (Fabrica-managed)")
+}
+
+// AgentToCoordinatorGRPCIngressDesiredState authorizes the coordinator's
+// gRPC port — the port agents use for enrollment traffic — for
+// agent-initiated connections.
+func AgentToCoordinatorGRPCIngressDesiredState(plan *AgentsCreatePlan, agentSGID string) (json.RawMessage, error) {
+	return agentToCoordinatorIngress(plan, agentSGID, plan.CoordinatorGRPCPort, "Horde agents to coordinator gRPC (Fabrica-managed)")
 }
 
 // AgentRoleDesiredState returns Cloud Control desired-state for the agent EC2

@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/gamelift"
+	gltypes "github.com/aws/aws-sdk-go-v2/service/gamelift/types"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 )
 
@@ -15,6 +16,7 @@ var _ fabricac.GameLiftManager = (*awsProvider)(nil)
 // gameLiftClient is the subset of the GameLift SDK the provider uses.
 type gameLiftClient interface {
 	DescribeFleetAttributes(context.Context, *gamelift.DescribeFleetAttributesInput, ...func(*gamelift.Options)) (*gamelift.DescribeFleetAttributesOutput, error)
+	DescribeFleetCapacity(context.Context, *gamelift.DescribeFleetCapacityInput, ...func(*gamelift.Options)) (*gamelift.DescribeFleetCapacityOutput, error)
 	DescribeFleetEvents(context.Context, *gamelift.DescribeFleetEventsInput, ...func(*gamelift.Options)) (*gamelift.DescribeFleetEventsOutput, error)
 }
 
@@ -39,10 +41,11 @@ func (p *awsProvider) FleetStatus(ctx context.Context, fleetID string) (fabricac
 	if err != nil {
 		return fabricac.FleetInfo{}, err
 	}
+	client := p.gameLiftClient(cfg)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	out, err := p.gameLiftClient(cfg).DescribeFleetAttributes(ctx, &gamelift.DescribeFleetAttributesInput{
+	out, err := client.DescribeFleetAttributes(ctx, &gamelift.DescribeFleetAttributesInput{
 		FleetIds: []string{fleetID},
 	})
 	if err != nil {
@@ -52,7 +55,38 @@ func (p *awsProvider) FleetStatus(ctx context.Context, fleetID string) (fabricac
 		return fabricac.FleetInfo{}, fmt.Errorf("fleet %s not found — check 'fabrica deploy status'", fleetID)
 	}
 	a := out.FleetAttributes[0]
-	return fabricac.FleetInfo{FleetID: aws.ToString(a.FleetId), Status: string(a.Status)}, nil
+	info := fabricac.FleetInfo{FleetID: aws.ToString(a.FleetId), Status: string(a.Status)}
+	// Capacity counts only matter once the fleet is ACTIVE, when the promote
+	// poll reconciles them before accepting the fleet; skip the extra call
+	// in every earlier phase.
+	if a.Status == gltypes.FleetStatusActive {
+		info.CapacityCurrent, info.CapacityDesired, info.CapacityMinimum, info.CapacityMaximum =
+			p.fleetCapacityCounts(ctx, client, fleetID)
+	}
+	return info, nil
+}
+
+// fleetCapacityCounts best-effort fetches the EC2 instance counts GameLift
+// reports for a fleet (DescribeFleetCapacity). Zero counts when the call
+// fails or the fleet has no capacity entry: a capacity hiccup must not kill
+// the activation poll, and callers treat zero counts as "not exposed".
+func (p *awsProvider) fleetCapacityCounts(ctx context.Context, client gameLiftClient, fleetID string) (current, desired, minimum, maximum int) {
+	out, err := client.DescribeFleetCapacity(ctx, &gamelift.DescribeFleetCapacityInput{
+		FleetIds: []string{fleetID},
+	})
+	if err != nil {
+		return 0, 0, 0, 0
+	}
+	for _, c := range out.FleetCapacity {
+		if aws.ToString(c.FleetId) != fleetID || c.InstanceCounts == nil {
+			continue
+		}
+		return int(aws.ToInt32(c.InstanceCounts.ACTIVE)),
+			int(aws.ToInt32(c.InstanceCounts.DESIRED)),
+			int(aws.ToInt32(c.InstanceCounts.MINIMUM)),
+			int(aws.ToInt32(c.InstanceCounts.MAXIMUM))
+	}
+	return 0, 0, 0, 0
 }
 
 func (p *awsProvider) FleetEvents(ctx context.Context, fleetID string) ([]fabricac.FleetEvent, error) {

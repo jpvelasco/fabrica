@@ -53,7 +53,7 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 			c := command{
 				jsonOut:   opts.JSONOutput,
 				out:       out,
-				readState: func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				readState: func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
 			}
 			return c.run(cmd.Context())
 		},

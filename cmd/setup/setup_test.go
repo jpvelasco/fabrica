@@ -3,6 +3,8 @@ package setup
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,23 +15,6 @@ import (
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
-
-func TestSetupTagsMergesStandardAndUserTags(t *testing.T) {
-	tags := setupTags("test-version", map[string]string{
-		"Environment": "dev",
-		"ManagedBy":   "custom",
-	})
-
-	if tags["Environment"] != "dev" {
-		t.Fatalf("user tag not copied")
-	}
-	if tags["ManagedBy"] != "custom" {
-		t.Fatalf("user tag should override standard tag, got %q", tags["ManagedBy"])
-	}
-	if tags["FabricaVersion"] != "test-version" {
-		t.Fatalf("FabricaVersion = %q", tags["FabricaVersion"])
-	}
-}
 
 func TestCostResourcesPreservesPlanLabels(t *testing.T) {
 	resources := costResources([]fabricastate.ResourcePlan{
@@ -351,6 +336,56 @@ func TestSaveBackendConfigPartialFill(t *testing.T) {
 	// Bucket should be filled from plan (which uses the plan's account)
 	if cfg.State.Bucket != "fabrica-state-new-account" {
 		t.Errorf("Bucket = %q, want fabrica-state-new-account", cfg.State.Bucket)
+	}
+}
+
+// TestSaveBackendConfigRoundTripPreservesFile is the issue #558 regression
+// test for the saveBackendConfig wiring: a hand-written config comes back
+// with its comment intact, the missing backend keys added in place, and a
+// pre-set key left out of the update set. The preservation details are
+// unit tested on Config.SaveKeys.
+func TestSaveBackendConfigRoundTripPreservesFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fabrica.yaml")
+	original := "# studio fabrica config\n" +
+		"cloud:\n" +
+		"  aws:\n" +
+		"    region: us-west-2  # home region\n" +
+		"state:\n" +
+		"  table: my-locks\n"
+	if err := os.WriteFile(path, []byte(original), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	var buf strings.Builder
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = ""
+	cfg.State.Bucket = ""
+	cfg.State.Table = "my-locks" // already set (as a loaded config would be), so it stays out of the update set
+
+	cmd := command{
+		runtime: globals.Runtime{
+			Config:     cfg,
+			ConfigPath: path,
+		},
+		out: &buf,
+	}
+
+	plan := fabricastate.NewSetupPlan(cfg, "111222333444", "us-west-2")
+	cmd.saveBackendConfig(plan)
+
+	if buf.Len() > 0 {
+		t.Fatalf("expected a clean save, got:\n%s", buf.String())
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading updated config: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{"# home region", `accountId: "111222333444"`, "bucket: fabrica-state-111222333444", "table: my-locks"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("config lost %q after save:\n%s", want, got)
+		}
 	}
 }
 

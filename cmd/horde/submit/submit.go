@@ -3,8 +3,10 @@ package submit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -18,6 +20,7 @@ import (
 
 const (
 	moduleName   = "horde"
+	lineWidth    = 58 // match deploy promote's dry-run header width
 	waitInterval = 30 * time.Second
 	waitTimeout  = 60 * time.Minute
 
@@ -27,6 +30,7 @@ const (
 type command struct {
 	runtime        globals.Runtime
 	buildGraphPath string
+	dryRun         bool
 	wait           bool
 	out            io.Writer
 
@@ -49,7 +53,10 @@ Parses the BuildGraph file to extract the job name and target, then POSTs to
 the Horde REST API. By default, submits and returns immediately (fire-and-forget).
 
 Use --wait / -w to poll every 30 seconds until the job completes or errors
-(times out after 60 minutes).
+(times out after 60 minutes). With --wait the command exits non-zero when
+the job finishes in error, the wait times out, or polling is cancelled (the
+job keeps running on the coordinator either way). Use --dry-run to preview
+the job and the coordinator address without submitting.
 
 The Horde coordinator must be reachable from this machine (VPN or same VPC).
 Run 'fabrica horde status' to confirm the coordinator is ready.`,
@@ -59,13 +66,15 @@ Run 'fabrica horde status' to confirm the coordinator is ready.`,
 			if err != nil {
 				return err
 			}
+			opts := optionsSource()
 
 			c := command{
 				runtime:        rt,
 				buildGraphPath: args[0],
+				dryRun:         opts.DryRun,
 				wait:           wait,
 				out:            out,
-				readState:      func() (*fabricastate.State, error) { return provision.ReadState(rt) },
+				readState:      func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
 				waitCtx:        provision.WaitInterval,
 				now:            time.Now,
 			}
@@ -96,8 +105,11 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("Horde is not provisioned. Run 'fabrica horde create' first.")
 	}
 
-	// Resolve the horde client if not injected (production path).
+	// Resolve the coordinator address if no client is injected (production
+	// path); the HTTP client is built after the dry-run return so a preview
+	// never opens a connection.
 	client := c.hordeClient
+	baseURL := ""
 	if client == nil {
 		instRes, hasInst := stateutil.ResourceByType(m, "AWS::EC2::Instance")
 		if !hasInst || instRes.Identifier == "" {
@@ -116,7 +128,15 @@ func (c command) run(ctx context.Context) error {
 		if port <= 0 {
 			port = defaultPort
 		}
-		baseURL := fmt.Sprintf("http://%s:%d", privateIP, port)
+		baseURL = fmt.Sprintf("http://%s:%d", privateIP, port)
+	}
+
+	if c.dryRun {
+		c.printDryRun(job, baseURL)
+		return nil
+	}
+
+	if client == nil {
 		client = newHordeHTTPClient(baseURL, "")
 	}
 
@@ -133,6 +153,18 @@ func (c command) run(ctx context.Context) error {
 	return c.pollUntilDone(ctx, client, jobID)
 }
 
+// printDryRun previews the job submission without contacting the coordinator.
+func (c command) printDryRun(job *buildgraph.BuildGraphJob, baseURL string) {
+	fmt.Fprintln(c.out, "Horde submit (dry run)")
+	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
+	fmt.Fprintf(c.out, "  job:    %s\n", job.Name)
+	fmt.Fprintf(c.out, "  target: %s\n", job.Target)
+	if baseURL != "" {
+		fmt.Fprintf(c.out, "  coordinator: %s\n", baseURL)
+	}
+	fmt.Fprintln(c.out, "Run without --dry-run to submit the job.")
+}
+
 func (c command) pollUntilDone(ctx context.Context, client HordeClient, jobID string) error {
 	deadline := c.now().Add(waitTimeout)
 	for {
@@ -143,19 +175,22 @@ func (c command) pollUntilDone(ctx context.Context, client HordeClient, jobID st
 
 		fmt.Fprintf(c.out, "Job %s: %s\n", jobID, state)
 
-		if state == "complete" || state == "error" {
+		switch state {
+		case "complete":
 			return nil
+		case "error":
+			return fmt.Errorf("job %s finished in error — inspect it in the Horde web UI", jobID)
 		}
 
 		if c.now().After(deadline) {
-			fmt.Fprintf(c.out, "timed out waiting for job %s to complete (60 minutes)\n", jobID)
-			fmt.Fprintf(c.out, "Job ID: %s — monitor in Horde web UI\n", jobID)
-			return nil
+			return fmt.Errorf("timed out waiting for job %s after 60 minutes — job %s is still running; monitor it in the Horde web UI", jobID, jobID)
 		}
 
 		if err := c.waitCtx(ctx, waitInterval); err != nil {
-			fmt.Fprintf(c.out, "waiting cancelled: %v\n", err)
-			return nil
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return fmt.Errorf("waiting for job %s cancelled: %w — job %s continues on the coordinator; check its state in the Horde web UI", jobID, err, jobID)
+			}
+			return fmt.Errorf("waiting for job %s: %w", jobID, err)
 		}
 	}
 }

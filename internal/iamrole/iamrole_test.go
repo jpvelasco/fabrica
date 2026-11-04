@@ -16,6 +16,13 @@ func TestRoleDocumentPathAndBoundary(t *testing.T) {
 	if !strings.Contains(text, `"/fabrica/"`) || !strings.Contains(text, `"PermissionsBoundary"`) {
 		t.Fatalf("document missing guardrails: %s", text)
 	}
+	root, err := RoleDocument("role", ServiceEC2, nil, nil, nil, WithPath("/"))
+	if err != nil {
+		t.Fatalf("root path / rejected: %v", err)
+	}
+	if !strings.Contains(string(root), `"Path":"/"`) {
+		t.Fatalf("document missing root path: %s", root)
+	}
 	if _, err := RoleDocument("role", ServiceEC2, nil, nil, nil, WithPath("fabrica")); err == nil {
 		t.Fatal("expected invalid path to fail")
 	}
@@ -112,6 +119,28 @@ func TestSSMParameterReadPolicyIsOneARN(t *testing.T) {
 	resources := stmts[0]["Resource"].([]string)
 	if len(resources) != 1 || resources[0] != arn {
 		t.Fatalf("resources = %v", resources)
+	}
+}
+
+func TestS3ObjectReadPolicyIsOneObjectStatement(t *testing.T) {
+	const bucket = "dcv-license.us-east-1"
+	doc := S3ObjectReadPolicy("fabrica-workstation-dcv-license", bucket)
+	if doc["PolicyName"] != "fabrica-workstation-dcv-license" {
+		t.Fatalf("PolicyName = %v", doc["PolicyName"])
+	}
+	policy := doc["PolicyDocument"].(map[string]any)
+	stmts := policy["Statement"].([]map[string]any)
+	if len(stmts) != 1 {
+		t.Fatalf("statements = %d, want 1", len(stmts))
+	}
+	actions := stmts[0]["Action"].([]string)
+	if len(actions) != 1 || actions[0] != "s3:GetObject" {
+		t.Fatalf("actions = %v", actions)
+	}
+	resources := stmts[0]["Resource"].([]string)
+	want := "arn:aws:s3:::" + bucket + "/*"
+	if len(resources) != 1 || resources[0] != want {
+		t.Fatalf("resources = %v, want %v", resources, want)
 	}
 }
 
@@ -356,6 +385,47 @@ func TestRoleDocument_Basic(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "ec2.amazonaws.com") {
 		t.Errorf("RoleDocument missing trust service")
+	}
+}
+
+func TestS3BucketPolicy_Shared(t *testing.T) {
+	objectActions := []string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject"}
+	p := S3BucketPolicy("fabrica-lore-store-s3", "lore-store-bucket",
+		[]string{"s3:ListBucket"}, objectActions, "ddc/")
+	if p["PolicyName"] != "fabrica-lore-store-s3" {
+		t.Fatalf("PolicyName = %v", p["PolicyName"])
+	}
+	pd := p["PolicyDocument"].(map[string]any)
+	if pd["Version"] != "2012-10-17" {
+		t.Errorf("Version = %v, want 2012-10-17", pd["Version"])
+	}
+	stmts := pd["Statement"].([]map[string]any)
+	if len(stmts) != 2 {
+		t.Fatalf("Statement len = %d, want 2 (bucket, objects)", len(stmts))
+	}
+	if stmts[0]["Effect"] != "Allow" || stmts[1]["Effect"] != "Allow" {
+		t.Errorf("Effects = %v, %v, want Allow", stmts[0]["Effect"], stmts[1]["Effect"])
+	}
+	actions := stmts[0]["Action"].([]string)
+	if len(actions) != 1 || actions[0] != "s3:ListBucket" {
+		t.Errorf("bucket Action = %v", actions)
+	}
+	resources := stmts[0]["Resource"].([]string)
+	if len(resources) != 1 || resources[0] != "arn:aws:s3:::lore-store-bucket" {
+		t.Errorf("bucket Resource = %v, want the bucket ARN", resources)
+	}
+	actions = stmts[1]["Action"].([]string)
+	if len(actions) != len(objectActions) {
+		t.Fatalf("object Action = %v", actions)
+	}
+	for i, want := range objectActions {
+		if actions[i] != want {
+			t.Errorf("object Action[%d] = %q, want %q", i, actions[i], want)
+		}
+	}
+	resources = stmts[1]["Resource"].([]string)
+	if len(resources) != 1 || resources[0] != "arn:aws:s3:::lore-store-bucket/ddc/" {
+		t.Errorf("object Resource = %v, want the prefixed object ARN", resources)
 	}
 }
 

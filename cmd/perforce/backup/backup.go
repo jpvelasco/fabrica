@@ -64,8 +64,8 @@ With no subcommand, creates a new backup.`,
 				confirm:     prompt.Confirm,
 				now:         time.Now,
 			}
-			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(rt) }
-			c.writeState = fabricastate.WriteState
+			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
+			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			c.readCreds = func() (string, error) {
 				return credentials.ReadPerforceAdminPassword(credFile)
 			}
@@ -136,7 +136,10 @@ func (c createCommand) run(ctx context.Context) error {
 	}
 
 	id := perforce.NewBackupID(c.now(), c.name)
-	dest := perforce.BackupDir(backupRoot, id)
+	dest, err := perforce.BackupDir(backupRoot, id)
+	if err != nil {
+		return err
+	}
 
 	if c.dryRun {
 		return c.printDryRun(id, dest, s3Export, cfg)
