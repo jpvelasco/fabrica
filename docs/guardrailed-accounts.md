@@ -87,6 +87,38 @@ unencrypted AMI. When Cloud Control returns a deny that names
 `ec2:Encrypted`, Fabrica does not retry it through `RunInstances`. Both
 paths request the same encryption, so a retry cannot pass.
 
+## KMS permissions for a CMK default EBS key
+
+Workstation root volumes are encrypted at launch without a `KmsKeyId`
+(see [workstation-ami.md](workstation-ami.md#ebs-encryption)), so EBS
+uses the account's default EBS key: the AWS managed key `aws/ebs` unless
+the account default is a customer managed key (CMK). There is no
+`KmsKeyId` option today.
+
+With a CMK default, the principal that launches — the operator identity
+that runs `fabrica`, either directly (the `volumeRequestTags` path) or
+through Cloud Control, which makes the downstream EC2 calls with the
+caller's credentials — and the Image Builder or bake principal need these
+actions on that key:
+
+- `kms:CreateGrant`
+- `kms:Decrypt`
+- `kms:GenerateDataKey*`
+- `kms:ReEncrypt*`
+
+They typically also need `kms:DescribeKey`. The grants are usually scoped
+with the `kms:GrantIsForAWSResource` condition. Both sides must allow the
+actions: the **key policy** and the **principal's** IAM policy — and the
+permissions boundary the launch identity sits under must not deny them.
+An allow in only one place is not enough. The symptom when a grant is
+missing: the instance goes to `terminated` shortly after launch with a
+client error about the KMS key state.
+
+**Cross-account sharing.** An AMI whose snapshots are encrypted with the
+AWS managed `aws/ebs` key cannot be shared with another account. To share
+a baked AMI, either use a CMK whose key policy grants the target account,
+or copy the AMI into a CMK first (`copy-image --encrypted --kms-key-id`).
+
 ## Boundary must allow
 
 A boundary policy that blocks any of the actions below breaks the affected flow at the point the action is used. Grant the instance-side actions to the instance profile or role (via the boundary), and the operator-side actions to the operator identity used by `fabrica`.
