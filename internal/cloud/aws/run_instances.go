@@ -87,7 +87,7 @@ func (c *resourceClients) createInstanceWithVolumeTags(ctx context.Context, r *f
 		r.Identifier = id
 		return nil
 	}
-	input, err := runInstancesInput(r.DesiredState, c.volumeRequestTags, c.runInstancesClientToken(r))
+	input, err := BuildRunInstancesInput(r.DesiredState, c.volumeRequestTags, c.runInstancesClientToken(r))
 	if err != nil {
 		return err
 	}
@@ -372,7 +372,14 @@ type ccInstanceDoc struct {
 // instead of silently clamping.
 const maxIMDSv2HopLimit = 64
 
-func runInstancesInput(desired json.RawMessage, volumeTags map[string]string, clientToken string) (*ec2.RunInstancesInput, error) {
+// BuildRunInstancesInput builds the EC2 RunInstances request the volume-tag
+// fallback launches with, from the Cloud Control desired-state document:
+// image and type, a capacity of one, IMDSv2 required, tag specifications for
+// the instance and its volumes, and the block device mappings with the
+// Encrypted flag carried exactly as the desired state writes it. Exported so
+// the e2e fake provider can capture the fallback's request shape without a
+// real EC2 client.
+func BuildRunInstancesInput(desired json.RawMessage, volumeTags map[string]string, clientToken string) (*ec2.RunInstancesInput, error) {
 	var doc ccInstanceDoc
 	if err := json.Unmarshal(desired, &doc); err != nil {
 		return nil, fmt.Errorf("reading EC2 instance desired state: %w", err)
