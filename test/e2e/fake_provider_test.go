@@ -8,7 +8,10 @@ import (
 	"sync"
 	"testing"
 
+	ec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
+
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/cloud/aws"
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
@@ -108,6 +111,20 @@ type fakeStore struct {
 	failCreateType string
 	failCreateID   string
 
+	// imageRootDevice, when set, overrides the root device DescribeImage
+	// reports (default /dev/sda1).
+	imageRootDevice string
+
+	// volumeTagDeny makes an AWS::EC2::Instance Create simulate the AWS
+	// provider's volume-tag deny fallback: the request the fallback would
+	// send is built with the provider's real builder and recorded in
+	// lastRunInstances.
+	volumeTagDeny bool
+
+	// lastRunInstances is the RunInstances request the fallback simulation
+	// built for the most recent instance create.
+	lastRunInstances *ec2.RunInstancesInput
+
 	remoteCalls   []remoteCall
 	remoteHandler func(instanceID string, commands []string) (cloud.RemoteResult, error)
 	listStdout    string
@@ -156,10 +173,16 @@ var (
 	_ cloud.AMIResolver    = (*fakeProvider)(nil)
 )
 
-// DescribeImage reports a DCV AMI with an EBS root on /dev/sda1: workstation
-// create reads the root device from the AMI and refuses to launch without it.
+// DescribeImage reports a DCV AMI with an EBS root: workstation create reads
+// the root device from the AMI and refuses to launch without it. The store
+// can override the root device (default /dev/sda1) for tests that exercise
+// other device names.
 func (p *fakeProvider) DescribeImage(_ context.Context, id string) (cloud.ImageInfo, error) {
-	return cloud.ImageInfo{ID: id, Name: "fabrica-workstation-dcv", RootDeviceName: "/dev/sda1", RootDeviceType: "ebs"}, nil
+	root := p.store.imageRootDevice
+	if root == "" {
+		root = "/dev/sda1"
+	}
+	return cloud.ImageInfo{ID: id, Name: "fabrica-workstation-dcv", RootDeviceName: root, RootDeviceType: "ebs"}, nil
 }
 
 // ResolveUbuntuAMI gives perforce create the Ubuntu AMI its apply path
@@ -217,6 +240,18 @@ func (c *fakeRC) Create(_ context.Context, r *cloud.Resource) error {
 	if c.store.failCreateType != "" && r.TypeName == c.store.failCreateType {
 		r.Identifier = c.store.failCreateID
 		return nil
+	}
+
+	// Simulate the Cloud Control volume-tag deny: the AWS provider falls back
+	// to a direct RunInstances built from the same desired state. Build that
+	// request with the provider's real builder and record it so the test can
+	// assert the fallback's shape (#515).
+	if c.store.volumeTagDeny && r.TypeName == "AWS::EC2::Instance" {
+		in, err := aws.BuildRunInstancesInput(r.DesiredState, nil, "")
+		if err != nil {
+			return err
+		}
+		c.store.lastRunInstances = in
 	}
 
 	slug := typeSlug(r.TypeName)

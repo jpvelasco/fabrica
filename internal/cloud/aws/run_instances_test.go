@@ -377,16 +377,16 @@ func TestCreateInstanceWithVolumeTagsReportsLaunchFailures(t *testing.T) {
 	if err := rc.createInstanceWithVolumeTags(context.Background(), r); err == nil || !strings.Contains(err.Error(), "no instance ID") {
 		t.Fatalf("err = %v", err)
 	}
-	if _, err := runInstancesInput(json.RawMessage(`{`), nil, ""); err == nil {
+	if _, err := BuildRunInstancesInput(json.RawMessage(`{`), nil, ""); err == nil {
 		t.Fatal("expected invalid desired state to fail")
 	}
 }
 
 func TestRunInstancesInputRequiresShape(t *testing.T) {
-	if _, err := runInstancesInput(json.RawMessage(`{"InstanceType":"t3.micro"}`), nil, ""); err == nil {
+	if _, err := BuildRunInstancesInput(json.RawMessage(`{"InstanceType":"t3.micro"}`), nil, ""); err == nil {
 		t.Fatal("expected missing ImageId to fail")
 	}
-	in, err := runInstancesInput(json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro","IamInstanceProfile":{"Name":"prof"}}`), nil, "tok-abc")
+	in, err := BuildRunInstancesInput(json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro","IamInstanceProfile":{"Name":"prof"}}`), nil, "tok-abc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,15 +403,15 @@ func TestRunInstancesInputRequiresShape(t *testing.T) {
 	// empty for a nonce-less desired state (an identity-only token would
 	// repeat across separate creates), so the builder must not mint one on
 	// its own.
-	if inEmpty, err := runInstancesInput(json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro"}`), nil, ""); err != nil {
+	if inEmpty, err := BuildRunInstancesInput(json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro"}`), nil, ""); err != nil {
 		t.Fatal(err)
 	} else if inEmpty.ClientToken != nil {
 		t.Fatalf("ClientToken = %q, want unset for an empty token", awssdk.ToString(inEmpty.ClientToken))
 	}
-	if _, err := runInstancesInput(json.RawMessage(`{`), nil, ""); err == nil {
+	if _, err := BuildRunInstancesInput(json.RawMessage(`{`), nil, ""); err == nil {
 		t.Fatal("expected invalid JSON to fail")
 	}
-	named, err := runInstancesInput(json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro","IamInstanceProfile":"prof-name","UserData":"abc"}`), map[string]string{"": "skip", "Project": "studio"}, "")
+	named, err := BuildRunInstancesInput(json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro","IamInstanceProfile":"prof-name","UserData":"abc"}`), map[string]string{"": "skip", "Project": "studio"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +422,7 @@ func TestRunInstancesInputRequiresShape(t *testing.T) {
 	if instanceProfileName(nil) != "" || instanceProfileName(json.RawMessage(`{`)) != "" || instanceProfileName(json.RawMessage(`{"Name":1}`)) != "" {
 		t.Fatal("bad instance profile JSON should yield an empty name")
 	}
-	kept, err := runInstancesInput(json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro","Tags":[{"Key":"","Value":"skip"},{"Key":"Project","Value":"from-state"}]}`), map[string]string{"Project": "from-request"}, "")
+	kept, err := BuildRunInstancesInput(json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro","Tags":[{"Key":"","Value":"skip"},{"Key":"Project","Value":"from-state"}]}`), map[string]string{"Project": "from-request"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,16 +452,16 @@ func TestRunInstancesInputReadsHttpPutResponseHopLimit(t *testing.T) {
 			if tc.meta != "" {
 				doc = `{"ImageId":"ami-1","InstanceType":"t3.micro",` + tc.meta + `}`
 			}
-			in, err := runInstancesInput(json.RawMessage(doc), nil, "")
+			in, err := BuildRunInstancesInput(json.RawMessage(doc), nil, "")
 			if err != nil {
-				t.Fatalf("runInstancesInput: %v", err)
+				t.Fatalf("BuildRunInstancesInput: %v", err)
 			}
 			if in.MetadataOptions == nil || awssdk.ToInt32(in.MetadataOptions.HttpPutResponseHopLimit) != tc.wantHop {
 				t.Fatalf("hop = %d, want %d (input %+v)", awssdk.ToInt32(in.MetadataOptions.HttpPutResponseHopLimit), tc.wantHop, in)
 			}
 		})
 	}
-	bad, err := runInstancesInput(json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro","MetadataOptions":{"HttpPutResponseHopLimit":255}}`), nil, "")
+	bad, err := BuildRunInstancesInput(json.RawMessage(`{"ImageId":"ami-1","InstanceType":"t3.micro","MetadataOptions":{"HttpPutResponseHopLimit":255}}`), nil, "")
 	if err == nil || bad != nil {
 		t.Fatalf("hop 255: err = %v, want an invalid-hop-limit error", err)
 	}
@@ -1157,9 +1157,9 @@ func TestRunInstancesInputCarriesEncrypted(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			desired := json.RawMessage(`{"ImageId":"test-image","InstanceType":"g6.xlarge",` +
 				`"BlockDeviceMappings":[{"DeviceName":"/dev/sda1","Ebs":` + tc.ebs + `}]}`)
-			in, err := runInstancesInput(desired, nil, "")
+			in, err := BuildRunInstancesInput(desired, nil, "")
 			if err != nil {
-				t.Fatalf("runInstancesInput: %v", err)
+				t.Fatalf("BuildRunInstancesInput: %v", err)
 			}
 			if len(in.BlockDeviceMappings) != 1 || in.BlockDeviceMappings[0].Ebs == nil {
 				t.Fatalf("BlockDeviceMappings = %+v", in.BlockDeviceMappings)
@@ -1199,9 +1199,9 @@ func TestRunInstancesInputCarriesEncryptedAcrossMappings(t *testing.T) {
 				`"BlockDeviceMappings":[` +
 				`{"DeviceName":"/dev/sdf","Ebs":` + tc.data + `},` +
 				`{"DeviceName":"/dev/sda1","Ebs":` + rootEBS + `}]}`)
-			in, err := runInstancesInput(desired, nil, "")
+			in, err := BuildRunInstancesInput(desired, nil, "")
 			if err != nil {
-				t.Fatalf("runInstancesInput: %v", err)
+				t.Fatalf("BuildRunInstancesInput: %v", err)
 			}
 			if len(in.BlockDeviceMappings) != 2 {
 				t.Fatalf("BlockDeviceMappings = %+v", in.BlockDeviceMappings)
