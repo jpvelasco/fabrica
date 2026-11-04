@@ -15,7 +15,9 @@ package ami
 //     digest gate catches it)
 //   - multi-key keyfile (the pre-import show-only gate refuses it)
 //   - multi-key keyring (the post-import keyring gate refuses it)
-//   - one positive: every check passes
+//   - one positive: every check passes, and the output carries the bake-log
+//     summary line with the VALIDSIG count and the matched signing key
+//     fingerprint (#508)
 //
 // The bash crafter mirrors the manual container harness (throwaway rsa2048
 // keys, clearsigned composite v4 manifests, ar-built archives). Skipped —
@@ -199,6 +201,8 @@ func TestVerifyDebExecutesAgainstCraftedDebs(t *testing.T) {
 	assertReject("bitflip.deb", "")
 	if rc, out := verifyDeb("good.deb"); rc != 0 {
 		t.Errorf("positive good.deb: verify_deb failed (rc=%d);\n%s", rc, out)
+	} else if !strings.Contains(out, "1 VALIDSIG line, signing key fingerprint "+pin) {
+		t.Errorf("positive good.deb: summary line (VALIDSIG count + matched fingerprint) missing from output:\n%s", out)
 	}
 
 	// Keyfile gates run in stage (the gate reads ./NICE-GPG-KEY) against the
