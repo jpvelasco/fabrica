@@ -285,6 +285,38 @@ func TestCheckPerforceCIDR(t *testing.T) {
 			wantStatus: "warning",
 			wantMsg:    "10.0.0.0/8",
 		},
+		{
+			name: "perforce allowedCidr 0.0.0.0/0 warns (world-open)",
+			rt: globals.Runtime{Config: &config.Config{
+				Perforce: config.PerforceConfig{InstanceType: "c5.2xlarge", AllowedCIDR: "0.0.0.0/0"},
+			}},
+			wantStatus: "warning",
+			wantMsg:    "0.0.0.0/0",
+		},
+		{
+			name: "perforce allowedCidr ::/0 warns (world-open IPv6)",
+			rt: globals.Runtime{Config: &config.Config{
+				Perforce: config.PerforceConfig{InstanceType: "c5.2xlarge", AllowedCIDR: "::/0"},
+			}},
+			wantStatus: "warning",
+			wantMsg:    "::/0",
+		},
+		{
+			name: "perforce allowedCidr not a CIDR fails",
+			rt: globals.Runtime{Config: &config.Config{
+				Perforce: config.PerforceConfig{InstanceType: "c5.2xlarge", AllowedCIDR: "not-a-cidr"},
+			}},
+			wantStatus: "fail",
+			wantMsg:    "not-a-cidr is not a valid CIDR",
+		},
+		{
+			name: "perforce allowedCidr prefix out of range fails",
+			rt: globals.Runtime{Config: &config.Config{
+				Perforce: config.PerforceConfig{InstanceType: "c5.2xlarge", AllowedCIDR: "10.0.0.0/33"},
+			}},
+			wantStatus: "fail",
+			wantMsg:    "10.0.0.0/33 is not a valid CIDR",
+		},
 	}
 
 	for _, tt := range tests {
