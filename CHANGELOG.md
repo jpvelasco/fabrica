@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-05
+
 ### Added
 
 - **The workstation bake log records the per-deb signature-verification summary** - the Image Builder component's fail-closed `verify_deb` gate (the `_gpgbuilder` GPG verification each DCV `.deb` passes before `apt-get install`) printed nothing on success, so reviewers had to infer verification from the exit code or run a separate in-image check. Each verified `.deb` now logs one summary line to the SSM bake log: the observed `VALIDSIG` line count and the matched signing key fingerprint (public material only — the gate above the line proved the count is one and the fingerprint equals the pinned NICE key; no key material beyond the fingerprint is logged). Fail-closed behavior is unchanged: every failed gate still exits nonzero before `apt-get` runs. The executed test asserts the summary line (count + fingerprint) against the crafted positive deb. (#508)
@@ -25,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`doctor` validates `perforce.allowedCidr`** — the Perforce CIDR check passed any non-empty value. An unparseable value now fails, and a `/0` prefix (`0.0.0.0/0` or `::/0`) warns because it opens port 1666 to the internet. (#634)
 - **`workstation terminate` removes the local DCV credentials record** — after teardown, `.fabrica/workstation-credentials.yaml` stayed on disk with the session password for an instance that no longer exists. A fully successful teardown (standalone `terminate` and via `destroy --all`) now removes the file after all cloud resources are deleted and the module is dropped from state; a missing file is a no-op, and a file that cannot be removed is reported as a warning so the operator can delete it by hand. The teardown engine gained a `Spec.LocalCleanupFile` hook for local credential artifacts, and the file path is shared between create and terminate through `workstation.CredentialsFile` (the file was already written mode 0600). Engine tests cover success, missing file, warning on removal failure, retention on a failed teardown, dry-run, and JSON mode; the e2e suite covers removal through the real command tree. Docs describe the file's lifecycle. (#511)
 - **AMI bakes tag their snapshots, so `ManagedBy` sweeps find them** — the bake runbooks and generated guides created AMIs without tagging the snapshots the bake takes, so the snapshots stayed invisible to tag-scoped sweeps and teardown and could orphan and keep accruing cost. The direct-EC2 bake snippets in `docs/horde-ami.md` and `docs/horde-agent-ami.md` now pass `--tag-specifications` for both `image` and `snapshot`; the generated horde and lore build guides gained a post-build `create-tags` loop over the AMI's snapshot ids (the Packer templates gained a `snapshot_tags` block mirroring the AMI tag set); the lore and ddc Image Builder runbooks tag the candidate's snapshots before the AMI is recorded. The workstation bake already carried snapshot tag specifications on both bake paths and the `verify-ami.sh` gate. Template render tests assert the snapshot tag specifications in the generated horde and lore artifacts. (#509)
 - **`iam.path` rejects the explicit AWS root path `/`** — both validation surfaces (`config` and the `iamrole` role-document builder) required a path of at least two characters, so setting `iam.path: /` failed with "must start and end with /" even though omitting the key lands on that same AWS default root path. The root path is now accepted on both surfaces, with validation for non-root paths (leading and trailing slash, no empty segments) unchanged. Tests cover empty/default, root, nested, and malformed paths on both the config and role-document sides. (#548)
@@ -503,7 +506,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/jpvelasco/fabrica/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jpvelasco/fabrica/compare/v0.4.6...v0.5.0
 [0.4.6]: https://github.com/jpvelasco/fabrica/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/jpvelasco/fabrica/compare/v0.4.4...v0.4.5
