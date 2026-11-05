@@ -6,6 +6,7 @@ package doctorchecks
 import (
 	"context"
 	"fmt"
+	"net"
 	"runtime"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -134,16 +135,30 @@ func perforceSectionConfigured(p config.PerforceConfig) bool {
 	return p.IAM.Path != "" || p.IAM.PermissionsBoundary != ""
 }
 
-// checkPerforceCIDR warns when perforce is configured but its allowedCidr is
-// unset. Unlike lore and horde (which resolve the VPC CIDR at create),
-// perforce falls back to 10.0.0.0/8, which does not cover AWS default VPCs
-// (172.31.0.0/16) — in-VPC clients would not reach port 1666.
+// checkPerforceCIDR checks perforce.allowedCidr when perforce is configured.
+// Unset warns: perforce falls back to 10.0.0.0/8, which does not cover AWS
+// default VPCs (172.31.0.0/16), so in-VPC clients would not reach port 1666.
+// A set value must parse as a CIDR (fail otherwise) and must not be a /0
+// prefix, which opens port 1666 to the internet (warn).
 func checkPerforceCIDR(rt globals.Runtime) DoctorCheck {
 	if rt.Config == nil || !perforceSectionConfigured(rt.Config.Perforce) {
 		return DoctorCheck{"Perforce CIDR", "ok", "not configured"}
 	}
-	if rt.Config.Perforce.AllowedCIDR == "" {
+	cidr := rt.Config.Perforce.AllowedCIDR
+	if cidr == "" {
 		return DoctorCheck{"Perforce CIDR", "warning", fmt.Sprintf("unset — port 1666 opens only to %s (default). perforce does not auto-resolve the VPC CIDR. Set perforce.allowedCidr to your VPC CIDR (e.g. 172.31.0.0/16 on the default VPC)", perforce.DefaultAllowedCIDR)}
 	}
-	return DoctorCheck{"Perforce CIDR", "ok", rt.Config.Perforce.AllowedCIDR + " (configured)"}
+	return classifyPerforceCIDR(cidr)
+}
+
+// classifyPerforceCIDR grades a configured perforce.allowedCidr.
+func classifyPerforceCIDR(cidr string) DoctorCheck {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return DoctorCheck{"Perforce CIDR", "fail", fmt.Sprintf("%s is not a valid CIDR (%v). Set perforce.allowedCidr to your VPC CIDR, e.g. 172.31.0.0/16", cidr, err)}
+	}
+	if ones, _ := ipnet.Mask.Size(); ones == 0 {
+		return DoctorCheck{"Perforce CIDR", "warning", cidr + " opens port 1666 to the entire internet. Restrict perforce.allowedCidr to your VPC CIDR, e.g. 172.31.0.0/16"}
+	}
+	return DoctorCheck{"Perforce CIDR", "ok", cidr + " (configured)"}
 }
