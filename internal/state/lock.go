@@ -37,11 +37,38 @@ type DeleteItemFunc func(ctx context.Context, key map[string]string, condition s
 // functions so the SDK stays out of this package; internal/cloud/aws provides
 // the DynamoDB implementation via cloud.StateLockManager.
 type LockStore struct {
-	table string
-	ttl   time.Duration
-	now   func() time.Time
-	put   PutItemFunc
-	del   DeleteItemFunc
+	table     string
+	ttl       time.Duration
+	now       func() time.Time
+	newTicker TickerFunc
+	newTimer  TimerFunc
+	put       PutItemFunc
+	del       DeleteItemFunc
+}
+
+// Timer is the lease-timer surface Heartbeat re-arms; *time.Timer satisfies it.
+type Timer interface {
+	Stop() bool
+	Reset(d time.Duration) bool
+}
+
+// TickerFunc starts a periodic tick source of period d and returns its channel
+// and a stop function. TimerFunc starts a one-shot timer of duration d and
+// returns its channel and handle. Both are the seams that let tests drive
+// heartbeat renewals and lease expiry exactly, instead of racing the scheduler.
+type (
+	TickerFunc func(d time.Duration) (ticks <-chan time.Time, stop func())
+	TimerFunc  func(d time.Duration) (fire <-chan time.Time, t Timer)
+)
+
+func realTicker(d time.Duration) (<-chan time.Time, func()) {
+	t := time.NewTicker(d)
+	return t.C, t.Stop
+}
+
+func realTimer(d time.Duration) (<-chan time.Time, Timer) {
+	t := time.NewTimer(d)
+	return t.C, t
 }
 
 // NewFuncLockStore builds a LockStore over injected storage functions.
@@ -51,16 +78,24 @@ func NewFuncLockStore(table string, ttl time.Duration, put PutItemFunc, del Dele
 		ttl = DefaultLockTTL
 	}
 	return &LockStore{
-		table: table,
-		ttl:   ttl,
-		now:   time.Now,
-		put:   put,
-		del:   del,
+		table:     table,
+		ttl:       ttl,
+		now:       time.Now,
+		newTicker: realTicker,
+		newTimer:  realTimer,
+		put:       put,
+		del:       del,
 	}
 }
 
 // SetClock overrides the time source (tests).
 func (s *LockStore) SetClock(now func() time.Time) { s.now = now }
+
+// SetTicker overrides the heartbeat renewal tick source (tests).
+func (s *LockStore) SetTicker(newTicker TickerFunc) { s.newTicker = newTicker }
+
+// SetTimer overrides the heartbeat lease timer (tests).
+func (s *LockStore) SetTimer(newTimer TimerFunc) { s.newTimer = newTimer }
 
 // Acquire attempts to acquire a lock for resourceID held by holder.
 // Succeeds when the lock row is absent OR older than the TTL (stale takeover).
@@ -135,8 +170,8 @@ func (s *LockStore) Heartbeat(ctx context.Context, resourceID, token, holder str
 	if interval <= 0 {
 		interval = time.Millisecond
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	ticks, stop := s.newTicker(interval)
+	defer stop()
 
 	// margin keeps the abort ahead of the real expiry so the row is still
 	// ours (or at least ambiguous) when the caller stops mutating.
@@ -145,7 +180,7 @@ func (s *LockStore) Heartbeat(ctx context.Context, resourceID, token, holder str
 		margin = time.Millisecond
 	}
 	deadline := s.now().Add(s.ttl)
-	leaseTimer := time.NewTimer(leaseDelay(deadline, margin))
+	leaseFired, leaseTimer := s.newTimer(leaseDelay(deadline, margin))
 	defer leaseTimer.Stop()
 	var lastErr error
 
@@ -153,13 +188,13 @@ func (s *LockStore) Heartbeat(ctx context.Context, resourceID, token, holder str
 		select {
 		case <-ctx.Done():
 			return
-		case <-leaseTimer.C:
+		case <-leaseFired:
 			if lastErr == nil {
 				lastErr = fmt.Errorf("lock lease lapsed without a successful renewal")
 			}
 			fireLost(lastErr)
 			return
-		case <-ticker.C:
+		case <-ticks:
 			err := s.Renew(ctx, resourceID, token, holder)
 			switch {
 			case err == nil:
@@ -194,7 +229,7 @@ func leaseDelay(deadline time.Time, margin time.Duration) time.Duration {
 // already-expired timer), in which case the caller must abort. Since Go 1.23
 // timer channels are unbuffered and the value reaches only the heartbeat's
 // own lease case — which aborts first — the expired branch is defensive.
-func rescheduleLease(leaseTimer *time.Timer, deadline time.Time, margin time.Duration) bool {
+func rescheduleLease(leaseTimer Timer, deadline time.Time, margin time.Duration) bool {
 	d := leaseDelay(deadline, margin)
 	if d == 0 {
 		return false

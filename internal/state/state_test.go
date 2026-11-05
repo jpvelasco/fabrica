@@ -180,6 +180,56 @@ func TestLockRenewFailedIsError(t *testing.T) {
 	}
 }
 
+// useManualTimers replaces the heartbeat's tick source and lease timer with
+// test-owned channels: renewals happen only when the test sends a tick, and the
+// lease lapses only when the test sends on lease.
+func useManualTimers(ls *LockStore) (ticks, lease chan time.Time) {
+	ticks = make(chan time.Time)
+	lease = make(chan time.Time)
+	ls.SetTicker(func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} })
+	ls.SetTimer(func(time.Duration) (<-chan time.Time, Timer) { return lease, fakeTimer{} })
+	return ticks, lease
+}
+
+// fakeTimer reports that the lease has not yet fired, so re-arming succeeds.
+type fakeTimer struct{}
+
+func (fakeTimer) Stop() bool               { return true }
+func (fakeTimer) Reset(time.Duration) bool { return true }
+
+// sendTick delivers one tick to the heartbeat loop. It fails the test instead
+// of blocking forever when the loop has already returned.
+func sendTick(t *testing.T, ticks chan<- time.Time) {
+	t.Helper()
+	select {
+	case ticks <- time.Time{}:
+	case <-time.After(5 * time.Second):
+		t.Fatal("heartbeat did not receive tick; loop returned early")
+	}
+}
+
+// startHeartbeatWithLost runs Heartbeat in a goroutine that reports loss on
+// lost. The returned channel is closed when the heartbeat returns.
+func startHeartbeatWithLost(ctx context.Context, ls *LockStore, token string, lost chan<- error) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		ls.Heartbeat(ctx, "res", token, "holder", func(err error) { lost <- err })
+		close(done)
+	}()
+	return done
+}
+
+// waitHeartbeatDone bounds the wait for the heartbeat goroutine; the bound only
+// guards against hangs, not timing.
+func waitHeartbeatDone(t *testing.T, done <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("heartbeat did not return")
+	}
+}
+
 func TestLockHeartbeatRenewsUntilCancelled(t *testing.T) {
 	rec := &recordingLockStore{}
 	ls := NewFuncLockStore("t", 30*time.Millisecond, rec.put, rec.del)
@@ -187,32 +237,28 @@ func TestLockHeartbeatRenewsUntilCancelled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
+	ticks, _ := useManualTimers(ls)
 
 	lost := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		ls.Heartbeat(ctx, "res", token, "holder", func(err error) { lost <- err })
-		close(done)
-	}()
+	defer cancel()
+	done := startHeartbeatWithLost(ctx, ls, token, lost)
 
-	deadline := time.Now().Add(400 * time.Millisecond)
-	for time.Now().Before(deadline) && rec.puts() < 3 {
-		time.Sleep(10 * time.Millisecond)
+	// Unbuffered sends: each returns once the loop has received the tick, and
+	// the loop renews before it selects again. Three sends mean three renewals.
+	for range 3 {
+		sendTick(t, ticks)
 	}
 	cancel()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("heartbeat did not stop after cancel")
-	}
-	if got := rec.puts(); got < 3 {
-		t.Fatalf("putCalls = %d, want at least 3 (acquire + renewals)", got)
+	waitHeartbeatDone(t, done)
+
+	if got := rec.puts(); got != 4 {
+		t.Fatalf("putCalls = %d, want 4 (acquire + 3 renewals)", got)
 	}
 	select {
 	case err := <-lost:
 		t.Fatalf("onLost fired while renewals succeed: %v", err)
-	case <-time.After(50 * time.Millisecond):
+	default:
 	}
 }
 
@@ -264,27 +310,31 @@ func TestLockHeartbeatTransientRetriesUntilLeaseLapse(t *testing.T) {
 	rec.mu.Lock()
 	rec.putErr = errors.New("throttled")
 	rec.mu.Unlock()
+	ticks, lease := useManualTimers(ls)
 
 	lost := make(chan error, 1)
-	done := make(chan struct{})
-	start := time.Now()
-	go func() {
-		ls.Heartbeat(context.Background(), "res", token, "holder", func(err error) { lost <- err })
-		close(done)
-	}()
+	done := startHeartbeatWithLost(context.Background(), ls, token, lost)
+
+	// Two failing renewals: the loop must keep retrying rather than abort.
+	sendTick(t, ticks)
+	sendTick(t, ticks)
+
+	// The lease lapses with no successful renewal: abort with the last error.
+	// The loop only reaches this case after finishing the last renewal, so the
+	// put count read below is settled.
+	lease <- time.Time{}
 	select {
 	case err := <-lost:
 		if !strings.Contains(err.Error(), "throttled") {
 			t.Fatalf("onLost err = %v, want the last transient error", err)
 		}
-		// The abort must land inside the lease (ttl=300ms), not after it.
-		if elapsed := time.Since(start); elapsed > 300*time.Millisecond {
-			t.Errorf("abort took %v, lease was 300ms", elapsed)
-		}
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("onLost did not fire after the lease lapsed")
 	}
-	<-done
+	waitHeartbeatDone(t, done)
+	if got := rec.puts(); got != 3 {
+		t.Fatalf("putCalls = %d, want 3 (acquire + 2 retried renewals)", got)
+	}
 }
 
 // TestLockHeartbeatTransientRecoversWithinLease verifies a transient failure
@@ -302,32 +352,28 @@ func TestLockHeartbeatTransientRecoversWithinLease(t *testing.T) {
 	rec.mu.Lock()
 	rec.renewFailures = 1 // first renewal fails, the rest succeed
 	rec.mu.Unlock()
+	ticks, _ := useManualTimers(ls)
 
 	lost := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		ls.Heartbeat(ctx, "res", token, "holder", func(err error) { lost <- err })
-		close(done)
-	}()
+	defer cancel()
+	done := startHeartbeatWithLost(ctx, ls, token, lost)
 
-	// The first tick (ttl/3 = 100ms) fails, the next succeeds and re-arms
-	// the lease (margin at ~270ms, reset to ~470ms). Sleep past both ticks,
-	// then cancel and assert the heartbeat survived the transient error.
-	time.Sleep(350 * time.Millisecond)
+	// Tick 1 fails (transient, lease not extended); tick 2 succeeds and re-arms
+	// the lease. The lease channel is never fired, so the loop can only end by
+	// cancellation: it survived the transient error.
+	sendTick(t, ticks)
+	sendTick(t, ticks)
 	cancel()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("heartbeat did not stop after cancel")
-	}
-	if got := rec.puts(); got < 3 {
-		t.Fatalf("putCalls = %d, want at least 3 (acquire + 2 renewals)", got)
+	waitHeartbeatDone(t, done)
+
+	if got := rec.puts(); got != 3 {
+		t.Fatalf("putCalls = %d, want 3 (acquire + failed + recovered renewal)", got)
 	}
 	select {
 	case err := <-lost:
 		t.Fatalf("onLost fired despite recovery: %v", err)
-	case <-time.After(50 * time.Millisecond):
+	default:
 	}
 }
 
