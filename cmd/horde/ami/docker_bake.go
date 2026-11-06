@@ -38,6 +38,14 @@ mkdir -p /etc/horde
 # The horde unit runs a one-shot docker compose up -d and never re-converges,
 # so mongodb and redis must self-heal after a crash or OOM via their own
 # restart policies.
+#
+# Authentication: MongoDB runs with --auth, and Horde runs in its built-in
+# account mode (HORDE__AUTHMETHOD=Horde). Horde's default, Anonymous, grants
+# every request the administrator claim. The compose file reads its secrets and
+# bind address from /etc/horde/.env, which the cloud-init script generates on
+# the instance at first boot (nothing secret is baked into the AMI). Until
+# cloud-init has created the Admin account the ports are published on
+# loopback only.
 cat >/etc/horde/docker-compose.yml <<'COMPOSE'
 services:
   mongodb:
@@ -45,10 +53,13 @@ services:
     container_name: horde-mongodb
     volumes:
       - mongodb-data:/data/db
-    command: mongod --noauth
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=horde
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD:?MONGO_PASSWORD must be set in /etc/horde/.env}
+    command: mongod --auth
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD", "mongosh", "--quiet", "-u", "horde", "-p", "${MONGO_PASSWORD}", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 15s
       retries: 5
@@ -69,14 +80,16 @@ services:
     image: fabrica-horde-server:__HORDE_VERSION__
     container_name: horde-server
     ports:
-      - "5000:5000"
-      - "5002:5002"
+      - "${HORDE_BIND_ADDRESS:-127.0.0.1}:5000:5000"
+      - "${HORDE_BIND_ADDRESS:-127.0.0.1}:5002:5002"
     volumes:
       - /etc/horde/globals.json:/app/Defaults/globals.json:ro
       - /etc/horde/server.json:/app/Defaults/server.json:ro
     environment:
       - HORDE__REDISCONNECTIONSTRING=redis:6379
-      - HORDE__MONGOCONNECTIONSTRING=mongodb://mongodb:27017/horde
+      - HORDE__MONGOCONNECTIONSTRING=mongodb://horde:${MONGO_PASSWORD}@mongodb:27017/horde?authSource=admin
+      - HORDE__AUTHMETHOD=Horde
+      - HORDE__SERVERURL=${HORDE_SERVER_URL:-http://localhost:5000}
       - ASPNETCORE_URLS=http://+:5000
       - HORDE__CONFIGPATH=/app/Defaults/globals.json
     depends_on:
