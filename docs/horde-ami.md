@@ -68,9 +68,12 @@ services:
     container_name: horde-mongodb
     volumes:
       - mongodb-data:/data/db
-    command: mongod --noauth
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=horde
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD:?MONGO_PASSWORD must be set in /etc/horde/.env}
+    command: mongod --auth
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD", "mongosh", "--quiet", "-u", "horde", "-p", "${MONGO_PASSWORD}", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -89,14 +92,16 @@ services:
     image: fabrica-horde-server:latest
     container_name: horde-server
     ports:
-      - "5000:5000"
-      - "5002:5002"
+      - "${HORDE_BIND_ADDRESS:-127.0.0.1}:5000:5000"
+      - "${HORDE_BIND_ADDRESS:-127.0.0.1}:5002:5002"
     volumes:
       - /etc/horde/globals.json:/app/Defaults/globals.json:ro
       - /etc/horde/server.json:/app/Defaults/server.json:ro
     environment:
       - HORDE__REDISCONNECTIONSTRING=redis:6379
-      - HORDE__MONGOCONNECTIONSTRING=mongodb://mongodb:27017/horde
+      - HORDE__MONGOCONNECTIONSTRING=mongodb://horde:${MONGO_PASSWORD}@mongodb:27017/horde?authSource=admin
+      - HORDE__AUTHMETHOD=Horde
+      - HORDE__SERVERURL=${HORDE_SERVER_URL:-http://localhost:5000}
       - ASPNETCORE_URLS=http://+:5000
       - HORDE__CONFIGPATH=/app/Defaults/globals.json
     depends_on:
@@ -510,7 +515,8 @@ be internet-exposed.
 | Images not found on first start | Dependency images not pre-pulled into the AMI | `docker pull mongo:7.0 redis:7.2` before `create-image` |
 | AMI in wrong region | AMI IDs are region-scoped | Re-copy the AMI to each region: `aws ec2 copy-image` |
 | `x86_64` vs `arm64` mismatch | AMI architecture doesn't match instance type | Build the AMI on the same instance family you plan to run |
-| MongoDB auth errors | `globals.json` references auth but compose uses `--noauth` | Ensure `databaseConnectionString` does not include username/password |
+| MongoDB auth errors | `MONGO_PASSWORD` in `/etc/horde/.env` does not match the password MongoDB was initialised with (the data volume keeps the first one) | On a throwaway instance, `docker compose down -v` and re-run cloud-init; otherwise restore the original `.env` |
+| Horde answers every request as an administrator | `HORDE__AUTHMETHOD` is unset, so Horde uses its `Anonymous` default | Keep `HORDE__AUTHMETHOD=Horde` in the compose file; see [Authentication and access model](#authentication-and-access-model) |
 | `POST /api/v1/jobs` returns 404 | Horde server image built without the job-creation API (no jobs/graphs/agents controllers) | Use a Horde server image that includes the full API surface — verify `curl -sf http://localhost:5000/api/v1/jobs` returns 200 (not 404) before baking the AMI |
 | First `docker compose up -d` fails with `dependency failed to start: container horde-mongodb is unhealthy` on a cold boot | Mongo's `mongosh` healthcheck exceeds its 5s `timeout` for the first ~30s (server takes time to accept connections on first start), so the `service_healthy` dependency fails before the stack converges | Fixed in cloud-init (#446): Fabrica's cloud-init retries `docker compose up -d` (8 × 20s) before the HTTP readiness probe and fails closed on exhaustion. Optional AMI-side hardening: raise the mongo healthcheck `timeout` to `15s` / add `start_period: 30s` (the generated compose applies this) |
 | ECR pull fails at bake with `no basic auth credentials` | `ecr:GetAuthorizationToken` scoped to a repository ARN | Allow `ecr:GetAuthorizationToken` on `Resource: "*"`; keep `BatchGetImage` / `GetDownloadUrlForLayer` repo-scoped (see [Jammy base and SSM footguns](#jammy-base-and-ssm-footguns)) |
@@ -521,16 +527,43 @@ be internet-exposed.
 
 ---
 
-## MongoDB Password Note
+## Authentication and access model
 
-Fabrica generates a MongoDB password at `horde create` time and writes it to
-`.fabrica/horde-credentials.yaml`. With the Docker compose AMI, this password is
-**validated but not applied by cloud-init** — the compose stack manages MongoDB
-credentials independently (typically `--noauth` for intra-container communication).
+The compose stack must not run MongoDB without authentication, and Horde must
+not run in its default `Anonymous` auth mode: in that mode every request is
+granted the administrator claim, so anyone who can reach ports 5000 or 5002
+can submit jobs and use the full coordinator API.
 
-If your studio requires MongoDB authentication, configure it in the compose file
-and `globals.json` baked into the AMI. The password in the credentials file is
-kept for backward compatibility.
+How `fabrica horde create` secures the stack:
+
+1. The baked compose file starts MongoDB with `--auth`, sets
+   `HORDE__AUTHMETHOD=Horde` (Horde's built-in accounts), and reads
+   `MONGO_PASSWORD`, `HORDE_SERVER_URL`, and `HORDE_BIND_ADDRESS` from
+   `/etc/horde/.env`. The ports bind to `127.0.0.1` unless
+   `HORDE_BIND_ADDRESS` says otherwise.
+2. On first boot, cloud-init generates the MongoDB password and the Horde
+   `Admin` password **on the instance** (`openssl rand`) and writes them to
+   `/etc/horde/.env` and `/etc/horde/admin-password` (mode 0600). No secret
+   is baked into the AMI or passed through user data.
+3. While Horde is still bound to loopback, cloud-init creates the `Admin`
+   account. Horde's `POST /api/v1/accounts/admin/create` endpoint is anonymous
+   and first-caller-wins, so it must run before the ports are published.
+4. Only then does cloud-init set `HORDE_BIND_ADDRESS=0.0.0.0`. The security
+   group's `horde.allowedCidr` still limits which hosts can connect.
+
+Read the `Admin` password over SSM:
+
+```bash
+aws ssm start-session --target <instance-id> \
+  --document-name AWS-StartInteractiveCommand \
+  --parameters command="sudo cat /etc/horde/admin-password"
+```
+
+The `mongodb_password` in `.fabrica/horde-credentials.yaml` is validated but
+**not** applied: the MongoDB credentials live only on the instance.
+
+AMIs baked before this change contain the old `--noauth` compose file and keep
+the old behaviour. Re-run `fabrica horde ami build` and recreate the instance.
 
 ---
 

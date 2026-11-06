@@ -166,3 +166,42 @@ func TestValidate(t *testing.T) {
 		}
 	})
 }
+
+// Horde's anonymous auth mode grants every request the admin claim, and in
+// built-in account mode the anonymous admin-create endpoint is first-caller-wins.
+// The script must therefore create the Admin account while Horde is still bound
+// to loopback, and only then publish the ports.
+func TestGenerateRawCreatesAdminBeforePublishingPorts(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{MongoPassword: "p", Port: 5000})
+	if err != nil {
+		t.Fatalf("GenerateRaw: %v", err)
+	}
+	loopback := strings.Index(got, "HORDE_BIND_ADDRESS=127.0.0.1")
+	create := strings.Index(got, "/api/v1/accounts/admin/create")
+	open := strings.Index(got, "HORDE_BIND_ADDRESS=0.0.0.0")
+	if loopback < 0 || create < 0 || open < 0 {
+		t.Fatalf("missing steps: loopback=%d create=%d open=%d", loopback, create, open)
+	}
+	if !(loopback < create && create < open) {
+		t.Errorf("order must be loopback bind (%d) < admin create (%d) < publish (%d)", loopback, create, open)
+	}
+}
+
+func TestGenerateRawGeneratesSecretsOnInstance(t *testing.T) {
+	secret := "do-not-embed-abc" // NOLINTALL // test-only sentinel, not a credential
+	got, err := GenerateRaw(UserDataConfig{MongoPassword: secret, Port: 5000})
+	if err != nil {
+		t.Fatalf("GenerateRaw: %v", err)
+	}
+	for _, want := range []string{"umask 077", "openssl rand", "/etc/horde/.env", "/etc/horde/admin-password"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("script missing %q", want)
+		}
+	}
+	if strings.Contains(got, secret) {
+		t.Error("fabrica-side password must not be embedded; secrets are generated on the instance")
+	}
+	if strings.Contains(got, "--noauth") {
+		t.Error("script must not start MongoDB without authentication")
+	}
+}

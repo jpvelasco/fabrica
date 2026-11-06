@@ -71,3 +71,29 @@ func TestHordeDockerUnitCommand(t *testing.T) {
 		t.Error("unit command should close the heredoc with UNIT")
 	}
 }
+
+// The baked compose stack must not run MongoDB without authentication or leave
+// Horde in its default anonymous mode (every request is an administrator), and
+// it must not publish the Horde ports beyond loopback until userdata opens them.
+func TestDockerBakeScriptRequiresAuthentication(t *testing.T) {
+	got := dockerBakeScript("5.8.0")
+	if strings.Contains(got, "--noauth") {
+		t.Error("compose stack must not start MongoDB with --noauth")
+	}
+	for _, want := range []string{
+		"mongod --auth",
+		"MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD:?",
+		"HORDE__AUTHMETHOD=Horde",
+		"HORDE__SERVERURL=${HORDE_SERVER_URL",
+		"mongodb://horde:${MONGO_PASSWORD}@mongodb:27017/horde?authSource=admin",
+		"${HORDE_BIND_ADDRESS:-127.0.0.1}:5000:5000",
+		"${HORDE_BIND_ADDRESS:-127.0.0.1}:5002:5002",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("compose stack missing %q", want)
+		}
+	}
+	if strings.Contains(got, `- "5000:5000"`) || strings.Contains(got, `- "5002:5002"`) {
+		t.Error("Horde ports must not be published on all interfaces by default")
+	}
+}
