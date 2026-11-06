@@ -53,6 +53,12 @@ type CreatePlan struct {
 	// IAM is the resolved path and permissions boundary for the instance role.
 	IAM config.IAM
 
+	// ServiceTokenParameter is the per-create SSM SecureString cloud-init
+	// publishes the Horde service-account token to. The create layer mints it
+	// (ServiceTokenParameterFor) before the plan is printed, so the role scope,
+	// cloud-init, and the state record name the same parameter.
+	ServiceTokenParameter string
+
 	CostResources []cost.Resource
 }
 

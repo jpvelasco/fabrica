@@ -83,3 +83,25 @@ func TestBuildspecRawPreflightsJobAPI(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildspecRawAuthenticatesWithServiceToken(t *testing.T) {
+	spec := BuildspecRaw(testPlan())
+	for _, want := range []string{
+		"shell: bash",
+		`HORDE_AUTH=(-H "Authorization: ServiceAccount ${HORDE_TOKEN}")`,
+		`"${HORDE_AUTH[@]}" "$HORDE_URL/api/v1/jobs"`,
+		`curl -fsS -X POST "$HORDE_URL/api/v1/jobs" "${HORDE_AUTH[@]}"`,
+		"401|403)",
+		"Horde rejected the CI credentials",
+	} {
+		if !strings.Contains(spec, want) {
+			t.Errorf("buildspec missing %q", want)
+		}
+	}
+	if strings.Count(spec, "HORDE_AUTH=()") != 2 {
+		t.Error("each phase that calls Horde must rebuild the auth header (phases may not share a shell)")
+	}
+	if strings.Contains(spec, "echo \"$HORDE_TOKEN") || strings.Contains(spec, "echo $HORDE_TOKEN") {
+		t.Error("the token must never be echoed")
+	}
+}

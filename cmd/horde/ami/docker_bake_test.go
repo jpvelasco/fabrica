@@ -1,8 +1,11 @@
 package ami
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/horde"
 )
 
 func TestHclInline(t *testing.T) {
@@ -95,5 +98,42 @@ func TestDockerBakeScriptRequiresAuthentication(t *testing.T) {
 	}
 	if strings.Contains(got, `- "5000:5000"`) || strings.Contains(got, `- "5002:5002"`) {
 		t.Error("Horde ports must not be published on all interfaces by default")
+	}
+}
+
+// The fabrica-ci service account (created by cloud-init for horde submit and
+// ci) is authorized only through this global ACL entry: job creation and
+// viewing, nothing administrative.
+func TestDockerBakeGlobalsGrantServiceAccountJobsOnly(t *testing.T) {
+	got := dockerBakeScript("5.8.0")
+	start := strings.Index(got, "cat >/etc/horde/globals.json <<'JSON'\n")
+	if start < 0 {
+		t.Fatal("globals.json heredoc not found")
+	}
+	body := got[start+len("cat >/etc/horde/globals.json <<'JSON'\n"):]
+	body = body[:strings.Index(body, "\nJSON\n")]
+	var cfg struct {
+		ACL struct {
+			Entries []struct {
+				Claim struct {
+					Type  string `json:"type"`
+					Value string `json:"value"`
+				} `json:"claim"`
+				Actions []string `json:"actions"`
+			} `json:"entries"`
+		} `json:"acl"`
+	}
+	if err := json.Unmarshal([]byte(body), &cfg); err != nil {
+		t.Fatalf("globals.json is not valid JSON: %v", err)
+	}
+	if len(cfg.ACL.Entries) != 1 {
+		t.Fatalf("acl entries = %d, want 1", len(cfg.ACL.Entries))
+	}
+	e := cfg.ACL.Entries[0]
+	if e.Claim.Type != horde.ServiceAccountGroupClaimType || e.Claim.Value != horde.ServiceAccountGroup {
+		t.Errorf("acl claim = %+v", e.Claim)
+	}
+	if strings.Join(e.Actions, ",") != "ViewStream,CreateJob,ViewJob" {
+		t.Errorf("acl actions = %v", e.Actions)
 	}
 }

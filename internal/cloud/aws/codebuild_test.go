@@ -546,3 +546,34 @@ func TestProjectExistsFalse(t *testing.T) {
 		t.Error("exists = true, want false")
 	}
 }
+
+func TestEnsureProjectRendersSecretEnvAsParameterStore(t *testing.T) {
+	cb := &fakeCodeBuildClient{}
+	p := newCodeBuildTestProvider(cb, nil)
+	const param = "/fabrica/horde/0123456789abcdef0123456789abcdef/service-token"
+	if _, err := p.EnsureProject(context.Background(), fabricac.CodeBuildProjectSpec{
+		Name:           "fabrica-ci",
+		ServiceRoleARN: "arn:aws:iam::123:role/fabrica-ci-codebuild",
+		ComputeType:    "BUILD_GENERAL1_SMALL",
+		Image:          "aws/codebuild/x:1",
+		BuildTimeout:   60,
+		Buildspec:      "version: 0.2",
+		EnvDefaults:    map[string]string{"HORDE_URL": "http://10.0.0.5:5000"},
+		SecretEnv:      map[string]string{"HORDE_TOKEN": param},
+	}); err != nil {
+		t.Fatalf("EnsureProject: %v", err)
+	}
+	var found bool
+	for _, v := range cb.createInput.Environment.EnvironmentVariables {
+		if awssdk.ToString(v.Name) != "HORDE_TOKEN" {
+			continue
+		}
+		found = true
+		if v.Type != codebuildtypes.EnvironmentVariableTypeParameterStore || awssdk.ToString(v.Value) != param {
+			t.Errorf("HORDE_TOKEN = %s %q, want PARAMETER_STORE %q", v.Type, awssdk.ToString(v.Value), param)
+		}
+	}
+	if !found {
+		t.Fatal("HORDE_TOKEN variable not rendered")
+	}
+}

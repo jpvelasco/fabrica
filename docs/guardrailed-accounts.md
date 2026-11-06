@@ -134,6 +134,28 @@ A boundary policy that blocks any of the actions below breaks the affected flow 
 }
 ```
 
+**Instance-side (horde, `ssm:PutParameter`)** — the Horde coordinator's cloud-init publishes the `fabrica-ci` service-account token to the per-create SecureString that `horde create` pre-created:
+
+```json
+{
+  "Sid": "FabricaHordeServiceToken",
+  "Effect": "Allow",
+  "Action": "ssm:PutParameter",
+  "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/fabrica/horde/*/service-token"
+}
+```
+
+**Instance-side (ci CodeBuild role, `ssm:GetParameters`)** — CodeBuild resolves the `HORDE_TOKEN` PARAMETER_STORE variable at build start:
+
+```json
+{
+  "Sid": "FabricaCIHordeToken",
+  "Effect": "Allow",
+  "Action": "ssm:GetParameters",
+  "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/fabrica/horde/*/service-token"
+}
+```
+
 **Instance-side (workstation, `s3:GetObject`)** — the NICE DCV server validates its no-cost EC2 license by reading a license object from the regional `dcv-license.REGION` S3 bucket; a boundary that denies the read makes the server fail to serve sessions (it logs `ORIGIN_OBJECT_FORBIDDEN_ACCESS` to `/var/log/dcv/server.log`):
 
 ```json
@@ -156,6 +178,8 @@ A boundary policy that blocks any of the actions below breaks the affected flow 
 - `ssm:PutParameter` (create writes the SecureString)
 - `ssm:DeleteParameter` (terminate deletes the recorded name)
 - `ssm:AddTagsToResource` (the parameter is tagged `ManagedBy=fabrica`)
+
+`horde create` and `horde destroy` need the same three actions on `parameter/fabrica/horde/*/service-token` (create stores a placeholder that cloud-init overwrites; destroy deletes the recorded name). `horde submit` needs `ssm:GetParameter` on it to read the token.
 
 **Operator-side (SDK launch path, `volumeRequestTags`)** — when `volumeRequestTags` is non-empty, create calls `RunInstances` directly and consults `DescribeInstances` to adopt an instance a previous attempt already launched:
 
@@ -305,6 +329,17 @@ Two statements look odd until you know why:
         "ssm:AddTagsToResource"
       ],
       "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/fabrica/workstation/*/dcv-password"
+    },
+    {
+      "Sid": "FabricaHordeServiceToken",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:PutParameter",
+        "ssm:GetParameter",
+        "ssm:DeleteParameter",
+        "ssm:AddTagsToResource"
+      ],
+      "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/fabrica/horde/*/service-token"
     },
     {
       "Sid": "FabricaSSMRunner",

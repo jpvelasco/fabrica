@@ -147,3 +147,38 @@ func TestSGDesiredState(t *testing.T) {
 		t.Errorf("SecurityGroupIngress missing from desired state: %s", raw)
 	}
 }
+
+const testHordeTokenParam = "/fabrica/horde/0123456789abcdef0123456789abcdef/service-token"
+
+func TestProjectSpecPassesHordeTokenAsParameterStore(t *testing.T) {
+	plan := testPlan()
+	plan.HordeTokenParameter = testHordeTokenParam
+	spec := ProjectSpec(plan, "arn:aws:iam::123456789012:role/r", "")
+	if spec.SecretEnv["HORDE_TOKEN"] != testHordeTokenParam {
+		t.Errorf("SecretEnv = %v", spec.SecretEnv)
+	}
+	if _, plain := spec.EnvDefaults["HORDE_TOKEN"]; plain {
+		t.Error("HORDE_TOKEN must not be a plaintext variable")
+	}
+}
+
+func TestRoleDesiredStateReadsOnlyTheHordeToken(t *testing.T) {
+	plan := testPlan()
+	plan.HordeTokenParameter = testHordeTokenParam
+	ds, err := RoleDesiredState(plan)
+	if err != nil {
+		t.Fatalf("RoleDesiredState: %v", err)
+	}
+	got := string(ds)
+	if !strings.Contains(got, "ssm:GetParameters") || !strings.Contains(got, "parameter"+testHordeTokenParam) || !strings.Contains(got, HordeTokenPolicyName) {
+		t.Errorf("role lacks the scoped token read: %s", got)
+	}
+	plan.HordeTokenParameter = ""
+	ds, err = RoleDesiredState(plan)
+	if err != nil {
+		t.Fatalf("RoleDesiredState: %v", err)
+	}
+	if strings.Contains(string(ds), "ssm:GetParameters") {
+		t.Error("no token parameter, but the role can read SSM parameters")
+	}
+}

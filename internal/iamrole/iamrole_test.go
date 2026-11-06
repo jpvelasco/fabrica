@@ -441,3 +441,30 @@ func TestRoleDocument_NilPolicies(t *testing.T) {
 		t.Errorf("RoleDocument missing extra tag")
 	}
 }
+
+func TestSSMParameterWritePolicyIsOneARN(t *testing.T) {
+	const arn = "arn:aws:ssm:us-west-2:123456789012:parameter/fabrica/horde/0123456789abcdef0123456789abcdef/service-token"
+	doc := SSMParameterWritePolicy("fabrica-horde-service-token", arn)
+	stmts := doc["PolicyDocument"].(map[string]any)["Statement"].([]map[string]any)
+	if len(stmts) != 1 {
+		t.Fatalf("statements = %d, want 1", len(stmts))
+	}
+	if actions := stmts[0]["Action"].([]string); len(actions) != 1 || actions[0] != "ssm:PutParameter" {
+		t.Fatalf("actions = %v", actions)
+	}
+	if resources := stmts[0]["Resource"].([]string); len(resources) != 1 || resources[0] != arn {
+		t.Fatalf("resources = %v", resources)
+	}
+}
+
+func TestCodeBuildParameterReadPolicyIsOneARN(t *testing.T) {
+	const arn = "arn:aws:ssm:us-west-2:123456789012:parameter/fabrica/horde/0123456789abcdef0123456789abcdef/service-token"
+	doc := CodeBuildParameterReadPolicy("fabrica-ci-horde-token", arn)
+	stmts := doc["PolicyDocument"].(map[string]any)["Statement"].([]map[string]any)
+	if actions := stmts[0]["Action"].([]string); len(actions) != 1 || actions[0] != "ssm:GetParameters" {
+		t.Fatalf("actions = %v", actions)
+	}
+	if resources := stmts[0]["Resource"].([]string); len(resources) != 1 || resources[0] != arn {
+		t.Fatalf("resources = %v", resources)
+	}
+}

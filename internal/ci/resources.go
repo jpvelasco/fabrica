@@ -5,8 +5,13 @@ import (
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/ec2state"
+	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/iamrole"
 )
+
+// HordeTokenPolicyName is the CodeBuild-role inline policy that reads the
+// Horde service-token parameter.
+const HordeTokenPolicyName = "fabrica-ci-horde-token"
 
 // ProjectSpec builds the provider-agnostic CodeBuild project spec for this plan.
 // CodeBuild projects are created via the cloud.CodeBuildRunner SDK path (not
@@ -30,6 +35,9 @@ func ProjectSpec(plan *CreatePlan, roleARN, sgID string) cloud.CodeBuildProjectS
 			"FabricaModule": "ci",
 			"Name":          plan.ProjectName,
 		},
+	}
+	if plan.HordeTokenParameter != "" {
+		spec.SecretEnv = map[string]string{"HORDE_TOKEN": plan.HordeTokenParameter}
 	}
 	if plan.VPCID != "" && plan.SubnetID != "" && sgID != "" {
 		spec.VpcConfig = &cloud.CodeBuildVpcConfig{
@@ -63,6 +71,14 @@ func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 // resolved IAM path and permissions boundary (cloud.aws.iam, ci.iam override)
 // are applied to the role when set.
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
-	return iamrole.RoleDocument(plan.RoleName, iamrole.ServiceCodeBuild, nil, []map[string]any{iamrole.CICodeBuildInlinePolicy(plan.Region, plan.Account, plan.ProjectName)}, map[string]string{"FabricaModule": "ci"},
+	policies := []map[string]any{iamrole.CICodeBuildInlinePolicy(plan.Region, plan.Account, plan.ProjectName)}
+	if plan.HordeTokenParameter != "" {
+		arn, err := horde.ServiceTokenParameterARN(plan.Region, plan.Account, plan.HordeTokenParameter)
+		if err != nil {
+			return nil, err
+		}
+		policies = append(policies, iamrole.CodeBuildParameterReadPolicy(HordeTokenPolicyName, arn))
+	}
+	return iamrole.RoleDocument(plan.RoleName, iamrole.ServiceCodeBuild, nil, policies, map[string]string{"FabricaModule": "ci"},
 		iamrole.Options(plan.IAM.Path, plan.IAM.PermissionsBoundary)...)
 }

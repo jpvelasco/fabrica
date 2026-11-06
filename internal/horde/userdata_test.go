@@ -205,3 +205,69 @@ func TestGenerateRawGeneratesSecretsOnInstance(t *testing.T) {
 		t.Error("script must not start MongoDB without authentication")
 	}
 }
+
+const testTokenParam = "/fabrica/horde/0123456789abcdef0123456789abcdef/service-token"
+
+func TestGenerateRawPublishesServiceTokenBeforePorts(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{MongoPassword: "p", Port: 5000, ServiceTokenParameter: testTokenParam, Region: "us-west-2"})
+	if err != nil {
+		t.Fatalf("GenerateRaw: %v", err)
+	}
+	steps := []string{
+		"/api/v1/accounts/admin/create",
+		"/account/login/dashboard",
+		"/api/v1/serviceaccounts",
+		"aws ssm put-parameter --region us-west-2 --name " + testTokenParam,
+		"HORDE_BIND_ADDRESS=0.0.0.0",
+	}
+	last := -1
+	for _, step := range steps {
+		idx := strings.Index(got, step)
+		if idx < 0 {
+			t.Fatalf("script missing %q", step)
+		}
+		if idx < last {
+			t.Errorf("%q is out of order: the token must be published while Horde is loopback-only", step)
+		}
+		last = idx
+	}
+	for _, want := range []string{
+		"--overwrite",
+		`--value "file://$WORK/token"`,
+		`"type":"http://epicgames.com/ue/horde/group","value":"fabrica-ci"`,
+		"/etc/horde/service-token-published",
+		"mktemp -d /run/fabrica-horde.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("script missing %q", want)
+		}
+	}
+	if strings.Contains(got, `"value":"admin"`) || strings.Contains(got, "ue/horde/role") {
+		t.Error("the service account must not carry the admin role claim")
+	}
+	if strings.Contains(got, "${ADMIN_PASSWORD}") {
+		t.Error("the Admin password must not be passed on a command line")
+	}
+}
+
+func TestGenerateRawOmitsServiceTokenWithoutParameter(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{MongoPassword: "p", Port: 5000})
+	if err != nil {
+		t.Fatalf("GenerateRaw: %v", err)
+	}
+	if strings.Contains(got, "/api/v1/serviceaccounts") || strings.Contains(got, "put-parameter") {
+		t.Error("no parameter configured, but the script publishes a service token")
+	}
+}
+
+func TestGenerateRawRejectsUnsafeServiceTokenInputs(t *testing.T) {
+	for _, cfg := range []UserDataConfig{
+		{MongoPassword: "p", Port: 5000, ServiceTokenParameter: "/fabrica/horde/x; curl evil/service-token", Region: "us-west-2"},
+		{MongoPassword: "p", Port: 5000, ServiceTokenParameter: testTokenParam, Region: ""},
+		{MongoPassword: "p", Port: 5000, ServiceTokenParameter: testTokenParam, Region: "us-west-2; reboot"},
+	} {
+		if _, err := GenerateRaw(cfg); err == nil {
+			t.Errorf("GenerateRaw accepted unsafe input %+v", cfg)
+		}
+	}
+}

@@ -14,30 +14,45 @@ import (
 // IAM role can describe the Perforce instance, but active P4 sync is out of
 // scope for this milestone (see the design spec).
 const buildspecTemplate = `version: 0.2
+env:
+  shell: bash
 phases:
   pre_build:
     commands:
       - 'echo "Fabrica CI build starting"'
       - 'test -n "$HORDE_URL" || { echo "HORDE_URL not set — is Horde provisioned?"; exit 1; }'
       - 'test -n "$TARGET" || { echo "TARGET not set"; exit 1; }'
-      # Pre-flight: confirm the coordinator exposes the job-creation API. A Horde
-      # build without the jobs/graphs/agents controllers returns 404 on
-      # /api/v1/jobs; fail fast with a clear message instead of a bare curl error.
+      # HORDE_TOKEN is a PARAMETER_STORE variable holding the fabrica-ci
+      # service-account token; CodeBuild resolves it at build start and masks
+      # it in logs. The header is rebuilt in each block that calls Horde.
+      # Pre-flight: confirm the coordinator accepts the token and exposes the
+      # job-creation API, and report which of the two failed.
       - |
-        if curl -fsS -o /dev/null "$HORDE_URL/api/v1/jobs"; then
-          echo "Horde job API check passed"
-        else
-          echo "Horde has no job-creation API: $HORDE_URL/api/v1/jobs is not reachable." >&2
-          echo "This Horde build does not expose the jobs API surface (see docs/horde-ami.md)." >&2
-          exit 1
-        fi
+        HORDE_AUTH=()
+        if [ -n "${HORDE_TOKEN:-}" ]; then HORDE_AUTH=(-H "Authorization: ServiceAccount ${HORDE_TOKEN}"); fi
+        code=$(curl -sS -o /dev/null -w '%{http_code}' "${HORDE_AUTH[@]}" "$HORDE_URL/api/v1/jobs" || true)
+        case "$code" in
+          2??) echo "Horde job API check passed" ;;
+          401|403)
+            echo "Horde rejected the CI credentials (HTTP $code): check the fabrica-ci service-account token parameter and the globals.json ACL." >&2
+            exit 1 ;;
+          404)
+            echo "Horde has no job-creation API: $HORDE_URL/api/v1/jobs returned 404." >&2
+            echo "This Horde build does not expose the jobs API surface (see docs/horde-ami.md)." >&2
+            exit 1 ;;
+          *)
+            echo "Horde is not reachable at $HORDE_URL (HTTP $code)." >&2
+            exit 1 ;;
+        esac
       # Perforce sync placeholder (out of scope for V1):
       # - 'p4 -p "$P4PORT" sync ...'
   build:
     commands:
       - 'echo "Submitting BuildGraph job to Horde at $HORDE_URL"'
       - |
-        curl -fsS -X POST "$HORDE_URL/api/v1/jobs" \
+        HORDE_AUTH=()
+        if [ -n "${HORDE_TOKEN:-}" ]; then HORDE_AUTH=(-H "Authorization: ServiceAccount ${HORDE_TOKEN}"); fi
+        curl -fsS -X POST "$HORDE_URL/api/v1/jobs" "${HORDE_AUTH[@]}" \
           -H "Content-Type: application/json" \
           -d "{\"name\":\"${BUILDGRAPH:-fabrica-ci}\",\"target\":\"$TARGET\"}"
   post_build:

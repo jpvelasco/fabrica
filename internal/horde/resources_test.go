@@ -257,3 +257,39 @@ func TestCoordinatorDesiredStatesStampFabricaModule(t *testing.T) {
 		t.Errorf("role FabricaModule = %q, want horde", got)
 	}
 }
+
+func TestRoleDesiredStateScopesServiceTokenWrite(t *testing.T) {
+	name := "/fabrica/horde/0123456789abcdef0123456789abcdef/service-token"
+	plan := &CreatePlan{Account: "123456789012", Region: "us-west-2", RoleName: "fabrica-horde-role", ServiceTokenParameter: name}
+	ds, err := RoleDesiredState(plan)
+	if err != nil {
+		t.Fatalf("RoleDesiredState: %v", err)
+	}
+	got := string(ds)
+	want := "arn:aws:ssm:us-west-2:123456789012:parameter" + name
+	if !strings.Contains(got, want) || !strings.Contains(got, `"ssm:PutParameter"`) || !strings.Contains(got, ServiceTokenPolicyName) {
+		t.Errorf("role lacks the scoped ssm:PutParameter policy: %s", got)
+	}
+	if strings.Contains(got, "parameter/fabrica/horde/*") {
+		t.Error("service-token write must not be granted on a wildcard")
+	}
+}
+
+func TestRoleDesiredStateWithoutServiceToken(t *testing.T) {
+	ds, err := RoleDesiredState(&CreatePlan{Account: "123456789012", Region: "us-west-2", RoleName: "fabrica-horde-role"})
+	if err != nil {
+		t.Fatalf("RoleDesiredState: %v", err)
+	}
+	// SSMOutputPolicy already writes parameter/MDS-* for SSM command output;
+	// without a planned token there must be no service-token grant.
+	if strings.Contains(string(ds), ServiceTokenPolicyName) || strings.Contains(string(ds), "parameter/fabrica/horde/") {
+		t.Error("no service-token parameter planned, but the role can write one")
+	}
+}
+
+func TestRoleDesiredStateRejectsMalformedServiceTokenName(t *testing.T) {
+	plan := &CreatePlan{Account: "123456789012", Region: "us-west-2", RoleName: "r", ServiceTokenParameter: "/fabrica/horde/*"}
+	if _, err := RoleDesiredState(plan); err == nil {
+		t.Fatal("malformed service-token name accepted")
+	}
+}

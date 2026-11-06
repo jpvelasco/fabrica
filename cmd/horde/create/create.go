@@ -43,6 +43,10 @@ type command struct {
 	inspectImage   func(ctx context.Context, imageID string) (cloud.ImageInfo, error)
 	genPassword    func(int) (string, error)
 	genUserData    func(horde.UserDataConfig) (string, error)
+	newNonce       func() (string, error)
+
+	putSecureParameter func(ctx context.Context, p cloud.SecureParameter) error
+	deleteParameter    func(ctx context.Context, name string) error
 }
 
 // New returns the "horde create" subcommand.
@@ -55,20 +59,25 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Short: "Provision an Unreal Horde build coordinator",
 		Long: `Provision an Unreal Horde build coordinator on AWS.
 
-Creates four resources in order:
-  1. EC2 Security Group — allows TCP 5000 (HTTP) and 5002 (gRPC) inbound
-  2. IAM Role — AmazonSSMManagedInstanceCore for SSM access
-  3. IAM Instance Profile — attaches the role to the EC2 instance
-  4. EC2 Instance — runs the Horde coordinator using a user-provided AMI
+Creates these resources in order:
+  1. SSM SecureString — /fabrica/horde/<create-nonce>/service-token, a
+     placeholder cloud-init overwrites with the Horde service-account token
+  2. EC2 Security Group — allows TCP 5000 (HTTP) and 5002 (gRPC) inbound
+  3. IAM Role — AmazonSSMManagedInstanceCore for SSM access, plus
+     ssm:PutParameter on exactly the service-token parameter
+  4. IAM Instance Profile — attaches the role to the EC2 instance
+  5. EC2 Instance — runs the Horde coordinator using a user-provided AMI
 
 State is written after each resource, so an interrupted create leaves a
 recoverable record. Re-running create on a complete module exits cleanly; on
 a partial one it fails and names the missing resources plus the cleanup
 command to run first.
 
-A MongoDB password is generated and written to .fabrica/horde-credentials.yaml.
-With Docker compose AMIs, this password is validated but not applied by cloud-init
-(the compose stack manages MongoDB credentials independently).
+Horde runs with its built-in accounts. Cloud-init generates the MongoDB and
+Admin passwords on the instance, creates the Admin account while Horde is
+bound to loopback, and creates the fabrica-ci service account whose token
+'fabrica horde submit' and the ci module read from the service-token
+parameter. Read the Admin password over SSM from /etc/horde/admin-password.
 
 Operator access to the instance is via AWS Systems Manager Session Manager
 (not public SSH). The instance has no inbound SSH from the internet.
@@ -98,6 +107,10 @@ making any AWS calls.`,
 				c.createResource = rt.Provider.Resources().Create
 				if insp, ok := rt.Provider.(cloud.ImageInspector); ok {
 					c.inspectImage = insp.DescribeImage
+				}
+				if store, ok := rt.Provider.(cloud.ParameterStore); ok {
+					c.putSecureParameter = store.PutSecureParameter
+					c.deleteParameter = store.DeleteParameter
 				}
 			}
 			return c.run(cmd.Context())
@@ -151,6 +164,21 @@ func (c command) run(ctx context.Context) error {
 	}
 	plan.RootDeviceName = rootDevice
 
+	// Mint the per-create service-token parameter name before the plan is
+	// printed or applied, so the previews, the role scope, cloud-init, and the
+	// state record all name the same SecureString.
+	newNonce := c.newNonce
+	if newNonce == nil {
+		newNonce = horde.NewServiceTokenNonce
+	}
+	nonce, err := newNonce()
+	if err != nil {
+		return fmt.Errorf("building create plan: %w", err)
+	}
+	if plan.ServiceTokenParameter, err = horde.ServiceTokenParameterFor(nonce); err != nil {
+		return fmt.Errorf("building create plan: %w", err)
+	}
+
 	return provision.RunCreate(ctx, provision.CreateSpec[*horde.CreatePlan]{
 		ModuleName:        moduleName,
 		Account:           account,
@@ -187,6 +215,9 @@ func (c command) inspectAMI(ctx context.Context, amiID string) (string, error) {
 }
 
 func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *horde.CreatePlan) error {
+	if c.putSecureParameter == nil || c.deleteParameter == nil {
+		return fmt.Errorf("storing the Horde service token requires a provider with SSM parameter support. Run 'fabrica setup' with the AWS provider.")
+	}
 	genPass := c.genPassword
 	if genPass == nil {
 		genPass = credentials.GeneratePassword
@@ -201,6 +232,19 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	}
 	fmt.Fprintf(c.out, "\nMongoDB credentials written to %s\n", credFile)
 
+	// Pre-create the service-token SecureString with a placeholder and the
+	// operator's tags. The instance role may only overwrite this one name;
+	// cloud-init replaces the placeholder with the real token.
+	tokenParam := plan.ServiceTokenParameter
+	if err := c.putSecureParameter(ctx, cloud.SecureParameter{
+		Name:  tokenParam,
+		Value: horde.ServiceTokenPlaceholder,
+		Tags:  c.runtime.Config.Cloud.AWS.Tags,
+	}); err != nil {
+		return fmt.Errorf("creating the service-token SSM parameter %s: %w", tokenParam, err)
+	}
+	fmt.Fprintf(c.out, "Created service-token SSM parameter %s (cloud-init publishes the token)\n", tokenParam)
+
 	var resources []fabricastate.ModuleResource
 
 	// Create Security Group
@@ -214,7 +258,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		},
 	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return fmt.Errorf("creating security group: %w", err)
+		return c.abandonServiceToken(ctx, tokenParam, fmt.Errorf("creating security group: %w", err))
 	}
 	sgID := resources[len(resources)-1].Identifier
 
@@ -226,7 +270,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		BuildDesiredState: func() ([]byte, error) { return horde.RoleDesiredState(plan) },
 	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return fmt.Errorf("creating IAM role: %w", err)
+		return c.abandonServiceToken(ctx, tokenParam, fmt.Errorf("creating IAM role: %w", err))
 	}
 
 	// Instance Profile
@@ -244,7 +288,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		},
 	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return fmt.Errorf("creating instance profile: %w", err)
+		return c.abandonServiceToken(ctx, tokenParam, fmt.Errorf("creating instance profile: %w", err))
 	}
 	profileName := resources[len(resources)-1].Identifier
 
@@ -255,11 +299,25 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		genUserData = horde.Generate
 	}
 	userData, err := genUserData(horde.UserDataConfig{
-		MongoPassword: mongoPass,
-		Port:          plan.Port,
+		MongoPassword:         mongoPass,
+		Port:                  plan.Port,
+		ServiceTokenParameter: tokenParam,
+		Region:                plan.Region,
 	})
 	if err != nil {
-		return fmt.Errorf("generating user data: %w", err)
+		return c.abandonServiceToken(ctx, tokenParam, fmt.Errorf("generating user data: %w", err))
+	}
+
+	// Track whether the instance itself was created: once it exists, the
+	// parameter stays for its cloud-init and for destroy even if volume
+	// tagging or the state write fails afterwards.
+	instanceCreated := false
+	createInstance := func(ctx context.Context, r *cloud.Resource) error {
+		if err := c.createResource(ctx, r); err != nil {
+			return err
+		}
+		instanceCreated = true
+		return nil
 	}
 
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
@@ -268,20 +326,38 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		BuildDesiredState: func() ([]byte, error) {
 			return horde.InstanceDesiredState(plan, sgID, userData, profileName)
 		},
+		// The service-token parameter is recorded on the instance, not as a
+		// state resource: a drift Get of AWS::SSM::Parameter would return the
+		// secret. Destroy, submit, and ci setup read the name from here.
 		Properties: map[string]string{
-			"instanceType": plan.InstanceType,
-			"volumeSize":   strconv.Itoa(plan.VolumeSize),
-			"rootDevice":   plan.RootDeviceName,
+			"instanceType":          plan.InstanceType,
+			"volumeSize":            strconv.Itoa(plan.VolumeSize),
+			"rootDevice":            plan.RootDeviceName,
+			"serviceTokenParameter": tokenParam,
 		},
 		PostCreate: provision.TagVolumesPostCreate(c.runtime.Provider, "horde", plan.InstanceName),
 		// fail on writeState error (default)
-	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, createInstance, c.writeState)
 	if err != nil {
-		return fmt.Errorf("creating EC2 instance: %w", err)
+		wrapped := fmt.Errorf("creating EC2 instance: %w", err)
+		if instanceCreated {
+			return wrapped
+		}
+		return c.abandonServiceToken(ctx, tokenParam, wrapped)
 	}
 
 	c.printPostCreate(plan, resources[len(resources)-1].Identifier)
 	return nil
+}
+
+// abandonServiceToken deletes the placeholder SecureString after a create that
+// failed before the instance existed, so the parameter does not outlive the
+// attempt.
+func (c command) abandonServiceToken(ctx context.Context, name string, err error) error {
+	if delErr := c.deleteParameter(ctx, name); delErr != nil {
+		return fmt.Errorf("%w (also failed to delete SSM parameter %s: %v)", err, name, delErr)
+	}
+	return err
 }
 
 func (c command) printDryRun(plan *horde.CreatePlan) {
@@ -307,6 +383,7 @@ func (c command) printDryRun(plan *horde.CreatePlan) {
 		},
 		ExtraFields: extraFields,
 		Resources: append([]string{
+			"SSM Parameter:    " + plan.ServiceTokenParameter,
 			"Security Group:   " + plan.SGName,
 			"IAM Role:         " + plan.RoleName,
 			"Instance Profile: " + plan.InstanceProfileName,
@@ -333,6 +410,7 @@ func (c command) printApplyPlan(plan *horde.CreatePlan) {
 	}, []provision.PlanField{
 		{Key: "AMI ID", Value: plan.AmiID},
 	}, append([]string{
+		"SSM Parameter:    " + plan.ServiceTokenParameter,
 		"Security Group:   " + plan.SGName,
 		"IAM Role:         " + plan.RoleName,
 		"Instance Profile: " + plan.InstanceProfileName,
@@ -348,12 +426,12 @@ func (c command) printPostCreate(plan *horde.CreatePlan, instanceID string) {
 		Details: []provision.PlanField{
 			{Key: "Horde HTTP", Value: fmt.Sprintf("http://<private-ip>:%d", plan.Port)},
 			{Key: "Horde gRPC", Value: fmt.Sprintf("<private-ip>:%d", plan.GRPCPort)},
-			{Key: "Credentials", Value: credFile},
+			{Key: "Service token", Value: "SSM " + plan.ServiceTokenParameter},
 		},
 		NextSteps: []string{
 			"fabrica horde status -w       Wait for coordinator to become ready",
-			fmt.Sprintf("Open http://<private-ip>:%d   Complete admin account setup in the web UI", plan.Port),
-			"fabrica horde submit <file>   Submit a BuildGraph job",
+			"Admin password                sudo cat /etc/horde/admin-password (over SSM)",
+			"fabrica horde submit <file>   Submit a BuildGraph job (uses the service token)",
 		},
 		RawAfter: func(w io.Writer) {
 			fmt.Fprintln(w)
