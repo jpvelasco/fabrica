@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-07
+
 ### Security
 
 - **The Horde stack no longer runs unauthenticated** — the baked compose file started MongoDB with `--noauth` and left Horde in its default `Anonymous` auth mode, which grants every request the administrator claim, so any host inside `horde.allowedCidr` could submit jobs and use the full coordinator API. The stack now runs MongoDB with `--auth` and Horde with its built-in accounts (`HORDE__AUTHMETHOD=Horde`). Cloud-init generates the MongoDB and `Admin` passwords on the instance, creates the `Admin` account while Horde is bound to loopback only (Horde's admin-create endpoint is first-caller-wins), and then publishes the ports. AMIs baked before this change keep the old behaviour; re-run `fabrica horde ami build`.
@@ -515,7 +517,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/jpvelasco/fabrica/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/jpvelasco/fabrica/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jpvelasco/fabrica/compare/v0.4.6...v0.5.0
 [0.4.6]: https://github.com/jpvelasco/fabrica/compare/v0.4.5...v0.4.6
