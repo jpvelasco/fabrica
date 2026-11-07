@@ -239,3 +239,24 @@ func TestNewTeardownDeletesServiceTokenParameter(t *testing.T) {
 		t.Fatalf("DeletedParameters = %v", provider.DeletedParameters)
 	}
 }
+
+// plainProvider satisfies cloud.Provider without the ParameterStore
+// capability, so wireServiceTokenDelete must leave the SDK delete seam unset.
+type plainProvider struct{}
+
+func (plainProvider) Name() string { return "plain" }
+
+func (plainProvider) Identity(_ context.Context) (string, string, string, error) {
+	return "123456789012", "arn:aws:iam::123456789012:root", "us-east-1", nil
+}
+
+func (plainProvider) Resources() cloud.ResourceClient { return nil }
+
+func TestWireServiceTokenDeleteWithoutParameterStore(t *testing.T) {
+	rt := globals.Runtime{Config: config.Defaults(), Provider: plainProvider{}}
+	tc := &teardown.Command{}
+	wireServiceTokenDelete(tc, rt)
+	if tc.SDKDeleteFunc != nil {
+		t.Fatal("SDKDeleteFunc must stay nil when the provider has no SSM parameter support")
+	}
+}
