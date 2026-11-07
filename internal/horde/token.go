@@ -32,7 +32,7 @@ var serviceTokenName = regexp.MustCompile(`^/fabrica/horde/[0-9a-f]{32}/service-
 
 // ServiceTokenPolicyName is the instance-role inline policy that allows
 // ssm:PutParameter on exactly one service-token parameter ARN.
-const ServiceTokenPolicyName = "fabrica-horde-service-token"
+const ServiceTokenPolicyName = "fabrica-horde-service-token" // #nosec G101 -- policy name, not a credential
 
 // ServiceTokenPlaceholder is the value `horde create` stores before cloud-init
 // publishes the real token. Readers treat it as "not published yet".

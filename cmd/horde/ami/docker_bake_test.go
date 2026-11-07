@@ -111,7 +111,11 @@ func TestDockerBakeGlobalsGrantServiceAccountJobsOnly(t *testing.T) {
 		t.Fatal("globals.json heredoc not found")
 	}
 	body := got[start+len("cat >/etc/horde/globals.json <<'JSON'\n"):]
-	body = body[:strings.Index(body, "\nJSON\n")]
+	end := strings.Index(body, "\nJSON\n")
+	if end < 0 {
+		t.Fatal("globals.json heredoc terminator not found")
+	}
+	body = body[:end]
 	var cfg struct {
 		ACL struct {
 			Entries []struct {

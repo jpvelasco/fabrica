@@ -816,7 +816,7 @@ func TestSubmitWaitCancelled(t *testing.T) {
 	assert.Contains(t, err.Error(), "job-cancel")
 }
 
-const testTokenParam = "/fabrica/horde/0123456789abcdef0123456789abcdef/service-token"
+const testTokenParam = "/fabrica/horde/0123456789abcdef0123456789abcdef/service-token" // #nosec G101 -- SSM parameter name fixture, not a credential
 
 // tokenTestCommand is a production-path command (no injected client) whose
 // coordinator resolves to 10.0.1.42 and whose instance records tokenParam.

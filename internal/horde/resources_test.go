@@ -288,7 +288,7 @@ func TestRoleDesiredStateWithoutServiceToken(t *testing.T) {
 }
 
 func TestRoleDesiredStateRejectsMalformedServiceTokenName(t *testing.T) {
-	plan := &CreatePlan{Account: "123456789012", Region: "us-west-2", RoleName: "r", ServiceTokenParameter: "/fabrica/horde/*"}
+	plan := &CreatePlan{Account: "123456789012", Region: "us-west-2", RoleName: "r", ServiceTokenParameter: "/fabrica/horde/*"} // #nosec G101 -- malformed-name fixture: the test asserts rejection
 	if _, err := RoleDesiredState(plan); err == nil {
 		t.Fatal("malformed service-token name accepted")
 	}

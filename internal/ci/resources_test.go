@@ -148,7 +148,7 @@ func TestSGDesiredState(t *testing.T) {
 	}
 }
 
-const testHordeTokenParam = "/fabrica/horde/0123456789abcdef0123456789abcdef/service-token"
+const testHordeTokenParam = "/fabrica/horde/0123456789abcdef0123456789abcdef/service-token" // #nosec G101 -- SSM parameter name fixture, not a credential
 
 func TestProjectSpecPassesHordeTokenAsParameterStore(t *testing.T) {
 	plan := testPlan()
