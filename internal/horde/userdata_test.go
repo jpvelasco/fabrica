@@ -182,7 +182,7 @@ func TestGenerateRawCreatesAdminBeforePublishingPorts(t *testing.T) {
 	if loopback < 0 || create < 0 || open < 0 {
 		t.Fatalf("missing steps: loopback=%d create=%d open=%d", loopback, create, open)
 	}
-	if !(loopback < create && create < open) {
+	if loopback >= create || create >= open {
 		t.Errorf("order must be loopback bind (%d) < admin create (%d) < publish (%d)", loopback, create, open)
 	}
 }
