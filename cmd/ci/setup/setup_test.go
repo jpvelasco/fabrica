@@ -566,3 +566,89 @@ func TestSetupVPCResolvesSGRoleError(t *testing.T) {
 		t.Errorf("expected SG step error, got: %v", err)
 	}
 }
+
+// TestSetupResolveHordeTokenParameter covers every branch of the resolver: a
+// state-read failure, a missing Horde module, a module without an instance,
+// an instance that records no parameter (pre-token coordinator), a well-formed
+// name, and a malformed recorded name.
+func TestSetupResolveHordeTokenParameter(t *testing.T) {
+	const validName = "/fabrica/horde/0123456789abcdef0123456789abcdef/service-token"
+	hordeState := func(resources ...fabricastate.ModuleResource) *fabricastate.State {
+		st := fabricastate.NewState("123456789012", "us-west-2")
+		if len(resources) > 0 {
+			st.UpsertModule("horde", "", "ready", resources)
+		}
+		return st
+	}
+	tests := []struct {
+		name    string
+		readErr error
+		st      *fabricastate.State
+		want    string
+		errSub  string
+	}{
+		{name: "state read failure degrades to no token", readErr: errors.New("state unavailable")},
+		{name: "no horde module", st: hordeState()},
+		{name: "module without an instance", st: hordeState(fabricastate.ModuleResource{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-horde"})},
+		{name: "instance records no parameter", st: hordeState(fabricastate.ModuleResource{TypeName: "AWS::EC2::Instance", Identifier: "i-horde123"})},
+		{name: "well-formed name is returned", st: hordeState(fabricastate.ModuleResource{TypeName: "AWS::EC2::Instance", Identifier: "i-horde123", Properties: map[string]string{"serviceTokenParameter": validName}}), want: validName},
+		{name: "malformed name fails closed", st: hordeState(fabricastate.ModuleResource{TypeName: "AWS::EC2::Instance", Identifier: "i-horde123", Properties: map[string]string{"serviceTokenParameter": "/fabrica/*"}}), errSub: "malformed service-token parameter"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var c *command
+			if tt.readErr != nil {
+				c = &command{readState: func() (*fabricastate.State, error) { return nil, tt.readErr }}
+			} else {
+				st := tt.st
+				c = &command{readState: func() (*fabricastate.State, error) { return st, nil }}
+			}
+			got, err := c.resolveHordeTokenParameter()
+			if tt.errSub != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.errSub) {
+					t.Fatalf("err = %v, want %q", err, tt.errSub)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveHordeTokenParameter: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("resolveHordeTokenParameter = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSetupRejectsMalformedServiceTokenParameter pins the run() wiring: a
+// malformed recorded name aborts setup before the lock is taken and nothing
+// is created.
+func TestSetupRejectsMalformedServiceTokenParameter(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-west-2")
+	st.UpsertModule("horde", "", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-horde123", Properties: map[string]string{"serviceTokenParameter": "/fabrica/*"}},
+	})
+	created := &[]string{}
+	c := &command{
+		runtime:    testRuntime(),
+		out:        &out,
+		costs:      fabricacost.Global,
+		assumeYes:  true,
+		readState:  func() (*fabricastate.State, error) { return st, nil },
+		writeState: func(*fabricastate.State) error { return nil },
+		createResource: func(_ context.Context, r *cloud.Resource) error {
+			*created = append(*created, r.TypeName)
+			return nil
+		},
+		ensureProject: func(context.Context, cloud.CodeBuildProjectSpec) (bool, error) { return true, nil },
+		confirm:       func(string) bool { return true },
+	}
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "malformed service-token parameter") {
+		t.Fatalf("err = %v, want the malformed-name fail-closed", err)
+	}
+	if len(*created) != 0 {
+		t.Errorf("nothing should be created when the name is malformed, got %v", *created)
+	}
+}

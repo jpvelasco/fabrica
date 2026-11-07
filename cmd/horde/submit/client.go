@@ -64,7 +64,10 @@ func (c *hordeHTTPClient) SubmitJob(ctx context.Context, job *buildgraph.BuildGr
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return "", fmt.Errorf("Horde rejected the request (auth): check admin token in .fabrica/horde-credentials.yaml")
+		if c.token == "" {
+			return "", fmt.Errorf("Horde rejected the request (HTTP %d): the coordinator requires authentication and no service token was sent; re-create Horde so it publishes one", resp.StatusCode)
+		}
+		return "", fmt.Errorf("Horde rejected the service-account token (HTTP %d): the fabrica-ci account may be disabled or lack job permissions in globals.json", resp.StatusCode)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if resp.StatusCode == http.StatusNotFound && c.jobsRouteMissing(ctx) {

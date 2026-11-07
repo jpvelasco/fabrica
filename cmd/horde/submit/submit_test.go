@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -642,6 +643,24 @@ func TestHordeHTTPClientSubmitForbidden(t *testing.T) {
 	assert.Contains(t, err.Error(), "auth")
 }
 
+func TestHordeHTTPClientRejectsServiceAccountToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "ServiceAccount tok-rejected" {
+			t.Errorf("Authorization = %q", got)
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	client := newHordeHTTPClient(srv.URL, "tok-rejected")
+	_, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{Name: "A", Target: "T"})
+	if err == nil {
+		t.Fatal("expected auth error, got nil")
+	}
+	assert.Contains(t, err.Error(), "rejected the service-account token")
+	assert.Contains(t, err.Error(), "globals.json")
+}
+
 func TestHordeHTTPClientSubmitNon2xx(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -813,4 +832,157 @@ func TestSubmitWaitCancelled(t *testing.T) {
 		t.Errorf("error %v must wrap context.Canceled", err)
 	}
 	assert.Contains(t, err.Error(), "job-cancel")
+}
+
+const testTokenParam = "/fabrica/horde/0123456789abcdef0123456789abcdef/service-token" // #nosec G101 -- SSM parameter name fixture, not a credential
+
+// tokenTestCommand is a production-path command (no injected client) whose
+// coordinator resolves to 10.0.1.42 and whose instance records tokenParam.
+func tokenTestCommand(t *testing.T, out *bytes.Buffer, tokenParam string, get func(context.Context, string) (string, error)) (command, *fakeHordeClient, *string) {
+	t.Helper()
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	props := map[string]string{}
+	if tokenParam != "" {
+		props["serviceTokenParameter"] = tokenParam
+	}
+	st.UpsertModule("horde", "", "ready", []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-horde123", Properties: props},
+	})
+	fakeRC := &fakeResourceClient{getFn: func(_ context.Context, r *cloud.Resource) error {
+		r.ActualState = json.RawMessage(`{"PrivateIpAddress":"10.0.1.42"}`)
+		return nil
+	}}
+	client := &fakeHordeClient{}
+	var gotToken string
+	c := command{
+		runtime:            globals.Runtime{Config: config.Defaults(), Provider: &fakeSubmitProvider{rc: fakeRC}},
+		out:                out,
+		waitCtx:            func(context.Context, time.Duration) error { return nil },
+		now:                time.Now,
+		getSecureParameter: get,
+		newClient: func(_, token string) HordeClient {
+			gotToken = token
+			return client
+		},
+	}
+	c.readState = func() (*fabricastate.State, error) { return st, nil }
+	c.buildGraphPath = writeTempBuildGraph(t)
+	return c, client, &gotToken
+}
+
+func TestSubmitSendsServiceToken(t *testing.T) {
+	var out bytes.Buffer
+	c, client, gotToken := tokenTestCommand(t, &out, testTokenParam, func(_ context.Context, name string) (string, error) {
+		if name != testTokenParam {
+			t.Errorf("read parameter %q", name)
+		}
+		return "tok-123", nil
+	})
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if *gotToken != "tok-123" || client.submitCalls != 1 {
+		t.Errorf("token = %q, submits = %d", *gotToken, client.submitCalls)
+	}
+	if bytes.Contains(out.Bytes(), []byte("tok-123")) {
+		t.Error("the token must never be printed")
+	}
+}
+
+func TestSubmitRejectsUnpublishedServiceToken(t *testing.T) {
+	var out bytes.Buffer
+	c, client, _ := tokenTestCommand(t, &out, testTokenParam, func(context.Context, string) (string, error) {
+		return "pending-cloud-init", nil
+	})
+	err := c.run(context.Background())
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("not published")) {
+		t.Fatalf("err = %v", err)
+	}
+	if client.submitCalls != 0 {
+		t.Error("submitted without a published token")
+	}
+}
+
+func TestSubmitMissingServiceTokenParameter(t *testing.T) {
+	var out bytes.Buffer
+	c, _, _ := tokenTestCommand(t, &out, testTokenParam, func(_ context.Context, name string) (string, error) {
+		return "", fmt.Errorf("SSM parameter %s: %w", name, cloud.ErrParameterNotFound)
+	})
+	if err := c.run(context.Background()); err == nil || !bytes.Contains([]byte(err.Error()), []byte("does not exist")) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSubmitLegacyCoordinatorWithoutServiceToken(t *testing.T) {
+	var out bytes.Buffer
+	c, client, gotToken := tokenTestCommand(t, &out, "", func(context.Context, string) (string, error) {
+		t.Error("no parameter recorded, but submit read SSM")
+		return "", nil
+	})
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if *gotToken != "" || client.submitCalls != 1 {
+		t.Errorf("token = %q, submits = %d", *gotToken, client.submitCalls)
+	}
+	assert.Contains(t, out.String(), "no service-token parameter")
+}
+
+func TestSubmitDryRunNeverReadsServiceToken(t *testing.T) {
+	var out bytes.Buffer
+	c, client, _ := tokenTestCommand(t, &out, testTokenParam, func(context.Context, string) (string, error) {
+		t.Error("dry run read the service token")
+		return "", nil
+	})
+	c.dryRun = true
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if client.submitCalls != 0 {
+		t.Error("dry run submitted")
+	}
+	assert.Contains(t, out.String(), "ServiceAccount token from SSM "+testTokenParam)
+}
+
+func TestSubmitRejectsMalformedServiceTokenParameter(t *testing.T) {
+	var out bytes.Buffer
+	c, client, _ := tokenTestCommand(t, &out, "/fabrica/horde/not-a-per-create-name/service-token", func(context.Context, string) (string, error) {
+		t.Error("a malformed parameter name must not reach SSM")
+		return "", nil
+	})
+	err := c.run(context.Background())
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("not a per-create")) ||
+		!bytes.Contains([]byte(err.Error()), []byte("re-run 'fabrica horde create'")) {
+		t.Fatalf("err = %v", err)
+	}
+	if client.submitCalls != 0 {
+		t.Error("submitted with a malformed parameter name")
+	}
+}
+
+func TestSubmitRequiresSSMParameterReader(t *testing.T) {
+	var out bytes.Buffer
+	c, client, _ := tokenTestCommand(t, &out, testTokenParam, nil)
+	err := c.run(context.Background())
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("requires a provider with SSM parameter support")) {
+		t.Fatalf("err = %v", err)
+	}
+	if client.submitCalls != 0 {
+		t.Error("submitted without a token reader")
+	}
+}
+
+func TestSubmitSurfacesServiceTokenReadError(t *testing.T) {
+	var out bytes.Buffer
+	c, client, _ := tokenTestCommand(t, &out, testTokenParam, func(context.Context, string) (string, error) {
+		return "", errors.New("ssm denied")
+	})
+	err := c.run(context.Background())
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("reading the Horde service token")) ||
+		!bytes.Contains([]byte(err.Error()), []byte("ssm denied")) {
+		t.Fatalf("err = %v", err)
+	}
+	if client.submitCalls != 0 {
+		t.Error("submitted when the token read failed")
+	}
 }

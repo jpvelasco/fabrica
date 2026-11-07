@@ -15,6 +15,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
@@ -118,6 +119,9 @@ func (c command) run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("building CI plan: %w", err)
 	}
+	if plan.HordeTokenParameter, err = c.resolveHordeTokenParameter(); err != nil {
+		return err
+	}
 
 	if c.dryRun {
 		c.printDryRun(plan)
@@ -209,6 +213,30 @@ func (c command) applyResources(ctx context.Context, st *fabricastate.State, pla
 	}
 	resources = provision.AppendUnique(resources, fabricastate.ModuleResource{TypeName: ci.TypeAWSCodeBuildProject, Identifier: plan.ProjectName})
 	return resources, nil
+}
+
+// resolveHordeTokenParameter returns the service-token parameter recorded on
+// the Horde coordinator instance, or "" when Horde is not provisioned or was
+// created before service tokens. A malformed recorded name is an error: it
+// would otherwise widen the CodeBuild role's SSM scope.
+func (c command) resolveHordeTokenParameter() (string, error) {
+	st, err := c.readState()
+	if err != nil {
+		return "", nil
+	}
+	m := st.GetModule("horde")
+	if m == nil {
+		return "", nil
+	}
+	inst, ok := stateutil.ResourceByType(m, "AWS::EC2::Instance")
+	if !ok {
+		return "", nil
+	}
+	name := inst.Properties["serviceTokenParameter"]
+	if name != "" && !horde.IsServiceTokenName(name) {
+		return "", fmt.Errorf("the Horde instance records a malformed service-token parameter %q; re-run 'fabrica horde create'", name)
+	}
+	return name, nil
 }
 
 func (c command) resolveHordeURL(ctx context.Context) string {

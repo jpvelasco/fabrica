@@ -562,11 +562,10 @@ aws ssm start-session --target <instance-id> \
 The `mongodb_password` in `.fabrica/horde-credentials.yaml` is validated but
 **not** applied: the MongoDB credentials live only on the instance.
 
-### Service token lifecycle
+### Service token for `horde submit` and `ci`
 
-`fabrica horde create` provisions a scoped `fabrica-ci` Horde service account;
-the token it publishes is the credential `horde submit` and the `ci` module
-authenticate with (that wiring lands in a follow-up change):
+`fabrica horde submit` and the `ci` CodeBuild project authenticate with a Horde
+service-account token, not the Admin password:
 
 1. `horde create` pre-creates a per-create SecureString,
    `/fabrica/horde/<create-nonce>/service-token`, holding a placeholder and the
@@ -580,7 +579,15 @@ authenticate with (that wiring lands in a follow-up change):
 3. The baked `globals.json` grants that claim only `ViewStream`, `CreateJob`,
    and `ViewJob` in its global ACL, so the token is not an administrator. Add
    stream-level ACL entries if your studio needs a narrower scope.
-4. `horde destroy` deletes the parameter just before the instance.
+4. `horde submit` reads the token from SSM (never under `--dry-run`) and sends
+   `Authorization: ServiceAccount <token>`. `ci setup` passes the parameter to
+   CodeBuild as the PARAMETER_STORE variable `HORDE_TOKEN`, resolved at build
+   start and masked in logs, and grants the CodeBuild role `ssm:GetParameters`
+   on that ARN.
+5. `horde destroy` deletes the parameter just before the instance.
+
+A coordinator created before this change records no parameter; `horde submit`
+then sends no credentials and prints a note. Re-create it to enable the token.
 
 ### Transport encryption (not yet)
 

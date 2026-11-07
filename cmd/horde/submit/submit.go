@@ -12,6 +12,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/horde/buildgraph"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
@@ -35,10 +36,12 @@ type command struct {
 	out            io.Writer
 
 	// seams for testing
-	readState   func() (*fabricastate.State, error)
-	hordeClient HordeClient
-	waitCtx     func(context.Context, time.Duration) error
-	now         func() time.Time
+	readState          func() (*fabricastate.State, error)
+	hordeClient        HordeClient
+	newClient          func(baseURL, token string) HordeClient
+	getSecureParameter func(ctx context.Context, name string) (string, error)
+	waitCtx            func(context.Context, time.Duration) error
+	now                func() time.Time
 }
 
 // New returns the "horde submit" subcommand.
@@ -57,6 +60,11 @@ Use --wait / -w to poll every 30 seconds until the job completes or errors
 the job finishes in error, the wait times out, or polling is cancelled (the
 job keeps running on the coordinator either way). Use --dry-run to preview
 the job and the coordinator address without submitting.
+
+The request authenticates with the fabrica-ci service-account token that the
+coordinator's cloud-init publishes to the SSM SecureString recorded at create
+time (/fabrica/horde/<create-nonce>/service-token); reading it requires
+ssm:GetParameter on that parameter. --dry-run never reads the token.
 
 The Horde coordinator must be reachable from this machine (VPN or same VPC).
 Run 'fabrica horde status' to confirm the coordinator is ready.`,
@@ -77,6 +85,9 @@ Run 'fabrica horde status' to confirm the coordinator is ready.`,
 				readState:      func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
 				waitCtx:        provision.WaitInterval,
 				now:            time.Now,
+			}
+			if rd, ok := rt.Provider.(cloud.SecureParameterReader); ok {
+				c.getSecureParameter = rd.GetSecureParameter
 			}
 			return c.run(cmd.Context())
 		},
@@ -110,8 +121,9 @@ func (c command) run(ctx context.Context) error {
 	// never opens a connection.
 	client := c.hordeClient
 	baseURL := ""
+	instRes, hasInst := stateutil.ResourceByType(m, "AWS::EC2::Instance")
+	tokenParam := instRes.Properties["serviceTokenParameter"]
 	if client == nil {
-		instRes, hasInst := stateutil.ResourceByType(m, "AWS::EC2::Instance")
 		if !hasInst || instRes.Identifier == "" {
 			return fmt.Errorf("Horde instance has no private IP yet. Run 'fabrica horde status' to check readiness.")
 		}
@@ -132,12 +144,20 @@ func (c command) run(ctx context.Context) error {
 	}
 
 	if c.dryRun {
-		c.printDryRun(job, baseURL)
+		c.printDryRun(job, baseURL, tokenParam)
 		return nil
 	}
 
 	if client == nil {
-		client = newHordeHTTPClient(baseURL, "")
+		token, err := c.serviceToken(ctx, tokenParam)
+		if err != nil {
+			return err
+		}
+		newClient := c.newClient
+		if newClient == nil {
+			newClient = func(baseURL, token string) HordeClient { return newHordeHTTPClient(baseURL, token) }
+		}
+		client = newClient(baseURL, token)
 	}
 
 	jobID, err := client.SubmitJob(ctx, job)
@@ -153,14 +173,45 @@ func (c command) run(ctx context.Context) error {
 	return c.pollUntilDone(ctx, client, jobID)
 }
 
+// serviceToken reads the fabrica-ci service-account token from the recorded
+// SSM SecureString. A coordinator created before service tokens records no
+// parameter; submit then sends no credentials, which only an unauthenticated
+// (pre-hardening) Horde accepts.
+func (c command) serviceToken(ctx context.Context, name string) (string, error) {
+	if name == "" {
+		fmt.Fprintln(c.out, "Note: this Horde coordinator records no service-token parameter (created before service tokens); submitting without credentials. Re-create it to enable authentication.")
+		return "", nil
+	}
+	if !horde.IsServiceTokenName(name) {
+		return "", fmt.Errorf("the recorded service-token parameter %q is not a per-create %s name; re-run 'fabrica horde create'", name, horde.ServiceTokenParameterPrefix)
+	}
+	if c.getSecureParameter == nil {
+		return "", fmt.Errorf("reading the Horde service token from SSM parameter %s requires a provider with SSM parameter support", name)
+	}
+	token, err := c.getSecureParameter(ctx, name)
+	if err != nil {
+		if errors.Is(err, cloud.ErrParameterNotFound) {
+			return "", fmt.Errorf("the Horde service-token parameter %s does not exist; re-run 'fabrica horde create'", name)
+		}
+		return "", fmt.Errorf("reading the Horde service token: %w", err)
+	}
+	if strings.TrimSpace(token) == "" || token == horde.ServiceTokenPlaceholder {
+		return "", fmt.Errorf("the coordinator has not published its service token to %s yet. Run 'fabrica horde status -w'; if it stays unpublished, check /var/log/fabrica-horde-init.log on the instance", name)
+	}
+	return token, nil
+}
+
 // printDryRun previews the job submission without contacting the coordinator.
-func (c command) printDryRun(job *buildgraph.BuildGraphJob, baseURL string) {
+func (c command) printDryRun(job *buildgraph.BuildGraphJob, baseURL, tokenParam string) {
 	fmt.Fprintln(c.out, "Horde submit (dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "  job:    %s\n", job.Name)
 	fmt.Fprintf(c.out, "  target: %s\n", job.Target)
 	if baseURL != "" {
 		fmt.Fprintf(c.out, "  coordinator: %s\n", baseURL)
+	}
+	if tokenParam != "" {
+		fmt.Fprintf(c.out, "  auth:   %s token from SSM %s\n", horde.ServiceTokenAuthScheme, tokenParam)
 	}
 	fmt.Fprintln(c.out, "Run without --dry-run to submit the job.")
 }
