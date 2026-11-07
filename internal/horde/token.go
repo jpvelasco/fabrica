@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 )
@@ -80,8 +81,12 @@ func ServiceTokenParameterARN(region, account, name string) (string, error) {
 // NewServiceTokenNonce returns a 16-byte random hex nonce that names a
 // per-create service-token parameter.
 func NewServiceTokenNonce() (string, error) {
+	return readServiceTokenNonce(rand.Reader)
+}
+
+func readServiceTokenNonce(r io.Reader) (string, error) {
 	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	if _, err := io.ReadFull(r, b[:]); err != nil {
 		return "", fmt.Errorf("generating service-token nonce: %w", err)
 	}
 	return hex.EncodeToString(b[:]), nil

@@ -295,6 +295,9 @@ func TestParameterStoreConfigError(t *testing.T) {
 	if err := p.DeleteParameter(context.Background(), "/fabrica/workstation/dcv-password"); err == nil || !strings.Contains(err.Error(), "no creds") {
 		t.Fatalf("delete err = %v", err)
 	}
+	if _, err := p.GetSecureParameter(context.Background(), "/fabrica/workstation/dcv-password"); err == nil || !strings.Contains(err.Error(), "no creds") {
+		t.Fatalf("get err = %v", err)
+	}
 }
 
 func TestPutSecureParameterRejectsEmptyName(t *testing.T) {
@@ -331,5 +334,44 @@ func TestGetSecureParameterNotFound(t *testing.T) {
 	_, err := testProviderWithParameter(m).GetSecureParameter(context.Background(), "/fabrica/horde/x/service-token")
 	if !errors.Is(err, fabricac.ErrParameterNotFound) {
 		t.Fatalf("err = %v, want ErrParameterNotFound", err)
+	}
+}
+
+func TestGetSecureParameterRejectsBadInput(t *testing.T) {
+	p := testProviderWithParameter(&mockParameter{})
+	if _, err := p.GetSecureParameter(context.Background(), "  "); err == nil {
+		t.Fatal("expected empty-name error")
+	}
+	if _, err := p.GetSecureParameter(context.Background(), "flat-name"); err == nil {
+		t.Fatal("expected hierarchical-name error")
+	}
+}
+
+func TestGetSecureParameterAPIError(t *testing.T) {
+	m := &mockParameter{getFn: func(context.Context, *ssm.GetParameterInput) (*ssm.GetParameterOutput, error) {
+		return nil, paramAPIError{code: "InternalServiceError"}
+	}}
+	_, err := testProviderWithParameter(m).GetSecureParameter(context.Background(), "/fabrica/horde/x/service-token")
+	if err == nil || !strings.Contains(err.Error(), "reading SSM parameter") {
+		t.Fatalf("err = %v, want reading-SSM-parameter error", err)
+	}
+	if errors.Is(err, fabricac.ErrParameterNotFound) {
+		t.Fatal("non-NotFound API error must not map to ErrParameterNotFound")
+	}
+}
+
+func TestGetSecureParameterEmptyResult(t *testing.T) {
+	m := &mockParameter{getFn: func(context.Context, *ssm.GetParameterInput) (*ssm.GetParameterOutput, error) {
+		return &ssm.GetParameterOutput{}, nil
+	}}
+	_, err := testProviderWithParameter(m).GetSecureParameter(context.Background(), "/fabrica/horde/x/service-token")
+	if err == nil || !strings.Contains(err.Error(), "returned no value") {
+		t.Fatalf("err = %v, want no-value error", err)
+	}
+	m2 := &mockParameter{getFn: func(context.Context, *ssm.GetParameterInput) (*ssm.GetParameterOutput, error) {
+		return &ssm.GetParameterOutput{Parameter: &ssmtypes.Parameter{}}, nil
+	}}
+	if _, err := testProviderWithParameter(m2).GetSecureParameter(context.Background(), "/fabrica/horde/x/service-token"); err == nil || !strings.Contains(err.Error(), "returned no value") {
+		t.Fatalf("err = %v, want no-value error for a parameter without a value", err)
 	}
 }
