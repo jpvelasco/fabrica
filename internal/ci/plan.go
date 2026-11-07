@@ -48,6 +48,13 @@ type CreatePlan struct {
 	// project is usable as soon as Horde is reachable.
 	HordeURL string
 
+	// HordeTokenParameter is the Horde coordinator's service-token SSM
+	// SecureString, read from Horde's state at setup time. When set, builds
+	// receive it as the PARAMETER_STORE variable HORDE_TOKEN and the role may
+	// read exactly that parameter. Empty for a coordinator created before
+	// service tokens.
+	HordeTokenParameter string
+
 	// VPCID and SubnetID place the CodeBuild project inside a VPC so builds
 	// can reach a private-IP Horde. SGName is the project's security group.
 	VPCID    string

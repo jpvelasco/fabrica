@@ -37,7 +37,12 @@ type CodeBuildProjectSpec struct {
 	BuildTimeout   int
 	Buildspec      string
 	EnvDefaults    map[string]string
-	Tags           map[string]string
+	// SecretEnv maps environment-variable names to SSM SecureString names.
+	// They are rendered as PARAMETER_STORE variables, so CodeBuild resolves
+	// the value at build start and masks it in logs; the value never enters
+	// the project definition.
+	SecretEnv map[string]string
+	Tags      map[string]string
 
 	// VpcConfig, when non-empty, places the project's builds inside a VPC.
 	// Required for builds to reach a private-IP Horde coordinator. When empty,

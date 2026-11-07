@@ -50,12 +50,19 @@ func (p *awsProvider) EnsureProject(ctx context.Context, spec fabricac.CodeBuild
 		return false, nil
 	}
 
-	envVars := make([]codebuildtypes.EnvironmentVariable, 0, len(spec.EnvDefaults))
+	envVars := make([]codebuildtypes.EnvironmentVariable, 0, len(spec.EnvDefaults)+len(spec.SecretEnv))
 	for k, v := range spec.EnvDefaults {
 		envVars = append(envVars, codebuildtypes.EnvironmentVariable{
 			Name:  aws.String(k),
 			Value: aws.String(v),
 			Type:  codebuildtypes.EnvironmentVariableTypePlaintext,
+		})
+	}
+	for k, param := range spec.SecretEnv {
+		envVars = append(envVars, codebuildtypes.EnvironmentVariable{
+			Name:  aws.String(k),
+			Value: aws.String(param),
+			Type:  codebuildtypes.EnvironmentVariableTypeParameterStore,
 		})
 	}
 	// Ensure FabricaVersion is tagged, mirroring the Cloud Control path
