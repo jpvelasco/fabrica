@@ -182,3 +182,11 @@ func TestRoleDesiredStateReadsOnlyTheHordeToken(t *testing.T) {
 		t.Error("no token parameter, but the role can read SSM parameters")
 	}
 }
+
+func TestRoleDesiredStateRejectsMalformedHordeTokenParameter(t *testing.T) {
+	plan := testPlan()
+	plan.HordeTokenParameter = "/fabrica/horde/not-a-per-create-name/service-token" // #nosec G101 -- SSM parameter name fixture, not a credential
+	if _, err := RoleDesiredState(plan); err == nil || !strings.Contains(err.Error(), "not a per-create") {
+		t.Fatalf("err = %v", err)
+	}
+}

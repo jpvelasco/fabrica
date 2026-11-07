@@ -643,6 +643,24 @@ func TestHordeHTTPClientSubmitForbidden(t *testing.T) {
 	assert.Contains(t, err.Error(), "auth")
 }
 
+func TestHordeHTTPClientRejectsServiceAccountToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "ServiceAccount tok-rejected" {
+			t.Errorf("Authorization = %q", got)
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	client := newHordeHTTPClient(srv.URL, "tok-rejected")
+	_, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{Name: "A", Target: "T"})
+	if err == nil {
+		t.Fatal("expected auth error, got nil")
+	}
+	assert.Contains(t, err.Error(), "rejected the service-account token")
+	assert.Contains(t, err.Error(), "globals.json")
+}
+
 func TestHordeHTTPClientSubmitNon2xx(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -924,4 +942,47 @@ func TestSubmitDryRunNeverReadsServiceToken(t *testing.T) {
 		t.Error("dry run submitted")
 	}
 	assert.Contains(t, out.String(), "ServiceAccount token from SSM "+testTokenParam)
+}
+
+func TestSubmitRejectsMalformedServiceTokenParameter(t *testing.T) {
+	var out bytes.Buffer
+	c, client, _ := tokenTestCommand(t, &out, "/fabrica/horde/not-a-per-create-name/service-token", func(context.Context, string) (string, error) {
+		t.Error("a malformed parameter name must not reach SSM")
+		return "", nil
+	})
+	err := c.run(context.Background())
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("not a per-create")) ||
+		!bytes.Contains([]byte(err.Error()), []byte("re-run 'fabrica horde create'")) {
+		t.Fatalf("err = %v", err)
+	}
+	if client.submitCalls != 0 {
+		t.Error("submitted with a malformed parameter name")
+	}
+}
+
+func TestSubmitRequiresSSMParameterReader(t *testing.T) {
+	var out bytes.Buffer
+	c, client, _ := tokenTestCommand(t, &out, testTokenParam, nil)
+	err := c.run(context.Background())
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("requires a provider with SSM parameter support")) {
+		t.Fatalf("err = %v", err)
+	}
+	if client.submitCalls != 0 {
+		t.Error("submitted without a token reader")
+	}
+}
+
+func TestSubmitSurfacesServiceTokenReadError(t *testing.T) {
+	var out bytes.Buffer
+	c, client, _ := tokenTestCommand(t, &out, testTokenParam, func(context.Context, string) (string, error) {
+		return "", errors.New("ssm denied")
+	})
+	err := c.run(context.Background())
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("reading the Horde service token")) ||
+		!bytes.Contains([]byte(err.Error()), []byte("ssm denied")) {
+		t.Fatalf("err = %v", err)
+	}
+	if client.submitCalls != 0 {
+		t.Error("submitted when the token read failed")
+	}
 }
