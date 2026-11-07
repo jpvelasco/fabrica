@@ -220,6 +220,47 @@ func SSMParameterReadPolicy(policyName, parameterARN string) map[string]any {
 	}
 }
 
+// SSMParameterWritePolicy is the inline policy that lets an instance overwrite
+// one SecureString it does not own the lifecycle of: Fabrica creates and tags
+// the parameter, the instance only publishes its value. resource must be the
+// parameter ARN, not a wildcard: the Horde service token is the only caller.
+func SSMParameterWritePolicy(policyName, parameterARN string) map[string]any {
+	return map[string]any{
+		"PolicyName": policyName,
+		"PolicyDocument": map[string]any{
+			"Version": "2012-10-17",
+			"Statement": []map[string]any{
+				{
+					"Sid":      "PublishSecureParameter",
+					"Effect":   "Allow",
+					"Action":   []string{"ssm:PutParameter"},
+					"Resource": []string{parameterARN},
+				},
+			},
+		},
+	}
+}
+
+// CodeBuildParameterReadPolicy is the inline policy a CodeBuild role needs to
+// resolve one PARAMETER_STORE environment variable. CodeBuild reads such
+// variables with ssm:GetParameters; resource must be the parameter ARN.
+func CodeBuildParameterReadPolicy(policyName, parameterARN string) map[string]any {
+	return map[string]any{
+		"PolicyName": policyName,
+		"PolicyDocument": map[string]any{
+			"Version": "2012-10-17",
+			"Statement": []map[string]any{
+				{
+					"Sid":      "ReadBuildSecret",
+					"Effect":   "Allow",
+					"Action":   []string{"ssm:GetParameters"},
+					"Resource": []string{parameterARN},
+				},
+			},
+		},
+	}
+}
+
 // S3BucketPolicy builds an inline policy document that grants S3 access to a
 // specific bucket. bucketName is the bucket name; bucketActions are the actions
 // allowed on the bucket ARN (e.g. "s3:ListBucket"); objectActions are the

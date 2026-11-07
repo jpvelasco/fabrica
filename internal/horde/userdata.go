@@ -2,6 +2,7 @@ package horde
 
 import (
 	"fmt"
+	"regexp"
 	"text/template"
 
 	"github.com/jpvelasco/fabrica/internal/userdata"
@@ -11,10 +12,24 @@ import (
 // MongoPassword is validated (non-empty) but never rendered: the MongoDB and
 // Horde Admin passwords are generated on the instance at first boot, so no
 // secret travels through user data. Port is used for the health check.
+//
+// ServiceTokenParameter, when set, makes cloud-init create the fabrica-ci
+// service account and publish its token to that per-create SSM SecureString
+// in Region. Only the parameter name is rendered, never a token.
 type UserDataConfig struct {
-	MongoPassword string
-	Port          int
+	MongoPassword         string
+	Port                  int
+	ServiceTokenParameter string
+	Region                string
 }
+
+// AccountName, GroupClaimType, and GroupClaimValue expose the service-account
+// constants to the template.
+func (UserDataConfig) AccountName() string     { return ServiceAccountName }
+func (UserDataConfig) GroupClaimType() string  { return ServiceAccountGroupClaimType }
+func (UserDataConfig) GroupClaimValue() string { return ServiceAccountGroup }
+
+var regionPattern = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]$`)
 
 var userDataRenderer = userdata.New(template.Must(template.New("horde-userdata").Parse(`#!/bin/bash
 set -euo pipefail
@@ -81,15 +96,64 @@ done
 # In built-in account mode the anonymous admin-create endpoint is first-caller-
 # wins, so create the Admin account now, while the ports are loopback-only.
 # 403 means the account already exists (a re-run).
-ADMIN_PASSWORD=$(cat /etc/horde/admin-password)
+# Request bodies carrying secrets go through 0600 files in a private temp
+# directory, never through command-line arguments or the log.
+WORK=$(mktemp -d /run/fabrica-horde.XXXXXX)
+trap 'rm -rf "$WORK"' EXIT
+python3 - /etc/horde/admin-password "$WORK" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    password = f.read().strip()
+with open(sys.argv[2] + "/create.json", "w") as f:
+    json.dump({"password": password}, f)
+with open(sys.argv[2] + "/login.json", "w") as f:
+    json.dump({"username": "Admin", "password": password}, f)
+PY
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
-  -d "{\"password\":\"${ADMIN_PASSWORD}\"}" \
+  --data @"$WORK/create.json" \
   http://127.0.0.1:{{ .Port }}/api/v1/accounts/admin/create || true)
 case "$code" in
   200|403) ;;
   *) echo "ERROR: Horde Admin account creation failed (HTTP $code)"; exit 1 ;;
 esac
-unset ADMIN_PASSWORD
+{{- if .ServiceTokenParameter }}
+
+# Create the {{ .AccountName }} service account for 'fabrica horde submit' and
+# the ci CodeBuild project, still on loopback. Its only claim is the
+# {{ .GroupClaimValue }} group, which the baked globals.json ACL limits to
+# creating and viewing jobs, so the token is not an administrator. The token
+# goes from Horde's response straight into the per-create SSM SecureString.
+if [ ! -e /etc/horde/service-token-published ]; then
+  code=$(curl -s -o /dev/null -w '%{http_code}' -c "$WORK/cookies" -X POST -H 'Content-Type: application/json' \
+    --data @"$WORK/login.json" http://127.0.0.1:{{ .Port }}/account/login/dashboard || true)
+  case "$code" in
+    200|302) ;;
+    *) echo "ERROR: Horde Admin login failed (HTTP $code)"; exit 1 ;;
+  esac
+  code=$(curl -s -o "$WORK/account.json" -w '%{http_code}' -b "$WORK/cookies" -X POST -H 'Content-Type: application/json' \
+    -d '{"name":"{{ .AccountName }}","description":"fabrica horde submit and ci","claims":[{"type":"{{ .GroupClaimType }}","value":"{{ .GroupClaimValue }}"}],"enabled":true}' \
+    http://127.0.0.1:{{ .Port }}/api/v1/serviceaccounts || true)
+  if [ "$code" != 200 ]; then
+    echo "ERROR: Horde service-account creation failed (HTTP $code)"
+    exit 1
+  fi
+  python3 - "$WORK/account.json" "$WORK/token" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    token = json.load(f).get("secretToken", "")
+if not token:
+    sys.exit("ERROR: Horde returned no service-account token")
+with open(sys.argv[2], "w") as f:
+    f.write(token)
+PY
+  /usr/local/bin/aws ssm put-parameter --region {{ .Region }} --name {{ .ServiceTokenParameter }} \
+    --type SecureString --overwrite --value "file://$WORK/token" > /dev/null
+  touch /etc/horde/service-token-published
+  echo "Published the Horde service-account token to SSM parameter {{ .ServiceTokenParameter }}"
+fi
+{{- end }}
+rm -rf "$WORK"
+trap - EXIT
 
 # Publish Horde on the network (the security group still limits the source CIDR).
 sed -i 's/^HORDE_BIND_ADDRESS=.*/HORDE_BIND_ADDRESS=0.0.0.0/' /etc/horde/.env
@@ -108,6 +172,16 @@ touch /var/lib/cloud/instance/horde-ready
 func (cfg *UserDataConfig) validate() error {
 	if cfg.MongoPassword == "" {
 		return fmt.Errorf("MongoPassword must not be empty")
+	}
+	if cfg.ServiceTokenParameter != "" {
+		// Both values are rendered into a root shell script: accept only the
+		// exact per-create name shape and a real Region code.
+		if !IsServiceTokenName(cfg.ServiceTokenParameter) {
+			return fmt.Errorf("ServiceTokenParameter %q is not a per-create %s name", cfg.ServiceTokenParameter, ServiceTokenParameterPrefix)
+		}
+		if !regionPattern.MatchString(cfg.Region) {
+			return fmt.Errorf("Region %q is not a valid AWS Region (required with ServiceTokenParameter)", cfg.Region)
+		}
 	}
 	return nil
 }
