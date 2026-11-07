@@ -1,11 +1,14 @@
 package destroy
 
 import (
+	"context"
 	"io"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/horde"
+	"github.com/jpvelasco/fabrica/internal/oplog"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -22,6 +25,43 @@ var spec = teardown.Spec{
 	SuccessMessage: "Unreal Horde build coordinator destroyed.",
 	// Instance → profile → role → SG (reverse of create: SG → role → profile → instance).
 	ResourceOrder: hordeResourceOrder,
+	WireCommand:   wireServiceTokenDelete,
+}
+
+// wireServiceTokenDelete removes the service-token SecureString. The
+// parameter is not a Cloud Control resource, so this hook handles only that
+// type; every other type falls through. A missing parameter is success.
+func wireServiceTokenDelete(tc *teardown.Command, rt globals.Runtime) {
+	if rt.Provider == nil {
+		return
+	}
+	store, ok := rt.Provider.(cloud.ParameterStore)
+	if !ok {
+		return
+	}
+	tc.SDKDeleteFunc = func(ctx context.Context, typeName, identifier string) error {
+		if typeName != cloud.TypeAWSSSMParameter {
+			return cloud.ErrNotHandled
+		}
+		return store.DeleteParameter(ctx, identifier)
+	}
+}
+
+// serviceTokenParameter returns the recorded service-token parameter as a
+// teardown resource. Its name lives only on the coordinator instance record,
+// which is dropped from state when the instance is deleted, so it is deleted
+// just before the instance; a malformed name is skipped so a hand-edited
+// state entry cannot widen the delete target.
+func serviceTokenParameter(r fabricastate.ModuleResource) (cloud.Resource, bool) {
+	name := r.Properties["serviceTokenParameter"]
+	if name == "" {
+		return cloud.Resource{}, false
+	}
+	if !horde.IsServiceTokenName(name) {
+		oplog.WithModule("horde").Warn("skipping service-token parameter: the recorded name is not a well-formed per-create name", "name", name)
+		return cloud.Resource{}, false
+	}
+	return cloud.Resource{TypeName: cloud.TypeAWSSSMParameter, Identifier: name}, true
 }
 
 func hordeResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
@@ -64,10 +104,15 @@ func hordeResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 		}},
 	}
 
-	out := make([]cloud.Resource, 0, len(m.Resources))
+	out := make([]cloud.Resource, 0, len(m.Resources)+1)
 	for _, p := range phases {
 		for _, r := range m.Resources {
 			if p.matchFn(r) && r.Identifier != "" {
+				if p.name == "instance" {
+					if param, ok := serviceTokenParameter(r); ok {
+						out = append(out, param)
+					}
+				}
 				out = append(out, cloud.Resource{TypeName: r.TypeName, Identifier: r.Identifier})
 			}
 		}
@@ -90,7 +135,10 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Short: "Permanently delete the Unreal Horde build coordinator",
 		Long: `Permanently delete the Unreal Horde build coordinator and all its AWS resources.
 
-Resources are deleted in reverse-creation order to respect dependencies:
+Resources are deleted in reverse-creation order to respect dependencies.
+The service-token SSM SecureString (/fabrica/horde/<create-nonce>/service-token)
+is deleted just before the coordinator instance, whose state record holds its
+name:
   1. Agent Security Group Ingress (if agents exist)
   2. Scaling Policies (if queue scaling is enabled)
   3. CloudWatch Alarms (if queue scaling is enabled)

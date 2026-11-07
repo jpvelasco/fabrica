@@ -1,12 +1,15 @@
 package destroy
 
 import (
+	"context"
+	"errors"
 	"io"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
@@ -193,5 +196,67 @@ func TestHordeResourceOrder_NoScalingResources(t *testing.T) {
 	// Instance should be first (destroyed before IAM/SG).
 	if len(resources) > 0 && resources[0].TypeName != "AWS::EC2::Instance" {
 		t.Errorf("first resource = %s, want AWS::EC2::Instance", resources[0].TypeName)
+	}
+}
+
+func TestHordeResourceOrderDeletesServiceTokenBeforeInstance(t *testing.T) {
+	name := "/fabrica/horde/0123456789abcdef0123456789abcdef/service-token"
+	m := &fabricastate.ModuleState{Resources: []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-1"},
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-1", Properties: map[string]string{"serviceTokenParameter": name}},
+	}}
+	got := hordeResourceOrder(m)
+	if len(got) != 3 || got[0].TypeName != cloud.TypeAWSSSMParameter || got[0].Identifier != name || got[1].Identifier != "i-1" {
+		t.Fatalf("order = %+v", got)
+	}
+}
+
+func TestHordeResourceOrderSkipsMalformedServiceToken(t *testing.T) {
+	m := &fabricastate.ModuleState{Resources: []fabricastate.ModuleResource{
+		{TypeName: "AWS::EC2::Instance", Identifier: "i-1", Properties: map[string]string{"serviceTokenParameter": "/fabrica/*"}},
+	}}
+	for _, r := range hordeResourceOrder(m) {
+		if r.TypeName == cloud.TypeAWSSSMParameter {
+			t.Fatalf("malformed parameter name scheduled for delete: %+v", r)
+		}
+	}
+}
+
+func TestNewTeardownDeletesServiceTokenParameter(t *testing.T) {
+	provider := &testutil.TestProvider{}
+	tc := NewTeardown(globals.Runtime{Config: config.Defaults(), Provider: provider}, io.Discard)
+	if tc.SDKDeleteFunc == nil {
+		t.Fatal("SDKDeleteFunc must delete the service-token parameter")
+	}
+	if err := tc.SDKDeleteFunc(context.Background(), cloud.TypeAWSEC2Instance, "i-1"); !errors.Is(err, cloud.ErrNotHandled) {
+		t.Fatalf("instance delete = %v, want ErrNotHandled", err)
+	}
+	name := "/fabrica/horde/0123456789abcdef0123456789abcdef/service-token"
+	if err := tc.SDKDeleteFunc(context.Background(), cloud.TypeAWSSSMParameter, name); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.DeletedParameters) != 1 || provider.DeletedParameters[0] != name {
+		t.Fatalf("DeletedParameters = %v", provider.DeletedParameters)
+	}
+}
+
+// plainProvider satisfies cloud.Provider without the ParameterStore
+// capability, so wireServiceTokenDelete must leave the SDK delete seam unset.
+type plainProvider struct{}
+
+func (plainProvider) Name() string { return "plain" }
+
+func (plainProvider) Identity(_ context.Context) (string, string, string, error) {
+	return "123456789012", "arn:aws:iam::123456789012:root", "us-east-1", nil
+}
+
+func (plainProvider) Resources() cloud.ResourceClient { return nil }
+
+func TestWireServiceTokenDeleteWithoutParameterStore(t *testing.T) {
+	rt := globals.Runtime{Config: config.Defaults(), Provider: plainProvider{}}
+	tc := &teardown.Command{}
+	wireServiceTokenDelete(tc, rt)
+	if tc.SDKDeleteFunc != nil {
+		t.Fatal("SDKDeleteFunc must stay nil when the provider has no SSM parameter support")
 	}
 }

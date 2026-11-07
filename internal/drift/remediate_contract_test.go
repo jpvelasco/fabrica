@@ -188,3 +188,27 @@ func TestRebuildInstanceDesiredState_Horde_EmptyMongoPassword(t *testing.T) {
 		t.Fatalf("expected a cloud-init render error, got %v", err)
 	}
 }
+
+// A rebuilt Horde coordinator republishes its service token to the recorded
+// per-create parameter, using the account region for the SSM call.
+func TestRebuildInstanceDesiredState_Horde_ServiceTokenParameter(t *testing.T) {
+	const tokenParam = "/fabrica/horde/0123456789abcdef0123456789abcdef/service-token" // #nosec G101 -- parameter-name fixture, not a credential
+	mod := hordeModuleFixture()
+	mod.Resources[2].Properties["serviceTokenParameter"] = tokenParam
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.Region = "us-west-2"
+	st := state.NewState("123456789012", "us-east-1")
+	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
+
+	ds, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, st, cfg, nil)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	ud := decodedUserData(t, ds)
+	if !strings.Contains(ud, tokenParam) {
+		t.Errorf("cloud-init must publish to the recorded service-token parameter, got:\n%s", ud)
+	}
+	if !strings.Contains(ud, "--region us-west-2") {
+		t.Errorf("cloud-init must use the account region for the SSM put, got:\n%s", ud)
+	}
+}

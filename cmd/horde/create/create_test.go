@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -39,6 +40,10 @@ func newTestCommand(out *bytes.Buffer, provider cloud.Provider, st *fabricastate
 		// root device for the encrypted root mapping (#513).
 		if insp, ok := provider.(cloud.ImageInspector); ok {
 			c.inspectImage = insp.DescribeImage
+		}
+		if store, ok := provider.(cloud.ParameterStore); ok {
+			c.putSecureParameter = store.PutSecureParameter
+			c.deleteParameter = store.DeleteParameter
 		}
 	}
 	return c
@@ -679,5 +684,207 @@ func TestCreateInspectsTheConfiguredAMI(t *testing.T) {
 	}
 	if len(provider.DescribeImageIDs) != 1 || provider.DescribeImageIDs[0] != "ami-test123" {
 		t.Errorf("DescribeImageIDs = %v, want one call for the configured AMI", provider.DescribeImageIDs)
+	}
+}
+
+const testNonce = "0123456789abcdef0123456789abcdef"
+
+func TestCreateServiceTokenParameterLifecycle(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{}
+	st := testutil.NewTestState()
+	capture := &testutil.StateWriteCapture{}
+	c := newTestCommand(&out, provider, st)
+	c.assumeYes = true
+	c.writeState = capture.WriteFunc()
+	c.newNonce = func() (string, error) { return testNonce, nil }
+	c.runtime.Config.Cloud.AWS.Tags = map[string]string{"project": "studio"}
+	var gotUD horde.UserDataConfig
+	c.genUserData = func(cfg horde.UserDataConfig) (string, error) { gotUD = cfg; return "dWQ=", nil }
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	want := "/fabrica/horde/" + testNonce + "/service-token"
+	if len(provider.PutParameters) != 1 {
+		t.Fatalf("PutParameters = %d, want 1", len(provider.PutParameters))
+	}
+	p := provider.PutParameters[0]
+	if p.Name != want || p.Value != horde.ServiceTokenPlaceholder || p.Tags["project"] != "studio" {
+		t.Errorf("parameter = %+v", p)
+	}
+	if gotUD.ServiceTokenParameter != want || gotUD.Region == "" {
+		t.Errorf("cloud-init config = %+v", gotUD)
+	}
+	inst := capture.Last().GetModule("horde").Resources[3]
+	if inst.Properties["serviceTokenParameter"] != want {
+		t.Errorf("instance properties = %v", inst.Properties)
+	}
+	for _, r := range provider.Created {
+		if strings.Contains(string(r.DesiredState), horde.ServiceTokenPlaceholder) {
+			t.Errorf("%s desired state carries the parameter value", r.TypeName)
+		}
+	}
+	if len(provider.DeletedParameters) != 0 {
+		t.Errorf("successful create deleted %v", provider.DeletedParameters)
+	}
+}
+
+func TestCreateSGFailureDeletesServiceTokenParameter(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{}
+	provider.CreateErr = map[string]error{"AWS::EC2::SecurityGroup": errors.New("boom")}
+	c := newTestCommand(&out, provider, testutil.NewTestState())
+	c.assumeYes = true
+	c.newNonce = func() (string, error) { return testNonce, nil }
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected an error")
+	}
+	if len(provider.DeletedParameters) != 1 || provider.DeletedParameters[0] != "/fabrica/horde/"+testNonce+"/service-token" {
+		t.Errorf("DeletedParameters = %v", provider.DeletedParameters)
+	}
+}
+
+func TestCreateKeepsServiceTokenOnceInstanceExists(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{}
+	c := newTestCommand(&out, provider, testutil.NewTestState())
+	c.assumeYes = true
+	c.newNonce = func() (string, error) { return testNonce, nil }
+	writes := 0
+	c.writeState = func(*fabricastate.State) error {
+		writes++
+		if writes == 4 { // the state write after the instance is created
+			return errors.New("state write failed")
+		}
+		return nil
+	}
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected an error")
+	}
+	if len(provider.DeletedParameters) != 0 {
+		t.Errorf("the instance exists, but create deleted %v", provider.DeletedParameters)
+	}
+}
+
+func TestCreateRequiresParameterStore(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{}
+	c := newTestCommand(&out, provider, testutil.NewTestState())
+	c.assumeYes = true
+	c.putSecureParameter = nil
+	c.deleteParameter = nil
+	if err := c.run(context.Background()); err == nil || !strings.Contains(err.Error(), "SSM parameter support") {
+		t.Fatalf("err = %v", err)
+	}
+	if provider.CreateCalls != 0 {
+		t.Errorf("CreateCalls = %d, want 0", provider.CreateCalls)
+	}
+}
+
+// TestCreateNonceFailure verifies a nonce-generation failure aborts before
+// any write and surfaces the cause.
+func TestCreateNonceFailure(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{}
+	c := newTestCommand(&out, provider, testutil.NewTestState())
+	c.assumeYes = true
+	c.newNonce = func() (string, error) { return "", errors.New("nonce unavailable") }
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when nonce generation fails")
+	}
+	assert.Contains(t, err.Error(), "nonce unavailable")
+	if len(provider.PutParameters) != 0 {
+		t.Fatalf("PutParameters = %v, want none", provider.PutParameters)
+	}
+	if provider.CreateCalls != 0 {
+		t.Fatalf("CreateCalls = %d, want 0 (the nonce precedes every write)", provider.CreateCalls)
+	}
+}
+
+// TestCreateMalformedNonceRejected verifies a nonce that fails the per-create
+// name shape is rejected before the parameter is created.
+func TestCreateMalformedNonceRejected(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{}
+	c := newTestCommand(&out, provider, testutil.NewTestState())
+	c.assumeYes = true
+	c.newNonce = func() (string, error) { return "not-hex-32", nil }
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error for a malformed nonce")
+	}
+	assert.Contains(t, err.Error(), "nonce must be 32 lowercase hex characters")
+	if len(provider.PutParameters) != 0 {
+		t.Fatalf("PutParameters = %v, want none", provider.PutParameters)
+	}
+	if provider.CreateCalls != 0 {
+		t.Fatalf("CreateCalls = %d, want 0", provider.CreateCalls)
+	}
+}
+
+// TestCreatePutServiceTokenParameterFailure verifies a SecureString create
+// failure fails the run with the parameter name and cause, before any
+// resource exists.
+func TestCreatePutServiceTokenParameterFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{
+		TestProvider: testutil.TestProvider{
+			PutParameterErr: errors.New("ssm denied"),
+		},
+	}
+	c := newTestCommand(&out, provider, testutil.NewTestState())
+	c.assumeYes = true
+	c.newNonce = func() (string, error) { return testNonce, nil }
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when the SSM parameter cannot be created")
+	}
+	assert.Contains(t, err.Error(), "creating the service-token SSM parameter")
+	assert.Contains(t, err.Error(), "/fabrica/horde/"+testNonce+"/service-token")
+	assert.Contains(t, err.Error(), "ssm denied")
+	if provider.CreateCalls != 0 {
+		t.Fatalf("CreateCalls = %d, want 0 (the parameter precedes every resource)", provider.CreateCalls)
+	}
+}
+
+// TestCreateInstanceFailureAndParameterDeleteFailure verifies the compound
+// error when the instance create fails and the placeholder cleanup fails too.
+func TestCreateInstanceFailureAndParameterDeleteFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{
+		TestProvider: testutil.TestProvider{
+			CreateErr: map[string]error{
+				cloud.TypeAWSEC2Instance: errors.New("quota exceeded"),
+			},
+			DeleteParameterErr: errors.New("ssm delete denied"),
+		},
+	}
+	c := newTestCommand(&out, provider, testutil.NewTestState())
+	c.assumeYes = true
+	c.newNonce = func() (string, error) { return testNonce, nil }
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when the instance create and the parameter cleanup both fail")
+	}
+	assert.Contains(t, err.Error(), "creating EC2 instance")
+	assert.Contains(t, err.Error(), "quota exceeded")
+	assert.Contains(t, err.Error(), "also failed to delete SSM parameter")
+	assert.Contains(t, err.Error(), "/fabrica/horde/"+testNonce+"/service-token")
+	assert.Contains(t, err.Error(), "ssm delete denied")
+	if len(provider.DeletedParameters) != 0 {
+		t.Fatalf("DeletedParameters = %v, want none", provider.DeletedParameters)
+	}
+	if provider.CreateCalls != 4 {
+		t.Fatalf("CreateCalls = %d, want 4 (SG, role, profile, plus the failed instance attempt)", provider.CreateCalls)
 	}
 }
