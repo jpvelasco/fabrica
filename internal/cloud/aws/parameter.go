@@ -24,12 +24,16 @@ import (
 // left an orphan or two creates raced on one nonce) and fails loudly so the
 // operator can delete the orphan via AWS Console/CLI — never a blind
 // overwrite of a live instance's secret.
-var _ fabricac.ParameterStore = (*awsProvider)(nil)
+var (
+	_ fabricac.ParameterStore        = (*awsProvider)(nil)
+	_ fabricac.SecureParameterReader = (*awsProvider)(nil)
+)
 
 type parameterClient interface {
 	PutParameter(ctx context.Context, params *ssm.PutParameterInput, optFns ...func(*ssm.Options)) (*ssm.PutParameterOutput, error)
 	DeleteParameter(ctx context.Context, params *ssm.DeleteParameterInput, optFns ...func(*ssm.Options)) (*ssm.DeleteParameterOutput, error)
 	AddTagsToResource(ctx context.Context, params *ssm.AddTagsToResourceInput, optFns ...func(*ssm.Options)) (*ssm.AddTagsToResourceOutput, error)
+	GetParameter(ctx context.Context, params *ssm.GetParameterInput, optFns ...func(*ssm.Options)) (*ssm.GetParameterOutput, error)
 }
 
 type parameterClientFactory func(aws.Config) parameterClient
@@ -84,6 +88,33 @@ func (p *awsProvider) PutSecureParameter(ctx context.Context, param fabricac.Sec
 		return fmt.Errorf("tagging SSM parameter %s: %w", name, err)
 	}
 	return nil
+}
+
+// GetSecureParameter returns the decrypted SecureString value. The value is
+// never included in an error string.
+func (p *awsProvider) GetSecureParameter(ctx context.Context, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || !strings.HasPrefix(name, "/") {
+		return "", fmt.Errorf("SSM parameter name must be a non-empty hierarchical name starting with /")
+	}
+	cfg, err := p.stateBackendConfig(ctx)
+	if err != nil {
+		return "", err
+	}
+	out, err := p.parameterClient(cfg).GetParameter(ctx, &ssm.GetParameterInput{
+		Name:           aws.String(name),
+		WithDecryption: aws.Bool(true),
+	})
+	if err != nil {
+		if isParameterNotFound(err) {
+			return "", fmt.Errorf("SSM parameter %s: %w", name, fabricac.ErrParameterNotFound)
+		}
+		return "", fmt.Errorf("reading SSM parameter %s: %w", name, err)
+	}
+	if out.Parameter == nil || out.Parameter.Value == nil {
+		return "", fmt.Errorf("SSM parameter %s returned no value", name)
+	}
+	return *out.Parameter.Value, nil
 }
 
 // DeleteParameter removes the SecureString. ParameterNotFound is success.

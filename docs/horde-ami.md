@@ -562,6 +562,35 @@ aws ssm start-session --target <instance-id> \
 The `mongodb_password` in `.fabrica/horde-credentials.yaml` is validated but
 **not** applied: the MongoDB credentials live only on the instance.
 
+### Service token lifecycle
+
+`fabrica horde create` provisions a scoped `fabrica-ci` Horde service account;
+the token it publishes is the credential `horde submit` and the `ci` module
+authenticate with (that wiring lands in a follow-up change):
+
+1. `horde create` pre-creates a per-create SecureString,
+   `/fabrica/horde/<create-nonce>/service-token`, holding a placeholder and the
+   operator's tags. It records the name on the instance in state. The instance
+   role may only `ssm:PutParameter` that one ARN.
+2. Cloud-init, still on loopback, logs in as `Admin`, creates the `fabrica-ci`
+   service account with the single claim
+   `http://epicgames.com/ue/horde/group: fabrica-ci`, and overwrites the
+   placeholder with the returned token. The token never appears in user data,
+   the AMI, Cloud Control desired state, Fabrica state, or the init log.
+3. The baked `globals.json` grants that claim only `ViewStream`, `CreateJob`,
+   and `ViewJob` in its global ACL, so the token is not an administrator. Add
+   stream-level ACL entries if your studio needs a narrower scope.
+4. `horde destroy` deletes the parameter just before the instance.
+
+### Transport encryption (not yet)
+
+Horde is served over plain HTTP on 5000 and cleartext gRPC on 5002, so the
+service token, the Admin password at login, and job payloads cross the VPC
+unencrypted at the application layer. `horde.allowedCidr` limits who can reach
+the ports, and AWS does not let one instance sniff another's VPC traffic, but
+this is not a substitute for TLS. Serving Horde over TLS (certificate source,
+agent trust, rotation) is planned as separate work.
+
 AMIs baked before this change contain the old `--noauth` compose file and keep
 the old behaviour. Re-run `fabrica horde ami build` and recreate the instance.
 

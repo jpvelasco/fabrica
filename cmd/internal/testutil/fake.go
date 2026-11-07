@@ -38,6 +38,10 @@ type TestProvider struct {
 
 	// Parameter Store seam (cloud.ParameterStore). PutParameterErr and
 	// DeleteParameterErr inject failures; the slices record successful calls.
+	// SecureParameters backs GetSecureParameter (cloud.SecureParameterReader);
+	// GetParameterErr injects a read failure.
+	SecureParameters   map[string]string
+	GetParameterErr    error
 	PutParameters      []cloud.SecureParameter
 	PutParameterErr    error
 	DeletedParameters  []string
@@ -53,8 +57,9 @@ type TestProvider struct {
 }
 
 var (
-	_ cloud.ParameterStore = (*TestProvider)(nil)
-	_ cloud.StateStore     = (*TestProvider)(nil)
+	_ cloud.ParameterStore        = (*TestProvider)(nil)
+	_ cloud.SecureParameterReader = (*TestProvider)(nil)
+	_ cloud.StateStore            = (*TestProvider)(nil)
 )
 
 func (f *TestProvider) Name() string { return "fake" }
@@ -86,6 +91,18 @@ func (f *TestProvider) PutSecureParameter(_ context.Context, p cloud.SecureParam
 	}
 	f.PutParameters = append(f.PutParameters, p)
 	return nil
+}
+
+// GetSecureParameter returns SecureParameters[name], or an error wrapping
+// cloud.ErrParameterNotFound when it is absent.
+func (f *TestProvider) GetSecureParameter(_ context.Context, name string) (string, error) {
+	if f.GetParameterErr != nil {
+		return "", f.GetParameterErr
+	}
+	if v, ok := f.SecureParameters[name]; ok {
+		return v, nil
+	}
+	return "", fmt.Errorf("SSM parameter %s: %w", name, cloud.ErrParameterNotFound)
 }
 
 // DeleteParameter records a successful delete. A missing name is still

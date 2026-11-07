@@ -106,6 +106,14 @@ COMPOSE
 cat >/etc/horde/globals.json <<'JSON'
 {
   "Version": 2,
+  "acl": {
+    "entries": [
+      {
+        "claim": { "type": "http://epicgames.com/ue/horde/group", "value": "fabrica-ci" },
+        "actions": [ "ViewStream", "CreateJob", "ViewJob" ]
+      }
+    ]
+  },
   "horde": {
     "httpPort": 5000,
     "http2Port": 5002,

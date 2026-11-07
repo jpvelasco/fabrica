@@ -18,6 +18,7 @@ type mockParameter struct {
 	putFn func(context.Context, *ssm.PutParameterInput) (*ssm.PutParameterOutput, error)
 	delFn func(context.Context, *ssm.DeleteParameterInput) (*ssm.DeleteParameterOutput, error)
 	tagFn func(context.Context, *ssm.AddTagsToResourceInput) (*ssm.AddTagsToResourceOutput, error)
+	getFn func(context.Context, *ssm.GetParameterInput) (*ssm.GetParameterOutput, error)
 	puts  int
 	dels  int
 	tags  int
@@ -45,6 +46,13 @@ func (m *mockParameter) AddTagsToResource(ctx context.Context, in *ssm.AddTagsTo
 		return m.tagFn(ctx, in)
 	}
 	return &ssm.AddTagsToResourceOutput{}, nil
+}
+
+func (m *mockParameter) GetParameter(ctx context.Context, in *ssm.GetParameterInput, _ ...func(*ssm.Options)) (*ssm.GetParameterOutput, error) {
+	if m.getFn != nil {
+		return m.getFn(ctx, in)
+	}
+	return &ssm.GetParameterOutput{}, nil
 }
 
 func testProviderWithParameter(m *mockParameter) *awsProvider {
@@ -302,3 +310,26 @@ func (e paramAPIError) Error() string                 { return e.code }
 func (e paramAPIError) ErrorCode() string             { return e.code }
 func (e paramAPIError) ErrorMessage() string          { return e.code }
 func (e paramAPIError) ErrorFault() smithy.ErrorFault { return smithy.FaultClient }
+
+func TestGetSecureParameterDecrypts(t *testing.T) {
+	m := &mockParameter{getFn: func(_ context.Context, in *ssm.GetParameterInput) (*ssm.GetParameterOutput, error) {
+		if in.WithDecryption == nil || !*in.WithDecryption {
+			t.Error("GetParameter must request decryption")
+		}
+		return &ssm.GetParameterOutput{Parameter: &ssmtypes.Parameter{Value: aws.String("tok")}}, nil
+	}}
+	got, err := testProviderWithParameter(m).GetSecureParameter(context.Background(), "/fabrica/horde/x/service-token")
+	if err != nil || got != "tok" {
+		t.Fatalf("GetSecureParameter = %q, %v", got, err)
+	}
+}
+
+func TestGetSecureParameterNotFound(t *testing.T) {
+	m := &mockParameter{getFn: func(context.Context, *ssm.GetParameterInput) (*ssm.GetParameterOutput, error) {
+		return nil, &smithy.GenericAPIError{Code: "ParameterNotFound", Message: "missing"}
+	}}
+	_, err := testProviderWithParameter(m).GetSecureParameter(context.Background(), "/fabrica/horde/x/service-token")
+	if !errors.Is(err, fabricac.ErrParameterNotFound) {
+		t.Fatalf("err = %v, want ErrParameterNotFound", err)
+	}
+}

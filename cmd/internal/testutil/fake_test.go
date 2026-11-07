@@ -407,6 +407,31 @@ func TestTestProviderPutSecureParameter(t *testing.T) {
 	}
 }
 
+func TestTestProviderGetSecureParameter(t *testing.T) {
+	const testTokenParam = "/fabrica/horde/0123456789abcdef0123456789abcdef/service-token" // #nosec G101 -- SSM parameter name fixture, not a credential
+	ctx := context.Background()
+
+	stored := &TestProvider{SecureParameters: map[string]string{testTokenParam: "tok-value"}}
+	got, err := stored.GetSecureParameter(ctx, testTokenParam)
+	if err != nil {
+		t.Fatalf("GetSecureParameter = %v, want nil", err)
+	}
+	if got != "tok-value" {
+		t.Errorf("GetSecureParameter = %q, want %q", got, "tok-value")
+	}
+
+	empty := &TestProvider{}
+	if _, err := empty.GetSecureParameter(ctx, testTokenParam); !errors.Is(err, cloud.ErrParameterNotFound) {
+		t.Errorf("missing name error = %v, want ErrParameterNotFound", err)
+	}
+
+	wantErr := errors.New("ssm get failed")
+	failing := &TestProvider{GetParameterErr: wantErr, SecureParameters: map[string]string{testTokenParam: "tok-value"}}
+	if _, err := failing.GetSecureParameter(ctx, testTokenParam); !errors.Is(err, wantErr) {
+		t.Errorf("injected error = %v, want %v", err, wantErr)
+	}
+}
+
 func TestTestProviderDeleteParameter(t *testing.T) {
 	p := &TestProvider{}
 	if err := p.DeleteParameter(context.Background(), "/fabrica/workstation/nonce/dcv-password"); err != nil {
