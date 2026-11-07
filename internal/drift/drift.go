@@ -1076,7 +1076,15 @@ func rebuildHordeInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg
 	if port <= 0 {
 		port = horde.DefaultPort
 	}
-	userData, err := horde.Generate(horde.UserDataConfig{MongoPassword: mongoPass, Port: port})
+	// The rebuilt instance publishes its new service token to the same
+	// recorded parameter (its role still scopes ssm:PutParameter to it). A
+	// coordinator created before service tokens records none.
+	tokenParam := rec.Properties["serviceTokenParameter"]
+	tokenRegion := ""
+	if tokenParam != "" {
+		tokenRegion = cfg.Cloud.AWS.Region
+	}
+	userData, err := horde.Generate(horde.UserDataConfig{MongoPassword: mongoPass, Port: port, ServiceTokenParameter: tokenParam, Region: tokenRegion})
 	if err != nil {
 		return nil, fmt.Errorf("rendering horde cloud-init: %w", err)
 	}
