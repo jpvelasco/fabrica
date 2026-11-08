@@ -398,20 +398,17 @@ TBD — you need to bake one.
 
 | Region | AMI ID | Name / notes | Source | Jobs API verified |
 |--------|--------|-------------|--------|-------------------|
-| us-west-2 | ami-01b860bd17f6a0c57 | SSM overlay on fabrica-horde-ami-v3 — fail-closed SSM Agent; private-subnet SSM Online; loopback HTTP 200 | Image Builder overlay 2026-09-19 | **No** — health endpoint `GET /` is 200; `GET /api/v1/jobs` returns 404 (Build plugin not enabled). Do not use for `horde submit` / `ci trigger` |
-| us-west-2 | ami-05a17a8dfbabeea54 | SSM overlay on the jobs-capable base (fabrica-horde-20260806) — fail-closed SSM Agent (deb **or** snap unit) + bake-time jobs gate (3 containers, `GET /` 200, `GET /api/v1/jobs` 200 `[]`) | Image Builder overlay 2026-09-20 | Yes (200, empty list) |
-| us-west-2 | ami-0764d44c38ef85362 | fabrica-horde-20260806 — UE 5.8.0 Horde, Docker compose, mongo:7.0, redis:7.2 | ghcr.io/epicgames/horde-server:5.8.0 | Yes (200) |
+| TBD | TBD | SSM overlay on a jobs-capable base — fail-closed SSM Agent (deb **or** snap unit) + bake-time jobs gate (3 containers, `GET /` 200, `GET /api/v1/jobs` 200 `[]`) | Image Builder overlay | Yes (200, empty list) |
+| TBD | TBD | SSM overlay on a base without the Build plugin enabled — fail-closed SSM Agent; private-subnet SSM Online; loopback HTTP 200 | Image Builder overlay | **No** — health endpoint `GET /` is 200; `GET /api/v1/jobs` returns 404 (Build plugin not enabled). Do not use for `horde submit` / `ci trigger` |
 
-> **Verified column = the jobs API, not the health endpoint.** The
-> `ami-05a17a8dfbabeea54` row is the overlay AMI that satisfies both paths:
-> SSM-verified on a private subnet **and** jobs-capable (bake gate 1.0.1 baked
-> `globals.json` with the Build plugin enabled on the jobs-capable base, so
-> `GET /api/v1/jobs` → 200 with an empty list). The earlier
-> `ami-01b860bd17f6a0c57` overlay is kept in the table marked **No** — its
-> baked `globals.json` does not enable the Build plugin, so its jobs API 404s;
-> it is known-good for the SSM-private path only. Use `ami-05a17a8dfbabeea54`
-> (or any jobs-capable row) for submitting builds (`fabrica horde submit`,
-> `fabrica ci trigger`).
+> **Verified column = the jobs API, not the health endpoint.** The jobs-capable
+> overlay row satisfies both paths: SSM-verified on a private subnet **and**
+> jobs-capable (bake gate 1.0.1 bakes `globals.json` with the Build plugin
+> enabled on the jobs-capable base, so `GET /api/v1/jobs` → 200 with an empty
+> list). An overlay whose base `globals.json` does not enable the Build plugin
+> 404s on the jobs API and is known-good for the SSM-private path only — keep
+> such a row marked **No** so it is never selected for submitting builds
+> (`fabrica horde submit`, `fabrica ci trigger`).
 
 After a successful bake, record the AMI ID here and in `fabrica.yaml`. Keep this
 table updated as you bake new versions. AMIs are private (`--owners self`) and

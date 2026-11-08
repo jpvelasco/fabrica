@@ -9,11 +9,11 @@ import (
 func TestSessionPasswordParameterARN(t *testing.T) {
 	const nonce = "0123456789abcdef0123456789abcdef"
 	const name = "/fabrica/workstation/" + nonce + "/dcv-password"
-	got, err := SessionPasswordParameterARN("us-west-2", "575108928122", name)
+	got, err := SessionPasswordParameterARN("us-west-2", "123456789012", name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "arn:aws:ssm:us-west-2:575108928122:parameter/fabrica/workstation/0123456789abcdef0123456789abcdef/dcv-password"
+	const want = "arn:aws:ssm:us-west-2:123456789012:parameter/fabrica/workstation/0123456789abcdef0123456789abcdef/dcv-password"
 	if got != want {
 		t.Fatalf("ARN = %q, want %q", got, want)
 	}
