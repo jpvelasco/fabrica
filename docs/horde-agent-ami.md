@@ -349,8 +349,8 @@ need to bake one.
 
 | Region | AMI ID | Name / notes | Method | Verified |
 |--------|--------|-------------|--------|----------|
-| us-west-2 | ami-038c6725282386512 | SSM overlay on fabrica-horde-agent-20260811 — fail-closed SSM Agent; private-subnet SSM Online | Image Builder overlay 2026-09-19 | Yes (SSM PingStatus Online, no public IP) |
-| us-west-2 | ami-0eb4ac363d0115cd6 | fabrica-horde-agent-20260812 — stub agent for road test, Ubuntu 22.04 | Native | superseded for private SSM; use overlay AMI above |
+| TBD | TBD | SSM overlay on the agent base — fail-closed SSM Agent; private-subnet SSM Online | Image Builder overlay | Yes (SSM PingStatus Online, no public IP) |
+| TBD | TBD | Stub agent for road test, Ubuntu 22.04 | Native | superseded for private SSM; use overlay AMI above |
 
 > **Note:** These AMI IDs are account- and region-specific. Bake your own AMI
 > per the guide above for production use. AMIs are private (`--owners self`)

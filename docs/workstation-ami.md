@@ -221,7 +221,7 @@ then connect the DCV client to `https://localhost:8443`.
 
 | Date (UTC) | Region | AMI ID | Notes |
 | --- | --- | --- | --- |
-| 2026-09-20 | us-west-2 | `ami-0219a686f7416f70a` | Image Builder 1.0.1; private subnet, no public IP, SSM Online; `dcv` on PATH; `dcvserver` enabled; instance terminated. **Deregistered** — this row is the last known-good record; a live account may hold no DCV AMI. Bake a fresh one (`workstation ami build`, then Image Builder) before the next `workstation create`. |
+| 2026-09-20 | us-west-2 | TBD (deregistered) | Image Builder 1.0.1; private subnet, no public IP, SSM Online; `dcv` on PATH; `dcvserver` enabled; instance terminated. **Deregistered** — this row is the last known-good record; a live account may hold no DCV AMI. Bake a fresh one (`workstation ami build`, then Image Builder) before the next `workstation create`. |
 
 Do not mark an AMI known-good from Image Builder success alone.
 

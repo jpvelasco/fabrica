@@ -9,11 +9,12 @@ Packer adapter. It makes no AWS calls.
 Image Builder is the preferred path. Packer remains a supported alternative
 and consumes the same generated installation and verification scripts.
 
-> **Verification status:** us-west-2 `ami-04f7e70f15bf0357c` (lore v0.8.6) is
-> known-good for the local store after private-subnet SSM registration, loopback
-> health 200, and clean destroy (#413). A successful Image Builder build by
-> itself is not proof that an AMI works with Fabrica. The S3-store checklist
-> has not been re-run on this AMI.
+> **Verification status:** a lore v0.8.6 AMI baked in us-west-2 was known-good
+> for the local store after private-subnet SSM registration, loopback health
+> 200, and clean destroy (#413); the recorded AMI has since been deregistered —
+> bake a fresh one before the next `fabrica lore create`. A successful Image
+> Builder build by itself is not proof that an AMI works with Fabrica. The
+> S3-store checklist has not been re-run since.
 
 ## AMI Contract
 
@@ -308,12 +309,13 @@ region-specific. The table intentionally has no pre-filled candidate.
 
 | Date (UTC) | Region | AMI ID | Base AMI | Lore/UE revision | Bake backend | Local: boot/status/destroy | S3: boot/status/destroy | Evidence link |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2026-09-19 | us-west-2 | `ami-04f7e70f15bf0357c` | `ami-0bdb09211df876db4` | lore v0.8.6 | Image Builder (component `fabrica-lore-0-8-6` 1.1.0/1, recipe 1.1.0; fail-closed SSM enable) | boot: private subnet, no public IP, SSM PingStatus Online; runtime: loreserver active, `GET /health_check` 200 on loopback; destroy: instance + IAM + SG deleted | not run this pass | #413 / #430 |
-| 2026-08-28 | us-west-2 | `ami-0cb86d7ebcd1a4487` | `ami-0bdb09211df876db4` | lore v0.8.6 | Image Builder (component `fabrica-lore-0-8-6` 1.0.0/3, recipe 1.0.2) | superseded — bake enabled SSM with `\|\| true`; private SSM registration did not complete | not run | #413 |
+| 2026-09-19 | us-west-2 | TBD (deregistered) | `ami-0bdb09211df876db4` | lore v0.8.6 | Image Builder (component `fabrica-lore-0-8-6` 1.1.0/1, recipe 1.1.0; fail-closed SSM enable) | boot: private subnet, no public IP, SSM PingStatus Online; runtime: loreserver active, `GET /health_check` 200 on loopback; destroy: instance + IAM + SG deleted | not run this pass | #413 / #430 |
+| 2026-08-28 | us-west-2 | TBD (superseded) | `ami-0bdb09211df876db4` | lore v0.8.6 | Image Builder (component `fabrica-lore-0-8-6` 1.0.0/3, recipe 1.0.2) | superseded — bake enabled SSM with `\|\| true`; private SSM registration did not complete | not run | #413 |
 
-Use `ami-04f7e70f15bf0357c` as the known-good Lore AMI in us-west-2. Private-subnet
-creates must be verified through SSM (or VPN/in-VPC). Laptop `fabrica lore status
---wait` against the instance private IP is not the private path.
+Record your verified Lore AMI in the table above, then use it in us-west-2.
+Private-subnet creates must be verified through SSM (or VPN/in-VPC). Laptop
+`fabrica lore status --wait` against the instance private IP is not the private
+path.
 
 ## Common Failures
 
