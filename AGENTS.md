@@ -207,7 +207,7 @@ GoReleaser builds cross-platform binaries + a GitHub Release; the `npm/` shim do
 
 ## Branch Protection
 
-`main` is protected by the `protect-main` repository ruleset (formerly `fabrica-default` — renamed to the fleet-managed name; the old disabled duplicate was removed). It blocks deletion and non-fast-forward, requires a PR (squash merges only, 0 approvals, conversation threads must be resolved, branches up to date), and requires the CI checks `Lint`, `Vulnerability scan`, `Build (ubuntu/windows)`, `Test (ubuntu/windows)`, `gosec`, `Trivy`, `Release build (snapshot)`, `Analyze (actions/go/javascript-typescript)`, and GitHub's `qa/verdict` + `security/verdict`. The extra contexts beyond fundamentum's shipped baseline (Release build, Analyze×3, the verdicts) are preserved by fundamentum's merge-based reconcile — re-apply adds only missing baseline checks, never removes hand-added ones. `protect-version-tags` guards `v*`.
+`main` is protected by the `protect-main` repository ruleset (formerly `fabrica-default` — renamed to the fleet-managed name; the old disabled duplicate was removed). It blocks deletion and non-fast-forward, requires a PR (squash merges only, 0 approvals, conversation threads must be resolved, branches up to date), and requires the CI checks `Lint`, `Vulnerability scan`, `Build (ubuntu/windows)`, `Test (ubuntu/windows)`, `gosec`, `Trivy`, `Release build (snapshot)`, `Analyze (actions/go/javascript-typescript)`, and `change/policy`. The extra contexts beyond fundamentum's shipped baseline (Release build, Analyze×3, `change/policy`) are preserved by fundamentum's merge-based reconcile — re-apply adds only missing baseline checks, never removes hand-added ones. `protect-version-tags` guards `v*`.
 
 ## Git Hooks
 
