@@ -28,6 +28,7 @@ func ProjectSpec(plan *CreatePlan, roleARN, sgID string) cloud.CodeBuildProjectS
 		Buildspec:      BuildspecRaw(plan),
 		EnvDefaults: map[string]string{
 			"HORDE_URL":      plan.HordeURL,
+			"HORDE_CA_FILE":  plan.HordeCAPath,
 			"FABRICA_REGION": plan.Region,
 		},
 		Tags: map[string]string{

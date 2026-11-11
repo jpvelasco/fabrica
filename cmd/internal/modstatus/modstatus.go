@@ -44,6 +44,7 @@ type Info struct {
 	// known); Reachable is its result.
 	ProbeAttempted bool
 	Reachable      bool
+	ProbeError     string
 
 	// LastBackupId / LastBackupAt are optional Perforce backup cache fields
 	// from instance resource Properties (empty for other modules).
@@ -114,14 +115,18 @@ type CobraSpec struct {
 	// Resolve builds the runtime-dependent behavior. cmdCtx is the signal-
 	// cancelled command context; renderers that make live calls (e.g. DDC
 	// edge probes) must thread it through so Ctrl+C cancels promptly.
-	Resolve func(globals.Runtime, context.Context) RuntimeSpec
+	Resolve      func(globals.Runtime, context.Context) RuntimeSpec
+	ResolveState func(globals.Runtime, context.Context, *fabricastate.ModuleState) (RuntimeSpec, error)
 }
 
 // RuntimeSpec contains the status behavior that may depend on loaded config.
 type RuntimeSpec struct {
-	ProbePort int
-	Renderer  Renderer
-	Probe     func(address string) bool
+	ProbePort      int
+	Renderer       Renderer
+	Probe          func(address string) bool
+	ProbeContext   func(context.Context, string) error
+	Ready          func(context.Context, *fabricastate.ModuleState) error
+	ResourceByType func(*fabricastate.ModuleState, string) (fabricastate.ModuleResource, bool)
 }
 
 // NewCobraCommand builds the shared Cobra/runtime/state/provider wiring for a
@@ -151,15 +156,21 @@ func NewCobraCommand(spec CobraSpec, runtimeSource globals.RuntimeSource, option
 					ProbePort:   resolved.ProbePort,
 					DisplayName: spec.DisplayName,
 				},
-				Renderer:   resolved.Renderer,
-				JSONOut:    optionsSource().JSONOutput,
-				Wait:       wait,
-				Out:        out,
-				ReadState:  func(ctx context.Context) (*fabricastate.State, error) { return provision.ReadState(ctx, rt) },
-				WriteState: func(ctx context.Context, st *fabricastate.State) error { return provision.StateWriter(ctx, rt)(st) },
-				ProbeTCP:   probe,
-				SleepCtx:   provision.WaitInterval,
-				Now:        time.Now,
+				Renderer:       resolved.Renderer,
+				JSONOut:        optionsSource().JSONOutput,
+				Wait:           wait,
+				Out:            out,
+				ReadState:      func(ctx context.Context) (*fabricastate.State, error) { return provision.ReadState(ctx, rt) },
+				WriteState:     func(ctx context.Context, st *fabricastate.State) error { return provision.StateWriter(ctx, rt)(st) },
+				ProbeTCP:       probe,
+				SleepCtx:       provision.WaitInterval,
+				Now:            time.Now,
+				ProbeContext:   resolved.ProbeContext,
+				Ready:          resolved.Ready,
+				ResourceByType: resolved.ResourceByType,
+			}
+			if spec.ResolveState != nil {
+				c.ResolveState = func(m *fabricastate.ModuleState) (RuntimeSpec, error) { return spec.ResolveState(rt, cmd.Context(), m) }
 			}
 			if rt.Provider != nil {
 				c.GetResource = rt.Provider.Resources().Get
@@ -181,12 +192,16 @@ type Command struct {
 	Wait    bool
 	Out     io.Writer
 
-	ReadState   func(ctx context.Context) (*fabricastate.State, error)
-	WriteState  func(ctx context.Context, st *fabricastate.State) error
-	GetResource func(ctx context.Context, r *cloud.Resource) error
-	ProbeTCP    func(address string) bool
-	SleepCtx    func(context.Context, time.Duration) error
-	Now         func() time.Time
+	ReadState      func(ctx context.Context) (*fabricastate.State, error)
+	WriteState     func(ctx context.Context, st *fabricastate.State) error
+	GetResource    func(ctx context.Context, r *cloud.Resource) error
+	ProbeTCP       func(address string) bool
+	SleepCtx       func(context.Context, time.Duration) error
+	Now            func() time.Time
+	ResolveState   func(*fabricastate.ModuleState) (RuntimeSpec, error)
+	ProbeContext   func(context.Context, string) error
+	Ready          func(context.Context, *fabricastate.ModuleState) error
+	ResourceByType func(*fabricastate.ModuleState, string) (fabricastate.ModuleResource, bool)
 }
 
 // Run reads state, builds the status snapshot, transitions provisioning→ready
@@ -201,6 +216,17 @@ func (c Command) Run(ctx context.Context) error {
 	if m == nil {
 		c.Renderer.NotProvisioned(c.Out, c.JSONOut)
 		return nil
+	}
+	if c.ResolveState != nil {
+		resolved, err := c.ResolveState(m)
+		if err != nil {
+			return err
+		}
+		c.Spec.ProbePort, c.Renderer, c.ProbeContext, c.Ready = resolved.ProbePort, resolved.Renderer, resolved.ProbeContext, resolved.Ready
+		c.ResourceByType = resolved.ResourceByType
+		if resolved.Probe != nil {
+			c.ProbeTCP = resolved.Probe
+		}
 	}
 
 	if c.Wait {
@@ -259,6 +285,14 @@ func (c Command) pollUntilReady(ctx context.Context, st *fabricastate.State, m *
 // markReady transitions the module to "ready" in state and persists it,
 // surfacing a write failure as a warning.
 func (c Command) markReady(ctx context.Context, st *fabricastate.State, m *fabricastate.ModuleState, info *Info) {
+	if c.Ready != nil {
+		if err := c.Ready(ctx, m); err != nil {
+			fmt.Fprintf(c.Out, "Warning: could not update readiness: %v\n", err)
+			return
+		}
+		info.ModuleStatus = "ready"
+		return
+	}
 	m.Status = "ready"
 	info.ModuleStatus = "ready"
 	st.UpsertModule(c.Spec.ModuleName, m.Version, "ready", m.Resources)
@@ -273,12 +307,16 @@ func (c Command) buildInfo(ctx context.Context, m *fabricastate.ModuleState) (In
 		ModuleStatus: m.Status,
 		Version:      m.Version,
 	}
+	resourceByType := c.ResourceByType
+	if resourceByType == nil {
+		resourceByType = stateutil.ResourceByType
+	}
 
-	if sgRes, ok := stateutil.ResourceByType(m, "AWS::EC2::SecurityGroup"); ok {
+	if sgRes, ok := resourceByType(m, "AWS::EC2::SecurityGroup"); ok {
 		info.SGID = sgRes.Identifier
 	}
 
-	instRes, hasInst := stateutil.ResourceByType(m, "AWS::EC2::Instance")
+	instRes, hasInst := resourceByType(m, "AWS::EC2::Instance")
 	if !hasInst {
 		return info, nil
 	}
@@ -298,7 +336,15 @@ func (c Command) buildInfo(ctx context.Context, m *fabricastate.ModuleState) (In
 
 	if info.PrivateIP != "" {
 		info.ProbeAttempted = true
-		info.Reachable = c.ProbeTCP(fmt.Sprintf("%s:%d", info.PrivateIP, c.Spec.ProbePort))
+		if c.ProbeContext != nil {
+			err := c.ProbeContext(ctx, info.PrivateIP)
+			info.Reachable = err == nil
+			if err != nil {
+				info.ProbeError = err.Error()
+			}
+		} else {
+			info.Reachable = c.ProbeTCP(fmt.Sprintf("%s:%d", info.PrivateIP, c.Spec.ProbePort))
+		}
 	}
 
 	return info, nil

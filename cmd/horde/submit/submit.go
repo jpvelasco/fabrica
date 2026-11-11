@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/hordeapi"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/horde/buildgraph"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
-	"github.com/jpvelasco/fabrica/internal/stateutil"
 	"github.com/spf13/cobra"
 )
 
@@ -24,8 +24,6 @@ const (
 	lineWidth    = 58 // match deploy promote's dry-run header width
 	waitInterval = 30 * time.Second
 	waitTimeout  = 60 * time.Minute
-
-	defaultPort = 5000
 )
 
 type command struct {
@@ -115,13 +113,17 @@ func (c command) run(ctx context.Context) error {
 	if m == nil {
 		return fmt.Errorf("Horde is not provisioned. Run 'fabrica horde create' first.")
 	}
+	connection, err := horde.ResolveConnection(c.runtime.Config.Horde, m)
+	if err != nil {
+		return err
+	}
 
 	// Resolve the coordinator address if no client is injected (production
 	// path); the HTTP client is built after the dry-run return so a preview
 	// never opens a connection.
 	client := c.hordeClient
 	baseURL := ""
-	instRes, hasInst := stateutil.ResourceByType(m, "AWS::EC2::Instance")
+	instRes, hasInst := horde.CoordinatorResource(m, "AWS::EC2::Instance")
 	tokenParam := instRes.Properties["serviceTokenParameter"]
 	if client == nil {
 		if !hasInst || instRes.Identifier == "" {
@@ -136,11 +138,7 @@ func (c command) run(ctx context.Context) error {
 			return fmt.Errorf("Horde instance has no private IP yet. Run 'fabrica horde status' to check readiness.")
 		}
 
-		port := c.runtime.Config.Horde.Port
-		if port <= 0 {
-			port = defaultPort
-		}
-		baseURL = fmt.Sprintf("http://%s:%d", privateIP, port)
+		baseURL = connection.URL(privateIP)
 	}
 
 	if c.dryRun {
@@ -149,13 +147,19 @@ func (c command) run(ctx context.Context) error {
 	}
 
 	if client == nil {
+		httpClient, err := hordeapi.NewClient(connection, c.runtime.ConfigPath, c.runtime.Config.Horde.ClientCAPath, "", hordeHTTPTimeout)
+		if err != nil {
+			return err
+		}
 		token, err := c.serviceToken(ctx, tokenParam)
 		if err != nil {
 			return err
 		}
 		newClient := c.newClient
 		if newClient == nil {
-			newClient = func(baseURL, token string) HordeClient { return newHordeHTTPClient(baseURL, token) }
+			newClient = func(baseURL, token string) HordeClient {
+				return &hordeHTTPClient{baseURL: baseURL, token: token, http: httpClient}
+			}
 		}
 		client = newClient(baseURL, token)
 	}

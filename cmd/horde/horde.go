@@ -10,6 +10,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/horde/destroy"
 	"github.com/jpvelasco/fabrica/cmd/horde/status"
 	"github.com/jpvelasco/fabrica/cmd/horde/submit"
+	"github.com/jpvelasco/fabrica/cmd/horde/tls"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +28,7 @@ Available operations:
   submit   Submit a BuildGraph job to the coordinator
   destroy  Permanently delete the coordinator and its AWS resources
   ami      Tools for building a Horde AMI
+  tls      Render migration files and adopt a verified TLS coordinator
   agents   Manage a pool of Horde build agents (ASG + Launch Template)`,
 	}
 	cmd.AddCommand(create.New(runtimeSource, optionsSource, out))
@@ -35,5 +37,6 @@ Available operations:
 	cmd.AddCommand(destroy.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(ami.New(out))
 	cmd.AddCommand(agents.New(runtimeSource, optionsSource, out))
+	cmd.AddCommand(tls.New(runtimeSource, optionsSource, out))
 	return cmd
 }

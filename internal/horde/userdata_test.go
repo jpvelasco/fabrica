@@ -233,7 +233,7 @@ func TestGenerateRawPublishesServiceTokenBeforePorts(t *testing.T) {
 	}
 	for _, want := range []string{
 		"--overwrite",
-		`--value "file://$WORK/token"`,
+		`--value "file:///etc/horde/service-token-pending"`,
 		`"type":"http://epicgames.com/ue/horde/group","value":"fabrica-ci"`,
 		"/etc/horde/service-token-published",
 		"mktemp -d /run/fabrica-horde.",

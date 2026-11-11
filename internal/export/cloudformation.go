@@ -40,7 +40,7 @@ func (g *cloudFormationGenerator) Generate(modules []ExportModule) ([]byte, erro
 			"FabricaExport": map[string]any{
 				"Version":    "v2",
 				"Modules":    moduleNames(modules),
-				"Disclaimer": "Generated from Fabrica local state — verify before applying. UserData and credentials are redacted.",
+				"Disclaimer": "Generated from Fabrica local state — verify before applying. UserData and credentials are redacted. Horde runtime overlays, certificate delivery, and application TLS bootstrap are not reconstructed.",
 			},
 		},
 		Resources: make(map[string]map[string]any),

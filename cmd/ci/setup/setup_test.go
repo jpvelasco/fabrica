@@ -587,7 +587,7 @@ func TestSetupResolveHordeTokenParameter(t *testing.T) {
 		want    string
 		errSub  string
 	}{
-		{name: "state read failure degrades to no token", readErr: errors.New("state unavailable")},
+		{name: "state read failure fails closed", readErr: errors.New("state unavailable"), errSub: "state unavailable"},
 		{name: "no horde module", st: hordeState()},
 		{name: "module without an instance", st: hordeState(fabricastate.ModuleResource{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-horde"})},
 		{name: "instance records no parameter", st: hordeState(fabricastate.ModuleResource{TypeName: "AWS::EC2::Instance", Identifier: "i-horde123"})},

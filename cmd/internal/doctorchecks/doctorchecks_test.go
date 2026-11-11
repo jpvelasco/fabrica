@@ -31,8 +31,8 @@ func newTestRuntime(bucket, table, region string) globals.Runtime {
 func TestRunChecks_Count(t *testing.T) {
 	rt := newTestRuntime("fabrica-state-123456789012", "fabrica-state-lock", "us-west-2")
 	checks := RunChecks(context.Background(), rt, nil)
-	if len(checks) != 7 {
-		t.Fatalf("expected 7 checks, got %d", len(checks))
+	if len(checks) != 8 {
+		t.Fatalf("expected 8 checks, got %d", len(checks))
 	}
 }
 
@@ -79,8 +79,8 @@ func TestRunChecks_NoConfig(t *testing.T) {
 	rt := globals.Runtime{}
 	checks := RunChecks(context.Background(), rt, nil)
 
-	if len(checks) != 7 {
-		t.Fatalf("expected 7 checks, got %d", len(checks))
+	if len(checks) != 8 {
+		t.Fatalf("expected 8 checks, got %d", len(checks))
 	}
 
 	// Region should be warning when config is nil

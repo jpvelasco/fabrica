@@ -90,7 +90,7 @@ func TestBuildspecRawAuthenticatesWithServiceToken(t *testing.T) {
 		"shell: bash",
 		`HORDE_AUTH=(-H "Authorization: ServiceAccount ${HORDE_TOKEN}")`,
 		`"${HORDE_AUTH[@]}" "$HORDE_URL/api/v1/jobs"`,
-		`curl -fsS -X POST "$HORDE_URL/api/v1/jobs" "${HORDE_AUTH[@]}"`,
+		`-X POST "$HORDE_URL/api/v1/jobs" "${HORDE_AUTH[@]}"`,
 		"401|403)",
 		"Horde rejected the CI credentials",
 	} {

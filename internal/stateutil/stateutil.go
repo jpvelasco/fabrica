@@ -6,6 +6,9 @@ import fabricastate "github.com/jpvelasco/fabrica/internal/state"
 // ResourceByType returns the first resource with the given TypeName from m.
 // Returns the zero value and false if no matching resource exists.
 func ResourceByType(m *fabricastate.ModuleState, typeName string) (fabricastate.ModuleResource, bool) {
+	if m == nil {
+		return fabricastate.ModuleResource{}, false
+	}
 	for _, r := range m.Resources {
 		if r.TypeName == typeName {
 			return r, true

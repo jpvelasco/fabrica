@@ -183,8 +183,8 @@ func TestCheckerRun(t *testing.T) {
 		&fakeStateBackendChecker{bucketExists: true, tableExists: true},
 	)
 
-	if len(checks) != 7 {
-		t.Fatalf("got %d checks, want 7", len(checks))
+	if len(checks) != 8 {
+		t.Fatalf("got %d checks, want 8", len(checks))
 	}
 	for _, d := range checks {
 		if d.Status != "ok" {
@@ -271,8 +271,8 @@ func TestCommandRunJSON(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 	}
-	if len(parsed) != 7 {
-		t.Fatalf("got %d diagnostics, want 7", len(parsed))
+	if len(parsed) != 8 {
+		t.Fatalf("got %d diagnostics, want 8", len(parsed))
 	}
 }
 

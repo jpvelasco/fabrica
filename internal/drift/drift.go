@@ -970,10 +970,15 @@ func subnetFor(rec *state.ModuleResource, cfgSubnet string) string {
 // SSM or join its VPC.
 func recordedSGAndProfile(rec *state.ModuleResource, mod *state.ModuleState, module string) (string, string, error) {
 	sgID := moduleSGIDFor(rec, mod)
+	profile := moduleInstanceProfileFor(mod)
+	if module == "horde" {
+		sg, _ := horde.CoordinatorResource(mod, cloud.TypeAWSEC2SecurityGroup)
+		instanceProfile, _ := horde.CoordinatorResource(mod, cloud.TypeAWSIAMInstanceProfile)
+		sgID, profile = sg.Identifier, instanceProfile.Identifier
+	}
 	if sgID == "" {
 		return "", "", fmt.Errorf("no security group recorded for the %s module; re-run the %s create command", module, module)
 	}
-	profile := moduleInstanceProfileFor(mod)
 	if profile == "" {
 		return "", "", fmt.Errorf("no IAM instance profile recorded for the %s module; re-run the %s create command", module, module)
 	}
@@ -1053,6 +1058,10 @@ func rebuildPerforceInstance(rec *state.ModuleResource, mod *state.ModuleState, 
 // password comes from the create-time credentials file and the AMI is the
 // module version create recorded at launch.
 func rebuildHordeInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+	connection, err := horde.ResolveConnection(cfg.Horde, mod)
+	if err != nil {
+		return nil, err
+	}
 	ami := mod.Version
 	if ami == "" {
 		return nil, fmt.Errorf("no AMI recorded for the horde instance (module version); re-run 'fabrica horde create'")
@@ -1072,10 +1081,6 @@ func rebuildHordeInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg
 	if err != nil {
 		return nil, err
 	}
-	port := cfg.Horde.Port
-	if port <= 0 {
-		port = horde.DefaultPort
-	}
 	// The rebuilt instance publishes its new service token to the same
 	// recorded parameter (its role still scopes ssm:PutParameter to it). A
 	// coordinator created before service tokens records none.
@@ -1084,7 +1089,7 @@ func rebuildHordeInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg
 	if tokenParam != "" {
 		tokenRegion = cfg.Cloud.AWS.Region
 	}
-	userData, err := horde.Generate(horde.UserDataConfig{MongoPassword: mongoPass, Port: port, ServiceTokenParameter: tokenParam, Region: tokenRegion})
+	userData, err := horde.Generate(horde.UserDataConfig{MongoPassword: mongoPass, Port: connection.Port, Connection: connection, ServiceTokenParameter: tokenParam, Region: tokenRegion})
 	if err != nil {
 		return nil, fmt.Errorf("rendering horde cloud-init: %w", err)
 	}
@@ -1533,19 +1538,15 @@ func dispatchModuleSG(rec *state.ModuleResource, mod *state.ModuleState, cfg *co
 			})
 			break
 		}
-		port := cfg.Horde.Port
-		if port <= 0 {
-			port = horde.DefaultPort
-		}
-		grpcPort := cfg.Horde.GRPCPort
-		if grpcPort <= 0 {
-			grpcPort = horde.DefaultGRPCPort
+		connection, connErr := horde.ResolveConnection(cfg.Horde, mod)
+		if connErr != nil {
+			return nil, connErr
 		}
 		ds, err = horde.SGDesiredState(&horde.CreatePlan{
 			SGName:      horde.DefaultSGName,
 			VPCID:       sgVPCID(rec, cfg.Horde.VPCId),
-			Port:        port,
-			GRPCPort:    grpcPort,
+			Port:        connection.Port,
+			GRPCPort:    connection.GRPCPort,
 			AllowedCIDR: defaultCIDR(cfg.Horde.AllowedCIDR, horde.DefaultAllowedCIDR),
 		})
 	case "perforce":
