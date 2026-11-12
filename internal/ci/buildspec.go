@@ -58,13 +58,29 @@ phases:
         # FABRICA_CURL_OPTIONS
         HORDE_AUTH=()
         if [ -n "${HORDE_TOKEN:-}" ]; then HORDE_AUTH=(-H "Authorization: ServiceAccount ${HORDE_TOKEN}"); fi
-        code=$(curl "${CURL_OPTS[@]}" --fail -o /dev/null -w '%{http_code}' -X POST "$HORDE_URL/api/v1/jobs" "${HORDE_AUTH[@]}" \
+        response=$(mktemp)
+        trap 'rm -f "$response"' EXIT
+        code=$(curl "${CURL_OPTS[@]}" --fail --max-filesize 65536 -o "$response" -w '%{http_code}' -X POST "$HORDE_URL/api/v1/jobs" "${HORDE_AUTH[@]}" \
           -H "Content-Type: application/json" \
           -d "{\"name\":\"${BUILDGRAPH:-fabrica-ci}\",\"target\":\"$TARGET\"}")
         case "$code" in
-          2??) echo "Horde job submitted" ;;
+          2??) ;;
           *) echo "Horde job submission failed (HTTP $code)" >&2; exit 1 ;;
         esac
+        python3 - "$response" <<'PY'
+        import json, re, sys
+        try:
+            with open(sys.argv[1], "rb") as response:
+                body = response.read(65537)
+            if len(body) > 65536:
+                raise ValueError()
+            job_id = json.loads(body)["id"]
+            if not isinstance(job_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", job_id):
+                raise ValueError()
+        except (ValueError, KeyError, TypeError):
+            sys.exit("Horde returned an invalid job identifier; inspect the coordinator job API")
+        print("Horde job submitted: " + job_id)
+        PY
   post_build:
     commands:
       - 'echo "BuildGraph job submitted"'
@@ -87,7 +103,8 @@ func BuildspecRaw(plan *CreatePlan) string {
 		check = strings.ReplaceAll(check, "\n", "\n        ")
 	}
 	result := strings.Replace(buildspecTemplate, "# FABRICA_TLS_PREFLIGHT", check, 1)
-	options := `CURL_OPTS=(--silent --show-error --connect-timeout 5 --max-time 30)
+	options := `set -e -o pipefail
+CURL_OPTS=(--silent --show-error --connect-timeout 5 --max-time 30)
 case "$HORDE_URL" in
   https://*) CURL_OPTS+=(--proto '=https') ;;
   http://*) CURL_OPTS+=(--proto '=http') ;;
