@@ -77,7 +77,7 @@ func writeArtifacts(directory string, files map[string]string) error {
 			return err
 		}
 	}
-	if err := os.MkdirAll(directory, 0755); err != nil {
+	if err := os.MkdirAll(directory, 0700); err != nil {
 		return fmt.Errorf("creating migration output directory: %w", err)
 	}
 	for name, content := range files {

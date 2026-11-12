@@ -1,6 +1,7 @@
 package horde
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"path"
@@ -67,10 +68,10 @@ func RuntimeValidation(c Connection) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	expected, _ := json.Marshal(overlay)
+	expected := base64.StdEncoding.EncodeToString([]byte(overlay))
 	header += "test \"$(cat /etc/horde/fabrica-runtime-contract)\" = '1'\n"
 	header += `python3 - <<'PY'
-import json, subprocess, sys
+import base64, json, subprocess, sys
 with open("/etc/horde/fabrica-runtime.json") as f:
     actual = json.load(f)["services"]["horde"]
 # FABRICA_EXPECTED_RUNTIME
@@ -89,12 +90,12 @@ if base.get("ports") or base.get("restart", "no") != "no" or any(k.lower() in tr
     sys.exit("Remove base listener publication and conflicting URL/certificate environment before TLS bootstrap")
 PY
 `
-	header = strings.Replace(header, "# FABRICA_EXPECTED_RUNTIME", "expected = json.loads("+string(expected)+")[\"services\"][\"horde\"]", 1)
+	header = strings.Replace(header, "# FABRICA_EXPECTED_RUNTIME", "expected = json.loads(base64.b64decode('"+expected+"'))[\"services\"][\"horde\"]", 1)
 	if !c.TLS {
 		return header, nil
 	}
-	// %q quotes JSON/Python strings; shell arguments use the shared literal
-	// shell quotation owner. No certificate contents enter the rendered script.
+	// Shell arguments use the literal quotation owner. No certificate contents
+	// enter the rendered script.
 	header += fmt.Sprintf(`cert=%s
 key=%s
 ca=%s
@@ -145,15 +146,17 @@ func AdoptionVerifier(c Connection) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	validationJSON, _ := json.Marshal(validation)
-	overlayJSON, _ := json.Marshal(overlay)
+	// Encode data crossing language boundaries instead of treating JSON string
+	// syntax as Python source quotation.
+	validationData := base64.StdEncoding.EncodeToString([]byte(validation))
+	overlayData := base64.StdEncoding.EncodeToString([]byte(overlay))
 	return fmt.Sprintf(`python3 - <<'FABRICA_VERIFY'
-import json, os, subprocess, sys
+import base64, json, os, subprocess, sys
 try:
-    check = subprocess.run(["bash", "-c", %s], capture_output=True, timeout=45)
+    check = subprocess.run(["bash", "-c", base64.b64decode('%s').decode("utf-8")], capture_output=True, timeout=45)
     if check.returncode or not os.path.isfile("/etc/horde/bootstrap-complete"):
         raise ValueError()
-    expected = json.loads(%s)["services"]["horde"]
+    expected = json.loads(base64.b64decode('%s'))["services"]["horde"]
     inspected = subprocess.run(["docker", "inspect", "horde-server"], capture_output=True, timeout=15)
     if inspected.returncode:
         raise ValueError()
@@ -180,5 +183,5 @@ except Exception:
     sys.exit(1)
 print('{"verified":true,"contract":1,"port":%d}')
 FABRICA_VERIFY
-`, validationJSON, overlayJSON, fmt.Sprint(c.Port), fmt.Sprint(c.Port), fmt.Sprint(c.Port), fmt.Sprint(c.Port), c.Port), nil
+`, validationData, overlayData, fmt.Sprint(c.Port), fmt.Sprint(c.Port), fmt.Sprint(c.Port), fmt.Sprint(c.Port), c.Port), nil
 }

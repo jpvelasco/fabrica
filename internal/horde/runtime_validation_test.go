@@ -27,7 +27,7 @@ func TestRuntimeCertificateValidation(t *testing.T) {
 	if _, err := exec.LookPath("openssl"); err != nil {
 		t.Skip("openssl not installed")
 	}
-	for _, name := range []string{"valid", "missing CA", "bad key", "permissions", "wrong SAN", "base ports", "base restart", "conflicting env", "changed overlay"} {
+	for _, name := range []string{"valid", "literal paths", "missing CA", "bad key", "permissions", "wrong SAN", "base ports", "base restart", "conflicting env", "changed overlay"} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			material := filepath.Join(dir, "tls")
@@ -52,6 +52,9 @@ func TestRuntimeCertificateValidation(t *testing.T) {
 				t.Fatal(err)
 			}
 			cfg := config.HordeConfig{TLS: config.HordeTLSConfig{Enabled: true, ServerName: "horde.example.internal", CertPath: filepath.Join(material, "cert.pem"), KeyPath: filepath.Join(material, "key.pem"), CAPath: filepath.Join(material, "ca.pem")}}
+			if name == "literal paths" {
+				cfg.TLS.CertPath = filepath.Join(material, `cert"$(touch INJECTION_SENTINEL).pem`)
+			}
 			for path, data := range map[string][]byte{cfg.TLS.CertPath: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), cfg.TLS.CAPath: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), cfg.TLS.KeyPath: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pk})} {
 				if err := os.WriteFile(path, data, 0600); err != nil {
 					t.Fatal(err)
@@ -98,13 +101,17 @@ func TestRuntimeCertificateValidation(t *testing.T) {
 				t.Fatal(err)
 			}
 			cmd := exec.Command("bash", "-c", script)
+			cmd.Dir = dir
 			cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
 			out, err := cmd.CombinedOutput()
-			if (err == nil) != (name == "valid") {
+			if (err == nil) != (name == "valid" || name == "literal paths") {
 				t.Fatalf("%s: %v %s", name, err, out)
 			}
 			if strings.Contains(string(out), "never-print-this") {
 				t.Fatal("base environment leaked")
+			}
+			if _, err := os.Stat(filepath.Join(dir, "INJECTION_SENTINEL")); !os.IsNotExist(err) {
+				t.Fatal("certificate path executed shell substitution")
 			}
 		})
 	}
@@ -177,7 +184,7 @@ curl() {
     *) printf '%s\n%s' "$TEST_PORTS" "$TEST_CODE" ;;
   esac
 }
-CURL_OPTS=()
+CURL_OPTS=(--silent)
 HORDE_URL=https://horde.example.internal:5000
 ` + ListenerCheckScript(c)
 			cmd := exec.Command(bash, "-c", script)

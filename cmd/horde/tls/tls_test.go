@@ -228,6 +228,33 @@ horde:
 	if err := run(false); err == nil {
 		t.Fatal("overwrite accepted")
 	}
+	for _, tc := range []struct {
+		name, contents, output string
+	}{
+		{"invalid YAML", "horde: [", filepath.Join(dir, "invalid-yaml")},
+		{"invalid DNS", strings.Replace(cfg, "horde.example.internal", "https://invalid", 1), filepath.Join(dir, "invalid-dns")},
+		{"disabled TLS", strings.Replace(cfg, "enabled: true", "enabled: false", 1), filepath.Join(dir, "disabled")},
+		{"HTTP mode", "horde: {}", filepath.Join(dir, "http")},
+		{"invalid output path", cfg, "invalid\x00path"},
+		{"empty output directory", cfg, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(configFile, []byte(tc.contents), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := newRender(func() globals.Options { return globals.Options{} }, &bytes.Buffer{})
+			cmd.Flags().String("config", configFile, "config")
+			cmd.SetArgs([]string{"--output-dir=" + tc.output})
+			if err := cmd.Execute(); err == nil {
+				t.Fatal("invalid render input accepted")
+			}
+			if tc.output != "" && !strings.ContainsRune(tc.output, '\x00') {
+				if _, err := os.Stat(tc.output); !os.IsNotExist(err) {
+					t.Fatal("failed validation created output")
+				}
+			}
+		})
+	}
 }
 
 func TestAdoptCobraWiring(t *testing.T) {
