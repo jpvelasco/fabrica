@@ -87,17 +87,15 @@ func TestDockerBakeScriptRequiresAuthentication(t *testing.T) {
 		"mongod --auth",
 		"MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD:?",
 		"HORDE__AUTHMETHOD=Horde",
-		"HORDE__SERVERURL=${HORDE_SERVER_URL",
 		"mongodb://horde:${MONGO_PASSWORD}@mongodb:27017/horde?authSource=admin",
-		"${HORDE_BIND_ADDRESS:-127.0.0.1}:5000:5000",
-		"${HORDE_BIND_ADDRESS:-127.0.0.1}:5002:5002",
+		"/etc/horde/fabrica-runtime-contract",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("compose stack missing %q", want)
 		}
 	}
-	if strings.Contains(got, `- "5000:5000"`) || strings.Contains(got, `- "5002:5002"`) {
-		t.Error("Horde ports must not be published on all interfaces by default")
+	if strings.Contains(got, "    ports:") || strings.Contains(got, "ASPNETCORE_URLS") || strings.Contains(got, "HORDE__SERVERURL") {
+		t.Error("base stack must leave listener publication and server URL to the runtime overlay")
 	}
 }
 

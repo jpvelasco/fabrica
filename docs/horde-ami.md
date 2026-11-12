@@ -586,14 +586,14 @@ service-account token, not the Admin password:
 A coordinator created before this change records no parameter; `horde submit`
 then sends no credentials and prints a note. Re-create it to enable the token.
 
-### Transport encryption (not yet)
+### Transport encryption
 
-Horde is served over plain HTTP on 5000 and cleartext gRPC on 5002, so the
-service token, the Admin password at login, and job payloads cross the VPC
-unencrypted at the application layer. `horde.allowedCidr` limits who can reach
-the ports, and AWS does not let one instance sniff another's VPC traffic, but
-this is not a substitute for TLS. Serving Horde over TLS (certificate source,
-agent trust, rotation) is planned as separate work.
+HTTP compatibility mode uses plaintext ports 5000/5002. Opt-in
+`horde.tls.enabled` uses one HTTPS port, operator-supplied certificate paths
+and independent client/agent/CI trust. See [Horde TLS](horde-tls.md) before baking
+or migrating. TLS requires the updated generated Docker base contract: no
+base Horde port publication, a runtime overlay and gated host startup. Older
+manual Compose examples in this guide describe the HTTP compatibility stack.
 
 AMIs baked before this change contain the old `--noauth` compose file and keep
 the old behaviour. Re-run `fabrica horde ami build` and recreate the instance.

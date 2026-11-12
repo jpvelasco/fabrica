@@ -293,15 +293,23 @@ Restores Helix Core from a backup id: stops `helix-p4d`, restores checkpoint/jou
 
 #### `fabrica horde create`
 
-Provisions an Unreal Horde build coordinator on an `m7i.2xlarge` instance using your pre-baked AMI. Security group allows ports 5000 (HTTP) and 5002 (gRPC) inbound from the configured `horde.allowedCidr` (default `10.0.0.0/8`). **Important:** the default `10.0.0.0/8` does not cover AWS default VPCs (`172.31.0.0/16`). If your CodeBuild project, workstations, or operators live in a different CIDR, set `horde.allowedCidr` to your VPC CIDR (e.g. `172.31.0.0/16`) in `fabrica.yaml` before creating — or `horde create` will resolve the VPC CIDR automatically and use it as the default. Do not use `0.0.0.0/0` on ports 5000/5002. Generates MongoDB credentials to `.fabrica/horde-credentials.yaml` (mode 0600).
+Provisions an Unreal Horde build coordinator on an `m7i.2xlarge` instance using your pre-baked AMI. HTTP mode opens ports 5000 (API/UI) and 5002 (gRPC); opt-in TLS uses one configured HTTPS port for both. See [Horde TLS](docs/horde-tls.md) for the Docker runtime, operator-supplied certificate and trust requirements. Inbound traffic is restricted to `horde.allowedCidr`; when omitted, create resolves the VPC CIDR, falling back to `10.0.0.0/8`. Set an explicit CIDR for clients in other networks; do not open the Horde listeners to `0.0.0.0/0`. Generates MongoDB credentials to `.fabrica/horde-credentials.yaml` (mode 0600).
 
 #### `fabrica horde status`
 
-Reads live state and TCP-probes port 5000. Reports the Horde web UI URL and gRPC endpoint. `--json` emits `hordeUrl` and `hordeGrpc` fields. The probe targets the instance **private IP** — private-only farms (no VPN/in-VPC) will report `provisioning` indefinitely; verify with SSM ([docs/ssm-private.md](docs/ssm-private.md)).
+Reads live state and probes the recorded endpoint. HTTP mode uses TCP; TLS verifies the certificate and TLS-only listener report. Reports the UI/API URL and gRPC endpoint, with diagnostic probe errors in text and JSON. Requires VPN or in-VPC access to the private endpoint ([docs/ssm-private.md](docs/ssm-private.md)).
+
+#### `fabrica horde tls render`
+
+Generates local TLS migration files with `--output-dir`. Initializes no provider and refuses existing output files. Inspect the artifacts before installing them through SSM; see [the migration runbook](docs/horde-tls.md).
+
+#### `fabrica horde tls adopt`
+
+Verifies an operator-installed Docker TLS coordinator over SSM and pinned private-IP HTTPS, then records its connection under the state lock. `--dry-run` previews checks without remote verification or mutation. Adoption preserves the coordinator; legacy agent pools and CI projects require replacement.
 
 #### `fabrica horde submit`
 
-Parses a BuildGraph XML file and POSTs the job to the Horde REST API via the coordinator's private IP. The target is resolved from the XML (first `<Agent>`'s first `<Node>` name). Use `examples/BuildGraph.sample.xml` as a starting point. Options:
+Parses a BuildGraph XML file and POSTs the job to the recorded Horde endpoint (private IP for HTTP; configured DNS identity for TLS). The target is resolved from the XML (first `<Agent>`'s first `<Node>` name). Use `examples/BuildGraph.sample.xml` as a starting point. Options:
 
 ```
 --wait         Poll until the job completes (exits non-zero if the job errors, the wait times out, or polling is cancelled)

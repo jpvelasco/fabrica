@@ -1,6 +1,10 @@
 package ami
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/jpvelasco/fabrica/internal/horde"
+)
 
 // Shared shell content for the Horde AMI bake. The Image Builder component
 // (component.yaml.tmpl) and the Packer template (packer.hcl.tmpl) both embed
@@ -79,9 +83,6 @@ services:
   horde:
     image: fabrica-horde-server:__HORDE_VERSION__
     container_name: horde-server
-    ports:
-      - "${HORDE_BIND_ADDRESS:-127.0.0.1}:5000:5000"
-      - "${HORDE_BIND_ADDRESS:-127.0.0.1}:5002:5002"
     volumes:
       - /etc/horde/globals.json:/app/Defaults/globals.json:ro
       - /etc/horde/server.json:/app/Defaults/server.json:ro
@@ -89,15 +90,14 @@ services:
       - HORDE__REDISCONNECTIONSTRING=redis:6379
       - HORDE__MONGOCONNECTIONSTRING=mongodb://horde:${MONGO_PASSWORD}@mongodb:27017/horde?authSource=admin
       - HORDE__AUTHMETHOD=Horde
-      - HORDE__SERVERURL=${HORDE_SERVER_URL:-http://localhost:5000}
-      - ASPNETCORE_URLS=http://+:5000
       - HORDE__CONFIGPATH=/app/Defaults/globals.json
     depends_on:
       mongodb:
         condition: service_healthy
       redis:
         condition: service_healthy
-    restart: unless-stopped
+    # Publication is controlled by the gated host unit, including on reboot.
+    restart: "no"
 
 volumes:
   mongodb-data:
@@ -139,6 +139,7 @@ cat >/etc/horde/server.json <<'JSON'
 JSON
 
 test -s /etc/horde/docker-compose.yml
+printf '1\n' > /etc/horde/fabrica-runtime-contract
 
 # ghcr.io/epicgames/horde-server is private (the operator-side pull needs a
 # GitHub token with read:packages scope), so the operator mirrors the image
@@ -181,21 +182,7 @@ docker pull mongo:7.0
 docker pull redis:7.2`
 
 // hordeDockerUnitText is the systemd unit for the docker-install Horde stack.
-const hordeDockerUnitText = `[Unit]
-Description=Horde Server (docker compose)
-After=network-online.target docker.service
-Requires=docker.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-WorkingDirectory=/etc/horde
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose down
-ExecReload=/bin/sh -c '/usr/bin/docker compose pull && /usr/bin/docker compose up -d'
-
-[Install]
-WantedBy=multi-user.target`
+const hordeDockerUnitText = horde.RuntimeUnit
 
 // dockerBakeScript returns the docker-bake script for the given Horde version.
 func dockerBakeScript(version string) string {

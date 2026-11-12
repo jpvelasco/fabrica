@@ -16,6 +16,13 @@ image) pre-baked.
 
 See [docs/horde-ami.md](horde-ami.md) for the **coordinator** AMI build guide.
 
+For TLS, follow the [native agent contract](horde-tls.md#native-agent-ami):
+stock Linux agent, non-root `horde-agent.service`, versioned AMI marker and
+preinstalled trust. Fabrica configures the service with official environment
+keys and verifies coordinator HTTPS/HTTP2 before restart. Configuration success
+does not prove enrollment. The custom INI/Docker steps below describe legacy
+HTTP compatibility mode.
+
 ---
 
 ## Requirements

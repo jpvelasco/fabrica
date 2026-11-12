@@ -96,9 +96,6 @@ func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region 
 	if err != nil {
 		return nil, err
 	}
-	if connection.TLS {
-		return nil, fmt.Errorf("TLS provisioning is not enabled in this build; use the completed Horde TLS release")
-	}
 
 	vpcID, subnetID, defaultVPC, err := topology.ResolveVPC(ctx, cfg.VPCId, cfg.SubnetId, resolver)
 	if err != nil {

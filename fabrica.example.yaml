@@ -54,7 +54,17 @@ perforce: {}
 #   instanceType: m7i.2xlarge
 #   volumeSize: 100
 #   allowedCidr: 172.31.0.0/16    # set to your VPC CIDR
+#   port: 5000
+#   # Optional single-port HTTPS (omit grpcPort). Supply files on the host.
+#   tls:
+#     enabled: true
+#     serverName: horde.example.internal
+#     certPath: /etc/horde/tls/server.crt
+#     keyPath: /etc/horde/tls/server.key
+#     caPath: /etc/horde/tls/ca-bundle.pem
+#   clientCAPath: ./certs/horde-ca.pem  # local, relative to config directory
 #   agents:
+#     caPath: /etc/horde/tls/ca-bundle.pem  # already present in native agent AMI
 #     spot: false                 # estimate-only discount; Fabrica does not request Spot capacity
 #     # Place the agent pool explicitly (set together). When both are empty
 #     # the pool follows the coordinator's placement, falling back to the
@@ -127,6 +137,7 @@ horde: {}
 # CI: a CodeBuild project that orchestrates Horde BuildGraph jobs.
 # All fields are optional — defaults shown.
 ci:
+  hordeCAPath: ""             # optional CA bundle already in the CodeBuild image
   projectName: ""             # CodeBuild project name (default "fabrica-ci")
   computeType: ""             # CodeBuild compute type (default "BUILD_GENERAL1_SMALL")
   image: ""                   # Build image (default "aws/codebuild/amazonlinux2-x86_64-standard:5.0")
