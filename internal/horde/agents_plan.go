@@ -50,6 +50,8 @@ type CoordinatorPlacement struct {
 // Auto Scaling Group. It is built from config + the existing coordinator state
 // (coordinator private IP for agent enrollment).
 type AgentsCreatePlan struct {
+	Connection      Connection
+	CAPath          string
 	Account         string
 	Region          string
 	AmiID           string
