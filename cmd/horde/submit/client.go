@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jpvelasco/fabrica/cmd/internal/hordeapi"
+	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/horde/buildgraph"
 )
 
@@ -32,10 +34,11 @@ type hordeHTTPClient struct {
 }
 
 func newHordeHTTPClient(baseURL, token string) *hordeHTTPClient {
+	client, _ := hordeapi.NewClient(horde.Connection{}, "", "", "", hordeHTTPTimeout)
 	return &hordeHTTPClient{
 		baseURL: baseURL,
 		token:   token,
-		http:    &http.Client{Timeout: hordeHTTPTimeout},
+		http:    client,
 	}
 }
 

@@ -28,6 +28,7 @@ const DefaultAllowedCIDR = "10.0.0.0/8"
 const DefaultSGName = "fabrica-horde-sg"
 
 type CreatePlan struct {
+	Connection   Connection
 	Account      string
 	Region       string
 	AmiID        string
@@ -91,13 +92,12 @@ func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region 
 	if volumeSize <= 0 {
 		volumeSize = 100
 	}
-	port := cfg.Port
-	if port <= 0 {
-		port = DefaultPort
+	connection, err := ConnectionFromConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
-	grpcPort := cfg.GRPCPort
-	if grpcPort <= 0 {
-		grpcPort = DefaultGRPCPort
+	if connection.TLS {
+		return nil, fmt.Errorf("TLS provisioning is not enabled in this build; use the completed Horde TLS release")
 	}
 
 	vpcID, subnetID, defaultVPC, err := topology.ResolveVPC(ctx, cfg.VPCId, cfg.SubnetId, resolver)
@@ -107,13 +107,14 @@ func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region 
 	allowedCIDR := topology.ResolveAllowedCIDR(ctx, cfg.AllowedCIDR, vpcID, cidrResolver, DefaultAllowedCIDR)
 
 	return &CreatePlan{
+		Connection:          connection,
 		Account:             account,
 		Region:              region,
 		AmiID:               cfg.AmiID,
 		InstanceType:        instanceType,
 		VolumeSize:          volumeSize,
-		Port:                port,
-		GRPCPort:            grpcPort,
+		Port:                connection.Port,
+		GRPCPort:            connection.GRPCPort,
 		AllowedCIDR:         allowedCIDR,
 		VPCID:               vpcID,
 		SubnetID:            subnetID,

@@ -95,16 +95,28 @@ type HordeConfig struct {
 	SubnetId     string            `mapstructure:"subnetId"     yaml:"subnetId"`
 	Port         int               `mapstructure:"port"         yaml:"port"`
 	GRPCPort     int               `mapstructure:"grpcPort"     yaml:"grpcPort"`
+	TLS          HordeTLSConfig    `mapstructure:"tls"          yaml:"tls"`
+	ClientCAPath string            `mapstructure:"clientCAPath" yaml:"clientCAPath"`
 	AllowedCIDR  string            `mapstructure:"allowedCidr"  yaml:"allowedCidr"`
 	Agents       HordeAgentsConfig `mapstructure:"agents"       yaml:"agents"`
 	// IAM overrides cloud.aws.iam for the coordinator and the agent pool.
 	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
 }
 
+// HordeTLSConfig names operator-supplied PEM material on the coordinator.
+type HordeTLSConfig struct {
+	Enabled    bool   `mapstructure:"enabled"    yaml:"enabled"`
+	ServerName string `mapstructure:"serverName" yaml:"serverName"`
+	CertPath   string `mapstructure:"certPath"   yaml:"certPath"`
+	KeyPath    string `mapstructure:"keyPath"    yaml:"keyPath"`
+	CAPath     string `mapstructure:"caPath"     yaml:"caPath"`
+}
+
 // HordeAgentsConfig holds the horde.agents: section of fabrica.yaml.
 // Used by `fabrica horde agents create` to provision an Auto Scaling Group
 // of Horde build agents.
 type HordeAgentsConfig struct {
+	CAPath          string `mapstructure:"caPath"          yaml:"caPath"`
 	AmiID           string `mapstructure:"amiId"           yaml:"amiId"`
 	InstanceType    string `mapstructure:"instanceType"    yaml:"instanceType"`
 	MinSize         int    `mapstructure:"minSize"         yaml:"minSize"`
@@ -174,6 +186,7 @@ type LoreTLSConfig struct {
 // VPCId and SubnetId place the CodeBuild project inside a VPC so builds can
 // reach a private-IP Horde; empty values fall back to the account default VPC.
 type CIConfig struct {
+	HordeCAPath  string `mapstructure:"hordeCAPath"  yaml:"hordeCAPath"`
 	ProjectName  string `mapstructure:"projectName"  yaml:"projectName"`
 	ComputeType  string `mapstructure:"computeType"  yaml:"computeType"`
 	Image        string `mapstructure:"image"        yaml:"image"`
