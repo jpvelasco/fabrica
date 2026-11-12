@@ -459,23 +459,14 @@ func TestCreateWriteCredentialsError(t *testing.T) {
 // TestCreateReadStateError verifies that readState errors propagate.
 func TestCreateReadStateError(t *testing.T) {
 	var out bytes.Buffer
-	c := command{
-		runtime: globals.Runtime{
-			Config:   config.Defaults(),
-			Provider: &testutil.TestProvider{},
-		},
-		costs: fabricacost.Global,
-		out:   &out,
-	}
+	c := newTestCommand(&out, &testutil.InspectorProvider{}, nil)
 	c.readState = func() (*fabricastate.State, error) {
 		return nil, errors.New("state corrupted")
 	}
-	c.writeState = testutil.StateWriteNever()
-	c.createResource = func(ctx context.Context, r *cloud.Resource) error { return nil }
 
 	err := c.run(context.Background())
-	if err == nil {
-		t.Fatal("expected error when readState fails")
+	if err == nil || !strings.Contains(err.Error(), "state corrupted") {
+		t.Fatalf("state failure hidden by an earlier validation error: %v", err)
 	}
 }
 
