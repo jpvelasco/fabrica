@@ -157,3 +157,34 @@ esac
 		})
 	}
 }
+
+func TestTLSBuildspecRejectsPlaintextURLOverride(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash unavailable")
+	}
+	var doc struct {
+		Phases map[string]struct{ Commands []string } `yaml:"phases"`
+	}
+	if err := yaml.Unmarshal([]byte(BuildspecRaw(&CreatePlan{HordeConnection: horde.Connection{TLS: true, Port: 5000}})), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []string{"pre_build", "build"} {
+		t.Run(phase, func(t *testing.T) {
+			canary := filepath.Join(t.TempDir(), "network-call")
+			curl := `curl() { touch "$CANARY"; printf '{"http":0,"https":5000,"unencryptedHttp2":0}\n200'; }` + "\n"
+			commands := doc.Phases[phase].Commands
+			cmd := exec.Command(bash, "-c", curl+commands[len(commands)-1])
+			cmd.Env = append(os.Environ(), "CANARY="+filepath.ToSlash(canary),
+				"HORDE_URL=http://horde.example.internal:5000", "HORDE_CA_FILE=", "HORDE_TOKEN=fixture-credential",
+				"BUILDGRAPH=fixture", "TARGET=Build")
+			out, err := cmd.CombinedOutput()
+			if err == nil || strings.Contains(string(out), "fixture-credential") {
+				t.Fatalf("plaintext override: %v %s", err, out)
+			}
+			if _, err := os.Stat(canary); !os.IsNotExist(err) {
+				t.Fatal("TLS build made a plaintext request")
+			}
+		})
+	}
+}
