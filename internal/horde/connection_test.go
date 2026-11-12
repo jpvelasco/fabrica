@@ -115,3 +115,24 @@ func TestConnectionState(t *testing.T) {
 		t.Fatalf("partial SG record: %v", err)
 	}
 }
+
+func TestDependentContract(t *testing.T) {
+	c, _ := ConnectionFromConfig(tlsConfig())
+	for _, properties := range []map[string]string{
+		nil,
+		{"contract": "1"},
+		{"contract": "0", ConnectionProperty: c.Record()},
+		{"contract": "1", ConnectionProperty: "invalid"},
+	} {
+		if err := ValidateDependent(c, state.ModuleResource{Properties: properties}, "contract"); err == nil {
+			t.Fatal("unverified TLS dependent accepted")
+		}
+	}
+	verified := state.ModuleResource{Properties: map[string]string{"contract": "1", ConnectionProperty: c.Record()}}
+	if err := ValidateDependent(c, verified, "contract"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateDependent(Connection{}, state.ModuleResource{}, "contract"); err != nil {
+		t.Fatal("legacy HTTP dependent rejected", err)
+	}
+}
