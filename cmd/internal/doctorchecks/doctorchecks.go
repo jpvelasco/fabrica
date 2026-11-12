@@ -12,6 +12,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	fabricav "github.com/jpvelasco/fabrica/internal/version"
 )
@@ -34,7 +35,21 @@ func RunChecks(ctx context.Context, rt globals.Runtime, backend cloud.StateBacke
 		checkBucket(ctx, rt, backend),
 		checkTable(ctx, rt, backend),
 		checkPerforceCIDR(rt),
+		checkHordeConnection(rt),
 	}
+}
+
+func checkHordeConnection(rt globals.Runtime) DoctorCheck {
+	if rt.Config == nil {
+		return DoctorCheck{"Horde transport", "ok", "not configured"}
+	}
+	if _, err := horde.ConnectionFromConfig(rt.Config.Horde); err != nil {
+		return DoctorCheck{"Horde transport", "fail", err.Error()}
+	}
+	if err := horde.ValidateTrustPath("ci.hordeCAPath", rt.Config.CI.HordeCAPath); err != nil {
+		return DoctorCheck{"Horde transport", "fail", err.Error()}
+	}
+	return DoctorCheck{"Horde transport", "ok", "configuration valid; remote TLS material requires host validation"}
 }
 
 func checkGo() DoctorCheck {

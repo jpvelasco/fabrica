@@ -18,6 +18,7 @@ func (g *terraformGenerator) Generate(modules []ExportModule) ([]byte, error) {
 	sb.WriteString("#\n")
 	sb.WriteString("# Generated from Fabrica local state — review before applying.\n")
 	sb.WriteString("# UserData and credentials are redacted.\n")
+	sb.WriteString("# Horde runtime overlays, certificate delivery, and application TLS bootstrap are not reconstructed.\n")
 	sb.WriteString("\n")
 
 	// Provider block.
