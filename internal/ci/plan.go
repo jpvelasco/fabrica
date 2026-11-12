@@ -11,6 +11,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
 
@@ -34,13 +35,15 @@ const DefaultSGName = "fabrica-ci-sg"
 
 // CreatePlan is the resolved CI provisioning plan for one account/region.
 type CreatePlan struct {
-	Account      string
-	Region       string
-	ProjectName  string
-	RoleName     string
-	ComputeType  string
-	Image        string
-	BuildTimeout int
+	HordeConnection horde.Connection
+	HordeCAPath     string
+	Account         string
+	Region          string
+	ProjectName     string
+	RoleName        string
+	ComputeType     string
+	Image           string
+	BuildTimeout    int
 
 	// HordeURL is the resolved Horde coordinator base URL (e.g.
 	// "http://10.0.1.42:5000"). Empty at setup time — only required when a
@@ -76,6 +79,9 @@ func NewCreatePlan(ctx context.Context, cfg config.CIConfig, account, region, ho
 	if err := cfg.IAM.Validate(); err != nil {
 		return nil, err
 	}
+	if err := horde.ValidateTrustPath("ci.hordeCAPath", cfg.HordeCAPath); err != nil {
+		return nil, err
+	}
 	projectName := cfg.ProjectName
 	if projectName == "" {
 		projectName = defaultProjectName
@@ -107,6 +113,7 @@ func NewCreatePlan(ctx context.Context, cfg config.CIConfig, account, region, ho
 		Image:         image,
 		BuildTimeout:  buildTimeout,
 		HordeURL:      hordeURL,
+		HordeCAPath:   cfg.HordeCAPath,
 		VPCID:         vpcID,
 		SubnetID:      subnetID,
 		SGName:        DefaultSGName,

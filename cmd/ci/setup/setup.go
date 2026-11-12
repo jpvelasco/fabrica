@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -103,10 +104,34 @@ func (c command) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	ctx, releaseLock, err := provision.AcquireStateLockUnlessDryRun(ctx, c.runtime, "ci setup", c.dryRun)
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
 
 	// Resolve the Horde URL from state if Horde is provisioned, so the project's
 	// default HORDE_URL is populated. Not required for setup to succeed.
+	st, err := c.readState()
+	if err != nil {
+		return fmt.Errorf("reading state: %w", err)
+	}
+	connection, err := horde.ResolveConnection(c.runtime.Config.Horde, st.GetModule("horde"))
+	if err != nil {
+		return err
+	}
+	if connection.TLS && st.GetModule("horde") == nil {
+		return fmt.Errorf("TLS CI requires a provisioned and verified Horde coordinator; run 'fabrica horde tls adopt' first")
+	}
+	if project, ok := stateutil.ResourceByType(st.GetModule(moduleName), ci.TypeAWSCodeBuildProject); ok {
+		if err := horde.ValidateDependent(connection, project, "hordeCIContract"); err != nil {
+			return err
+		}
+	}
 	hordeURL := c.resolveHordeURL(ctx)
+	if connection.TLS {
+		hordeURL = connection.URL("")
+	}
 
 	ciCfg := c.runtime.Config.CI
 	resolvedIAM, err := config.ResolveIAM(c.runtime.Config.Cloud.AWS.IAM, ciCfg.IAM)
@@ -122,17 +147,14 @@ func (c command) run(ctx context.Context) error {
 	if plan.HordeTokenParameter, err = c.resolveHordeTokenParameter(); err != nil {
 		return err
 	}
+	if st.GetModule("horde") != nil {
+		plan.HordeConnection = connection
+	}
 
 	if c.dryRun {
 		c.printDryRun(plan)
 		return nil
 	}
-
-	ctx, releaseLock, err := provision.AcquireStateLock(ctx, c.runtime, "ci setup")
-	if err != nil {
-		return err
-	}
-	defer releaseLock()
 
 	c.printPlan(plan)
 	if !provision.ConfirmSetup(c.out, provision.CreateResourcesPrompt, c.assumeYes, c.confirm) {
@@ -146,6 +168,18 @@ func (c command) apply(ctx context.Context, plan *ci.CreatePlan) error {
 	st, err := c.readState()
 	if err != nil {
 		return fmt.Errorf("reading state: %w", err)
+	}
+	connection, err := horde.ResolveConnection(c.runtime.Config.Horde, st.GetModule("horde"))
+	if err != nil {
+		return err
+	}
+	if plan.HordeConnection.Version != 0 && plan.HordeConnection != connection {
+		return fmt.Errorf("Horde connection changed while preparing CI; retry setup")
+	}
+	if project, ok := stateutil.ResourceByType(st.GetModule(moduleName), ci.TypeAWSCodeBuildProject); ok {
+		if err := horde.ValidateDependent(connection, project, "hordeCIContract"); err != nil {
+			return err
+		}
 	}
 
 	resources, err := c.applyResources(ctx, st, plan)
@@ -166,7 +200,11 @@ func (c command) apply(ctx context.Context, plan *ci.CreatePlan) error {
 // after each so a partial failure is recoverable on re-run. Existing resources
 // (detected in current state) are skipped.
 func (c command) applyResources(ctx context.Context, st *fabricastate.State, plan *ci.CreatePlan) ([]fabricastate.ModuleResource, error) {
+	existingProject, hasProject := stateutil.ResourceByType(st.GetModule(moduleName), ci.TypeAWSCodeBuildProject)
 	var resources []fabricastate.ModuleResource
+	if m := st.GetModule(moduleName); m != nil {
+		resources = append(resources, m.Resources...)
+	}
 
 	roleARN := fmt.Sprintf("arn:aws:iam::%s:role/%s", plan.Account, plan.RoleName)
 
@@ -211,7 +249,24 @@ func (c command) applyResources(ctx context.Context, st *fabricastate.State, pla
 	} else {
 		fmt.Fprintf(c.out, "  CodeBuild project already exists — skipping: %s\n", plan.ProjectName)
 	}
-	resources = provision.AppendUnique(resources, fabricastate.ModuleResource{TypeName: ci.TypeAWSCodeBuildProject, Identifier: plan.ProjectName})
+	project := fabricastate.ModuleResource{TypeName: ci.TypeAWSCodeBuildProject, Identifier: plan.ProjectName}
+	if created {
+		project.Properties = map[string]string{"hordeCIContract": "1"}
+		if plan.HordeConnection.Version != 0 {
+			project.Properties[horde.ConnectionProperty] = plan.HordeConnection.Record()
+		}
+	} else {
+		if hasProject {
+			project = existingProject
+		}
+		if err := horde.ValidateDependent(plan.HordeConnection, project, "hordeCIContract"); err != nil {
+			return nil, err
+		}
+	}
+	resources = slices.DeleteFunc(resources, func(r fabricastate.ModuleResource) bool {
+		return r.TypeName == project.TypeName && r.Identifier == project.Identifier
+	})
+	resources = provision.AppendUnique(resources, project)
 	return resources, nil
 }
 
@@ -222,13 +277,13 @@ func (c command) applyResources(ctx context.Context, st *fabricastate.State, pla
 func (c command) resolveHordeTokenParameter() (string, error) {
 	st, err := c.readState()
 	if err != nil {
-		return "", nil
+		return "", fmt.Errorf("reading Horde token parameter state: %w", err)
 	}
 	m := st.GetModule("horde")
 	if m == nil {
 		return "", nil
 	}
-	inst, ok := stateutil.ResourceByType(m, "AWS::EC2::Instance")
+	inst, ok := horde.CoordinatorResource(m, "AWS::EC2::Instance")
 	if !ok {
 		return "", nil
 	}
@@ -248,7 +303,18 @@ func (c command) resolveHordeURL(ctx context.Context) string {
 	if m == nil {
 		return ""
 	}
-	inst, ok := stateutil.ResourceByType(m, "AWS::EC2::Instance")
+	var cfg config.HordeConfig
+	if c.runtime.Config != nil {
+		cfg = c.runtime.Config.Horde
+	}
+	connection, err := horde.ResolveConnection(cfg, m)
+	if err != nil {
+		return ""
+	}
+	if connection.TLS {
+		return connection.URL("")
+	}
+	inst, ok := horde.CoordinatorResource(m, "AWS::EC2::Instance")
 	if !ok || inst.Identifier == "" || c.getResource == nil {
 		return ""
 	}
@@ -260,11 +326,7 @@ func (c command) resolveHordeURL(ctx context.Context) string {
 	if ip == "" {
 		return ""
 	}
-	port := 5000
-	if c.runtime.Config != nil && c.runtime.Config.Horde.Port > 0 {
-		port = c.runtime.Config.Horde.Port
-	}
-	return fmt.Sprintf("http://%s:%d", ip, port)
+	return connection.URL(ip)
 }
 
 func (c command) printDryRun(plan *ci.CreatePlan) {

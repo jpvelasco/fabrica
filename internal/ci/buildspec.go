@@ -2,6 +2,9 @@ package ci
 
 import (
 	"encoding/base64"
+	"strings"
+
+	"github.com/jpvelasco/fabrica/internal/horde"
 )
 
 // buildspecTemplate is the inline CodeBuild buildspec. On each build it submits
@@ -28,9 +31,11 @@ phases:
       # Pre-flight: confirm the coordinator accepts the token and exposes the
       # job-creation API, and report which of the two failed.
       - |
+        # FABRICA_CURL_OPTIONS
+        # FABRICA_TLS_PREFLIGHT
         HORDE_AUTH=()
         if [ -n "${HORDE_TOKEN:-}" ]; then HORDE_AUTH=(-H "Authorization: ServiceAccount ${HORDE_TOKEN}"); fi
-        code=$(curl -sS -o /dev/null -w '%{http_code}' "${HORDE_AUTH[@]}" "$HORDE_URL/api/v1/jobs" || true)
+        code=$(curl "${CURL_OPTS[@]}" -o /dev/null -w '%{http_code}' "${HORDE_AUTH[@]}" "$HORDE_URL/api/v1/jobs" || true)
         case "$code" in
           2??) echo "Horde job API check passed" ;;
           401|403)
@@ -50,11 +55,16 @@ phases:
     commands:
       - 'echo "Submitting BuildGraph job to Horde at $HORDE_URL"'
       - |
+        # FABRICA_CURL_OPTIONS
         HORDE_AUTH=()
         if [ -n "${HORDE_TOKEN:-}" ]; then HORDE_AUTH=(-H "Authorization: ServiceAccount ${HORDE_TOKEN}"); fi
-        curl -fsS -X POST "$HORDE_URL/api/v1/jobs" "${HORDE_AUTH[@]}" \
+        code=$(curl "${CURL_OPTS[@]}" --fail -o /dev/null -w '%{http_code}' -X POST "$HORDE_URL/api/v1/jobs" "${HORDE_AUTH[@]}" \
           -H "Content-Type: application/json" \
-          -d "{\"name\":\"${BUILDGRAPH:-fabrica-ci}\",\"target\":\"$TARGET\"}"
+          -d "{\"name\":\"${BUILDGRAPH:-fabrica-ci}\",\"target\":\"$TARGET\"}")
+        case "$code" in
+          2??) echo "Horde job submitted" ;;
+          *) echo "Horde job submission failed (HTTP $code)" >&2; exit 1 ;;
+        esac
   post_build:
     commands:
       - 'echo "BuildGraph job submitted"'
@@ -69,8 +79,24 @@ func Buildspec(plan *CreatePlan) string {
 // BuildspecRaw returns the plain-text buildspec YAML, for test assertions and
 // debugging (mirrors the Generate/GenerateRaw convention in other modules).
 func BuildspecRaw(plan *CreatePlan) string {
-	// The template is currently static; the function takes plan for parity with
-	// the other modules' generators and to allow future per-plan customisation.
-	_ = plan
-	return buildspecTemplate
+	check := ""
+	if plan != nil && plan.HordeConnection.TLS {
+		check = strings.TrimSuffix(horde.ListenerCheckScript(plan.HordeConnection), "\n")
+		// Preflight must reject 3xx responses too, before authenticated calls.
+		check = strings.ReplaceAll(check, `curl "${CURL_OPTS[@]}"`, `curl "${CURL_OPTS[@]}" --fail`)
+		check = strings.ReplaceAll(check, "\n", "\n        ")
+	}
+	result := strings.Replace(buildspecTemplate, "# FABRICA_TLS_PREFLIGHT", check, 1)
+	options := `CURL_OPTS=(--silent --show-error --connect-timeout 5 --max-time 30)
+case "$HORDE_URL" in
+  https://*) CURL_OPTS+=(--proto '=https') ;;
+  http://*) CURL_OPTS+=(--proto '=http') ;;
+  *) echo "Invalid Horde URL scheme" >&2; exit 1 ;;
+esac
+if [ -n "${HORDE_CA_FILE:-}" ]; then
+  test -r "$HORDE_CA_FILE" || { echo "HORDE_CA_FILE is not readable" >&2; exit 1; }
+  CURL_OPTS+=(--cacert "$HORDE_CA_FILE")
+fi`
+	options = strings.ReplaceAll(options, "\n", "\n        ")
+	return strings.ReplaceAll(result, "# FABRICA_CURL_OPTIONS", options)
 }
