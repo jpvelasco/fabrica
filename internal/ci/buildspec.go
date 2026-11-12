@@ -96,7 +96,9 @@ func Buildspec(plan *CreatePlan) string {
 // debugging (mirrors the Generate/GenerateRaw convention in other modules).
 func BuildspecRaw(plan *CreatePlan) string {
 	check := ""
+	httpScheme := "  http://*) CURL_OPTS+=(--proto '=http') ;;"
 	if plan != nil && plan.HordeConnection.TLS {
+		httpScheme = ""
 		check = strings.TrimSuffix(horde.ListenerCheckScript(plan.HordeConnection), "\n")
 		// Preflight must reject 3xx responses too, before authenticated calls.
 		check = strings.ReplaceAll(check, `curl "${CURL_OPTS[@]}"`, `curl "${CURL_OPTS[@]}" --fail`)
@@ -107,13 +109,14 @@ func BuildspecRaw(plan *CreatePlan) string {
 CURL_OPTS=(--silent --show-error --connect-timeout 5 --max-time 30)
 case "$HORDE_URL" in
   https://*) CURL_OPTS+=(--proto '=https') ;;
-  http://*) CURL_OPTS+=(--proto '=http') ;;
+ # FABRICA_HTTP_SCHEME
   *) echo "Invalid Horde URL scheme" >&2; exit 1 ;;
 esac
 if [ -n "${HORDE_CA_FILE:-}" ]; then
   test -r "$HORDE_CA_FILE" || { echo "HORDE_CA_FILE is not readable" >&2; exit 1; }
   CURL_OPTS+=(--cacert "$HORDE_CA_FILE")
 fi`
+	options = strings.Replace(options, " # FABRICA_HTTP_SCHEME", httpScheme, 1)
 	options = strings.ReplaceAll(options, "\n", "\n        ")
 	return strings.ReplaceAll(result, "# FABRICA_CURL_OPTIONS", options)
 }
