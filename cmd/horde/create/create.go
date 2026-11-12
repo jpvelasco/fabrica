@@ -62,7 +62,7 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 Creates these resources in order:
   1. SSM SecureString — /fabrica/horde/<create-nonce>/service-token, a
      placeholder cloud-init overwrites with the Horde service-account token
-  2. EC2 Security Group — allows TCP 5000 (HTTP) and 5002 (gRPC) inbound
+  2. EC2 Security Group — allows the configured application listeners inbound
   3. IAM Role — AmazonSSMManagedInstanceCore for SSM access, plus
      ssm:PutParameter on exactly the service-token parameter
   4. IAM Instance Profile — attaches the role to the EC2 instance
@@ -81,6 +81,9 @@ parameter. Read the Admin password over SSM from /etc/horde/admin-password.
 
 Operator access to the instance is via AWS Systems Manager Session Manager
 (not public SSH). The instance has no inbound SSH from the internet.
+
+With horde.tls.enabled, HTTPS and gRPC share horde.port. Supply a supported
+Docker AMI, private DNS, and PEM files using the workflow in docs/horde-tls.md.
 
 With --dry-run, shows the provisioning plan and a monthly cost estimate without
 making any AWS calls.`,
@@ -191,12 +194,21 @@ func (c command) run(ctx context.Context) error {
 		RequiredResources: plan.RequiredResources(),
 		CleanupCommand:    "fabrica horde destroy",
 		Confirm:           c.confirm,
-		ReadState:         c.readState,
-		PrintDryRun:       c.printDryRun,
-		PrintApplyPlan:    c.printApplyPlan,
-		Apply:             c.applyCreate,
-		Runtime:           c.runtime,
-		Operation:         "horde create",
+		ReadState: func() (*fabricastate.State, error) {
+			st, err := c.readState()
+			if err != nil {
+				return nil, err
+			}
+			if _, err := horde.ResolveConnection(hordeCfg, st.GetModule(moduleName)); err != nil {
+				return nil, err
+			}
+			return st, nil
+		},
+		PrintDryRun:    c.printDryRun,
+		PrintApplyPlan: c.printApplyPlan,
+		Apply:          c.applyCreate,
+		Runtime:        c.runtime,
+		Operation:      "horde create",
 	})
 }
 
@@ -251,8 +263,9 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	fmt.Fprintln(c.out)
 	fmt.Fprintf(c.out, "Creating security group %s...\n", plan.SGName)
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
-		Label:    "Security group",
-		TypeName: cloud.TypeAWSEC2SecurityGroup,
+		Label:      "Security group",
+		TypeName:   cloud.TypeAWSEC2SecurityGroup,
+		Properties: map[string]string{horde.ConnectionProperty: plan.Connection.Record()},
 		BuildDesiredState: func() ([]byte, error) {
 			return horde.SGDesiredState(plan)
 		},
@@ -301,6 +314,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	userData, err := genUserData(horde.UserDataConfig{
 		MongoPassword:         mongoPass,
 		Port:                  plan.Port,
+		Connection:            plan.Connection,
 		ServiceTokenParameter: tokenParam,
 		Region:                plan.Region,
 	})
@@ -330,10 +344,11 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		// state resource: a drift Get of AWS::SSM::Parameter would return the
 		// secret. Destroy, submit, and ci setup read the name from here.
 		Properties: map[string]string{
-			"instanceType":          plan.InstanceType,
-			"volumeSize":            strconv.Itoa(plan.VolumeSize),
-			"rootDevice":            plan.RootDeviceName,
-			"serviceTokenParameter": tokenParam,
+			horde.ConnectionProperty: plan.Connection.Record(),
+			"instanceType":           plan.InstanceType,
+			"volumeSize":             strconv.Itoa(plan.VolumeSize),
+			"rootDevice":             plan.RootDeviceName,
+			"serviceTokenParameter":  tokenParam,
 		},
 		PostCreate: provision.TagVolumesPostCreate(c.runtime.Provider, "horde", plan.InstanceName),
 		// fail on writeState error (default)
@@ -419,13 +434,17 @@ func (c command) printApplyPlan(plan *horde.CreatePlan) {
 }
 
 func (c command) printPostCreate(plan *horde.CreatePlan, instanceID string) {
+	grpc := fmt.Sprintf("<private-ip>:%d", plan.GRPCPort)
+	if plan.Connection.TLS {
+		grpc = plan.Connection.URL("")
+	}
 	provision.PostCreate(c.out, provision.PostCreateSpec{
 		Title:        "Horde coordinator",
 		InstanceID:   instanceID,
 		StatusDetail: "provisioning (Horde starting up, ~3 min)",
 		Details: []provision.PlanField{
-			{Key: "Horde HTTP", Value: fmt.Sprintf("http://<private-ip>:%d", plan.Port)},
-			{Key: "Horde gRPC", Value: fmt.Sprintf("<private-ip>:%d", plan.GRPCPort)},
+			{Key: "Horde API", Value: plan.Connection.URL("<private-ip>")},
+			{Key: "Horde gRPC", Value: grpc},
 			{Key: "Service token", Value: "SSM " + plan.ServiceTokenParameter},
 		},
 		NextSteps: []string{
