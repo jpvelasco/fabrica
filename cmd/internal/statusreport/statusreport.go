@@ -13,6 +13,8 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/horde"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
 )
@@ -152,16 +154,20 @@ func buildModules(ctx context.Context, st *fabricastate.State, rt globals.Runtim
 
 	for i := range st.Modules {
 		m := &st.Modules[i]
+		resourceByType := stateutil.ResourceByType
+		if m.Name == "horde" {
+			resourceByType = horde.CoordinatorResource
+		}
 		sm := StatusModule{
 			Name:          m.Name,
 			Status:        m.Status,
 			Version:       m.Version,
 			ResourceCount: len(m.Resources),
 		}
-		if sg, ok := stateutil.ResourceByType(m, "AWS::EC2::SecurityGroup"); ok {
+		if sg, ok := resourceByType(m, "AWS::EC2::SecurityGroup"); ok {
 			sm.SGID = sg.Identifier
 		}
-		if inst, ok := stateutil.ResourceByType(m, "AWS::EC2::Instance"); ok {
+		if inst, ok := resourceByType(m, "AWS::EC2::Instance"); ok {
 			sm.InstanceID = inst.Identifier
 			ecState, privateIP := liveInstance(ctx, inst.Identifier, getResource)
 			sm.InstanceState = ecState
@@ -169,13 +175,38 @@ func buildModules(ctx context.Context, st *fabricastate.State, rt globals.Runtim
 				if privateIP == "" {
 					sm.Probe = "skipped (no reachable address)"
 				} else {
-					sm.Probe = probeModule(m.Name, privateIP, opts.ProbeTCP)
+					sm.Probe = probeModuleState(m, rt.Config, privateIP, opts.ProbeTCP)
 				}
 			}
 		}
 		out = append(out, sm)
 	}
 	return out
+}
+
+func probeModuleState(m *fabricastate.ModuleState, cfg *config.Config, ip string, probe func(string) bool) string {
+	if m.Name != "horde" {
+		return probeModule(m.Name, ip, probe)
+	}
+	var hordeCfg config.HordeConfig
+	if cfg != nil {
+		hordeCfg = cfg.Horde
+	}
+	connection, err := horde.ResolveConnection(hordeCfg, m)
+	if err != nil {
+		return "configuration error: " + err.Error()
+	}
+	reachable := probe(ip + ":" + strconv.Itoa(connection.Port))
+	if connection.TLS {
+		if reachable {
+			return "TCP responding (TLS unverified; run horde status)"
+		}
+		return "TCP unreachable (TLS unverified)"
+	}
+	if reachable {
+		return "responding"
+	}
+	return "unreachable"
 }
 
 func liveInstance(ctx context.Context, instanceID string, getResource func(ctx context.Context, r *cloud.Resource) error) (state, privateIP string) {

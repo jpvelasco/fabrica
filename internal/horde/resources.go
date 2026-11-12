@@ -8,16 +8,22 @@ import (
 )
 
 // SGDesiredState returns the Cloud Control desired-state JSON for the Horde
-// security group. Opens ports 5000 (HTTP) and 5002 (gRPC) to AllowedCIDR.
+// security group. Opens the unique application listeners to AllowedCIDR.
 func SGDesiredState(plan *CreatePlan) (json.RawMessage, error) {
+	var rules []ec2state.SGIngressRule
+	connection := Connection{Port: plan.Port, GRPCPort: plan.GRPCPort}
+	for i, port := range connection.ListenerPorts() {
+		description := "Horde API + web UI"
+		if i > 0 {
+			description = "Horde gRPC (agent connections)"
+		}
+		rules = append(rules, ec2state.SGIngressRule{IpProtocol: "tcp", FromPort: port, ToPort: port, CidrIp: plan.AllowedCIDR, Description: description})
+	}
 	return ec2state.SGDesiredState(
 		plan.SGName,
 		"Fabrica-managed security group for Horde coordinator",
 		plan.VPCID,
-		[]ec2state.SGIngressRule{
-			{IpProtocol: "tcp", FromPort: plan.Port, ToPort: plan.Port, CidrIp: plan.AllowedCIDR, Description: "Horde HTTP API + web UI"},
-			{IpProtocol: "tcp", FromPort: plan.GRPCPort, ToPort: plan.GRPCPort, CidrIp: plan.AllowedCIDR, Description: "Horde gRPC (agent connections)"},
-		},
+		rules,
 		map[string]string{"FabricaModule": "horde"},
 	)
 }

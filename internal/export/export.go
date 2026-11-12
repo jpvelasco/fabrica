@@ -11,6 +11,7 @@
 package export
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"strings"
@@ -135,6 +136,11 @@ func buildModules(st *state.State, cfg *config.Config) ([]ExportModule, error) {
 		switch ms.Name {
 		case "horde", "perforce", "lore", "ddc", "workstation", "ci", "deploy":
 			mod := buildModule(ms, cfg, st.Account, st.Region)
+			if ms.Name == "horde" {
+				if err := preserveHordeListeners(&mod, &ms, cfg); err != nil {
+					return nil, err
+				}
+			}
 			if len(mod.Resources) > 0 {
 				modules = append(modules, mod)
 			}
@@ -142,6 +148,36 @@ func buildModules(st *state.State, cfg *config.Config) ([]ExportModule, error) {
 	}
 
 	return modules, nil
+}
+
+func preserveHordeListeners(mod *ExportModule, ms *state.ModuleState, cfg *config.Config) error {
+	connection, err := horde.RecordedConnection(ms)
+	if err != nil {
+		return fmt.Errorf("exporting Horde transport: %w", err)
+	}
+	if connection == nil {
+		return nil
+	}
+	cidr := horde.DefaultAllowedCIDR
+	if cfg != nil && cfg.Horde.AllowedCIDR != "" {
+		cidr = cfg.Horde.AllowedCIDR
+	}
+	doc, err := horde.SGDesiredState(&horde.CreatePlan{Port: connection.Port, GRPCPort: connection.GRPCPort, AllowedCIDR: cidr})
+	if err != nil {
+		return err
+	}
+	var desired struct {
+		Ingress []map[string]any `json:"SecurityGroupIngress"`
+	}
+	if err := json.Unmarshal(doc, &desired); err != nil {
+		return err
+	}
+	for i, r := range ms.Resources {
+		if r.TypeName == "AWS::EC2::SecurityGroup" && horde.IsCoordinator(r) {
+			mod.Resources[i].Properties["SecurityGroupIngress"] = desired.Ingress
+		}
+	}
+	return nil
 }
 
 // sanitize strips credential-like fields from resource properties.
@@ -397,6 +433,10 @@ func sessionPasswordParamName(ms state.ModuleState) string {
 // resource properties; leaking them into generated templates yields invalid
 // IaC (e.g. "role": "agent" under AWS::EC2::Instance).
 var internalStateKeys = map[string]struct{}{
+	horde.ConnectionProperty:   {},
+	"hordeAgentContract":       {},
+	"hordeAgentCAPath":         {},
+	"hordeCIContract":          {},
 	"role":                     {},
 	"region":                   {},
 	"buildVersion":             {},

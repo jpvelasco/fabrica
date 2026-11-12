@@ -5,13 +5,11 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	"github.com/jpvelasco/fabrica/internal/assert"
-	"github.com/jpvelasco/fabrica/internal/config"
 )
 
-// These tests cover Horde-specific rendering (text + JSON) and port resolution.
+// These tests cover Horde-specific rendering (text + JSON).
 // Shared orchestration is tested once in cmd/internal/modstatus; the command is
 // exercised end-to-end in cobra_test.go.
 
@@ -31,7 +29,7 @@ func TestRenderText_RunningWithIP(t *testing.T) {
 	got := out.String()
 	for _, want := range []string{
 		"Horde build coordinator", "(running)", "m7i.2xlarge", "10.0.1.42",
-		"Horde HTTP:    http://10.0.1.42:5000", "Horde gRPC:    10.0.1.42:5002", "responding",
+		"Horde API:     http://10.0.1.42:5000", "Horde gRPC:    10.0.1.42:5002", "responding",
 	} {
 		assert.Contains(t, got, want)
 	}
@@ -92,19 +90,5 @@ func TestRenderJSON_CustomPorts(t *testing.T) {
 	}
 	if result.HordeGRPC != "10.0.0.5:9090" {
 		t.Errorf("hordeGrpc = %q, want 10.0.0.5:9090", result.HordeGRPC)
-	}
-}
-
-func TestResolvePorts(t *testing.T) {
-	cfg := config.Defaults()
-	rt := globals.Runtime{Config: cfg}
-	if p, g := resolvePorts(rt); p != defaultPort || g != defaultGRPCPort {
-		t.Errorf("defaults: got %d/%d, want %d/%d", p, g, defaultPort, defaultGRPCPort)
-	}
-
-	cfg.Horde.Port = 8080
-	cfg.Horde.GRPCPort = 9090
-	if p, g := resolvePorts(rt); p != 8080 || g != 9090 {
-		t.Errorf("overrides: got %d/%d, want 8080/9090", p, g)
 	}
 }
