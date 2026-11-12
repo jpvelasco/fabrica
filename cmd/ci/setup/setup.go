@@ -112,21 +112,12 @@ func (c command) run(ctx context.Context) error {
 
 	// Resolve the Horde URL from state if Horde is provisioned, so the project's
 	// default HORDE_URL is populated. Not required for setup to succeed.
-	st, err := c.readState()
-	if err != nil {
-		return fmt.Errorf("reading state: %w", err)
-	}
-	connection, err := horde.ResolveConnection(c.runtime.Config.Horde, st.GetModule("horde"))
+	st, connection, err := c.readHordeState()
 	if err != nil {
 		return err
 	}
 	if connection.TLS && st.GetModule("horde") == nil {
 		return fmt.Errorf("TLS CI requires a provisioned and verified Horde coordinator; run 'fabrica horde tls adopt' first")
-	}
-	if project, ok := stateutil.ResourceByType(st.GetModule(moduleName), ci.TypeAWSCodeBuildProject); ok {
-		if err := horde.ValidateDependent(connection, project, "hordeCIContract"); err != nil {
-			return err
-		}
 	}
 	hordeURL := c.resolveHordeURL(ctx)
 	if connection.TLS {
@@ -165,23 +156,13 @@ func (c command) run(ctx context.Context) error {
 }
 
 func (c command) apply(ctx context.Context, plan *ci.CreatePlan) error {
-	st, err := c.readState()
-	if err != nil {
-		return fmt.Errorf("reading state: %w", err)
-	}
-	connection, err := horde.ResolveConnection(c.runtime.Config.Horde, st.GetModule("horde"))
+	st, connection, err := c.readHordeState()
 	if err != nil {
 		return err
 	}
 	if plan.HordeConnection.Version != 0 && plan.HordeConnection != connection {
 		return fmt.Errorf("Horde connection changed while preparing CI; retry setup")
 	}
-	if project, ok := stateutil.ResourceByType(st.GetModule(moduleName), ci.TypeAWSCodeBuildProject); ok {
-		if err := horde.ValidateDependent(connection, project, "hordeCIContract"); err != nil {
-			return err
-		}
-	}
-
 	resources, err := c.applyResources(ctx, st, plan)
 	if err != nil {
 		return err
@@ -194,6 +175,25 @@ func (c command) apply(ctx context.Context, plan *ci.CreatePlan) error {
 
 	c.printCompletion()
 	return nil
+}
+
+// readHordeState applies the same recorded connection and project checks before
+// planning and again before mutation, when the state is refreshed.
+func (c command) readHordeState() (*fabricastate.State, horde.Connection, error) {
+	st, err := c.readState()
+	if err != nil {
+		return nil, horde.Connection{}, fmt.Errorf("reading state: %w", err)
+	}
+	connection, err := horde.ResolveConnection(c.runtime.Config.Horde, st.GetModule("horde"))
+	if err != nil {
+		return nil, horde.Connection{}, err
+	}
+	if project, ok := stateutil.ResourceByType(st.GetModule(moduleName), ci.TypeAWSCodeBuildProject); ok {
+		if err := horde.ValidateDependent(connection, project, "hordeCIContract"); err != nil {
+			return nil, horde.Connection{}, err
+		}
+	}
+	return st, connection, nil
 }
 
 // applyResources creates the IAM role then the CodeBuild project, writing state
