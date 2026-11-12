@@ -97,7 +97,10 @@ func TestRuntimeCertificateValidation(t *testing.T) {
 				}
 			}
 			docker := filepath.Join(dir, "docker")
-			if err := os.WriteFile(docker, []byte("#!/bin/sh\ncat <<'BASE'\n"+base+"\nBASE\n"), 0700); err != nil {
+			// First boot has no .env yet. Inspect the structural base without
+			// evaluating its required Mongo password or any other secrets.
+			dockerScript := "#!/bin/sh\ncase \" $* \" in *' --no-interpolate '*) ;; *) exit 42 ;; esac\ncat <<'BASE'\n" + base + "\nBASE\n"
+			if err := os.WriteFile(docker, []byte(dockerScript), 0700); err != nil {
 				t.Fatal(err)
 			}
 			cmd := exec.Command("bash", "-c", script)
@@ -154,6 +157,43 @@ subprocess.run=fake_run
 	}
 	if _, err := AdoptionVerifier(Connection{}); err == nil {
 		t.Fatal("HTTP adoption accepted")
+	}
+}
+
+func TestAgentTrustCheckedAsServiceUserBeforeNetwork(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Linux native service")
+	}
+	dir := t.TempDir()
+	c, _ := ConnectionFromConfig(tlsConfig())
+	script, err := AgentUserDataRaw(AgentUserDataConfig{Connection: c, CAPath: dir + "/ca.pem"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	script = strings.NewReplacer("/etc/horde", dir, "/etc/systemd/system", dir, "/var/log/fabrica-horde-agent-init.log", dir+"/init.log").Replace(script)
+	for name, data := range map[string]string{
+		"fabrica-native-agent-contract": "1",
+		"ca.pem":                        "readable by bootstrap, inaccessible to service user",
+		"systemctl":                     "#!/bin/sh\ncase \"$*\" in *LoadState*) echo loaded ;; *User*) echo fixture-agent ;; esac\n",
+		"id":                            "#!/bin/sh\necho 1001\n",
+		"runuser":                       "#!/bin/sh\nexit 1\n",
+		"curl":                          "#!/bin/sh\ntouch '" + dir + "/network-attempt'\nexit 1\n",
+	} {
+		mode := os.FileMode(0600)
+		if name == "systemctl" || name == "id" || name == "runuser" || name == "curl" {
+			mode = 0700
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("inaccessible service trust accepted: %s", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "network-attempt")); !os.IsNotExist(err) {
+		t.Fatal("contacted coordinator before checking service-user trust")
 	}
 }
 

@@ -78,7 +78,7 @@ with open("/etc/horde/fabrica-runtime.json") as f:
 if actual != expected:
     sys.exit("Horde runtime overlay differs from its configured transport contract")
 # Read the base independently: Compose appends port lists, which is unsafe.
-result = subprocess.run(["docker", "compose", "-f", "/etc/horde/docker-compose.yml", "config", "--format", "json"], capture_output=True)
+result = subprocess.run(["docker", "compose", "-f", "/etc/horde/docker-compose.yml", "config", "--no-interpolate", "--format", "json"], capture_output=True)
 if result.returncode:
     sys.exit("Horde base Compose validation failed")
 try:

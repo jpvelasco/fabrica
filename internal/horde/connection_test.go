@@ -22,6 +22,11 @@ func TestConnection(t *testing.T) {
 		t.Fatalf("legacy: %+v %v", legacy, err)
 	}
 	cfg := tlsConfig()
+	cfg.TLS.CertPath, cfg.TLS.KeyPath, cfg.TLS.CAPath = "", "", ""
+	if _, err := ConnectionFromConfig(cfg); err == nil || err.Error() != "horde.tls.certPath is required" {
+		t.Fatalf("missing paths: %v", err)
+	}
+	cfg = tlsConfig()
 	cfg.Port = 8443
 	c, err := ConnectionFromConfig(cfg)
 	if err != nil || c.GRPCPort != 8443 || c.URL("") != "https://horde.example.internal:8443" || len(c.ListenerPorts()) != 1 {
@@ -113,5 +118,26 @@ func TestConnectionState(t *testing.T) {
 	module.Resources[1].Properties = nil
 	if _, err := ResolveConnection(cfg, module); err != nil {
 		t.Fatalf("partial SG record: %v", err)
+	}
+}
+
+func TestDependentContract(t *testing.T) {
+	c, _ := ConnectionFromConfig(tlsConfig())
+	for _, properties := range []map[string]string{
+		nil,
+		{"contract": "1"},
+		{"contract": "0", ConnectionProperty: c.Record()},
+		{"contract": "1", ConnectionProperty: "invalid"},
+	} {
+		if err := ValidateDependent(c, state.ModuleResource{Properties: properties}, "contract"); err == nil {
+			t.Fatal("unverified TLS dependent accepted")
+		}
+	}
+	verified := state.ModuleResource{Properties: map[string]string{"contract": "1", ConnectionProperty: c.Record()}}
+	if err := ValidateDependent(c, verified, "contract"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateDependent(Connection{}, state.ModuleResource{}, "contract"); err != nil {
+		t.Fatal("legacy HTTP dependent rejected", err)
 	}
 }

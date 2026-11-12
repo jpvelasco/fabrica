@@ -117,7 +117,7 @@ mkdir -p /etc/systemd/system/horde-agent.service.d
 `
 	script += "HORDE_URL=" + ShellQuote(c.URL("")) + "\nCURL_OPTS=(--fail --silent --show-error --connect-timeout 5 --max-time 30 --proto '=https')\n"
 	if cfg.CAPath != "" {
-		script += "test -r " + ShellQuote(cfg.CAPath) + "\nCURL_OPTS+=(--cacert " + ShellQuote(cfg.CAPath) + ")\n"
+		script += "runuser -u \"$agent_user\" -- test -r " + ShellQuote(cfg.CAPath) + "\nCURL_OPTS+=(--cacert " + ShellQuote(cfg.CAPath) + ")\n"
 	}
 	script += ListenerCheckScript(c)
 	// systemd EnvironmentFile uses its own quoted value syntax, not shell

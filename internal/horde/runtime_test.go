@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/config"
-	"github.com/jpvelasco/fabrica/internal/state"
 )
 
 func TestRuntimeArtifacts(t *testing.T) {
@@ -119,21 +118,5 @@ func TestTLSBootstrapAndAgent(t *testing.T) {
 	c.Version = 0
 	if _, err := GenerateRaw(UserDataConfig{MongoPassword: "fixture-password", Port: c.Port, Connection: c}); err == nil || !strings.Contains(err.Error(), "unsupported Horde connection version") {
 		t.Fatal("unversioned TLS bootstrap silently became HTTP", err)
-	}
-}
-
-func TestDependentContract(t *testing.T) {
-	c, _ := ConnectionFromConfig(tlsConfig())
-	r := state.ModuleResource{Properties: map[string]string{ConnectionProperty: c.Record(), "hordeCIContract": "1"}}
-	if err := ValidateDependent(c, r, "hordeCIContract"); err != nil {
-		t.Fatal(err)
-	}
-	delete(r.Properties, "hordeCIContract")
-	if err := ValidateDependent(c, r, "hordeCIContract"); err == nil {
-		t.Fatal("accepted legacy dependent")
-	}
-	c.TLS = false
-	if err := ValidateDependent(c, r, "hordeCIContract"); err != nil {
-		t.Fatal(err)
 	}
 }
