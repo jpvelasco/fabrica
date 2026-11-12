@@ -17,7 +17,7 @@ func TestTLSSetupProjectContracts(t *testing.T) {
 	for _, mode := range []string{"new", "reuse", "legacy", "remote existing"} {
 		t.Run(mode, func(t *testing.T) {
 			var out bytes.Buffer
-			c, _ := newCmd(&out, nil, true)
+			c, created := newCmd(&out, nil, true)
 			c.runtime.Config.Horde.TLS = config.HordeTLSConfig{Enabled: true, ServerName: "horde.example.internal", CertPath: "/etc/horde/tls/server.crt", KeyPath: "/etc/horde/tls/server.key", CAPath: "/etc/horde/tls/ca.pem"}
 			conn, _ := horde.ConnectionFromConfig(c.runtime.Config.Horde)
 			st := state.NewState("", "")
@@ -45,6 +45,11 @@ func TestTLSSetupProjectContracts(t *testing.T) {
 				}
 				if project, ok := st.GetModuleResource("ci", ci.TypeAWSCodeBuildProject); ok && project.Properties["hordeCIContract"] == "1" {
 					t.Fatal("legacy project falsely upgraded")
+				}
+				if mode == "legacy" {
+					if err := c.apply(context.Background(), &ci.CreatePlan{HordeConnection: conn}); err == nil || len(*created) != 0 {
+						t.Fatalf("mutation accepted a stale project contract: %v", err)
+					}
 				}
 				return
 			}
