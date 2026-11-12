@@ -73,22 +73,25 @@ func (c Connection) validate() error {
 			return fmt.Errorf("horde.tls.serverName must be an ASCII DNS name without a URL, wildcard, port, or trailing dot")
 		}
 	}
+	fields := []struct{ name, value string }{{"certPath", c.CertPath}, {"keyPath", c.KeyPath}, {"caPath", c.CAPath}}
+	for _, f := range fields {
+		if f.value == "" {
+			return fmt.Errorf("horde.tls.%s is required", f.name)
+		}
+		if err := ValidateTrustPath("horde.tls."+f.name, f.value); err != nil {
+			return err
+		}
+	}
 	directory := path.Dir(c.CertPath)
 	if directory == "/" || directory == "." {
 		return fmt.Errorf("Horde TLS PEM files need a dedicated non-root directory")
 	}
 	seen := make(map[string]bool)
-	for name, value := range map[string]string{"certPath": c.CertPath, "keyPath": c.KeyPath, "caPath": c.CAPath} {
-		if value == "" {
-			return fmt.Errorf("horde.tls.%s is required", name)
-		}
-		if err := ValidateTrustPath("horde.tls."+name, value); err != nil {
-			return err
-		}
-		if path.Dir(value) != directory || seen[path.Base(value)] {
+	for _, f := range fields {
+		if path.Dir(f.value) != directory || seen[path.Base(f.value)] {
 			return fmt.Errorf("Horde TLS PEM files must be distinct files in the same dedicated directory")
 		}
-		seen[path.Base(value)] = true
+		seen[path.Base(f.value)] = true
 	}
 	return nil
 }

@@ -22,6 +22,11 @@ func TestConnection(t *testing.T) {
 		t.Fatalf("legacy: %+v %v", legacy, err)
 	}
 	cfg := tlsConfig()
+	cfg.TLS.CertPath, cfg.TLS.KeyPath, cfg.TLS.CAPath = "", "", ""
+	if _, err := ConnectionFromConfig(cfg); err == nil || err.Error() != "horde.tls.certPath is required" {
+		t.Fatalf("missing paths: %v", err)
+	}
+	cfg = tlsConfig()
 	cfg.Port = 8443
 	c, err := ConnectionFromConfig(cfg)
 	if err != nil || c.GRPCPort != 8443 || c.URL("") != "https://horde.example.internal:8443" || len(c.ListenerPorts()) != 1 {
