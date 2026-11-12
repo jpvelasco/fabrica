@@ -73,8 +73,9 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Long: `Provision a pool of Horde build agents on AWS.
 
 Creates an Auto Scaling Group with a Launch Template that launches agent
-instances. The agents enroll against the existing Horde coordinator using
-its private IP address.
+instances. HTTP agents use the existing coordinator's private IP address.
+TLS agents require the native-agent AMI contract and use the recorded DNS
+endpoint and agent-side trust bundle. Verify enrollment in Horde separately.
 
 **AMI requirement:** horde.agents.amiId must be a dedicated agent AMI — not
 the coordinator AMI (horde.amiId). The agent AMI should contain only the
@@ -226,6 +227,12 @@ func (c command) run(ctx context.Context) error {
 	}
 	plan.IAM = resolvedIAM
 	plan.VolumeRequestTags = maps.Clone(c.runtime.Config.Cloud.AWS.VolumeRequestTags)
+	plan.Connection, err = horde.ConnectionFromConfig(c.runtime.Config.Horde)
+	if err != nil {
+		return err
+	}
+	plan.CAPath = agentsCfg.CAPath
+	plan.CoordinatorPort, plan.CoordinatorGRPCPort = plan.Connection.Port, plan.Connection.GRPCPort
 
 	// Check if agents are already provisioned.
 	if !c.dryRun {
@@ -274,15 +281,39 @@ func (c command) resolveCoordinator(ctx context.Context) (ip string, port int, s
 	if m == nil {
 		return "", 0, "", horde.CoordinatorPlacement{}, fmt.Errorf("Horde coordinator is not provisioned. Run 'fabrica horde create' first before creating agents")
 	}
+	var hordeCfg config.HordeConfig
+	if c.runtime.Config != nil {
+		hordeCfg = c.runtime.Config.Horde
+	}
+	connection, connErr := horde.ResolveConnection(hordeCfg, m)
+	if connErr != nil {
+		return "", 0, "", placement, connErr
+	}
+	hasAgents, hasTemplate := false, false
+	for _, resource := range m.Resources {
+		hasAgents = hasAgents || resource.Properties["role"] == "agent" || resource.TypeName == cloud.TypeAWSAutoScalingAutoScalingGroup
+		if resource.TypeName == cloud.TypeAWSEC2LaunchTemplate {
+			hasTemplate = true
+			if err := horde.ValidateDependent(connection, resource, "hordeAgentContract"); err != nil {
+				return "", 0, "", placement, err
+			}
+			if connection.TLS && resource.Properties["hordeAgentCAPath"] != hordeCfg.Agents.CAPath {
+				return "", 0, "", placement, fmt.Errorf("agent trust path differs from its recorded TLS contract; restore configuration or replace the pool")
+			}
+		}
+	}
+	if connection.TLS && hasAgents && !hasTemplate {
+		return "", 0, "", placement, fmt.Errorf("existing agent pool lacks its TLS launch-template contract; drain and replace it after coordinator adoption")
+	}
 
 	// Get coordinator instance ID from state.
-	instRes, ok := stateutil.ResourceByType(m, cloud.TypeAWSEC2Instance)
+	instRes, ok := horde.CoordinatorResource(m, cloud.TypeAWSEC2Instance)
 	if !ok || instRes.Identifier == "" {
 		return "", 0, "", horde.CoordinatorPlacement{}, fmt.Errorf("coordinator instance not found in state. Run 'fabrica horde create' first")
 	}
 
 	// Get coordinator SG from state.
-	sgRes, ok := stateutil.ResourceByType(m, cloud.TypeAWSEC2SecurityGroup)
+	sgRes, ok := horde.CoordinatorResource(m, cloud.TypeAWSEC2SecurityGroup)
 	if ok && sgRes.Identifier != "" {
 		sgID = sgRes.Identifier
 	}
@@ -314,10 +345,7 @@ func (c command) resolveCoordinator(ctx context.Context) (ip string, port int, s
 	placement.SubnetID = actual.SubnetID
 
 	// Resolve port from config.
-	port = c.runtime.Config.Horde.Port
-	if port <= 0 {
-		port = 5000
-	}
+	port = connection.Port
 
 	// Resolve the coordinator's VPC from its security group (the VPC is not
 	// an instance attribute). A missing or unparseable SG state leaves the
@@ -438,6 +466,8 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	// 4. Launch Template
 	fmt.Fprintf(c.out, "Creating launch template %s...\n", plan.LaunchTemplateName)
 	userData, err := horde.AgentUserData(horde.AgentUserDataConfig{
+		Connection:          plan.Connection,
+		CAPath:              plan.CAPath,
 		CoordinatorIP:       plan.CoordinatorPrivateIP,
 		CoordinatorPort:     plan.CoordinatorPort,
 		CoordinatorGRPCPort: plan.CoordinatorGRPCPort,
@@ -453,9 +483,12 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 			return horde.LaunchTemplateDesiredState(plan, sgID, userData)
 		},
 		Properties: map[string]string{
-			"role":         "agent",
-			"instanceType": plan.InstanceType,
-			"imageId":      plan.AmiID,
+			horde.ConnectionProperty: plan.Connection.Record(),
+			"hordeAgentContract":     "1",
+			"hordeAgentCAPath":       plan.CAPath,
+			"role":                   "agent",
+			"instanceType":           plan.InstanceType,
+			"imageId":                plan.AmiID,
 		},
 	}, moduleName, ver, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {

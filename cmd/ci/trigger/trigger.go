@@ -13,6 +13,8 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/horde/buildgraph"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
@@ -25,7 +27,6 @@ const (
 	lineWidth    = 58 // match deploy promote's dry-run header width
 	waitInterval = 15 * time.Second
 	waitDeadline = 60 * time.Minute
-	defaultPort  = 5000
 	instanceType = "AWS::EC2::Instance"
 	projectType  = "AWS::CodeBuild::Project"
 )
@@ -136,6 +137,12 @@ func (c command) run(ctx context.Context) error {
 		"TARGET":     job.Target,
 		"HORDE_URL":  hordeURL,
 	}
+	if c.runtime.Config != nil {
+		if err := horde.ValidateTrustPath("ci.hordeCAPath", c.runtime.Config.CI.HordeCAPath); err != nil {
+			return err
+		}
+		env["HORDE_CA_FILE"] = c.runtime.Config.CI.HordeCAPath
+	}
 
 	if c.dryRun {
 		c.printDryRun(job, project, hordeURL)
@@ -185,7 +192,20 @@ func (c command) resolveHordeURL(ctx context.Context, st *fabricastate.State) (s
 	if m == nil {
 		return "", fmt.Errorf("Horde is not provisioned. Run 'fabrica horde create' first.")
 	}
-	inst, ok := stateutil.ResourceByType(m, instanceType)
+	var cfg config.HordeConfig
+	if c.runtime.Config != nil {
+		cfg = c.runtime.Config.Horde
+	}
+	connection, err := horde.ResolveConnection(cfg, m)
+	if err != nil {
+		return "", err
+	}
+	if project, ok := stateutil.ResourceByType(st.GetModule(moduleName), projectType); ok {
+		if err := horde.ValidateDependent(connection, project, "hordeCIContract"); err != nil {
+			return "", err
+		}
+	}
+	inst, ok := horde.CoordinatorResource(m, instanceType)
 	if !ok || inst.Identifier == "" {
 		return "", fmt.Errorf("Horde instance not found. Run 'fabrica horde status' to check.")
 	}
@@ -200,11 +220,7 @@ func (c command) resolveHordeURL(ctx context.Context, st *fabricastate.State) (s
 	if ip == "" {
 		return "", fmt.Errorf("Horde instance has no private IP yet. Run 'fabrica horde status'.")
 	}
-	port := defaultPort
-	if c.runtime.Config != nil && c.runtime.Config.Horde.Port > 0 {
-		port = c.runtime.Config.Horde.Port
-	}
-	return fmt.Sprintf("http://%s:%d", ip, port), nil
+	return connection.URL(ip), nil
 }
 
 func (c command) pollUntilDone(ctx context.Context, buildID string) error {
