@@ -62,6 +62,17 @@ func TestConfigShowCobra(t *testing.T) {
 	}
 }
 
+func TestConfigShowPreservesOwnershipSetting(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.Identity.ManagedBy = "fabrica"
+	out, err := runConfig(t, func() (globals.Runtime, error) {
+		return globals.Runtime{Config: cfg}, nil
+	}, "show")
+	if err != nil || !strings.Contains(out, "identity:") || !strings.Contains(out, "managedBy: fabrica") {
+		t.Fatalf("config show lost ownership setting: %s, %v", out, err)
+	}
+}
+
 // TestConfigShowCobraRuntimeError verifies runtimeSource errors surface.
 func TestConfigShowCobraRuntimeError(t *testing.T) {
 	src := func() (globals.Runtime, error) {

@@ -28,6 +28,9 @@ func (r BootstrapResult) String() string {
 // idempotent: an already-existing resource is reported with Existed=true, and a
 // re-run reconciles configuration rather than failing.
 func Bootstrap(ctx context.Context, provider fabricac.Provider, cfg *config.Config) ([]BootstrapResult, error) {
+	if _, err := cfg.ResolveIdentity(); err != nil {
+		return nil, err
+	}
 	account, _, region, err := provider.Identity(ctx)
 	if err != nil {
 		oplog.Logger().Error("failed to resolve provider identity", "provider", provider.Name(), "error", err)

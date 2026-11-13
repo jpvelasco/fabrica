@@ -51,6 +51,14 @@ func cfgFor(account string) *config.Config {
 	return c
 }
 
+func TestBootstrapRejectsProgrammaticCustomOwnershipBeforeProvider(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.Identity.ManagedBy = "Studio-Tools"
+	if _, err := Bootstrap(context.Background(), nil, cfg); err == nil || !strings.Contains(err.Error(), "custom ownership is not enabled") {
+		t.Fatalf("custom bootstrap reached provider I/O: %v", err)
+	}
+}
+
 func TestBootstrapCreatesBoth(t *testing.T) {
 	p := &fakeBootProvider{
 		account:   "123",

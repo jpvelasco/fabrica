@@ -15,21 +15,26 @@ import (
 	"github.com/jpvelasco/fabrica/internal/oplog"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
+	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // ReadState loads the canonical provisioning state for the runtime. When the
 // provider implements cloud.StateStore and the account is bootstrapped, the
 // remote snapshot wins: a missing document falls back to the local cache, and
-// a present one is validated against the configured account/region and
+// a present one is validated against the configured account/region/ownership and
 // refreshed into the local cache before use. Storage failures surface to the
 // caller. Mutating flows call this while holding the account lock; read-only
 // flows may call it without the lock (S3 reads are atomic).
 func ReadState(ctx context.Context, rt globals.Runtime) (*fabricastate.State, error) {
+	identity, err := rt.Config.ResolveIdentity()
+	if err != nil {
+		return nil, err
+	}
 	account, region := identitySides(rt)
 	path := StatePath(rt)
 	store, bucket := stateStore(rt)
 	if store == nil {
-		return fabricastate.ReadStateFile(path, account, region)
+		return readLocalState(path, account, region, identity)
 	}
 
 	doc, err := store.GetStateDocument(ctx, bucket, fabricastate.StateDocumentKey)
@@ -37,7 +42,7 @@ func ReadState(ctx context.Context, rt globals.Runtime) (*fabricastate.State, er
 		if !errors.Is(err, fabricac.ErrStateDocumentMissing) {
 			return nil, fmt.Errorf("reading remote state: %w", err)
 		}
-		st, err := fabricastate.ReadStateFile(path, account, region)
+		st, err := readLocalState(path, account, region, identity)
 		if err != nil {
 			return nil, err
 		}
@@ -53,8 +58,22 @@ func ReadState(ctx context.Context, rt globals.Runtime) (*fabricastate.State, er
 	if err != nil {
 		return nil, fmt.Errorf("reading remote state: %w", err)
 	}
+	if err := st.ValidateOwnership(identity); err != nil {
+		return nil, fmt.Errorf("reading remote state: %w", err)
+	}
 	if err := fabricastate.WriteStateTo(st, path); err != nil {
 		oplog.Logger().Warn("remote state loaded; local cache refresh failed", "file", path, "error", err)
+	}
+	return st, nil
+}
+
+func readLocalState(path, account, region string, identity tags.Identity) (*fabricastate.State, error) {
+	st, err := fabricastate.ReadStateFile(path, account, region)
+	if err != nil {
+		return nil, err
+	}
+	if err := st.ValidateOwnership(identity); err != nil {
+		return nil, err
 	}
 	return st, nil
 }
@@ -66,7 +85,8 @@ func StatePath(rt globals.Runtime) string {
 }
 
 // StateWriter returns a write seam bound to the runtime's state backend.
-// Every successful mutation is persisted to the canonical remote document
+// Ownership is validated before storage changes; fresh compatible state is
+// bound to the configured owner. Every successful mutation is persisted remotely
 // first (when the backend is available), then the local cache is refreshed.
 // A remote write failure fails the mutation and leaves the cache untouched so
 // a retry re-reads the last persisted state. A local cache failure after a
@@ -75,7 +95,14 @@ func StatePath(rt globals.Runtime) string {
 func StateWriter(ctx context.Context, rt globals.Runtime) func(*fabricastate.State) error {
 	path := StatePath(rt)
 	store, bucket := stateStore(rt)
+	identity, identityErr := rt.Config.ResolveIdentity()
 	return func(st *fabricastate.State) error {
+		if identityErr != nil {
+			return identityErr
+		}
+		if err := st.BindOwnership(identity); err != nil {
+			return err
+		}
 		remote := false
 		if store != nil {
 			err := store.PutStateDocument(ctx, bucket, fabricastate.StateDocumentKey, fabricastate.EncodeState(st))

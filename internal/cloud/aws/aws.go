@@ -88,6 +88,9 @@ func (p *awsProvider) TagInstanceVolumes(ctx context.Context, instanceID string,
 var _ fabricac.VolumeTagger = (*awsProvider)(nil)
 
 func newProvider(cfg *config.Config) (fabricac.Provider, error) {
+	if _, err := cfg.ResolveIdentity(); err != nil {
+		return nil, err
+	}
 	awsCfg := awsConfig{
 		region:  cfg.Cloud.AWS.Region,
 		profile: cfg.Cloud.AWS.Profile,

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -19,6 +20,187 @@ import (
 )
 
 const stateTestAccount = "123456789012"
+
+func TestReadState_RejectsOwnershipBeforeCacheRefresh(t *testing.T) {
+	const foreign = `{"managedBy":"Studio-Tools","modules":[{"name":"foreign"}]}`
+	for _, tc := range []struct {
+		name, source, doc, wantErr string
+	}{
+		{"remote foreign", "remote", foreign, "state ownership mismatch"},
+		{"missing remote fallback", "fallback", foreign, "state ownership mismatch"},
+		{"local only", "local", foreign, "state ownership mismatch"},
+		{"remote empty foreign", "remote", `{"managedBy":"Studio-Tools","modules":[]}`, "state ownership mismatch"},
+		{"fallback empty foreign", "fallback", `{"managedBy":"Studio-Tools","modules":[]}`, "state ownership mismatch"},
+		{"remote invalid binding", "remote", `{"managedBy":null}`, "state managedBy"},
+		{"remote malformed JSON", "remote", `{`, "parsing state document"},
+		{"remote target mismatch", "remote", `{"account":"other-account"}`, "state target mismatch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			provider := &testutil.TestProvider{}
+			rt := stateTestRuntime(t, provider)
+			if err := fabricastate.WriteState(fabricastate.NewState(stateTestAccount, "us-east-1")); err != nil {
+				t.Fatal(err)
+			}
+			if tc.source == "remote" {
+				provider.StateDocuments = map[string]string{stateTestKey(): tc.doc}
+			} else {
+				if err := os.WriteFile(StatePath(rt), []byte(tc.doc), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if tc.source == "local" {
+					rt.Provider = nil
+				}
+			}
+			before, err := os.ReadFile(StatePath(rt))
+			if err != nil {
+				t.Fatal(err)
+			}
+			st, err := ReadState(context.Background(), rt)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) || st != nil {
+				t.Fatalf("foreign state returned: state=%+v, error=%v", st, err)
+			}
+			after, err := os.ReadFile(StatePath(rt))
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("rejected read changed cache: %v", err)
+			}
+			if tc.source == "remote" && provider.StateDocuments[stateTestKey()] != tc.doc {
+				t.Fatal("read changed canonical document")
+			}
+		})
+	}
+}
+
+func TestStateWriter_RejectsLoadedOwnershipBeforeWrites(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		change   bool
+		changeTo string
+		wantErr  string
+	}{
+		{name: "foreign", wantErr: "state ownership mismatch"},
+		{name: "changed", change: true, changeTo: "fabrica", wantErr: "binding changed"},
+		{name: "cleared", change: true, wantErr: "binding changed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			provider := &testutil.TestProvider{StateDocuments: map[string]string{stateTestKey(): "original-remote"}}
+			rt := stateTestRuntime(t, provider)
+			if err := fabricastate.WriteState(fabricastate.NewState(stateTestAccount, "us-east-1")); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(StatePath(rt))
+			if err != nil {
+				t.Fatal(err)
+			}
+			st, err := fabricastate.ParseState([]byte(`{"managedBy":"Studio-Tools"}`), "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.change {
+				st.ManagedBy = tc.changeTo
+			}
+			err = StateWriter(context.Background(), rt)(st)
+			for _, want := range []string{tc.wantErr, "Studio-Tools", "restore"} {
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("write error = %v, want %q", err, want)
+				}
+			}
+			if !tc.change && !strings.Contains(err.Error(), "fabrica") {
+				t.Fatal("mismatch omitted configured owner")
+			}
+			if strings.Contains(err.Error(), "delete") || strings.Contains(err.Error(), "retag") {
+				t.Fatal("mismatch guidance must not suggest bypassing the binding")
+			}
+			after, err := os.ReadFile(StatePath(rt))
+			if err != nil || !bytes.Equal(before, after) || provider.StateDocuments[stateTestKey()] != "original-remote" {
+				t.Fatalf("rejected write changed storage: %v", err)
+			}
+		})
+	}
+}
+
+func TestStateIO_LegacyReadsAndFreshAbsence(t *testing.T) {
+	t.Chdir(t.TempDir())
+	provider := &testutil.TestProvider{}
+	rt := stateTestRuntime(t, provider)
+	st, err := ReadState(context.Background(), rt)
+	if err != nil || st.ManagedBy != "" {
+		t.Fatalf("absent state must remain unbound: %+v, %v", st, err)
+	}
+	if _, err := os.Stat(StatePath(rt)); !os.IsNotExist(err) || len(provider.StateDocuments) != 0 {
+		t.Fatal("reading absent state created storage")
+	}
+	legacy := `{"modules":[],"history":[]}`
+	provider.StateDocuments = map[string]string{stateTestKey(): legacy}
+	st, err = ReadState(context.Background(), rt)
+	if err != nil || st.ManagedBy != "fabrica" {
+		t.Fatalf("legacy state was not default-bound: %+v, %v", st, err)
+	}
+	if len(provider.StateDocuments) != 1 || provider.StateDocuments[stateTestKey()] != legacy {
+		t.Fatal("legacy read changed canonical remote bytes")
+	}
+	cache, err := os.ReadFile(StatePath(rt))
+	if err != nil || !bytes.Contains(cache, []byte(`"managedBy": "fabrica"`)) {
+		t.Fatalf("legacy cache refresh lost the resolved default binding: %v", err)
+	}
+}
+
+func TestStateWriter_PersistsDefaultOwnership(t *testing.T) {
+	for _, remote := range []bool{false, true} {
+		for _, legacy := range []bool{false, true} {
+			t.Run(fmt.Sprintf("remote=%t/legacy=%t", remote, legacy), func(t *testing.T) {
+				t.Chdir(t.TempDir())
+				provider := &testutil.TestProvider{}
+				rt := stateTestRuntime(t, provider)
+				if !remote {
+					rt.Provider = nil
+				}
+				st := fabricastate.NewState(stateTestAccount, "us-east-1")
+				if legacy {
+					var err error
+					st, err = fabricastate.ParseState(fabricastate.EncodeState(st), stateTestAccount, "us-east-1")
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				st.UpsertModule("lore", "test", "ready", nil)
+				st.AddOp("lore", "create", 0)
+				if err := StateWriter(context.Background(), rt)(st); err != nil {
+					t.Fatal(err)
+				}
+				cache, err := fabricastate.ReadStateFile(StatePath(rt), stateTestAccount, "us-east-1")
+				if err != nil || cache.ManagedBy != "fabrica" || cache.GetModule("lore") == nil || len(cache.History) != 1 {
+					t.Fatalf("write lost binding or inventory: %+v, %v", cache, err)
+				}
+				if remote && !strings.Contains(provider.StateDocuments[stateTestKey()], `"managedBy": "fabrica"`) {
+					t.Fatal("canonical remote write omitted default binding")
+				}
+			})
+		}
+	}
+}
+
+func TestStateIO_ProgrammaticCustomConfigAndNilWriteRejected(t *testing.T) {
+	t.Chdir(t.TempDir())
+	provider := &testutil.TestProvider{StateStoreGetErr: errors.New("remote read must not run")}
+	rt := stateTestRuntime(t, provider)
+	rt.Config.Cloud.AWS.Identity.ManagedBy = "Studio-Tools"
+	if _, err := ReadState(context.Background(), rt); err == nil || !strings.Contains(err.Error(), "custom ownership is not enabled") {
+		t.Fatalf("programmatic custom read not blocked before remote I/O: %v", err)
+	}
+	st := fabricastate.NewState("", "")
+	if err := StateWriter(context.Background(), rt)(st); err == nil || !strings.Contains(err.Error(), "custom ownership is not enabled") || st.ManagedBy != "" {
+		t.Fatalf("programmatic custom write not blocked before binding: %v", err)
+	}
+	rt.Config.Cloud.AWS.Identity.ManagedBy = ""
+	if err := StateWriter(context.Background(), rt)(nil); err == nil {
+		t.Fatal("nil state accepted for writing")
+	}
+	if _, err := os.Stat(StatePath(rt)); !os.IsNotExist(err) || len(provider.StateDocuments) != 0 {
+		t.Fatal("rejected state operation changed storage")
+	}
+}
 
 // stateTestRuntime builds a runtime with a Store-capable provider and a
 // bootstrapped account, so provision state I/O exercises the remote path.

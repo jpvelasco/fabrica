@@ -278,6 +278,24 @@ func TestGenerateOutputNilState(t *testing.T) {
 	}
 }
 
+func TestGenerateOutputRejectsUnpropagatedOwnership(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.Identity.ManagedBy = "Studio-Tools"
+	st := state.NewState("", "")
+	if _, err := GenerateOutput(CloudFormation, st, cfg); err == nil || !strings.Contains(err.Error(), "custom ownership is not enabled") {
+		t.Fatalf("custom configuration exported default tags: %v", err)
+	}
+	foreign, err := state.ParseState([]byte(`{"managedBy":"Studio-Tools"}`), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cfg := range []*config.Config{nil, config.Defaults()} {
+		if _, err := GenerateOutput(CloudFormation, foreign, cfg); err == nil || !strings.Contains(err.Error(), "state ownership mismatch") {
+			t.Fatalf("custom state exported default tags: %v", err)
+		}
+	}
+}
+
 func TestGenerateOutputEmptyModules(t *testing.T) {
 	st := state.NewState("", "")
 	cfg := config.Defaults()

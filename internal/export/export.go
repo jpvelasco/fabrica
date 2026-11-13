@@ -90,6 +90,13 @@ func GenerateOutput(format Format, st *state.State, cfg *config.Config) ([]byte,
 	if st == nil {
 		return nil, fmt.Errorf("no state available")
 	}
+	identity, err := cfg.ResolveIdentity()
+	if err != nil {
+		return nil, err
+	}
+	if err := st.ValidateOwnership(identity); err != nil {
+		return nil, err
+	}
 
 	modules, err := buildModules(st, cfg)
 	if err != nil {
