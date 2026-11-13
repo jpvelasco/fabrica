@@ -44,6 +44,23 @@ func TestParseStateOwnershipBinding(t *testing.T) {
 	}
 }
 
+func TestParseStateRequiresDocumentObject(t *testing.T) {
+	for _, doc := range []string{"null", " \nnull\t", "[]", `"state"`, "true", "7"} {
+		t.Run(doc, func(t *testing.T) {
+			st, err := ParseState([]byte(doc), "", "")
+			if st != nil || err == nil || !strings.Contains(err.Error(), "parsing state document") {
+				t.Fatalf("non-object document became ownership proof: state=%+v, err=%v", st, err)
+			}
+		})
+	}
+	for _, doc := range []string{`{}`, `{"modules":[]}`, `{"managedBy":"fabrica"}`} {
+		st, err := ParseState([]byte(doc), "", "")
+		if err != nil || st == nil || st.ManagedBy != tags.ManagedByValue {
+			t.Fatalf("valid object %s rejected: state=%+v, err=%v", doc, st, err)
+		}
+	}
+}
+
 func TestStateOwnershipValidationAndBinding(t *testing.T) {
 	custom, err := tags.ResolveIdentity("Studio-Tools")
 	if err != nil {
