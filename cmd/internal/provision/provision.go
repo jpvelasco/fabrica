@@ -37,8 +37,16 @@ func ReadState(ctx context.Context, rt globals.Runtime) (*fabricastate.State, er
 		if !errors.Is(err, fabricac.ErrStateDocumentMissing) {
 			return nil, fmt.Errorf("reading remote state: %w", err)
 		}
-		oplog.Logger().Warn("remote state document not found; using local state cache", "bucket", bucket)
-		return fabricastate.ReadStateFile(path, account, region)
+		st, err := fabricastate.ReadStateFile(path, account, region)
+		if err != nil {
+			return nil, err
+		}
+		if len(st.Modules) == 0 {
+			oplog.Logger().Debug("remote state empty; no modules provisioned yet", "bucket", bucket)
+		} else {
+			oplog.Logger().Warn("remote state document not found; using local state cache", "bucket", bucket)
+		}
+		return st, nil
 	}
 
 	st, err := fabricastate.ParseState(doc, account, region)

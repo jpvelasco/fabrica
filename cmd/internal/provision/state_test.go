@@ -129,27 +129,74 @@ func TestReadState_RemoteErrorSurfaces(t *testing.T) {
 }
 
 func TestReadState_MissingRemoteDocFallsBackToLocal(t *testing.T) {
-	buf := captureLogs(t)
-	t.Chdir(t.TempDir())
-
-	seed := fabricastate.NewState(stateTestAccount, "us-east-1")
-	seed.Modules = append(seed.Modules, fabricastate.ModuleState{Name: "lore"})
-	if err := fabricastate.WriteState(seed); err != nil {
-		t.Fatalf("seeding local cache: %v", err)
-	}
-
-	provider := &testutil.TestProvider{} // nothing stored remotely
-	rt := stateTestRuntime(t, provider)
-
-	st, err := ReadState(context.Background(), rt)
-	if err != nil {
-		t.Fatalf("ReadState: %v", err)
-	}
-	if len(st.Modules) != 1 || st.Modules[0].Name != "lore" {
-		t.Fatalf("state = %+v, want the seeded local cache", st.Modules)
-	}
-	if !strings.Contains(buf.String(), "remote state document not found") {
-		t.Fatalf("expected missing-document warning, got:\n%s", buf)
+	empty := fabricastate.NewState(stateTestAccount, "us-east-1")
+	populated := fabricastate.NewState(stateTestAccount, "us-east-1")
+	populated.Modules = append(populated.Modules, fabricastate.ModuleState{Name: "lore"})
+	for _, tt := range []struct {
+		name       string
+		cache      []byte
+		blockCache bool
+		wantErr    string
+		wantModule bool
+	}{
+		{name: "missing cache"},
+		{name: "empty cache", cache: fabricastate.EncodeState(empty)},
+		{name: "populated cache", cache: fabricastate.EncodeState(populated), wantModule: true},
+		{name: "malformed cache", cache: []byte("{"), wantErr: "parsing state document"},
+		{name: "account mismatch", cache: fabricastate.EncodeState(fabricastate.NewState("other-account", "us-east-1")), wantErr: "state target mismatch"},
+		{name: "region mismatch", cache: fabricastate.EncodeState(fabricastate.NewState(stateTestAccount, "us-west-2")), wantErr: "state target mismatch"},
+		{name: "unreadable cache", blockCache: true, wantErr: "reading state file"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := captureLogs(t)
+			t.Chdir(t.TempDir())
+			if tt.blockCache {
+				blockLocalCache(t)
+			} else if tt.cache != nil {
+				if err := os.MkdirAll(filepath.Dir(fabricastate.DefaultStateFile), 0700); err != nil {
+					t.Fatalf("creating cache directory: %v", err)
+				}
+				if err := os.WriteFile(fabricastate.DefaultStateFile, tt.cache, 0600); err != nil {
+					t.Fatalf("seeding local cache: %v", err)
+				}
+			}
+			provider := &testutil.TestProvider{} // nothing stored remotely
+			st, err := ReadState(context.Background(), stateTestRuntime(t, provider))
+			logs := buf.String()
+			if warned := strings.Contains(logs, "level=WARN"); warned != tt.wantModule {
+				t.Fatalf("warning = %t, want %t; logs:\n%s", warned, tt.wantModule, logs)
+			}
+			if len(provider.StateDocuments) != 0 {
+				t.Fatal("reading a missing document must not write remote state")
+			}
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("ReadState error = %v, want %q", err, tt.wantErr)
+				}
+				if st != nil {
+					t.Fatal("invalid cache returned usable state")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ReadState: %v", err)
+			}
+			wantCount, wantLevel := 0, "level=DEBUG"
+			wantMessage := "remote state empty; no modules provisioned yet"
+			if tt.wantModule {
+				wantCount, wantLevel = 1, "level=WARN"
+				wantMessage = "remote state document not found; using local state cache"
+			}
+			if len(st.Modules) != wantCount || st.Account != stateTestAccount || st.Region != "us-east-1" {
+				t.Fatalf("state = %+v, want %d modules with runtime identity", st, wantCount)
+			}
+			if tt.wantModule && st.Modules[0].Name != "lore" {
+				t.Fatalf("state = %+v, want the seeded local cache", st.Modules)
+			}
+			if !strings.Contains(logs, wantMessage) || !strings.Contains(logs, wantLevel) {
+				t.Fatalf("expected %s diagnostic %q, got:\n%s", wantLevel, wantMessage, logs)
+			}
+		})
 	}
 }
 
