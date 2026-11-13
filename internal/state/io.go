@@ -79,12 +79,15 @@ func ValidateIdentity(st *State, account, region string) error {
 // documents bind to default ownership; explicit invalid bindings fail closed.
 func ParseState(data []byte, account, region string) (*State, error) {
 	var st State
-	doc := struct {
+	doc := &struct {
 		*State
 		ManagedBy json.RawMessage `json:"managedBy"`
 	}{State: &st}
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("parsing state document: %w", err)
+	}
+	if doc == nil {
+		return nil, fmt.Errorf("parsing state document: expected a JSON object; inspect the recorded state")
 	}
 	value := tags.ManagedByValue
 	if doc.ManagedBy != nil {
