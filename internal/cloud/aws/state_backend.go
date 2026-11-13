@@ -333,18 +333,8 @@ func (p *awsProvider) EnsureStateLockTable(ctx context.Context, table string) (f
 		return result, fmt.Errorf("checking DynamoDB table %s: %w", table, err)
 	}
 
-	if _, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
-		TableName:   aws.String(table),
-		BillingMode: dynamodbtypes.BillingModePayPerRequest,
-		Tags:        dynamoTagList(p.stateBackendTags()),
-		AttributeDefinitions: []dynamodbtypes.AttributeDefinition{
-			{AttributeName: aws.String("LockID"), AttributeType: dynamodbtypes.ScalarAttributeTypeS},
-		},
-		KeySchema: []dynamodbtypes.KeySchemaElement{
-			{AttributeName: aws.String("LockID"), KeyType: dynamodbtypes.KeyTypeHash},
-		},
-	}); err != nil {
-		return result, fmt.Errorf("creating DynamoDB table %s: %w — check the dynamodb:CreateTable permission", table, err)
+	if err := createLockTable(ctx, client, table, p.stateBackendTags()); err != nil {
+		return result, err
 	}
 
 	waiter := p.tableExistsWaiter(client)
@@ -353,6 +343,24 @@ func (p *awsProvider) EnsureStateLockTable(ctx context.Context, table string) (f
 	}
 	result.Created = true
 	return result, nil
+}
+
+func createLockTable(ctx context.Context, client stateBackendDynamoDBClient, table string, desiredTags map[string]string) error {
+	if _, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName:   aws.String(table),
+		BillingMode: dynamodbtypes.BillingModePayPerRequest,
+		Tags:        dynamoTagList(desiredTags),
+		AttributeDefinitions: []dynamodbtypes.AttributeDefinition{
+			{AttributeName: aws.String("LockID"), AttributeType: dynamodbtypes.ScalarAttributeTypeS},
+		},
+		KeySchema: []dynamodbtypes.KeySchemaElement{
+			{AttributeName: aws.String("LockID"), KeyType: dynamodbtypes.KeyTypeHash},
+		},
+	}); err != nil {
+		return fmt.Errorf("creating DynamoDB table %s: %w — check the dynamodb:CreateTable permission", table, err)
+	}
+
+	return nil
 }
 
 func (p *awsProvider) tableExistsWaiter(client dynamodb.DescribeTableAPIClient) stateBackendTableExistsWaiter {
