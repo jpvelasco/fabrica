@@ -88,13 +88,14 @@ func ParseState(data []byte, account, region string) (*State, error) {
 	}
 	value := tags.ManagedByValue
 	if doc.ManagedBy != nil {
-		value = ""
-		if err := json.Unmarshal(doc.ManagedBy, &value); err != nil {
+		var recorded string
+		if err := json.Unmarshal(doc.ManagedBy, &recorded); err != nil {
 			return nil, fmt.Errorf("parsing state managedBy: %w", err)
 		}
-		if value == "" {
+		if recorded == "" {
 			return nil, fmt.Errorf("state managedBy must be a nonempty string; restore the document's recorded ownership")
 		}
+		value = recorded
 	}
 	identity, err := tags.ResolveIdentity(value)
 	if err != nil {
