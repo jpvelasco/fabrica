@@ -137,20 +137,21 @@ func (p *awsProvider) DeleteParameter(ctx context.Context, name string) error {
 }
 
 func parameterTags(extra map[string]string) []ssmtypes.Tag {
+	merged := (fabricatags.Identity{}).MergeProtected(nil, extra)
 	tags := []ssmtypes.Tag{{
-		Key:   aws.String("ManagedBy"),
-		Value: aws.String("fabrica"),
+		Key:   aws.String(fabricatags.ManagedByKey),
+		Value: aws.String(merged[fabricatags.ManagedByKey]),
 	}}
-	keys := make([]string, 0, len(extra))
-	for k := range extra {
-		if k == "" || fabricatags.IdentityKey(k) {
+	keys := make([]string, 0, len(merged)-1)
+	for k := range merged {
+		if k == fabricatags.ManagedByKey {
 			continue
 		}
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		tags = append(tags, ssmtypes.Tag{Key: aws.String(k), Value: aws.String(extra[k])})
+		tags = append(tags, ssmtypes.Tag{Key: aws.String(k), Value: aws.String(merged[k])})
 	}
 	return tags
 }

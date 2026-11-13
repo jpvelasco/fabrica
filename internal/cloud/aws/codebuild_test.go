@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 
@@ -201,6 +202,46 @@ func TestEnsureProjectMergesOperatorTags(t *testing.T) {
 	}
 	if _, present := tagMap["FabricaModule"]; present {
 		t.Errorf("FabricaModule = %q, want absent (operator cannot set identity tags)", tagMap["FabricaModule"])
+	}
+}
+
+func TestEnsureProjectPreservesTrustedTagsAndInputs(t *testing.T) {
+	cb := &fakeCodeBuildClient{}
+	p := newCodeBuildTestProvider(cb, nil)
+	p.clients.operatorTags = map[string]string{
+		"ManagedBy":               "operator",
+		"FabricaCreateNonce":      "operator",
+		"FabricaOwnershipVersion": "operator",
+		"Project":                 "operator-project",
+		"":                        "invalid-key",
+	}
+	specTags := map[string]string{
+		"ManagedBy":          "foreign",
+		"FabricaModule":      "ci",
+		"FabricaVersion":     "plan-version",
+		"FabricaCreateNonce": "trusted-nonce",
+		"Project":            "base-project",
+	}
+	specBefore, operatorBefore := maps.Clone(specTags), maps.Clone(p.clients.operatorTags)
+	if _, err := p.EnsureProject(context.Background(), fabricac.CodeBuildProjectSpec{Name: "fabrica-ci", Tags: specTags}); err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]string)
+	for _, tag := range cb.createInput.Tags {
+		key := awssdk.ToString(tag.Key)
+		if _, exists := got[key]; exists {
+			t.Fatalf("duplicate tag %q", key)
+		}
+		got[key] = awssdk.ToString(tag.Value)
+	}
+	want := maps.Clone(specTags)
+	want["ManagedBy"] = "fabrica"
+	want["Project"] = "operator-project"
+	if !maps.Equal(got, want) {
+		t.Fatalf("tags = %v, want %v", got, want)
+	}
+	if !maps.Equal(specTags, specBefore) || !maps.Equal(p.clients.operatorTags, operatorBefore) {
+		t.Fatal("EnsureProject mutated caller tags")
 	}
 }
 

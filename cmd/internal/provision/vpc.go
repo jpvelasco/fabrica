@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // VPCResolver returns the provider's default-VPC resolver, or nil when the
@@ -37,9 +38,9 @@ func TagVolumesPostCreate(p cloud.Provider, module, instanceName string) func(co
 			return nil
 		}
 		return tagger.TagInstanceVolumes(ctx, instanceID, map[string]string{
-			"ManagedBy":     "fabrica",
-			"FabricaModule": module,
-			"Name":          instanceName,
+			tags.ManagedByKey: tags.ManagedByValue,
+			"FabricaModule":   module,
+			"Name":            instanceName,
 		})
 	}
 }

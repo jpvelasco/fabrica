@@ -2,6 +2,7 @@ package aws
 
 import (
 	"encoding/json"
+	"maps"
 	"testing"
 )
 
@@ -215,16 +216,18 @@ func TestInjectFabricaTagsRespectsPlanModule(t *testing.T) {
 
 // TestInjectFabricaTagsOperatorCannotShadowIdentityTags verifies operator tags
 // (the extra parameter) are additive: same-key entries for reserved identity
-// tags are dropped so teardown/drift/cost keep keying off the Fabrica-owned
-// values.
+// tags are dropped and cannot forge ownership metadata.
 func TestInjectFabricaTagsOperatorCannotShadowIdentityTags(t *testing.T) {
 	state := `{"GroupName":"fabrica-horde-sg"}`
 	extra := map[string]string{
-		"env":            "staging",
-		"ManagedBy":      "operator",
-		"FabricaModule":  "operator",
-		"FabricaVersion": "operator",
+		"env":                     "staging",
+		"ManagedBy":               "operator",
+		"FabricaModule":           "operator",
+		"FabricaVersion":          "operator",
+		"FabricaCreateNonce":      "operator",
+		"FabricaOwnershipVersion": "operator",
 	}
+	before := maps.Clone(extra)
 
 	result := injectFabricaTags("AWS::EC2::SecurityGroup", json.RawMessage(state), "fabrica", "1.0.0", extra)
 
@@ -240,5 +243,13 @@ func TestInjectFabricaTagsOperatorCannotShadowIdentityTags(t *testing.T) {
 	}
 	if tags["FabricaVersion"] != "1.0.0" {
 		t.Errorf("FabricaVersion = %q, want 1.0.0 (tags: %v)", tags["FabricaVersion"], tags)
+	}
+	for _, key := range []string{"FabricaCreateNonce", "FabricaOwnershipVersion"} {
+		if _, exists := tags[key]; exists {
+			t.Errorf("operator forged reserved tag %s", key)
+		}
+	}
+	if !maps.Equal(extra, before) {
+		t.Error("injectFabricaTags mutated operator tags")
 	}
 }

@@ -3,6 +3,8 @@ package aws
 import (
 	"context"
 	"errors"
+	"maps"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -120,6 +122,43 @@ func TestPutSecureParameterPutsThenTags(t *testing.T) {
 	}
 	if m.puts != 1 || m.tags != 1 || m.dels != 0 {
 		t.Fatalf("puts=%d tags=%d dels=%d", m.puts, m.tags, m.dels)
+	}
+}
+
+func TestPutSecureParameterReservedTagsAndOrder(t *testing.T) {
+	extra := map[string]string{
+		"ManagedBy":               "operator",
+		"FabricaModule":           "operator",
+		"FabricaVersion":          "operator",
+		"FabricaCreateNonce":      "operator",
+		"FabricaOwnershipVersion": "operator",
+		"Project":                 "studio",
+		"Environment":             "test",
+		"":                        "invalid-key",
+	}
+	before := maps.Clone(extra)
+	m := &mockParameter{tagFn: func(_ context.Context, in *ssm.AddTagsToResourceInput) (*ssm.AddTagsToResourceOutput, error) {
+		var keys []string
+		got := make(map[string]string)
+		for _, tag := range in.Tags {
+			key := aws.ToString(tag.Key)
+			keys = append(keys, key)
+			got[key] = aws.ToString(tag.Value)
+		}
+		want := map[string]string{"ManagedBy": "fabrica", "Project": "studio", "Environment": "test"}
+		if !maps.Equal(got, want) || !reflect.DeepEqual(keys, []string{"ManagedBy", "Environment", "Project"}) {
+			t.Fatalf("tags = %v, keys = %v", got, keys)
+		}
+		return &ssm.AddTagsToResourceOutput{}, nil
+	}}
+	p := testProviderWithParameter(m)
+	if err := p.PutSecureParameter(context.Background(), fabricac.SecureParameter{
+		Name: "/fabrica/test/password", Value: "test-value", Tags: extra,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !maps.Equal(extra, before) {
+		t.Fatal("PutSecureParameter mutated caller tags")
 	}
 }
 

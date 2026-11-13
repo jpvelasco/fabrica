@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // rootDeviceRE matches the root device names EC2 AMIs use: /dev/sda1 (Ubuntu,
@@ -244,7 +246,7 @@ func SGDesiredState(groupName, description, vpcID string, rules []SGIngressRule,
 		}
 	}
 	tags := []map[string]string{
-		{"Key": "ManagedBy", "Value": "fabrica"},
+		{"Key": fabricatags.ManagedByKey, "Value": fabricatags.ManagedByValue},
 		{"Key": "Name", "Value": groupName},
 	}
 	for k, v := range extraTags {
@@ -279,7 +281,7 @@ func Build(spec InstanceSpec, dsOpts ...DesiredStateOption) (json.RawMessage, er
 			},
 		},
 		"Tags": []map[string]string{
-			{"Key": "ManagedBy", "Value": "fabrica"},
+			{"Key": fabricatags.ManagedByKey, "Value": fabricatags.ManagedByValue},
 			{"Key": "Name", "Value": spec.InstanceName},
 		},
 		"MetadataOptions": map[string]any{
