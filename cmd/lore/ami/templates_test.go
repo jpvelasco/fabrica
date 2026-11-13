@@ -2,8 +2,58 @@ package ami
 
 import (
 	"bytes"
+	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/tags"
 )
+
+func TestOwnershipTemplates(t *testing.T) {
+	for _, owner := range []string{"", "Studio_Tools.v1"} {
+		t.Run(owner, func(t *testing.T) {
+			identity, err := tags.ResolveIdentity(owner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b := newRenderTestCommand(true)
+			b.cfg.Identity = identity
+			data, err := b.templateData()
+			if err != nil {
+				t.Fatal(err)
+			}
+			recipe, err := b.renderTemplate("image-builder.json.tmpl", data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc struct {
+				ParentImage string            `json:"parentImage"`
+				Tags        map[string]string `json:"tags"`
+			}
+			if err := json.Unmarshal(recipe, &doc); err != nil {
+				t.Fatal(err)
+			}
+			want := identity.ManagedBy()
+			if doc.Tags["ManagedBy"] != want || doc.Tags["LoreVersion"] != b.cfg.Version || doc.Tags["Name"] != b.cfg.Name || doc.ParentImage != defaultBaseImage {
+				t.Fatalf("recipe ownership or metadata changed: %+v", doc)
+			}
+			packer, err := b.renderTemplate("packer.hcl.tmpl", data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Count(string(packer), `ManagedBy   = "`+want+`"`) != 2 {
+				t.Fatalf("AMI and snapshot tags must both select %q:\n%s", want, packer)
+			}
+			guide, err := b.renderTemplate("build-guide.md.tmpl", data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(guide), "Key=ManagedBy,Value="+want+" Key=FabricaModule,Value=lore Key=Name,Value="+b.cfg.Name) {
+				t.Fatalf("snapshot tag command must select %q:\n%s", want, guide)
+			}
+		})
+	}
+}
 
 func newRenderTestCommand(includePacker bool) *buildCommand {
 	return &buildCommand{
@@ -72,7 +122,7 @@ func TestRenderTemplates(t *testing.T) {
 				"verify-lore-ami-runtime.sh",
 				"fails closed",
 				// #509: the Image Builder bake must tag the output AMI's
-				// snapshots so ManagedBy-based sweeps find them.
+				// snapshots for identification and operator cleanup.
 				"aws ec2 create-tags --region us-west-2",
 				"Key=ManagedBy,Value=fabrica Key=FabricaModule,Value=lore Key=Name,Value=fabrica-lore-5.5.0",
 				"Images[0].BlockDeviceMappings[?Ebs].Ebs.SnapshotId",

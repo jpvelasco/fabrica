@@ -50,16 +50,16 @@ source "amazon-ebs" "horde" {
   }
 
   tags = {
-    ManagedBy     = "fabrica"
+    ManagedBy     = "{{ .Identity.ManagedBy }}"
     HordeVersion  = var.horde_version
     InstallMethod = "{{ .Install }}"
     Name          = local.ami_name
   }
 
-  # The snapshots the bake takes keep the AMI tag set, so ManagedBy sweeps
-  # find them (`tags` alone tags the AMI only).
+  # Keep the AMI tag set on its snapshots for identification and operator
+  # cleanup (`tags` alone tags the AMI only).
   snapshot_tags = {
-    ManagedBy     = "fabrica"
+    ManagedBy     = "{{ .Identity.ManagedBy }}"
     HordeVersion  = var.horde_version
     InstallMethod = "{{ .Install }}"
     Name          = local.ami_name

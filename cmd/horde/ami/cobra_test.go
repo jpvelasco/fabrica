@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
-
 	"github.com/jpvelasco/fabrica/cmd/horde/ami"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
+	"github.com/spf13/cobra"
 )
 
 // buildTestRoot wires the ami command under a minimal root that owns the
@@ -19,7 +19,7 @@ import (
 func buildTestRoot(out *bytes.Buffer) *cobra.Command {
 	root := &cobra.Command{Use: "fabrica", SilenceUsage: true, SilenceErrors: true}
 	root.PersistentFlags().Bool("dry-run", false, "")
-	root.AddCommand(ami.New(out))
+	root.AddCommand(ami.New(testutil.NewNilProviderRuntime(), out))
 	return root
 }
 
@@ -93,4 +93,8 @@ func TestAmiBuild_InvalidFlagValue(t *testing.T) {
 	if !strings.Contains(err.Error(), "--install must be") {
 		t.Errorf("unexpected error: %v", err)
 	}
+}
+
+func TestAMIRuntimeContract(t *testing.T) {
+	testutil.RunAMIRuntimeTests(t, ami.New)
 }

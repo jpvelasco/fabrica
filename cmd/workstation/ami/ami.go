@@ -3,11 +3,12 @@ package ami
 import (
 	"io"
 
+	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/spf13/cobra"
 )
 
 // New returns the "workstation ami" parent command.
-func New(out io.Writer) *cobra.Command {
+func New(runtimeSource globals.RuntimeSource, out io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ami",
 		Short: "Tools for building a NICE DCV workstation AMI",
@@ -16,6 +17,6 @@ func New(out io.Writer) *cobra.Command {
 Available operations:
   build   Generate files needed to build a DCV-ready workstation AMI`,
 	}
-	cmd.AddCommand(newBuildCmd(out))
+	cmd.AddCommand(newBuildCmd(runtimeSource, out))
 	return cmd
 }

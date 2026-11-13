@@ -4,7 +4,53 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/tags"
 )
+
+func TestOwnershipTemplates(t *testing.T) {
+	for _, owner := range []string{"", "Studio_Tools.v1"} {
+		t.Run(owner, func(t *testing.T) {
+			identity, err := tags.ResolveIdentity(owner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b := buildCommand{cfg: BuildConfig{
+				Identity: identity, Version: "5.5.0", Install: "native", BaseImage: defaultBaseImage,
+				Region: "us-west-2", Name: "fabrica-horde-5-5-0", IncludePacker: true,
+			}}
+			recipe, err := b.renderTemplate("image-builder.json.tmpl", b.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc struct {
+				ParentImage string            `json:"parentImage"`
+				Tags        map[string]string `json:"tags"`
+			}
+			if err := json.Unmarshal(recipe, &doc); err != nil {
+				t.Fatal(err)
+			}
+			want := identity.ManagedBy()
+			if doc.Tags["ManagedBy"] != want || doc.Tags["HordeVersion"] != "5.5.0" || doc.Tags["InstallMethod"] != "native" || doc.ParentImage != defaultBaseImage {
+				t.Fatalf("recipe ownership or metadata changed: %+v", doc)
+			}
+			packer, err := b.renderTemplate("packer.hcl.tmpl", b.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Count(string(packer), `ManagedBy     = "`+want+`"`) != 2 {
+				t.Fatalf("AMI and snapshot tags must both select %q:\n%s", want, packer)
+			}
+			guide, err := b.renderTemplate("build-guide.md.tmpl", b.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(guide), "Key=ManagedBy,Value="+want+" Key=FabricaModule,Value=horde Key=Name,Value="+b.cfg.Name) {
+				t.Fatalf("snapshot tag command must select %q:\n%s", want, guide)
+			}
+		})
+	}
+}
 
 // requireDockerBake asserts that rendered docker-install output contains the
 // shared bake markers (compose + image bake) and the full-path aws pull.
@@ -272,7 +318,7 @@ func TestRenderPackerTemplate_Docker(t *testing.T) {
 		t.Error("packer template should fail-closed enable SSM agent")
 	}
 	// #509: the snapshots the bake takes must carry the AMI tag set so
-	// ManagedBy-based sweeps find them.
+	// tags support identification and operator cleanup.
 	if !strings.Contains(s, "snapshot_tags = {") {
 		t.Error("packer template should declare snapshot_tags mirroring the AMI tag set")
 	}
@@ -365,7 +411,7 @@ func TestRenderBuildGuideTemplate_Docker(t *testing.T) {
 		t.Error("build guide should include create-component command")
 	}
 	// #509: the Image Builder bake must tag the output AMI's snapshots so
-	// ManagedBy-based sweeps find them.
+	// tags support identification and operator cleanup.
 	if !strings.Contains(s, "aws ec2 create-tags --region us-east-1") {
 		t.Error("build guide should include the snapshot create-tags loop")
 	}

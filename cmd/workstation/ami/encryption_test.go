@@ -5,7 +5,7 @@ package ami
 // on a recipe that would bake an unencrypted root snapshot, the build guide
 // documents the encrypted bake paths, and the generated verify-ami.sh gate
 // (executed under bash against a fake aws CLI) passes only an AMI whose EBS
-// snapshots are all encrypted and tagged ManagedBy=fabrica.
+// snapshots are all encrypted and tagged with the selected ManagedBy value.
 
 import (
 	"bytes"
@@ -17,6 +17,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // renderBuild runs the generator into a temp dir and returns it.
@@ -29,10 +31,15 @@ func renderBuild(t *testing.T) string {
 // root and returns the output dir.
 func renderBuildRoot(t *testing.T, root string) string {
 	t.Helper()
+	return renderBuildIdentity(t, root, tags.Identity{})
+}
+
+func renderBuildIdentity(t *testing.T, root string, identity tags.Identity) string {
+	t.Helper()
 	dir := t.TempDir()
 	c := buildCommand{
 		out:       &bytes.Buffer{},
-		cfg:       BuildConfig{BaseImage: defaultBaseImage, Region: "us-west-2", Name: "fabrica-workstation-dcv", OutputDir: dir, RootDevice: root},
+		cfg:       BuildConfig{Identity: identity, BaseImage: defaultBaseImage, Region: "us-west-2", Name: "fabrica-workstation-dcv", OutputDir: dir, RootDevice: root},
 		writeFile: os.WriteFile,
 		mkdirAll:  os.MkdirAll,
 	}
@@ -40,6 +47,50 @@ func renderBuildRoot(t *testing.T, root string) string {
 		t.Fatalf("run: %v", err)
 	}
 	return dir
+}
+
+func TestOwnershipArtifacts(t *testing.T) {
+	identity, err := tags.ResolveIdentity("Studio_Tools.v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := renderBuildIdentity(t, "/dev/xvda", identity)
+	raw, err := os.ReadFile(filepath.Join(dir, "image-builder-recipe.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recipe struct {
+		ParentImage string            `json:"parentImage"`
+		Tags        map[string]string `json:"tags"`
+		AMITags     map[string]string `json:"amiTags"`
+	}
+	if err := json.Unmarshal(raw, &recipe); err != nil {
+		t.Fatal(err)
+	}
+	for _, tagSet := range []map[string]string{recipe.Tags, recipe.AMITags} {
+		if tagSet["ManagedBy"] != identity.ManagedBy() || tagSet["Name"] != defaultName {
+			t.Fatalf("wrong selected ownership or name: %v", tagSet)
+		}
+	}
+	if recipe.ParentImage != defaultBaseImage || recipe.AMITags["FabricaModule"] != "workstation" {
+		t.Fatalf("base image or module changed: %+v", recipe)
+	}
+	guide, err := os.ReadFile(filepath.Join(dir, "build-guide.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"ManagedBy=Studio_Tools.v1", "Key=ManagedBy,Value=Studio_Tools.v1",
+		"ResourceType=image,Tags=[{Key=ManagedBy,Value=Studio_Tools.v1}",
+		"ResourceType=snapshot,Tags=[{Key=ManagedBy,Value=Studio_Tools.v1}",
+	} {
+		if !strings.Contains(string(guide), want) {
+			t.Errorf("guide missing %q", want)
+		}
+	}
+	if strings.Contains(string(guide), "ManagedBy=fabrica") || strings.Contains(string(guide), "Key=ManagedBy,Value=fabrica") {
+		t.Fatal("custom guide retained a default-owner selector")
+	}
 }
 
 func TestBuildRecipeRootVolumeEncryptedAndAMITagged(t *testing.T) {
@@ -243,6 +294,19 @@ esac
 `
 
 func TestVerifyAMIScriptGate(t *testing.T) {
+	for _, owner := range []string{"", "Studio_Tools.v1"} {
+		t.Run(owner, func(t *testing.T) {
+			identity, err := tags.ResolveIdentity(owner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			testVerifyAMIScriptGate(t, identity)
+		})
+	}
+}
+
+func testVerifyAMIScriptGate(t *testing.T, identity tags.Identity) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("executed gate runs under a POSIX shell; the linux and macOS legs run it")
 	}
@@ -250,7 +314,7 @@ func TestVerifyAMIScriptGate(t *testing.T) {
 	if err != nil {
 		t.Skip("bash not found")
 	}
-	dir := renderBuild(t)
+	dir := renderBuildIdentity(t, defaultRootDevice, identity)
 	script := filepath.Join(dir, "verify-ami.sh")
 	bin := t.TempDir()
 	if err := os.WriteFile(filepath.Join(bin, "aws"), []byte(fakeAWS), 0o755); err != nil { // #nosec G306 -- test-only fake CLI must be executable
@@ -263,7 +327,7 @@ func TestVerifyAMIScriptGate(t *testing.T) {
 		"FAKE_IMAGE_ENCRYPTED":    "True",
 		"FAKE_SNAPSHOTS":          "test-root-snapshot",
 		"FAKE_SNAPSHOT_ENCRYPTED": "True",
-		"FAKE_SNAPSHOT_MANAGEDBY": "fabrica",
+		"FAKE_SNAPSHOT_MANAGEDBY": identity.ManagedBy(),
 	}
 	with := func(over map[string]string) map[string]string {
 		m := map[string]string{}
@@ -275,6 +339,11 @@ func TestVerifyAMIScriptGate(t *testing.T) {
 		}
 		return m
 	}
+	otherOwner := "fabrica"
+	if identity.ManagedBy() == otherOwner {
+		otherOwner = "Studio_Tools.v1"
+	}
+	mismatch := "not tagged ManagedBy=" + identity.ManagedBy()
 	for _, tc := range []struct {
 		name     string
 		args     []string
@@ -282,7 +351,7 @@ func TestVerifyAMIScriptGate(t *testing.T) {
 		wantCode int
 		wantOut  string
 	}{
-		{name: "encrypted and tagged passes", args: []string{"test-image"}, env: pass, wantCode: 0, wantOut: "OK: AMI test-image root /dev/sda1 is encrypted; 1 EBS snapshot(s)"},
+		{name: "encrypted and tagged passes", args: []string{"test-image"}, env: pass, wantCode: 0, wantOut: "OK: AMI test-image root /dev/sda1 is encrypted; 1 EBS snapshot(s), all encrypted and tagged ManagedBy=" + identity.ManagedBy()},
 		{name: "xvda root encrypted passes", args: []string{"test-image"}, env: with(map[string]string{"FAKE_ROOT_DEVICE": "/dev/xvda"}), wantCode: 0, wantOut: "root /dev/xvda is encrypted"},
 		{name: "missing root device name fails", args: []string{"test-image"}, env: with(map[string]string{"FAKE_ROOT_DEVICE": "None"}), wantCode: 1, wantOut: "no usable root device name (RootDeviceName=None)"},
 		{name: "malformed root device name fails", args: []string{"test-image"}, env: with(map[string]string{"FAKE_ROOT_DEVICE": "/dev/sda1' || true"}), wantCode: 1, wantOut: "no usable root device name"},
@@ -294,7 +363,10 @@ func TestVerifyAMIScriptGate(t *testing.T) {
 		{name: "missing image (None) fails", args: []string{"test-image"}, env: with(map[string]string{"FAKE_IMAGE_ENCRYPTED": "None"}), wantCode: 1, wantOut: "Encrypted=None"},
 		{name: "no EBS snapshots fails", args: []string{"test-image"}, env: with(map[string]string{"FAKE_IMAGE_ENCRYPTED": ""}), wantCode: 1, wantOut: "no EBS snapshots"},
 		{name: "unencrypted snapshot fails", args: []string{"test-image"}, env: with(map[string]string{"FAKE_SNAPSHOT_ENCRYPTED": "False"}), wantCode: 1, wantOut: "snapshot test-root-snapshot of AMI test-image is not encrypted"},
-		{name: "untagged snapshot fails", args: []string{"test-image"}, env: with(map[string]string{"FAKE_SNAPSHOT_MANAGEDBY": "None"}), wantCode: 1, wantOut: "not tagged ManagedBy=fabrica"},
+		{name: "untagged snapshot fails", args: []string{"test-image"}, env: with(map[string]string{"FAKE_SNAPSHOT_MANAGEDBY": "None"}), wantCode: 1, wantOut: mismatch},
+		{name: "other valid owner fails", args: []string{"test-image"}, env: with(map[string]string{"FAKE_SNAPSHOT_MANAGEDBY": otherOwner}), wantCode: 1, wantOut: "Key=ManagedBy,Value=" + identity.ManagedBy()},
+		{name: "different owner fails", args: []string{"test-image"}, env: with(map[string]string{"FAKE_SNAPSHOT_MANAGEDBY": "studio-other"}), wantCode: 1, wantOut: mismatch},
+		{name: "case-only mismatch fails", args: []string{"test-image"}, env: with(map[string]string{"FAKE_SNAPSHOT_MANAGEDBY": strings.ToUpper(identity.ManagedBy())}), wantCode: 1, wantOut: mismatch},
 		{name: "aws error fails closed", args: []string{"test-image"}, env: with(map[string]string{"FAKE_AWS_FAIL": "1"}), wantCode: 254, wantOut: "AccessDenied"},
 		{name: "missing argument", args: nil, env: pass, wantCode: 2, wantOut: "usage:"},
 	} {
