@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,7 +72,7 @@ func RunAMIRuntimeTests(t *testing.T, newCmd func(globals.RuntimeSource, io.Writ
 				}
 				return
 			}
-			raw, err := os.ReadFile(filepath.Join(dir, "image-builder-recipe.json"))
+			raw, err := fs.ReadFile(os.DirFS(dir), "image-builder-recipe.json")
 			if err != nil {
 				t.Fatal(err)
 			}
