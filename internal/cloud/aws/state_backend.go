@@ -41,8 +41,9 @@ type stateBackendS3Client interface {
 }
 
 type stateBackendDynamoDBClient interface {
-	DescribeTable(context.Context, *dynamodb.DescribeTableInput, ...func(*dynamodb.Options)) (*dynamodb.DescribeTableOutput, error)
+	dynamodb.DescribeTableAPIClient
 	ListTagsOfResource(context.Context, *dynamodb.ListTagsOfResourceInput, ...func(*dynamodb.Options)) (*dynamodb.ListTagsOfResourceOutput, error)
+	TagResource(context.Context, *dynamodb.TagResourceInput, ...func(*dynamodb.Options)) (*dynamodb.TagResourceOutput, error)
 	DeleteTable(context.Context, *dynamodb.DeleteTableInput, ...func(*dynamodb.Options)) (*dynamodb.DeleteTableOutput, error)
 	CreateTable(context.Context, *dynamodb.CreateTableInput, ...func(*dynamodb.Options)) (*dynamodb.CreateTableOutput, error)
 }
@@ -204,7 +205,7 @@ func (p *awsProvider) EnsureStateBucket(ctx context.Context, bucket, region stri
 	}
 
 	// Reconcile configuration on every run so re-running setup heals drift.
-	if err := p.configureBucket(ctx, client, bucket); err != nil {
+	if err := p.configureBucket(ctx, client, bucket, p.stateBackendTags()); err != nil {
 		return result, err
 	}
 	return result, nil
@@ -265,7 +266,7 @@ func dynamoTagList(tags map[string]string) []dynamodbtypes.Tag {
 	return out
 }
 
-func (p *awsProvider) configureBucket(ctx context.Context, client stateBackendS3Client, bucket string) error {
+func (p *awsProvider) configureBucket(ctx context.Context, client stateBackendS3Client, bucket string, desiredTags map[string]string) error {
 	if _, err := client.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{
 		Bucket:                  aws.String(bucket),
 		VersioningConfiguration: &s3types.VersioningConfiguration{Status: s3types.BucketVersioningStatusEnabled},
@@ -301,11 +302,10 @@ func (p *awsProvider) configureBucket(ctx context.Context, client stateBackendS3
 		return fmt.Errorf("blocking public access on S3 bucket %s: %w", bucket, err)
 	}
 
-	// PutBucketTagging replaces the bucket tag set on every call, so a
-	// re-run of setup keeps the tags in sync with fabrica.yaml.
+	// PutBucketTagging replaces all tags. The caller supplies the complete set.
 	if _, err := client.PutBucketTagging(ctx, &s3.PutBucketTaggingInput{
 		Bucket:  aws.String(bucket),
-		Tagging: &s3types.Tagging{TagSet: s3TagList(p.stateBackendTags())},
+		Tagging: &s3types.Tagging{TagSet: s3TagList(desiredTags)},
 	}); err != nil {
 		return fmt.Errorf("tagging S3 bucket %s: %w", bucket, err)
 	}

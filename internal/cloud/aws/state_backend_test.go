@@ -814,6 +814,10 @@ func (f *fakeDynamoDBStateBackendClient) ListTagsOfResource(context.Context, *dy
 	return &dynamodb.ListTagsOfResourceOutput{}, nil
 }
 
+func (f *fakeDynamoDBStateBackendClient) TagResource(context.Context, *dynamodb.TagResourceInput, ...func(*dynamodb.Options)) (*dynamodb.TagResourceOutput, error) {
+	return &dynamodb.TagResourceOutput{}, nil
+}
+
 func (f *fakeDynamoDBStateBackendClient) DeleteTable(ctx context.Context, in *dynamodb.DeleteTableInput, optFns ...func(*dynamodb.Options)) (*dynamodb.DeleteTableOutput, error) {
 	f.deleteCalls++
 	f.deleteTable = awssdk.ToString(in.TableName)

@@ -23,7 +23,12 @@ func (p *awsProvider) StateBucketMetadata(ctx context.Context, bucket string) (f
 	if err != nil {
 		return empty, fmt.Errorf("reading S3 bucket %s metadata: %w", bucket, err)
 	}
-	out, err := p.s3StateClient(cfg).GetBucketTagging(ctx, &s3.GetBucketTaggingInput{Bucket: aws.String(bucket)})
+	return readStateBucketMetadata(ctx, p.s3StateClient(cfg), bucket)
+}
+
+func readStateBucketMetadata(ctx context.Context, client stateBackendS3Client, bucket string) (fabricac.StateBackendMetadata, error) {
+	empty := fabricac.StateBackendMetadata{}
+	out, err := client.GetBucketTagging(ctx, &s3.GetBucketTaggingInput{Bucket: aws.String(bucket)})
 	if err != nil {
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) {
@@ -56,17 +61,22 @@ func (p *awsProvider) StateLockTableMetadata(ctx context.Context, table string) 
 	if err != nil {
 		return empty, fmt.Errorf("reading DynamoDB table %s metadata: %w", table, err)
 	}
-	client := p.dynamoDBStateClient(cfg)
+	metadata, _, err := readStateLockTableMetadata(ctx, p.dynamoDBStateClient(cfg), table)
+	return metadata, err
+}
+
+func readStateLockTableMetadata(ctx context.Context, client stateBackendDynamoDBClient, table string) (fabricac.StateBackendMetadata, string, error) {
+	empty := fabricac.StateBackendMetadata{}
 	out, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(table)})
 	if err != nil {
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "ResourceNotFoundException" {
-			return empty, nil
+			return empty, "", nil
 		}
-		return empty, fmt.Errorf("reading DynamoDB table %s metadata: DescribeTable: %w — check dynamodb:DescribeTable permission", table, err)
+		return empty, "", fmt.Errorf("reading DynamoDB table %s metadata: DescribeTable: %w — check dynamodb:DescribeTable permission", table, err)
 	}
 	if out == nil || out.Table == nil || aws.ToString(out.Table.TableArn) == "" {
-		return empty, fmt.Errorf("reading DynamoDB table %s metadata: DescribeTable returned no table ARN; inspect the backend before retrying", table)
+		return empty, "", fmt.Errorf("reading DynamoDB table %s metadata: DescribeTable returned no table ARN; inspect the backend before retrying", table)
 	}
 	input := &dynamodb.ListTagsOfResourceInput{ResourceArn: out.Table.TableArn}
 	tags := map[string]string{}
@@ -74,22 +84,22 @@ func (p *awsProvider) StateLockTableMetadata(ctx context.Context, table string) 
 	for {
 		page, err := client.ListTagsOfResource(ctx, input)
 		if err != nil {
-			return empty, fmt.Errorf("reading DynamoDB table %s metadata: ListTagsOfResource: %w — check dynamodb:ListTagsOfResource permission", table, err)
+			return empty, "", fmt.Errorf("reading DynamoDB table %s metadata: ListTagsOfResource: %w — check dynamodb:ListTagsOfResource permission", table, err)
 		}
 		if page == nil {
-			return empty, fmt.Errorf("reading DynamoDB table %s metadata: ListTagsOfResource returned no output; inspect the backend before retrying", table)
+			return empty, "", fmt.Errorf("reading DynamoDB table %s metadata: ListTagsOfResource returned no output; inspect the backend before retrying", table)
 		}
 		for _, tag := range page.Tags {
 			if err := addBackendMetadataTag(tags, tag.Key, tag.Value); err != nil {
-				return empty, fmt.Errorf("reading DynamoDB table %s metadata: %w", table, err)
+				return empty, "", fmt.Errorf("reading DynamoDB table %s metadata: %w", table, err)
 			}
 		}
 		token := aws.ToString(page.NextToken)
 		if token == "" {
-			return fabricac.StateBackendMetadata{Exists: true, Tags: tags}, nil
+			return fabricac.StateBackendMetadata{Exists: true, Tags: tags}, aws.ToString(out.Table.TableArn), nil
 		}
 		if seenTokens[token] {
-			return empty, fmt.Errorf("reading DynamoDB table %s metadata: repeated pagination token; inspect the backend before retrying", table)
+			return empty, "", fmt.Errorf("reading DynamoDB table %s metadata: repeated pagination token; inspect the backend before retrying", table)
 		}
 		seenTokens[token] = true
 		input.NextToken = page.NextToken
