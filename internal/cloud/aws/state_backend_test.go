@@ -720,6 +720,10 @@ func (f *fakeS3StateBackendClient) HeadBucket(ctx context.Context, in *s3.HeadBu
 	return &s3.HeadBucketOutput{}, f.headErr
 }
 
+func (f *fakeS3StateBackendClient) GetBucketTagging(context.Context, *s3.GetBucketTaggingInput, ...func(*s3.Options)) (*s3.GetBucketTaggingOutput, error) {
+	return &s3.GetBucketTaggingOutput{}, nil
+}
+
 func (f *fakeS3StateBackendClient) DeleteBucket(ctx context.Context, in *s3.DeleteBucketInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketOutput, error) {
 	f.deleteCalls++
 	f.deleteBucket = awssdk.ToString(in.Bucket)
@@ -804,6 +808,10 @@ func (f *fakeDynamoDBStateBackendClient) DescribeTable(ctx context.Context, in *
 	f.describeCalls++
 	f.describeTable = awssdk.ToString(in.TableName)
 	return &dynamodb.DescribeTableOutput{}, f.describeErr
+}
+
+func (f *fakeDynamoDBStateBackendClient) ListTagsOfResource(context.Context, *dynamodb.ListTagsOfResourceInput, ...func(*dynamodb.Options)) (*dynamodb.ListTagsOfResourceOutput, error) {
+	return &dynamodb.ListTagsOfResourceOutput{}, nil
 }
 
 func (f *fakeDynamoDBStateBackendClient) DeleteTable(ctx context.Context, in *dynamodb.DeleteTableInput, optFns ...func(*dynamodb.Options)) (*dynamodb.DeleteTableOutput, error) {
