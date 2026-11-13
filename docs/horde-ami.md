@@ -240,13 +240,14 @@ docker logout "${ECR_REPO%%/*}"
 rm -f /root/.docker/config.json   # do not bake a transient registry session
 ```
 
-If building from source (UE 5.8.1+):
+If building from source (UE 5.8.1+), run these commands from the Unreal Engine
+source root. `Setup.sh` must finish before the Docker build; see
+[Build from source](#build-from-source-ue-581) for the dependency requirements.
 
 ```bash
-# The Dockerfile lives at Engine/Source/Programs/Horde/HordeServer/Dockerfile
+./Setup.sh
 docker build -f Engine/Source/Programs/Horde/HordeServer/Dockerfile \
-  --build-arg UE_ENGINE_ROOT=/ue5 \
-  -t fabrica-horde-server:latest .
+  -t fabrica-horde-server:latest Engine
 ```
 
 ### Step 4: Pre-pull dependency images
@@ -339,10 +340,20 @@ Unreal Engine source. The Dockerfile at
 `Engine/Source/Programs/Horde/HordeServer/Dockerfile` produces a server with the
 full API surface including Build/job controllers.
 
+Run the commands below from the Unreal Engine source root. A plain git clone or
+release tarball is not enough: `Setup.sh` runs GitDependencies to supply
+`Engine/Source/Programs/Horde/Directory.Build.props`,
+`Engine/Source/Programs/Shared/Directory.Build.props`,
+`Engine/Source/Programs/Shared/UnrealEngine.csproj.props`, and
+`Engine/Binaries/DotNET/EpicGames.Perforce.Native`. Without these dependencies,
+`dotnet restore` can fail with `NETSDK1013` (an empty `TargetFramework`).
+The Dockerfile's `COPY` paths are relative to `Engine/`, so use `Engine` as the
+build context.
+
 ```bash
+./Setup.sh
 docker build -f Engine/Source/Programs/Horde/HordeServer/Dockerfile \
-  --build-arg UE_ENGINE_ROOT=/ue5 \
-  -t fabrica-horde-server:latest .
+  -t fabrica-horde-server:latest Engine
 ```
 
 Ensure the Build plugin is enabled in `globals.json` (`"enabledPlugins"` includes
