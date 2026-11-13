@@ -46,7 +46,7 @@ func (i Identity) Standard(module, version string) map[string]string {
 // ordinary operator tags with their existing precedence. Operator tags cannot
 // supply reserved keys, including reserved keys absent from base.
 func (i Identity) MergeProtected(base, extra map[string]string) map[string]string {
-	out := make(map[string]string, len(base)+len(extra)+1)
+	out := make(map[string]string)
 	for k, v := range base {
 		out[k] = v
 	}
