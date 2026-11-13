@@ -23,7 +23,7 @@ on CPU; artist/g6 templates still want a GPU AMI).
 - `image-builder-recipe.json` — parent `{{ .BaseImage }}`; root volume `{{ .RootDevice }}` encrypted
 - `verify-ami.sh` — fail-closed bake gate (read-only): the AMI's root device
   must be an encrypted EBS mapping, and every EBS snapshot must be encrypted
-  and tagged `ManagedBy=fabrica`
+  and tagged `ManagedBy={{ .Identity.ManagedBy }}`
 
 ## Bake with an encrypted root volume
 
@@ -76,7 +76,7 @@ AMI=<new AMI ID>
 for s in $(aws ec2 describe-images --region {{ .Region }} --image-ids "$AMI" \
     --query 'Images[0].BlockDeviceMappings[?Ebs].Ebs.SnapshotId' --output text); do
   aws ec2 create-tags --region {{ .Region }} --resources "$s" \
-    --tags Key=ManagedBy,Value=fabrica Key=FabricaModule,Value=workstation Key=Name,Value={{ .Name }}
+    --tags Key=ManagedBy,Value={{ .Identity.ManagedBy }} Key=FabricaModule,Value=workstation Key=Name,Value={{ .Name }}
 done
 ```
 
@@ -93,8 +93,8 @@ aws ec2 run-instances --region {{ .Region }} --image-id {{ .BaseImage }} \
 aws ec2 create-image --region {{ .Region }} --instance-id "$BAKE_INSTANCE" \
   --name "{{ .Name }}-$(date +%Y%m%d%H%M)" \
   --tag-specifications \
-    'ResourceType=image,Tags=[{Key=ManagedBy,Value=fabrica},{Key=FabricaModule,Value=workstation},{Key=Name,Value={{ .Name }}}]' \
-    'ResourceType=snapshot,Tags=[{Key=ManagedBy,Value=fabrica},{Key=FabricaModule,Value=workstation},{Key=Name,Value={{ .Name }}}]'
+    'ResourceType=image,Tags=[{Key=ManagedBy,Value={{ .Identity.ManagedBy }}},{Key=FabricaModule,Value=workstation},{Key=Name,Value={{ .Name }}}]' \
+    'ResourceType=snapshot,Tags=[{Key=ManagedBy,Value={{ .Identity.ManagedBy }}},{Key=FabricaModule,Value=workstation},{Key=Name,Value={{ .Name }}}]'
 ```
 
 ## Gate: verify before recording the AMI
@@ -105,7 +105,7 @@ aws ec2 create-image --region {{ .Region }} --instance-id "$BAKE_INSTANCE" \
 
 Exit 0 is the only pass. It fails when the AMI reports no root device, the
 root device has no encrypted EBS mapping, an EBS snapshot is not encrypted or
-is missing the `ManagedBy=fabrica` tag, or an AWS CLI call fails. Record the
+is missing the `ManagedBy={{ .Identity.ManagedBy }}` tag, or an AWS CLI call fails. Record the
 AMI in `workstation.amiId` only after it passes. The bake instance, its
 volume, and any pipeline resources are not Fabrica resources; clean them up
 yourself.

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/cmd/lore/ami"
 	"github.com/spf13/cobra"
 )
@@ -15,7 +16,7 @@ func setupCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
 	out := &bytes.Buffer{}
 	root := &cobra.Command{Use: "fabrica"}
 	root.PersistentFlags().Bool("dry-run", false, "")
-	root.AddCommand(ami.New(out))
+	root.AddCommand(ami.New(testutil.NewNilProviderRuntime(), out))
 	return root, out
 }
 
@@ -116,4 +117,8 @@ func TestAMIBuildCustomFlags(t *testing.T) {
 	if !bytes.Contains([]byte(got), []byte("5.4.0")) {
 		t.Errorf("expected custom version in output, got:\n%s", got)
 	}
+}
+
+func TestAMIRuntimeContract(t *testing.T) {
+	testutil.RunAMIRuntimeTests(t, ami.New)
 }

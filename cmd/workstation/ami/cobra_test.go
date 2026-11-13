@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/cmd/workstation/ami"
 	"github.com/spf13/cobra"
 )
@@ -14,7 +15,7 @@ func TestBuildHelp(t *testing.T) {
 	root.PersistentFlags().Bool("dry-run", false, "")
 	root.PersistentFlags().Bool("yes", false, "")
 	root.PersistentFlags().Bool("json", false, "")
-	root.AddCommand(ami.New(&out))
+	root.AddCommand(ami.New(testutil.NewNilProviderRuntime(), &out))
 	root.SetOut(&out)
 	root.SetErr(&out)
 	root.SetArgs([]string{"ami", "build", "--help"})
@@ -24,4 +25,8 @@ func TestBuildHelp(t *testing.T) {
 	if !bytes.Contains(out.Bytes(), []byte("NICE DCV")) {
 		t.Errorf("help missing DCV: %s", out.String())
 	}
+}
+
+func TestAMIRuntimeContract(t *testing.T) {
+	testutil.RunAMIRuntimeTests(t, ami.New)
 }

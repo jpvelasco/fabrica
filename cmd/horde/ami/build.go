@@ -12,7 +12,9 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/amissm"
+	"github.com/jpvelasco/fabrica/internal/tags"
 	"github.com/spf13/cobra"
 )
 
@@ -36,6 +38,7 @@ var (
 
 // BuildConfig holds the parameters for AMI file generation.
 type BuildConfig struct {
+	Identity      tags.Identity
 	Version       string
 	Install       string
 	BaseImage     string
@@ -54,7 +57,7 @@ type buildCommand struct {
 	mkdirAll  func(path string, perm os.FileMode) error
 }
 
-func newBuildCmd(out io.Writer) *cobra.Command {
+func newBuildCmd(runtimeSource globals.RuntimeSource, out io.Writer) *cobra.Command {
 	var cfg BuildConfig
 
 	cmd := &cobra.Command{
@@ -87,6 +90,15 @@ Examples:
   # Preview what would be generated without writing any files
   fabrica horde ami build --dry-run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			rt, err := runtimeSource()
+			if err != nil {
+				return err
+			}
+			identity, err := rt.Config.ResolveIdentity()
+			if err != nil {
+				return err
+			}
+			cfg.Identity = identity
 			if f := cmd.InheritedFlags().Lookup("dry-run"); f != nil && f.Value.String() == "true" {
 				cfg.DryRun = true
 			}

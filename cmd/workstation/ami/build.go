@@ -13,8 +13,10 @@ import (
 	// local YAML/JSON/MD build artifacts, not HTML; no server or browser consumes this output.
 	"text/template"
 
+	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/amissm"
 	"github.com/jpvelasco/fabrica/internal/ec2state"
+	"github.com/jpvelasco/fabrica/internal/tags"
 	"github.com/spf13/cobra"
 )
 
@@ -37,6 +39,7 @@ var (
 )
 
 type BuildConfig struct {
+	Identity   tags.Identity
 	BaseImage  string
 	Region     string
 	Name       string
@@ -52,7 +55,7 @@ type buildCommand struct {
 	renderFile func(name string, data any) ([]byte, error)
 }
 
-func newBuildCmd(out io.Writer) *cobra.Command {
+func newBuildCmd(runtimeSource globals.RuntimeSource, out io.Writer) *cobra.Command {
 	var cfg BuildConfig
 	cmd := &cobra.Command{
 		Use:   "build",
@@ -67,10 +70,19 @@ The recipe bakes on an encrypted root volume, so the AMI's root snapshot is
 encrypted. --root-device must be the base image's RootDeviceName (the
 default, /dev/sda1, is Canonical Ubuntu's). Run the generated verify-ami.sh against the baked AMI before you
 record it: it fails unless every EBS snapshot is encrypted and tagged
-ManagedBy=fabrica.
+with the configured ManagedBy ownership value.
 
 No AWS calls. Record the resulting AMI ID in workstation.amiId.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			rt, err := runtimeSource()
+			if err != nil {
+				return err
+			}
+			identity, err := rt.Config.ResolveIdentity()
+			if err != nil {
+				return err
+			}
+			cfg.Identity = identity
 			c := buildCommand{out: out, cfg: cfg, writeFile: os.WriteFile, mkdirAll: os.MkdirAll}
 			return c.run()
 		},

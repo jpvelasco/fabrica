@@ -30,6 +30,6 @@ Lore is offered in parallel with Perforce — studios may run either or both.`,
 	cmd.AddCommand(create.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(status.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(destroy.New(runtimeSource, optionsSource, out))
-	cmd.AddCommand(ami.New(out))
+	cmd.AddCommand(ami.New(runtimeSource, out))
 	return cmd
 }

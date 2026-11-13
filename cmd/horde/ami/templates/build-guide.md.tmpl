@@ -148,15 +148,15 @@ aws imagebuilder start-image-pipeline-execution \
 
 When the pipeline finishes, note the new AMI ID and tag its snapshots before
 updating `fabrica.yaml`. Image Builder tags the build and the output AMI, but
-not the snapshots it takes, so an untagged snapshot stays invisible to
-`ManagedBy`-based sweeps and teardown:
+not the snapshots it takes. Tag snapshots for consistent identification and
+operator cleanup:
 
 ```bash
 AMI=<new AMI ID>
 for s in $(aws ec2 describe-images --region {{ .Region }} --image-ids "$AMI" \
     --query 'Images[0].BlockDeviceMappings[?Ebs].Ebs.SnapshotId' --output text); do
   aws ec2 create-tags --region {{ .Region }} --resources "$s" \
-    --tags Key=ManagedBy,Value=fabrica Key=FabricaModule,Value=horde Key=Name,Value={{ .Name }}
+    --tags Key=ManagedBy,Value={{ .Identity.ManagedBy }} Key=FabricaModule,Value=horde Key=Name,Value={{ .Name }}
 done
 ```
 
@@ -209,8 +209,8 @@ packer build packer.pkr.hcl
 {{- end }}
 
 Packer prints the new AMI ID at the end. The template's `snapshot_tags` block
-tags the AMI's snapshots with the same set as the AMI, so `ManagedBy`-based
-sweeps find them. Update `fabrica.yaml`:
+tags the AMI's snapshots with the same set as the AMI for consistent
+identification and operator cleanup. Update `fabrica.yaml`:
 
 ```yaml
 horde:

@@ -28,12 +28,12 @@
     }
   },
   "amiTags": {
-    "ManagedBy": "fabrica",
+    "ManagedBy": "{{ .Identity.ManagedBy }}",
     "FabricaModule": "workstation",
     "Name": "{{ .Name }}"
   },
   "tags": {
-    "ManagedBy": "fabrica",
+    "ManagedBy": "{{ .Identity.ManagedBy }}",
     "Name": "{{ .Name }}"
   }
 }

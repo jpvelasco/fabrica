@@ -37,6 +37,6 @@ Available operations:
 	cmd.AddCommand(action.NewStart(runtimeSource, optionsSource, out))
 	cmd.AddCommand(newSchedule(runtimeSource, optionsSource, out))
 	cmd.AddCommand(terminate.New(runtimeSource, optionsSource, out))
-	cmd.AddCommand(ami.New(out))
+	cmd.AddCommand(ami.New(runtimeSource, out))
 	return cmd
 }
