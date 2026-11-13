@@ -126,9 +126,10 @@ func TestStatePersistenceRejectsInvalidWritesBeforeStorage(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if scenario == "changed binding" {
+				switch scenario {
+				case "changed binding":
 					st.ManagedBy = "fabrica"
-				} else if scenario == "cleared binding" {
+				case "cleared binding":
 					st.ManagedBy = ""
 				}
 			case "custom config":
