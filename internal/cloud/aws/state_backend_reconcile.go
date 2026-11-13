@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -63,26 +64,33 @@ func (p *awsProvider) ReconcileStateLockTable(ctx context.Context, table string,
 // Compare raw values and presence, not ownership policy. Only the caller's
 // classifier can approve historical repair or same-owner reconciliation.
 func revalidatedBackendTags(actual fabricac.StateBackendMetadata, spec fabricac.StateBackendReconcileSpec) (map[string]string, error) {
-	if !actual.Exists {
-		return nil, fmt.Errorf("resource disappeared; inspect the backend and repeat the full setup preflight")
-	}
-	for _, key := range []string{tags.ManagedByKey, tags.OwnershipVersionKey} {
-		expectedValue, expectedPresent := spec.Expected.Tags[key]
-		actualValue, actualPresent := actual.Tags[key]
-		if expectedPresent != actualPresent || expectedValue != actualValue {
-			return nil, fmt.Errorf("protected backend tag %s changed; inspect the backend and repeat the full setup preflight", key)
-		}
+	if err := validateBackendSnapshot(actual, spec.Expected); err != nil {
+		return nil, err
 	}
 	marker, present := actual.Tags[tags.OwnershipVersionKey]
 	if desired, supplied := spec.Tags[tags.OwnershipVersionKey]; supplied && (!present || desired != marker) {
 		return nil, fmt.Errorf("existing backend marker must be preserved; inspect the backend and repeat the full setup preflight")
 	}
+	return mergeBackendTags(actual.Tags, spec.Tags), nil
+}
+
+func validateBackendSnapshot(actual, expected fabricac.StateBackendMetadata) error {
+	if !actual.Exists {
+		return fmt.Errorf("resource disappeared; inspect the backend and repeat the full setup preflight")
+	}
+	for _, key := range []string{tags.ManagedByKey, tags.OwnershipVersionKey} {
+		expectedValue, expectedPresent := expected.Tags[key]
+		actualValue, actualPresent := actual.Tags[key]
+		if expectedPresent != actualPresent || expectedValue != actualValue {
+			return fmt.Errorf("protected backend tag %s changed; inspect the backend and repeat the full setup preflight", key)
+		}
+	}
+	return nil
+}
+
+func mergeBackendTags(actual, desired map[string]string) map[string]string {
 	merged := make(map[string]string)
-	for k, v := range actual.Tags {
-		merged[k] = v
-	}
-	for k, v := range spec.Tags {
-		merged[k] = v
-	}
-	return merged, nil
+	maps.Copy(merged, actual)
+	maps.Copy(merged, desired)
+	return merged
 }
