@@ -8,13 +8,17 @@ import (
 
 // State is the canonical representation of provisioning state.
 type State struct {
-	Version string        `json:"version"`
-	Account string        `json:"account"`
-	Region  string        `json:"region"`
-	Modules []ModuleState `json:"modules"`
-	History []Operation   `json:"history"`
-	Updated time.Time     `json:"updated"`
-	Created time.Time     `json:"created"`
+	Version   string        `json:"version"`
+	ManagedBy string        `json:"managedBy,omitempty"`
+	Account   string        `json:"account"`
+	Region    string        `json:"region"`
+	Modules   []ModuleState `json:"modules"`
+	History   []Operation   `json:"history"`
+	Updated   time.Time     `json:"updated"`
+	Created   time.Time     `json:"created"`
+	// loadedOwner records an immutable decoded or prepared binding, including
+	// legacy default ownership. NewState alone remains unbound.
+	loadedOwner string
 }
 
 // ModuleState tracks the state of one provisioning module.

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jpvelasco/fabrica/internal/oplog"
+	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // DefaultStateFile is the local state cache for the default config
@@ -74,24 +75,78 @@ func ValidateIdentity(st *State, account, region string) error {
 }
 
 // ParseState unmarshals a state document (remote object body or local cache
-// content) and validates it against the expected account and region.
+// content) and validates it against the expected account and region. Legacy
+// documents bind to default ownership; explicit invalid bindings fail closed.
 func ParseState(data []byte, account, region string) (*State, error) {
 	var st State
-	if err := json.Unmarshal(data, &st); err != nil {
+	doc := struct {
+		*State
+		ManagedBy json.RawMessage `json:"managedBy"`
+	}{State: &st}
+	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("parsing state document: %w", err)
 	}
+	value := tags.ManagedByValue
+	if doc.ManagedBy != nil {
+		var recorded string
+		if err := json.Unmarshal(doc.ManagedBy, &recorded); err != nil {
+			return nil, fmt.Errorf("parsing state managedBy: %w", err)
+		}
+		if recorded == "" {
+			return nil, fmt.Errorf("state managedBy must be a nonempty string; restore the document's recorded ownership")
+		}
+		value = recorded
+	}
+	identity, err := tags.ResolveIdentity(value)
+	if err != nil {
+		return nil, fmt.Errorf("parsing state managedBy: %w", err)
+	}
+	st.ManagedBy = identity.ManagedBy()
+	st.loadedOwner = st.ManagedBy
 	if err := ValidateIdentity(&st, account, region); err != nil {
 		return nil, err
 	}
 	return &st, nil
 }
 
+// ValidateOwnership rejects a different owner or a changed loaded binding.
+// A fresh unbound state is accepted without assigning ownership during reads.
+func (s *State) ValidateOwnership(identity tags.Identity) error {
+	if s == nil {
+		return fmt.Errorf("no state available; read state before persisting it")
+	}
+	if s.loadedOwner != "" && s.ManagedBy != s.loadedOwner {
+		return fmt.Errorf("state ownership binding changed from %q to %q; restore the recorded binding and its original configuration", s.loadedOwner, s.ManagedBy)
+	}
+	if s.ManagedBy == "" {
+		return nil
+	}
+	recorded, err := tags.ResolveIdentity(s.ManagedBy)
+	if err != nil {
+		return fmt.Errorf("invalid state managedBy: %w", err)
+	}
+	if recorded.ManagedBy() != identity.ManagedBy() {
+		return fmt.Errorf("state ownership mismatch (recorded %q vs configured %q); restore the configuration that created this deployment", recorded.ManagedBy(), identity.ManagedBy())
+	}
+	return nil
+}
+
+// BindOwnership binds only a compatible state, never replacing loaded ownership.
+func (s *State) BindOwnership(identity tags.Identity) error {
+	if err := s.ValidateOwnership(identity); err != nil {
+		return err
+	}
+	s.ManagedBy = identity.ManagedBy()
+	s.loadedOwner = s.ManagedBy
+	return nil
+}
+
 // EncodeState renders the canonical state document. The remote object body
-// and the local cache file share this encoding so a cache refresh is
-// byte-for-byte what the remote holds.
+// and the local cache share this encoding. A decoded legacy document serializes
+// its resolved default binding when cached; reading never writes it remotely.
 //
-// MarshalIndent cannot fail for State — it has no unexported fields,
-// no circular references, and no custom Marshaler.
+// MarshalIndent cannot fail for State — it has no circular references or custom
+// Marshaler, and unexported binding bookkeeping is excluded.
 func EncodeState(st *State) []byte {
 	data, _ := json.MarshalIndent(st, "", "  ")
 	return data

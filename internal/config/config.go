@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jpvelasco/fabrica/internal/tags"
 	"github.com/spf13/viper"
 	"go.yaml.in/yaml/v3"
 )
@@ -343,6 +344,7 @@ type AWS struct {
 	Profile   string            `mapstructure:"profile" yaml:"profile"`
 	AccountID string            `mapstructure:"accountId" yaml:"accountId"`
 	Tags      map[string]string `mapstructure:"tags" yaml:"tags"`
+	Identity  AWSIdentity       `mapstructure:"identity" yaml:"identity,omitempty"`
 	// IAM applies to EC2-module roles (workstation, horde including agents,
 	// lore, perforce, ddc) and the CI CodeBuild role. Deploy ignores it.
 	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
@@ -350,6 +352,28 @@ type AWS struct {
 	// the instance and the root volume. Cloud Control cannot tag the volume
 	// it creates, so a non-empty map selects the EC2 SDK launch path.
 	VolumeRequestTags map[string]string `mapstructure:"volumeRequestTags" yaml:"volumeRequestTags,omitempty"`
+}
+
+// AWSIdentity selects deployment ownership; it has no per-module override.
+type AWSIdentity struct {
+	ManagedBy string `mapstructure:"managedBy" yaml:"managedBy,omitempty"`
+}
+
+// ResolveIdentity validates ownership for loaded and programmatic config.
+// Nondefault activation remains disabled until all ownership consumers are ready.
+func (c *Config) ResolveIdentity() (tags.Identity, error) {
+	value := ""
+	if c != nil {
+		value = c.Cloud.AWS.Identity.ManagedBy
+	}
+	identity, err := tags.ResolveIdentity(value)
+	if err != nil {
+		return tags.Identity{}, fmt.Errorf("cloud.aws.identity.managedBy: %w", err)
+	}
+	if identity.ManagedBy() != tags.ManagedByValue {
+		return tags.Identity{}, fmt.Errorf("custom ownership is not enabled; set cloud.aws.identity.managedBy to %q", tags.ManagedByValue)
+	}
+	return identity, nil
 }
 
 type State struct {
@@ -451,6 +475,9 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	cfg.normalize()
+	if _, err := cfg.ResolveIdentity(); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }

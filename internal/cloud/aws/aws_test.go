@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -10,6 +11,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/jpvelasco/fabrica/internal/config"
 )
+
+func TestNewProviderRejectsProgrammaticCustomOwnership(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.Identity.ManagedBy = "Studio-Tools"
+	p, err := newProvider(cfg)
+	if err == nil || p != nil || !strings.Contains(err.Error(), "custom ownership is not enabled") {
+		t.Fatalf("custom provider accepted: %v, %v", p, err)
+	}
+}
 
 func TestNewProvider(t *testing.T) {
 	cfg := config.Defaults()

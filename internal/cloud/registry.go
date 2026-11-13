@@ -34,6 +34,9 @@ func Register(name string, fn Constructor) {
 
 // Get returns the provider registered under name, constructed with the given config.
 func Get(name string, cfg *config.Config) (Provider, error) {
+	if _, err := cfg.ResolveIdentity(); err != nil {
+		return nil, err
+	}
 	reg.mu.RLock()
 	fn, ok := reg.providers[name]
 	reg.mu.RUnlock()

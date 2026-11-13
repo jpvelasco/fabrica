@@ -3,6 +3,7 @@ package state
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,8 +12,78 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/oplog"
-	"log/slog"
+	"github.com/jpvelasco/fabrica/internal/tags"
 )
+
+func TestParseStateOwnershipBinding(t *testing.T) {
+	for _, doc := range []string{`{}`, `{"modules":[]}`, `{"modules":[{"name":"horde"}]}`} {
+		st, err := ParseState([]byte(doc), "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(EncodeState(st), []byte(`"managedBy": "fabrica"`)) {
+			t.Fatal("decoded legacy state must be default-bound, including empty inventory")
+		}
+	}
+	if bytes.Contains(EncodeState(NewState("", "")), []byte(`"managedBy"`)) {
+		t.Fatal("fresh state must remain unbound")
+	}
+	for _, owner := range []string{`"fabrica"`, `"Studio-Tools"`, `"7"`} {
+		st, err := ParseState([]byte(`{"managedBy":`+owner+`}`), "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(EncodeState(st), []byte(`"managedBy": `+owner)) {
+			t.Fatalf("decoded owner %s was discarded or changed", owner)
+		}
+	}
+	for _, owner := range []string{`""`, `null`, `true`, `7`, `[]`, `{}`, `" studio"`, `"studio\n"`, `"studio/tools"`, `"` + strings.Repeat("a", 64) + `"`} {
+		if _, err := ParseState([]byte(`{"managedBy":`+owner+`}`), "", ""); err == nil || !strings.Contains(err.Error(), "managedBy") {
+			t.Fatalf("state accepted invalid binding %s: %v", owner, err)
+		}
+	}
+}
+
+func TestStateOwnershipValidationAndBinding(t *testing.T) {
+	custom, err := tags.ResolveIdentity("Studio-Tools")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, doc := range []string{`{}`, `{"managedBy":"fabrica"}`, `{"managedBy":"Studio-Tools"}`} {
+		st, err := ParseState([]byte(doc), "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, identity := range []tags.Identity{{}, custom} {
+			err := st.ValidateOwnership(identity)
+			if match := st.ManagedBy == identity.ManagedBy(); (err == nil) != match {
+				t.Fatalf("recorded %q vs selected %q: %v", st.ManagedBy, identity.ManagedBy(), err)
+			}
+		}
+	}
+	fresh := NewState("", "")
+	if err := fresh.ValidateOwnership(custom); err != nil || fresh.ManagedBy != "" {
+		t.Fatalf("read validation bound fresh state: %v", err)
+	}
+	if err := fresh.BindOwnership(tags.Identity{}); err != nil || fresh.ManagedBy != "fabrica" {
+		t.Fatalf("default binding failed: %v", err)
+	}
+	if err := fresh.BindOwnership(custom); err == nil || fresh.ManagedBy != "fabrica" {
+		t.Fatal("prepared state was rebound")
+	}
+	fresh.ManagedBy = ""
+	if err := fresh.BindOwnership(tags.Identity{}); err == nil {
+		t.Fatal("prepared binding could be cleared")
+	}
+	invalid := NewState("", "")
+	invalid.ManagedBy = "invalid owner"
+	if err := invalid.BindOwnership(tags.Identity{}); err == nil {
+		t.Fatal("invalid in-memory binding accepted")
+	}
+	if err := (*State)(nil).BindOwnership(tags.Identity{}); err == nil {
+		t.Fatal("nil state accepted for writing")
+	}
+}
 
 func TestReadStateFile_FileMissing_ReturnsNew(t *testing.T) {
 	t.Chdir(t.TempDir())
