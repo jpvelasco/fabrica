@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // AssumeRolePolicyDocument builds the standard IAM trust policy envelope that
@@ -38,7 +40,7 @@ const (
 // and Name tags. Additional module-specific tags can be appended by the caller.
 func RoleTags(name string, extra map[string]string) []map[string]string {
 	tags := []map[string]string{
-		{"Key": "ManagedBy", "Value": "fabrica"},
+		{"Key": fabricatags.ManagedByKey, "Value": fabricatags.ManagedByValue},
 		{"Key": "Name", "Value": name},
 	}
 	for k, v := range extra {

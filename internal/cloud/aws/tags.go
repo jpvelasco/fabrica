@@ -81,7 +81,7 @@ func injectFabricaTags(typeName string, state json.RawMessage, module, version s
 	for _, p := range pairs {
 		add(p.Key)
 	}
-	add("ManagedBy")
+	add(fabricatags.ManagedByKey)
 	add("FabricaVersion")
 	if _, ok := base["FabricaModule"]; !ok {
 		add("FabricaModule")

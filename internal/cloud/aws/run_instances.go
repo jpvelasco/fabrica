@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/oplog"
+	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // fallbackVolumeTags retries an EC2 instance create once through direct
@@ -168,14 +169,14 @@ func (c *resourceClients) runInstancesClientToken(r *fabricac.Resource) string {
 // messages and logs quote.
 func adoptionFilter(name, nonce string, withNonce bool) ([]types.Filter, string) {
 	filters := []types.Filter{
-		{Name: aws.String("tag:ManagedBy"), Values: []string{"fabrica"}},
+		{Name: aws.String("tag:" + fabricatags.ManagedByKey), Values: []string{fabricatags.ManagedByValue}},
 		{Name: aws.String("tag:Name"), Values: []string{name}},
 		{Name: aws.String("instance-state-name"), Values: []string{
 			string(types.InstanceStateNamePending),
 			string(types.InstanceStateNameRunning),
 		}},
 	}
-	display := "ManagedBy=fabrica and Name=" + name
+	display := fabricatags.ManagedByKey + "=" + fabricatags.ManagedByValue + " and Name=" + name
 	if withNonce {
 		filters = append(filters, types.Filter{Name: aws.String("tag:" + fabricac.CreateNonceTag), Values: []string{nonce}})
 		display += fmt.Sprintf(" and %s=%s", fabricac.CreateNonceTag, nonce)

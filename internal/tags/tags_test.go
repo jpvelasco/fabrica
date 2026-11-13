@@ -1,6 +1,10 @@
 package tags
 
-import "testing"
+import (
+	"maps"
+	"strings"
+	"testing"
+)
 
 func TestStandard(t *testing.T) {
 	got := Standard("perforce", "2024.2")
@@ -45,7 +49,7 @@ func TestMerge(t *testing.T) {
 }
 
 func TestIdentityKey(t *testing.T) {
-	for _, k := range []string{"ManagedBy", "FabricaModule", "FabricaVersion", "FabricaCreateNonce"} {
+	for _, k := range []string{"ManagedBy", "FabricaModule", "FabricaVersion", "FabricaCreateNonce", "FabricaOwnershipVersion"} {
 		if !IdentityKey(k) {
 			t.Errorf("IdentityKey(%q) = false, want true", k)
 		}
@@ -54,6 +58,102 @@ func TestIdentityKey(t *testing.T) {
 		if IdentityKey(k) {
 			t.Errorf("IdentityKey(%q) = true, want false", k)
 		}
+	}
+}
+
+func TestResolveIdentity(t *testing.T) {
+	for _, value := range []string{"", "fabrica", "studio-tools", "Studio_Tools.v1", "7", strings.Repeat("a", 63)} {
+		t.Run(value, func(t *testing.T) {
+			identity, err := ResolveIdentity(value)
+			if err != nil {
+				t.Fatalf("ResolveIdentity(%q): %v", value, err)
+			}
+			want := value
+			if want == "" {
+				want = ManagedByValue
+			}
+			if identity.ManagedBy() != want {
+				t.Fatalf("owner = %q, want %q", identity.ManagedBy(), want)
+			}
+			if got := identity.Standard("horde", "test"); got[ManagedByKey] != want || got["FabricaModule"] != "horde" || got["FabricaVersion"] != "test" {
+				t.Fatalf("standard tags = %v", got)
+			}
+		})
+	}
+	for _, value := range []string{" studio", "studio ", "studio tools", "studio\n", "studio\x00", "studio/tools", "studio:tools", "studio+tools", ".studio", "-studio", "_studio", "stúdio", strings.Repeat("a", 64)} {
+		t.Run(value, func(t *testing.T) {
+			if _, err := ResolveIdentity(value); err == nil {
+				t.Fatalf("ResolveIdentity(%q) accepted invalid owner", value)
+			}
+		})
+	}
+}
+
+func TestIdentityMergeProtected(t *testing.T) {
+	identity, err := ResolveIdentity("Studio-Tools")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := map[string]string{
+		ManagedByKey:              "foreign",
+		"FabricaModule":           "horde",
+		"FabricaVersion":          "plan-version",
+		"FabricaCreateNonce":      "trusted-nonce",
+		"FabricaOwnershipVersion": "1",
+		"FabricaRole":             "agent",
+		"Name":                    "fabrica-agent",
+		"Project":                 "base-project",
+	}
+	extra := map[string]string{
+		ManagedByKey:              "operator",
+		"FabricaModule":           "operator",
+		"FabricaVersion":          "operator",
+		"FabricaCreateNonce":      "operator",
+		"FabricaOwnershipVersion": "operator",
+		"Project":                 "operator-project",
+		"":                        "invalid-key",
+	}
+	baseBefore, extraBefore := maps.Clone(base), maps.Clone(extra)
+	got := identity.MergeProtected(base, extra)
+	want := maps.Clone(base)
+	want[ManagedByKey] = "Studio-Tools"
+	want["Project"] = "operator-project"
+	if !maps.Equal(got, want) {
+		t.Fatalf("tags = %v, want %v", got, want)
+	}
+	got["Name"] = "changed"
+	if !maps.Equal(base, baseBefore) || !maps.Equal(extra, extraBefore) {
+		t.Fatal("merge mutated caller maps")
+	}
+}
+
+func TestIdentityMergeDoesNotForgeReservedTags(t *testing.T) {
+	var identity Identity
+	extra := map[string]string{"Project": "studio"}
+	for _, key := range []string{"ManagedBy", "FabricaModule", "FabricaVersion", "FabricaCreateNonce", "FabricaOwnershipVersion"} {
+		extra[key] = "operator"
+	}
+	got := identity.MergeProtected(nil, extra)
+	want := map[string]string{ManagedByKey: ManagedByValue, "Project": "studio"}
+	if !maps.Equal(got, want) {
+		t.Fatalf("tags = %v, want %v", got, want)
+	}
+}
+
+func TestIdentitiesRemainIndependent(t *testing.T) {
+	for _, owner := range []string{"studio-a", "studio-b", ManagedByValue} {
+		t.Run(owner, func(t *testing.T) {
+			t.Parallel()
+			identity, err := ResolveIdentity(owner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range 100 {
+				if got := identity.MergeProtected(nil, nil)[ManagedByKey]; got != owner {
+					t.Fatalf("owner = %q, want %q", got, owner)
+				}
+			}
+		})
 	}
 }
 

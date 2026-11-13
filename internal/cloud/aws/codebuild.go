@@ -71,21 +71,9 @@ func (p *awsProvider) EnsureProject(ctx context.Context, spec fabricac.CodeBuild
 	// the SDK boundary. Preserve any FabricaVersion the spec already carries.
 	// Operator tags (cloud.aws.tags) are additive: they merge in but cannot
 	// shadow Fabrica-owned identity tags, matching injectFabricaTags.
-	specTags := spec.Tags
-	if _, ok := spec.Tags["FabricaVersion"]; !ok || len(p.clients.operatorTags) > 0 {
-		specTags = make(map[string]string, len(spec.Tags)+len(p.clients.operatorTags)+1)
-		for k, v := range spec.Tags {
-			specTags[k] = v
-		}
-	}
+	specTags := (fabricatags.Identity{}).MergeProtected(spec.Tags, p.clients.operatorTags)
 	if _, ok := specTags["FabricaVersion"]; !ok {
 		specTags["FabricaVersion"] = p.clients.version
-	}
-	for k, v := range p.clients.operatorTags {
-		if fabricatags.IdentityKey(k) {
-			continue
-		}
-		specTags[k] = v
 	}
 	tags := make([]codebuildtypes.Tag, 0, len(specTags))
 	for k, v := range specTags {
