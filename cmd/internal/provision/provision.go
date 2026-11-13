@@ -93,36 +93,10 @@ func StatePath(rt globals.Runtime) string {
 // successful remote write is a warning — the remote document is the record
 // of truth and the next read refreshes the cache.
 func StateWriter(ctx context.Context, rt globals.Runtime) func(*fabricastate.State) error {
-	path := StatePath(rt)
-	store, bucket := stateStore(rt)
-	identity, identityErr := rt.Config.ResolveIdentity()
+	persistence := NewStatePersistence(ctx, rt)
 	return func(st *fabricastate.State) error {
-		if identityErr != nil {
-			return identityErr
-		}
-		if err := st.BindOwnership(identity); err != nil {
-			return err
-		}
-		remote := false
-		if store != nil {
-			err := store.PutStateDocument(ctx, bucket, fabricastate.StateDocumentKey, fabricastate.EncodeState(st))
-			switch {
-			case err == nil:
-				remote = true
-			case errors.Is(err, fabricac.ErrStateBackendAbsent):
-				oplog.Logger().Warn("remote state bucket not found; keeping state in the local cache only", "bucket", bucket)
-			default:
-				return fmt.Errorf("persisting remote state: %w", err)
-			}
-		}
-		if err := fabricastate.WriteStateTo(st, path); err != nil {
-			if remote {
-				oplog.Logger().Warn("remote state persisted; local cache write failed", "file", path, "error", err)
-				return nil
-			}
-			return err
-		}
-		return nil
+		_, err := persistence.Persist(st, StateWriteAllowLocal)
+		return err
 	}
 }
 
