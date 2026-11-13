@@ -613,6 +613,9 @@ Full-stack teardown: destroys every provisioned module in reverse dependency ord
 
 Prints version, commit hash, Go toolchain version, and platform.
 
+`fabrica --version` prints only the same version line, without loading
+configuration or initializing the cloud provider.
+
 #### `fabrica export`
 
 Generates infrastructure-as-code templates from Fabrica's recorded local state and configuration. Reads the profile's local state cache under `.fabrica/` (`.fabrica/state.json` for the default config) and the config file (`fabrica.yaml` or `fabrica-<profile>.yaml`), then produces CloudFormation YAML or Terraform HCL for the resources Fabrica manages. No live AWS calls — all data comes from local state.
