@@ -28,6 +28,7 @@ import (
 	_ "github.com/jpvelasco/fabrica/internal/cloud/aws"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/oplog"
+	fabricav "github.com/jpvelasco/fabrica/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -46,6 +47,7 @@ func New(out io.Writer) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:          "fabrica",
+		Version:      fabricav.String(),
 		SilenceUsage: true,
 		Short:        "Studio infrastructure as code — AWS",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -57,6 +59,8 @@ func New(out io.Writer) *cobra.Command {
 			return runtimeStore.Init(config.Path(cfgFile, opts.Profile))
 		},
 	}
+	cmd.SetOut(out)
+	cmd.SetVersionTemplate("Fabrica {{.Version}}\n")
 
 	runtimeSource := runtimeStore.Require
 	optionsSource := func() globals.Options {
