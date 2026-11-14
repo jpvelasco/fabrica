@@ -220,3 +220,30 @@ func TestStandardEmptyValues(t *testing.T) {
 		t.Error("FabricaVersion should be empty")
 	}
 }
+
+func TestIdentityMergeStandardPreservesTrustedMetadata(t *testing.T) {
+	for _, owner := range []string{"fabrica", "Studio-A"} {
+		identity, err := ResolveIdentity(owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		base := map[string]string{ManagedByKey: "foreign", "FabricaModule": "lore", "FabricaVersion": "old",
+			"FabricaCreateNonce": "trusted", "Project": "base"}
+		extra := map[string]string{ManagedByKey: "forged", "FabricaModule": "forged", "FabricaVersion": "forged",
+			"FabricaCreateNonce": "forged", OwnershipVersionKey: "forged", "Project": "operator"}
+		beforeBase, beforeExtra := maps.Clone(base), maps.Clone(extra)
+		got := identity.MergeStandard("fallback", "new", base, extra)
+		want := maps.Clone(base)
+		want[ManagedByKey], want["FabricaVersion"], want["Project"] = owner, "new", "operator"
+		if !maps.Equal(got, want) || !maps.Equal(base, beforeBase) || !maps.Equal(extra, beforeExtra) {
+			t.Fatalf("got=%v want=%v base=%v extra=%v", got, want, base, extra)
+		}
+		fallback := identity.MergeStandard("fallback", "new", nil, nil)
+		if !maps.Equal(fallback, identity.Standard("fallback", "new")) {
+			t.Fatalf("fallback=%v", fallback)
+		}
+		if owner == ManagedByValue && !maps.Equal(got, MergeProtected("fallback", "new", base, extra)) {
+			t.Fatal("default adapter changed")
+		}
+	}
+}

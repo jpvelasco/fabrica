@@ -72,7 +72,7 @@ func (p *awsProvider) PutSecureParameter(ctx context.Context, param fabricac.Sec
 		}
 		return fmt.Errorf("storing SSM parameter %s: %w", name, err)
 	}
-	tags := parameterTags(param.Tags)
+	tags := parameterTags(p.awsCfg.identity, param.Tags)
 	_, err = client.AddTagsToResource(ctx, &ssm.AddTagsToResourceInput{
 		ResourceType: ssmtypes.ResourceTypeForTaggingParameter,
 		ResourceId:   aws.String(name),
@@ -136,8 +136,8 @@ func (p *awsProvider) DeleteParameter(ctx context.Context, name string) error {
 	return nil
 }
 
-func parameterTags(extra map[string]string) []ssmtypes.Tag {
-	merged := (fabricatags.Identity{}).MergeProtected(nil, extra)
+func parameterTags(identity fabricatags.Identity, extra map[string]string) []ssmtypes.Tag {
+	merged := identity.MergeProtected(nil, extra)
 	tags := []ssmtypes.Tag{{
 		Key:   aws.String(fabricatags.ManagedByKey),
 		Value: aws.String(merged[fabricatags.ManagedByKey]),

@@ -24,14 +24,14 @@ func (c *resourceClients) Create(ctx context.Context, r *fabricac.Resource) erro
 	// create. Skip straight to RunInstances so the root volume is tagged
 	// on the same request.
 	if r.TypeName == fabricac.TypeAWSEC2Instance && len(c.volumeRequestTags) > 0 {
-		r.DesiredState = injectFabricaTags(r.TypeName, r.DesiredState, "fabrica", c.version, c.operatorTags)
+		r.DesiredState = injectFabricaTags(c.awsCfg.identity, r.TypeName, r.DesiredState, "fabrica", c.version, c.operatorTags)
 		return c.createInstanceWithVolumeTags(ctx, r)
 	}
 	if err := c.ensureClient(ctx); err != nil {
 		return err
 	}
 
-	r.DesiredState = injectFabricaTags(r.TypeName, r.DesiredState, "fabrica", c.version, c.operatorTags)
+	r.DesiredState = injectFabricaTags(c.awsCfg.identity, r.TypeName, r.DesiredState, "fabrica", c.version, c.operatorTags)
 
 	out, err := c.cc.CreateResource(ctx, &cloudcontrol.CreateResourceInput{
 		TypeName:     aws.String(r.TypeName),
@@ -95,7 +95,7 @@ func (c *resourceClients) tagPostCreateResources(ctx context.Context, r *fabrica
 		if c.iam == nil {
 			return nil
 		}
-		return c.iam.TagInstanceProfile(ctx, r.Identifier, postCreateTags(r.DesiredState, c.version, c.operatorTags))
+		return c.iam.TagInstanceProfile(ctx, r.Identifier, postCreateTags(c.awsCfg.identity, r.DesiredState, c.version, c.operatorTags))
 	case fabricac.TypeAWSEC2SecurityGroup, fabricac.TypeAWSEC2SecurityGroupIngress:
 		if c.instances == nil {
 			return nil
@@ -122,7 +122,7 @@ func (c *resourceClients) tagPostCreateResources(ctx context.Context, r *fabrica
 		if len(specs) == 0 {
 			return nil
 		}
-		n, err := c.instances.TagSecurityGroupRules(ctx, groupID, specs, postCreateTags(r.DesiredState, c.version, c.operatorTags))
+		n, err := c.instances.TagSecurityGroupRules(ctx, groupID, specs, postCreateTags(c.awsCfg.identity, r.DesiredState, c.version, c.operatorTags))
 		if err != nil {
 			return err
 		}
@@ -143,7 +143,7 @@ func (c *resourceClients) createAsync(ctx context.Context, r *fabricac.Resource)
 	if err := c.ensureClient(ctx); err != nil {
 		return err
 	}
-	r.DesiredState = injectFabricaTags(r.TypeName, r.DesiredState, "fabrica", c.version, c.operatorTags)
+	r.DesiredState = injectFabricaTags(c.awsCfg.identity, r.TypeName, r.DesiredState, "fabrica", c.version, c.operatorTags)
 
 	out, err := c.cc.CreateResource(ctx, &cloudcontrol.CreateResourceInput{
 		TypeName:     aws.String(r.TypeName),

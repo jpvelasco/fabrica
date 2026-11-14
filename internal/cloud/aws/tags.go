@@ -32,7 +32,7 @@ var tagUnsupportedTypes = map[string]struct{}{
 }
 
 // Identity tag protection lives in internal/tags (fabricatags.IdentityKey,
-// fabricatags.MergeProtected) so the Cloud Control path and the post-create
+// fabricatags.Identity.MergeStandard) so the Cloud Control path and the post-create
 // SDK tagging paths (instance profiles, security group rules, SSM
 // parameters) share one rule: operator tags are additive, identity tags are
 // Fabrica-owned.
@@ -44,7 +44,7 @@ var tagUnsupportedTypes = map[string]struct{}{
 // shape. Existing tags are preserved; standard/extra tags override by key,
 // except reserved identity tags, which operator tags cannot shadow.
 // Returns the state unchanged for resource types that don't support tags.
-func injectFabricaTags(typeName string, state json.RawMessage, module, version string, extra map[string]string) json.RawMessage {
+func injectFabricaTags(identity fabricatags.Identity, typeName string, state json.RawMessage, module, version string, extra map[string]string) json.RawMessage {
 	if _, unsupported := tagUnsupportedTypes[typeName]; unsupported {
 		return state
 	}
@@ -63,7 +63,7 @@ func injectFabricaTags(typeName string, state json.RawMessage, module, version s
 	for _, p := range pairs {
 		base[p.Key] = p.Value
 	}
-	merged := fabricatags.MergeProtected(module, version, base, extra)
+	merged := identity.MergeStandard(module, version, base, extra)
 
 	// Rebuild the "Tags" array preserving first-seen key order for stable
 	// output: existing keys, then identity keys, then sorted operator keys.
@@ -116,7 +116,7 @@ func injectFabricaTags(typeName string, state json.RawMessage, module, version s
 // the resource — and falls back to the protected standard set for types
 // whose schemas carry no Tags (IAM instance profiles, standalone ingress
 // rules).
-func postCreateTags(desiredState json.RawMessage, version string, extra map[string]string) map[string]string {
+func postCreateTags(identity fabricatags.Identity, desiredState json.RawMessage, version string, extra map[string]string) map[string]string {
 	if len(desiredState) > 0 {
 		var m map[string]any
 		if err := json.Unmarshal(desiredState, &m); err == nil {
@@ -126,11 +126,11 @@ func postCreateTags(desiredState json.RawMessage, version string, extra map[stri
 				for _, p := range pairs {
 					out[p.Key] = p.Value
 				}
-				return out
+				return identity.MergeProtected(out, nil)
 			}
 		}
 	}
-	return fabricatags.MergeProtected("fabrica", version, nil, extra)
+	return identity.MergeStandard("fabrica", version, nil, extra)
 }
 
 type tagPair struct {

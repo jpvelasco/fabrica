@@ -52,10 +52,5 @@ func IdentityKey(key string) bool {
 // operator tags, which retain their precedence for ordinary keys. Identity
 // tags are Fabrica-owned. Empty operator keys are dropped: tag APIs reject them.
 func MergeProtected(module, version string, base, extra map[string]string) map[string]string {
-	out := (Identity{}).MergeProtected(base, extra)
-	out["FabricaVersion"] = version
-	if _, ok := out["FabricaModule"]; !ok {
-		out["FabricaModule"] = module
-	}
-	return out
+	return (Identity{}).MergeStandard(module, version, base, extra)
 }

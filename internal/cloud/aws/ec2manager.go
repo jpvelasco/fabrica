@@ -101,7 +101,7 @@ func (s *ec2Service) TagInstanceVolumes(ctx context.Context, instanceID string, 
 	}
 
 	ec2Tags := make([]types.Tag, 0, len(tags))
-	for k, v := range tags {
+	for k, v := range s.awsCfg.identity.MergeProtected(tags, nil) {
 		ec2Tags = append(ec2Tags, types.Tag{Key: aws.String(k), Value: aws.String(v)})
 	}
 

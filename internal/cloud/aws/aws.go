@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/tags"
 	fabricav "github.com/jpvelasco/fabrica/internal/version"
 )
 
@@ -39,8 +40,9 @@ type awsProvider struct {
 }
 
 type awsConfig struct {
-	region  string
-	profile string
+	region   string
+	profile  string
+	identity tags.Identity
 }
 
 type resourceClients struct {
@@ -88,12 +90,14 @@ func (p *awsProvider) TagInstanceVolumes(ctx context.Context, instanceID string,
 var _ fabricac.VolumeTagger = (*awsProvider)(nil)
 
 func newProvider(cfg *config.Config) (fabricac.Provider, error) {
-	if _, err := cfg.ResolveIdentity(); err != nil {
+	identity, err := cfg.ResolveIdentity()
+	if err != nil {
 		return nil, err
 	}
 	awsCfg := awsConfig{
-		region:  cfg.Cloud.AWS.Region,
-		profile: cfg.Cloud.AWS.Profile,
+		region:   cfg.Cloud.AWS.Region,
+		profile:  cfg.Cloud.AWS.Profile,
+		identity: identity,
 	}
 	p := &awsProvider{
 		cfg:    cfg,
@@ -195,7 +199,8 @@ func (p *awsProvider) WithRegion(_ context.Context, region string) (fabricac.Reg
 	if region == "" {
 		return fabricac.RegionView{}, fmt.Errorf("region is required")
 	}
-	scopedCfg := awsConfig{region: region, profile: p.awsCfg.profile}
+	scopedCfg := p.awsCfg
+	scopedCfg.region = region
 	scoped := &awsProvider{
 		cfg:    p.cfg,
 		awsCfg: scopedCfg,

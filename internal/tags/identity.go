@@ -59,3 +59,14 @@ func (i Identity) MergeProtected(base, extra map[string]string) map[string]strin
 	}
 	return out
 }
+
+// MergeStandard forces this owner and version, preserves a trusted module,
+// and merges ordinary operator tags with their existing precedence.
+func (i Identity) MergeStandard(module, version string, base, extra map[string]string) map[string]string {
+	out := i.MergeProtected(base, extra)
+	out["FabricaVersion"] = version
+	if _, ok := out["FabricaModule"]; !ok {
+		out["FabricaModule"] = module
+	}
+	return out
+}

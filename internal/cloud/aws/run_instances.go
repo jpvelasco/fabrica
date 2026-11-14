@@ -167,16 +167,16 @@ func (c *resourceClients) runInstancesClientToken(r *fabricac.Resource) string {
 // Name, and the per-create FabricaCreateNonce when withNonce) restricted to
 // pending or running state, plus the human-readable display name error
 // messages and logs quote.
-func adoptionFilter(name, nonce string, withNonce bool) ([]types.Filter, string) {
+func adoptionFilter(identity fabricatags.Identity, name, nonce string, withNonce bool) ([]types.Filter, string) {
 	filters := []types.Filter{
-		{Name: aws.String("tag:" + fabricatags.ManagedByKey), Values: []string{fabricatags.ManagedByValue}},
+		{Name: aws.String("tag:" + fabricatags.ManagedByKey), Values: []string{identity.ManagedBy()}},
 		{Name: aws.String("tag:Name"), Values: []string{name}},
 		{Name: aws.String("instance-state-name"), Values: []string{
 			string(types.InstanceStateNamePending),
 			string(types.InstanceStateNameRunning),
 		}},
 	}
-	display := fabricatags.ManagedByKey + "=" + fabricatags.ManagedByValue + " and Name=" + name
+	display := fabricatags.ManagedByKey + "=" + identity.ManagedBy() + " and Name=" + name
 	if withNonce {
 		filters = append(filters, types.Filter{Name: aws.String("tag:" + fabricac.CreateNonceTag), Values: []string{nonce}})
 		display += fmt.Sprintf(" and %s=%s", fabricac.CreateNonceTag, nonce)
@@ -205,7 +205,7 @@ func (c *resourceClients) describeInstances(ctx context.Context, typeName, name 
 
 // adoptFabricaInstance looks for the instance this create already launched so
 // a retried create adopts it instead of launching a second one. It looks by
-// the fabrica tags the create stamps (ManagedBy=fabrica, Name=<name>) and by
+// the selected owner and Name tags the create stamps and by
 // the per-create FabricaCreateNonce when the desired state carries one: the
 // nonce filter is the first-choice match for a same-nonce launch (e.g. inside
 // the Cloud Control fallback), where the instance's cloud-init belongs to
@@ -232,17 +232,17 @@ func (c *resourceClients) adoptFabricaInstance(ctx context.Context, r *fabricac.
 		return "", nil
 	}
 	nonce := createNonceTag(r.DesiredState)
-	firstFilters, firstDisplay := adoptionFilter(name, nonce, nonce != "")
+	firstFilters, firstDisplay := adoptionFilter(c.awsCfg.identity, name, nonce, nonce != "")
 	matches, err := c.describeInstances(ctx, r.TypeName, name, firstFilters)
 	if err != nil {
-		return "", fmt.Errorf("adopting %s: the lookup of existing fabrica instances failed, so the launch is not attempted (a failed lookup cannot rule out a prior instance — launching risks a second one): %w. Check the account's ec2:DescribeInstances grant and re-run",
-			name, err)
+		return "", fmt.Errorf("adopting %s: the lookup of existing instances matching %s failed, so the launch is not attempted (a failed lookup cannot rule out a prior instance — launching risks a second one): %w. Check the account's ec2:DescribeInstances grant and re-run",
+			name, firstDisplay, err)
 	}
 	if len(matches) == 0 && nonce != "" {
 		// A nonce-filtered miss on a re-run: the prior run stamped a
 		// different nonce, so its instance is only findable by the base
 		// tags. The leftover check is the cross-run double-launch guard.
-		secondFilters, secondDisplay := adoptionFilter(name, "", false)
+		secondFilters, secondDisplay := adoptionFilter(c.awsCfg.identity, name, "", false)
 		second, err := c.describeInstances(ctx, r.TypeName, name, secondFilters)
 		if err != nil {
 			return "", fmt.Errorf("adopting %s: the nonce-filtered lookup matched nothing and the nonce-less leftover check failed, so the launch is not attempted (the leftover check has not verified what exists — launching risks a second instance): %w. Check for a leftover %s before re-running",
@@ -403,7 +403,7 @@ func BuildRunInstancesInput(desired json.RawMessage, volumeTags map[string]strin
 		instanceTags = append(instanceTags, types.Tag{Key: aws.String(tag.Key), Value: aws.String(tag.Value)})
 	}
 	for k, v := range volumeTags {
-		if k == "" {
+		if k == "" || fabricatags.IdentityKey(k) {
 			continue
 		}
 		if _, ok := seen[k]; ok {

@@ -11,7 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	codebuildtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
-	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
 )
 
 var _ fabricac.CodeBuildRunner = (*awsProvider)(nil)
@@ -71,7 +70,7 @@ func (p *awsProvider) EnsureProject(ctx context.Context, spec fabricac.CodeBuild
 	// the SDK boundary. Preserve any FabricaVersion the spec already carries.
 	// Operator tags (cloud.aws.tags) are additive: they merge in but cannot
 	// shadow Fabrica-owned identity tags, matching injectFabricaTags.
-	specTags := (fabricatags.Identity{}).MergeProtected(spec.Tags, p.clients.operatorTags)
+	specTags := p.awsCfg.identity.MergeProtected(spec.Tags, p.clients.operatorTags)
 	if _, ok := specTags["FabricaVersion"]; !ok {
 		specTags["FabricaVersion"] = p.clients.version
 	}
