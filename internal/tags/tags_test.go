@@ -1,7 +1,9 @@
 package tags
 
 import (
+	"encoding/json"
 	"maps"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -20,6 +22,31 @@ func TestStandard(t *testing.T) {
 	}
 	if len(got) != 3 {
 		t.Errorf("len(tags) = %d, want 3", len(got))
+	}
+}
+
+func TestMerge(t *testing.T) {
+	got := Merge("setup", "test-version", map[string]string{
+		"Project":   "studio",
+		"ManagedBy": "custom",
+	})
+
+	if got["Project"] != "studio" {
+		t.Errorf("extra tag not merged: %v", got)
+	}
+	if got["ManagedBy"] != "custom" {
+		t.Errorf("extra tag should override standard tag, got %q", got["ManagedBy"])
+	}
+	if got["FabricaModule"] != "setup" || got["FabricaVersion"] != "test-version" {
+		t.Errorf("standard tags lost after merge: %v", got)
+	}
+	if len(got) != 4 {
+		t.Errorf("len(tags) = %d, want 4", len(got))
+	}
+
+	empty := Merge("lore", "1.0.0", nil)
+	if len(empty) != 3 || empty["FabricaModule"] != "lore" {
+		t.Errorf("nil extra should yield standard tags only: %v", empty)
 	}
 }
 
@@ -219,6 +246,31 @@ func TestIdentityMergeStandardPreservesTrustedMetadata(t *testing.T) {
 		}
 		if owner == ManagedByValue && !maps.Equal(got, MergeProtected("fallback", "new", base, extra)) {
 			t.Fatal("default adapter changed")
+		}
+	}
+}
+
+func TestRebindDesiredStatePreservesSchemas(t *testing.T) {
+	identity, err := ResolveIdentity("Studio-Tools")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := json.RawMessage(`{"Tags":[{"Key":"ManagedBy","Value":"fabrica","PropagateAtLaunch":true}],"LaunchTemplateData":{"TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"ManagedBy","Value":"old"},{"Key":"Name","Value":"fabrica"}]}]},"Other":{"Key":"ManagedBy","Value":"fabrica"},"TagsElsewhere":"fabrica"}`)
+	got := identity.RebindDesiredState(raw)
+	want := json.RawMessage(`{"Tags":[{"Key":"ManagedBy","Value":"Studio-Tools","PropagateAtLaunch":true}],"LaunchTemplateData":{"TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"ManagedBy","Value":"Studio-Tools"},{"Key":"Name","Value":"fabrica"}]}]},"Other":{"Key":"ManagedBy","Value":"fabrica"},"TagsElsewhere":"fabrica"}`)
+	var a, b any
+	if err := json.Unmarshal(got, &a); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(want, &b); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(a, b) {
+		t.Fatalf("schema changed: %s", got)
+	}
+	for _, raw := range []json.RawMessage{nil, []byte(`{`), []byte(`{"Tags":"unknown"}`), []byte(`{"Tags":["unknown",{"Key":"Name","Value":"keep"}]} `)} {
+		if got := identity.RebindDesiredState(raw); len(raw) > 0 && len(got) == 0 {
+			t.Fatal("document lost")
 		}
 	}
 }

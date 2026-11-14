@@ -21,10 +21,7 @@ func TestExtraUsesRecordedOwnership(t *testing.T) {
 					if agent {
 						tagList = append(tagList, map[string]string{"Key": "FabricaRole", "Value": "agent"})
 					}
-					raw, err := json.Marshal(map[string]any{"Tags": tagList})
-					if err != nil {
-						t.Fatal(err)
-					}
+					raw, _ := json.Marshal(map[string]any{"Tags": tagList})
 					res := cloud.Resource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "orphan", ActualState: raw}
 					if fetch {
 						res.ActualState = nil

@@ -192,3 +192,12 @@ func shortHostname(host string) string {
 	}
 	return host
 }
+
+// BindStateWriter selects an injected seam or binds persistence to the acquired
+// mutation context. Call after locking so the writer retains the live lease.
+func BindStateWriter(ctx context.Context, rt globals.Runtime, seam func(*fabricastate.State) error) func(*fabricastate.State) error {
+	if seam != nil {
+		return seam
+	}
+	return StateWriter(ctx, rt)
+}

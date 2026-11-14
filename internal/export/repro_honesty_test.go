@@ -10,7 +10,6 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/deploy"
 	"github.com/jpvelasco/fabrica/internal/state"
-	"github.com/jpvelasco/fabrica/internal/tags"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -111,7 +110,7 @@ func TestReproCIInlinePolicyExport(t *testing.T) {
 	cfg := testConfigWithCI()
 	// Build export module and check Policies
 	ms := state.ModuleState{Name: "ci", Status: "ready", Resources: st.Modules[0].Resources}
-	mod := buildModule(ms, cfg, exportAccount, exportRegion, tags.Identity{})
+	mod := buildModule(ms, cfg, exportAccount, exportRegion)
 	var got []map[string]any
 	for _, r := range mod.Resources {
 		if r.TypeName == "AWS::IAM::Role" {
@@ -152,7 +151,7 @@ func TestReproDeployInlinePolicyExport(t *testing.T) {
 	cfg := testConfigWithDeploy()
 	cfg.Deploy.BuildBucket = "my-build-bucket"
 	ms := state.ModuleState{Name: "deploy", Status: "ready", Resources: st.Modules[0].Resources}
-	mod := buildModule(ms, cfg, exportAccount, exportRegion, tags.Identity{})
+	mod := buildModule(ms, cfg, exportAccount, exportRegion)
 	var got []map[string]any
 	for _, r := range mod.Resources {
 		if r.TypeName == "AWS::IAM::Role" {

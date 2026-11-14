@@ -103,16 +103,6 @@ func StateWriter(ctx context.Context, rt globals.Runtime) func(*fabricastate.Sta
 	}
 }
 
-// BindStateWriter selects an injected test seam or binds the canonical writer
-// to the acquired mutation context. Call after locking, before state writes;
-// constructing writers in Cobra wiring would capture the unlocked context.
-func BindStateWriter(ctx context.Context, rt globals.Runtime, seam func(*fabricastate.State) error) func(*fabricastate.State) error {
-	if seam != nil {
-		return seam
-	}
-	return StateWriter(ctx, rt)
-}
-
 // identitySides extracts the configured account and home region used to
 // validate state documents. Empty values accept anything (an unknown side
 // cannot prove a mismatch).

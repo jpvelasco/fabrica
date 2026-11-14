@@ -5,7 +5,6 @@ import (
 
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/state"
-	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
 func TestExtractPropertiesAppliesIAMPlacement(t *testing.T) {
@@ -22,7 +21,7 @@ func TestExtractPropertiesAppliesIAMPlacement(t *testing.T) {
 			{TypeName: "AWS::IAM::Role", Identifier: "fabrica-workstation-role"},
 			{TypeName: "AWS::IAM::InstanceProfile", Identifier: "fabrica-workstation-profile"},
 		},
-	}, cfg, "123456789012", "us-east-1", tags.Identity{})
+	}, cfg, "123456789012", "us-east-1")
 
 	var role, profile map[string]any
 	for _, r := range ws.Resources {
@@ -51,7 +50,7 @@ func TestExtractPropertiesAppliesIAMPlacement(t *testing.T) {
 		Resources: []state.ModuleResource{
 			{TypeName: "AWS::IAM::Role", Identifier: "fabrica-ci-codebuild"},
 		},
-	}, cfg, "123456789012", "us-east-1", tags.Identity{})
+	}, cfg, "123456789012", "us-east-1")
 	for _, r := range ci.Resources {
 		if r.TypeName != "AWS::IAM::Role" {
 			continue

@@ -1,5 +1,7 @@
 package tags
 
+import "encoding/json"
+
 // ManagedByKey identifies resource ownership. ManagedByValue is the immutable
 // default owner, not a configurable package-level setting.
 const (
@@ -12,6 +14,20 @@ const (
 // This is the single source of truth for all Fabrica-managed resource tagging.
 func Standard(module, version string) map[string]string {
 	return (Identity{}).Standard(module, version)
+}
+
+// Merge returns the standard Fabrica tags for module/version with extra
+// operator tags layered on top. An operator tag overrides the standard tag
+// with the same key (for example ManagedBy).
+//
+// Retained for setup compatibility until backend provenance is validated.
+// Other resource paths must use protected merging.
+func Merge(module, version string, extra map[string]string) map[string]string {
+	tags := Standard(module, version)
+	for k, v := range extra {
+		tags[k] = v
+	}
+	return tags
 }
 
 // identityTagKeys are reserved for trusted resource metadata. Operator tags
@@ -39,4 +55,38 @@ func IdentityKey(key string) bool {
 // tags are Fabrica-owned. Empty operator keys are dropped: tag APIs reject them.
 func MergeProtected(module, version string, base, extra map[string]string) map[string]string {
 	return (Identity{}).MergeStandard(module, version, base, extra)
+}
+
+// RebindDesiredState replaces owners in nested tag arrays, preserving their
+// schema and metadata. Malformed documents remain unchanged.
+func (i Identity) RebindDesiredState(raw json.RawMessage) json.RawMessage {
+	var doc any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return raw
+	}
+	rebindOwner(doc, i.ManagedBy())
+	out, _ := json.Marshal(doc) // Decoded JSON contains only marshalable values.
+	return out
+}
+
+func rebindOwner(value any, owner string) {
+	switch value := value.(type) {
+	case map[string]any:
+		for key, child := range value {
+			if key == "Tags" {
+				if pairs, ok := child.([]any); ok {
+					for _, pair := range pairs {
+						if tag, ok := pair.(map[string]any); ok && tag["Key"] == ManagedByKey {
+							tag["Value"] = owner
+						}
+					}
+				}
+			}
+			rebindOwner(child, owner)
+		}
+	case []any:
+		for _, child := range value {
+			rebindOwner(child, owner)
+		}
+	}
 }

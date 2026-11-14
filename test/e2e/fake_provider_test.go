@@ -4,15 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
 	ec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
-
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/cloud/aws"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/drift"
+	"github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
@@ -517,3 +521,135 @@ var (
 	_ cloud.RegionProvider        = (*fakeProvider)(nil)
 	_ cloud.ResourceClient        = (*fakeRC)(nil)
 )
+
+func (p *fakeProvider) AcquireStateLockRow(ctx context.Context, table string, item map[string]string, condition string, values map[string]string) error {
+	p.store.mu.Lock()
+	defer p.store.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !p.store.tables[table] {
+		return cloud.ErrLockTableMissing
+	}
+	key := table + "/" + item["LockID"]
+	actual := p.store.lockRows[key]
+	if condition == state.RenewCondition {
+		if actual == nil || actual["Token"] != values[":token"] {
+			return cloud.ErrLockHeld
+		}
+	} else if actual != nil {
+		acquired, err := strconv.ParseInt(actual["AcquiredAt"], 10, 64)
+		if err != nil {
+			return err
+		}
+		stale, err := strconv.ParseInt(values[":stale"], 10, 64)
+		if err != nil {
+			return err
+		}
+		if acquired > stale {
+			return cloud.ErrLockHeld
+		}
+	}
+	p.store.lockRows[key] = maps.Clone(item)
+	return nil
+}
+
+func (p *fakeProvider) ReleaseStateLockRow(ctx context.Context, table, id, token string) error {
+	p.store.mu.Lock()
+	defer p.store.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	key := table + "/" + id
+	if actual := p.store.lockRows[key]; actual == nil || actual["Token"] != token {
+		return cloud.ErrLockHeld
+	}
+	delete(p.store.lockRows, key)
+	return nil
+}
+
+var _ cloud.StateLockManager = (*fakeProvider)(nil)
+
+func TestCustomOwnershipLifecycle(t *testing.T) {
+	store := setupE2E(t)
+	cfg, err := config.Load("fabrica.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Cloud.AWS.Identity.ManagedBy = "Studio-Tools"
+	cfg.Cloud.AWS.Tags = map[string]string{"ManagedBy": "forged", "FabricaOwnershipVersion": "forged", "Project": "studio"}
+	if err := cfg.Save("fabrica.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	commands := [][]string{{"setup", "--dry-run"}, {"setup", "--yes"}, {"perforce", "create", "--yes"}, {"horde", "create", "--yes"}, {"lore", "create", "--yes"}, {"ddc", "setup", "--yes"}, {"workstation", "create", "--yes"}, {"ci", "setup", "--yes"}, {"deploy", "setup", "--yes"}, {"deploy", "promote", "test-build", "--no-wait", "--yes"}}
+	for _, args := range commands {
+		if out, err := runCLI(t, args...); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+	for _, metadata := range []map[string]string{store.bucketTags[cfg.State.Bucket], store.tableTags[cfg.State.Table]} {
+		if metadata[tags.ManagedByKey] != "Studio-Tools" || metadata[tags.OwnershipVersionKey] != "1" || metadata["Project"] != "studio" {
+			t.Fatalf("wrong backend tags: %v", metadata)
+		}
+	}
+	for id, res := range store.resources {
+		if res.tags[tags.ManagedByKey] != "Studio-Tools" {
+			t.Fatalf("%s has wrong owner: %v", id, res.tags)
+		}
+	}
+	canonical := store.stateDocs[cfg.State.Bucket+"/"+state.StateDocumentKey]
+	if !strings.Contains(canonical, `"managedBy": "Studio-Tools"`) {
+		t.Fatal("custom owner not persisted")
+	}
+	// A fresh directory recovers the bound owner and the full remote inventory.
+	if err := os.Remove(".fabrica/state.json"); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runCLI(t, "status"); err != nil {
+		t.Fatalf("remote recovery: %v\n%s", err, out)
+	}
+	if readState(t).ManagedBy != "Studio-Tools" {
+		t.Fatal("remote recovery lost binding")
+	}
+	store.resources["custom-orphan"] = &storedResource{typeName: "AWS::EC2::SecurityGroup", identifier: "custom-orphan", tags: map[string]string{"ManagedBy": "Studio-Tools"}}
+	store.resources["default-orphan"] = &storedResource{typeName: "AWS::EC2::SecurityGroup", identifier: "default-orphan", tags: map[string]string{"ManagedBy": "fabrica"}}
+	out, err := runCLI(t, "drift", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report drift.DriftReport
+	assertJSON(t, out, &report)
+	if report.Extra != 1 {
+		t.Fatalf("drift mixed owners: %s", out)
+	}
+	delete(store.resources, "custom-orphan")
+	for _, format := range []string{"cloudformation", "terraform"} {
+		if out, err := runCLI(t, "export", "--format", format); err != nil || !strings.Contains(out, "Studio-Tools") {
+			t.Fatalf("export %s: %v\n%s", format, err, out)
+		}
+	}
+	before := len(store.resources)
+	if err := cfg.SaveKeys("fabrica.yaml", map[string]any{"cloud.aws.identity.managedBy": "other"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"setup", "--yes"}, {"perforce", "create", "--yes"}, {"destroy", "--all", "--yes"}, {"export", "--format", "cloudformation"}, {"drift"}} {
+		if _, err := runCLI(t, args...); err == nil || !strings.Contains(err.Error(), "ownership") {
+			t.Fatalf("%v allowed ownership change: %v", args, err)
+		}
+	}
+	if len(store.resources) != before || store.stateDocs[cfg.State.Bucket+"/"+state.StateDocumentKey] != canonical {
+		t.Fatal("ownership change mutated deployment")
+	}
+	if err := cfg.SaveKeys("fabrica.yaml", map[string]any{"cloud.aws.identity.managedBy": "Studio-Tools"}); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runCLI(t, "destroy", "--all", "--yes"); err != nil {
+		t.Fatalf("destroy: %v\n%s", err, out)
+	}
+	if len(store.resources) != 1 || store.resources["default-orphan"] == nil {
+		t.Fatalf("teardown did not preserve only the foreign orphan: %d resources", len(store.resources))
+	}
+	if store.buckets[cfg.State.Bucket] || store.tables[cfg.State.Table] {
+		t.Fatal("teardown retained custom backend")
+	}
+}

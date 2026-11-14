@@ -101,7 +101,6 @@ func TestPersistReadyMergesCurrentInventory(t *testing.T) {
 			resources := []state.ModuleResource{{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-test"}}
 			st.UpsertModule("lore", "ami-test", "provisioning", resources)
 			observed := *st.GetModule("lore")
-			observed.Resources = append([]state.ModuleResource(nil), resources...)
 			st.UpsertModule("ci", "test", "ready", nil)
 			if mode == "changed" {
 				st.GetModule("lore").Resources = []state.ModuleResource{{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-replaced"}}

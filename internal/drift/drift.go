@@ -357,18 +357,18 @@ func (e *Engine) fabricaOwned(ctx context.Context, res *cloud.Resource, get func
 	if err != nil {
 		return false
 	}
-	resTags, known := tagsFromState(res)
-	if !known {
-		if get == nil {
-			return false
-		}
-		fetch := *res
-		if err := get(ctx, &fetch); err != nil {
-			return false
-		}
-		*res = fetch
-		resTags, _ = tagsFromState(res)
+	if resTags, known := tagsFromState(res); known {
+		return resTags[tags.ManagedByKey] == identity.ManagedBy()
 	}
+	if get == nil {
+		return false
+	}
+	fetch := *res
+	if err := get(ctx, &fetch); err != nil {
+		return false
+	}
+	*res = fetch
+	resTags, _ := tagsFromState(&fetch)
 	return resTags[tags.ManagedByKey] == identity.ManagedBy()
 }
 
@@ -383,7 +383,7 @@ func (e *Engine) extraResults(ctx context.Context, typeName string, live []cloud
 	var results []DriftResult
 	for i := range live {
 		res := live[i]
-		if recordedIDs[res.Identifier] || isASGManagedInstance(res) {
+		if recordedIDs[res.Identifier] {
 			continue
 		}
 		if !e.fabricaOwned(ctx, &res, get) || isASGManagedInstance(res) {

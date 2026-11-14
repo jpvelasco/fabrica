@@ -694,16 +694,7 @@ deploy:
 
 `cloud.aws.tags` adds your attribution tags (for example `project: my-project`) to every resource Fabrica creates, including the surfaces Cloud Control cannot tag through desired state: IAM instance profiles (tagged after create with `iam:TagInstanceProfile`), the workstation DCV session-password SSM parameter, and security-group ingress rules (tagged with `ec2:CreateTags` on the rule IDs, matched against `DescribeSecurityGroupRules` by protocol, ports, and address). The Fabrica identity tags (`ManagedBy`, `FabricaModule`, `FabricaVersion`, `FabricaCreateNonce`, `FabricaOwnershipVersion`) are owned by Fabrica: `cloud.aws.tags` entries under those key names are ignored, so tag-scoped sweeps keep their attribution.
 
-Set `cloud.aws.identity.managedBy` to choose a deployment owner (default `fabrica`). For example:
-
-```yaml
-cloud:
-  aws:
-    identity:
-      managedBy: Studio-Tools
-```
-
-The value is case-sensitive and must match `[A-Za-z0-9][A-Za-z0-9._-]{0,62}`; an omitted or empty value selects `fabrica`. Setup, module resources, volumes, SDK-created resources, generated Horde/Lore/workstation AMI artifacts, drift orphan detection, and IaC export use the same owner. Ordinary `cloud.aws.tags.ManagedBy` and `volumeRequestTags.ManagedBy` cannot override it.
+Set `cloud.aws.identity.managedBy` to choose a deployment owner, for example `Studio-Tools` (default `fabrica`). The value is case-sensitive and must match `[A-Za-z0-9][A-Za-z0-9._-]{0,62}`; an omitted or empty value selects `fabrica`. Setup, module resources, volumes, SDK-created resources, generated Horde/Lore/workstation AMI artifacts, drift orphan detection, and IaC export use the same owner. Ordinary `cloud.aws.tags.ManagedBy` and `volumeRequestTags.ManagedBy` cannot override it.
 
 Choose the owner before running `fabrica setup`. Custom ownership requires a compatible remote state bucket and lock table before module mutations. New custom backends carry `FabricaOwnershipVersion=1`; ambiguous existing backends are refused. Ownership is recorded in canonical state and remains fixed, including when its module inventory is empty. Legacy state without an owner belongs to `fabrica`. Changing the setting does not retag or migrate an existing deployment: restore its original setting, or use a separate state backend and config for a new deployment. Teardown deletes recorded resources and leaves unrelated owners alone. Match your IAM request/resource-tag conditions and manual AMI bake commands to the configured owner; examples in the bake guides use the default.
 

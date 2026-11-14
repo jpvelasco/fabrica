@@ -5,7 +5,6 @@ import (
 
 	"github.com/jpvelasco/fabrica/internal/ec2state"
 	"github.com/jpvelasco/fabrica/internal/iamrole"
-	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // SGDesiredState returns Cloud Control desired-state for the DDC security group.
@@ -42,7 +41,7 @@ func BucketDesiredState(plan *SetupPlan) (json.RawMessage, error) {
 		},
 		"VersioningConfiguration": map[string]any{"Status": "Enabled"},
 		"Tags": []map[string]string{
-			{"Key": fabricatags.ManagedByKey, "Value": fabricatags.ManagedByValue},
+			{"Key": "ManagedBy", "Value": "fabrica"},
 			{"Key": "Name", "Value": plan.Bucket},
 			{"Key": "FabricaModule", "Value": "ddc"},
 		},
