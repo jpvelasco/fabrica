@@ -102,7 +102,6 @@ server.zip"; override with --s3-bucket / --s3-key.`,
 				out:          out,
 				costs:        fabricacost.Global,
 				readState:    func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
-				writeState:   provision.StateWriter(cmd.Context(), rt),
 				confirm:      prompt.Confirm,
 				waitCtx:      provision.WaitInterval,
 				now:          time.Now,
@@ -138,6 +137,7 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 	defer releaseLock()
+	c.writeState = provision.BindStateWriter(ctx, c.runtime, c.writeState)
 
 	st, err := c.readState()
 	if err != nil {

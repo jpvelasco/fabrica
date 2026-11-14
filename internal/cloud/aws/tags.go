@@ -45,6 +45,9 @@ var tagUnsupportedTypes = map[string]struct{}{
 // except reserved identity tags, which operator tags cannot shadow.
 // Returns the state unchanged for resource types that don't support tags.
 func injectFabricaTags(identity fabricatags.Identity, typeName string, state json.RawMessage, module, version string, extra map[string]string) json.RawMessage {
+	if identity.ManagedBy() != fabricatags.ManagedByValue {
+		state = identity.RebindDesiredState(state)
+	}
 	if _, unsupported := tagUnsupportedTypes[typeName]; unsupported {
 		return state
 	}

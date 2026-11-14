@@ -28,7 +28,7 @@ func RunAMIRuntimeTests(t *testing.T, newCmd func(globals.RuntimeSource, io.Writ
 		{name: "config without provider"},
 		{name: "source failure", sourceErr: sourceErr, want: sourceErr.Error()},
 		{name: "invalid identity", owner: "bad owner", want: "cloud.aws.identity.managedBy"},
-		{name: "activation guarded", owner: "studio-tools", want: "custom ownership is not enabled"},
+		{name: "custom ownership", owner: "studio-tools"},
 		{name: "help without runtime", sourceErr: sourceErr, help: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -82,7 +82,11 @@ func RunAMIRuntimeTests(t *testing.T, newCmd func(globals.RuntimeSource, io.Writ
 			if err := json.Unmarshal(raw, &recipe); err != nil {
 				t.Fatal(err)
 			}
-			if recipe.Tags["ManagedBy"] != "fabrica" {
+			wantOwner := tc.owner
+			if wantOwner == "" {
+				wantOwner = "fabrica"
+			}
+			if recipe.Tags["ManagedBy"] != wantOwner {
 				t.Fatalf("ordinary tag selected ownership: %v", recipe.Tags)
 			}
 		})

@@ -85,7 +85,7 @@ func TestPrepareSetupRuntimeRejectsUnsafeTarget(t *testing.T) {
 	}{
 		{name: "missing config", nilConfig: true, want: "configuration"},
 		{name: "missing provider", nilProvider: true, want: "provider"},
-		{name: "custom guard before provider", owner: "Studio-Tools", nilProvider: true, want: "custom ownership is not enabled"},
+		{name: "invalid guard before provider", owner: "invalid owner", nilProvider: true, want: "cloud.aws.identity.managedBy"},
 		{name: "invalid identity", owner: "old owner", want: "managedBy"},
 		{name: "identity failure", err: errors.New("credentials unavailable"), want: "credentials unavailable"},
 		{name: "empty account", providerRegion: "us-west-2", want: "account"},

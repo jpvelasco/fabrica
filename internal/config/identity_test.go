@@ -9,15 +9,15 @@ import (
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
-func TestLoadOwnershipActivationGuard(t *testing.T) {
+func TestLoadOwnershipValidation(t *testing.T) {
 	for _, tc := range []struct {
 		owner string
 		error string
 	}{
 		{owner: ""},
 		{owner: "fabrica"},
-		{owner: "Studio-Tools", error: "custom ownership is not enabled"},
-		{owner: "Fabrica", error: "custom ownership is not enabled"},
+		{owner: "Studio-Tools"},
+		{owner: "Fabrica"},
 		{owner: " studio", error: "must match"},
 		{owner: "studio\n", error: "must match"},
 		{owner: "studio/tools", error: "must match"},
@@ -63,18 +63,18 @@ func TestConfigOwnershipDefaultsAndRoundTrip(t *testing.T) {
 	if err != nil || !strings.Contains(string(out), "managedBy: Studio-Tools") {
 		t.Fatalf("identity lost or case changed during serialization: %s, %v", out, err)
 	}
-	if _, err := cloned.ResolveIdentity(); err == nil {
-		t.Fatal("programmatic custom activation was accepted")
+	if identity, err := cloned.ResolveIdentity(); err != nil || identity.ManagedBy() != "Studio-Tools" {
+		t.Fatalf("programmatic custom ownership lost: %v, %v", identity, err)
 	}
 	path := filepath.Join(t.TempDir(), "roundtrip.yaml")
-	if err := cfg.Save(path); err != nil {
+	if err := cloned.Save(path); err != nil {
 		t.Fatal(err)
 	}
-	if err := cfg.SaveKeys(path, map[string]any{"cloud.aws.region": "us-west-2"}); err != nil {
+	if err := cloned.SaveKeys(path, map[string]any{"cloud.aws.region": "us-west-2"}); err != nil {
 		t.Fatal(err)
 	}
 	loaded := loadConfig(t, path)
-	if loaded.Cloud.AWS.Identity.ManagedBy != "fabrica" || loaded.Cloud.AWS.Region != "us-west-2" {
+	if loaded.Cloud.AWS.Identity.ManagedBy != "Studio-Tools" || loaded.Cloud.AWS.Region != "us-west-2" {
 		t.Fatalf("save/load lost identity or edited region: %+v", loaded.Cloud.AWS)
 	}
 }

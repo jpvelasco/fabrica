@@ -36,7 +36,6 @@ func newDelete(runtimeSource globals.RuntimeSource, optionsSource globals.Option
 				confirm:   prompt.Confirm,
 			}
 			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
-			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			if rt.Provider != nil {
 				if rr, ok := rt.Provider.(cloud.RemoteRunner); ok {
 					c.runRemote = rr.RunCommand
@@ -69,6 +68,7 @@ func (c deleteCommand) run(ctx context.Context) error {
 		return err
 	}
 	defer releaseLock()
+	c.writeState = provision.BindStateWriter(ctx, c.runtime, c.writeState)
 
 	target, err := perforceprovisioning.Resolve(c.readState)
 	if err != nil {

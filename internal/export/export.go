@@ -24,6 +24,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
+	"github.com/jpvelasco/fabrica/internal/tags"
 	"github.com/jpvelasco/fabrica/internal/workstation"
 )
 
@@ -106,6 +107,9 @@ func GenerateOutput(format Format, st *state.State, cfg *config.Config) ([]byte,
 	if len(modules) == 0 {
 		return nil, fmt.Errorf("no modules to export — no provisioned modules found in state")
 	}
+	for i := range modules {
+		applyOwnership(&modules[i], identity)
+	}
 
 	gen, err := NewGenerator(format)
 	if err != nil {
@@ -155,6 +159,22 @@ func buildModules(st *state.State, cfg *config.Config) ([]ExportModule, error) {
 	}
 
 	return modules, nil
+}
+
+// applyOwnership binds generated tags and backend markers to the validated owner.
+func applyOwnership(module *ExportModule, identity tags.Identity) {
+	for i := range module.Resources {
+		props := module.Resources[i].Properties
+		pairs, _ := props["Tags"].([]map[string]string)
+		for _, pair := range pairs {
+			if pair["Key"] == tags.ManagedByKey {
+				pair["Value"] = identity.ManagedBy()
+			}
+		}
+		if len(pairs) > 0 && module.Name == "state-backend" && identity.ManagedBy() != tags.ManagedByValue {
+			props["Tags"] = append(pairs, map[string]string{"Key": tags.OwnershipVersionKey, "Value": "1"})
+		}
+	}
 }
 
 func preserveHordeListeners(mod *ExportModule, ms *state.ModuleState, cfg *config.Config) error {

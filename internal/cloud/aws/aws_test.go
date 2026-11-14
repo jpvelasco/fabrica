@@ -12,11 +12,11 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
-func TestNewProviderRejectsProgrammaticCustomOwnership(t *testing.T) {
+func TestNewProviderRejectsProgrammaticInvalidOwnership(t *testing.T) {
 	cfg := config.Defaults()
-	cfg.Cloud.AWS.Identity.ManagedBy = "Studio-Tools"
+	cfg.Cloud.AWS.Identity.ManagedBy = "invalid owner"
 	p, err := newProvider(cfg)
-	if err == nil || p != nil || !strings.Contains(err.Error(), "custom ownership is not enabled") {
+	if err == nil || p != nil || !strings.Contains(err.Error(), "cloud.aws.identity.managedBy") {
 		t.Fatalf("custom provider accepted: %v, %v", p, err)
 	}
 }
@@ -42,6 +42,7 @@ func TestNewProvider(t *testing.T) {
 func TestNewProviderWithProfile(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Cloud.AWS.Profile = "my-profile"
+	cfg.Cloud.AWS.Identity.ManagedBy = "Studio-Tools"
 	cfg.Cloud.AWS.Region = "eu-west-1"
 
 	p, err := newProvider(cfg)
@@ -60,6 +61,15 @@ func TestNewProviderWithProfile(t *testing.T) {
 	}
 	if ap.ec2.awsCfg != ap.awsCfg {
 		t.Errorf("EC2 config = %+v, want %+v", ap.ec2.awsCfg, ap.awsCfg)
+	}
+	view, err := ap.WithRegion(t.Context(), "eu-central-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, captured := range []awsConfig{ap.awsCfg, ap.ec2.awsCfg, ap.iam.awsCfg, ap.Resources().(*resourceClients).awsCfg, view.Resources.(*resourceClients).awsCfg} {
+		if captured.identity.ManagedBy() != "Studio-Tools" {
+			t.Fatalf("provider lost custom ownership: %+v", captured)
+		}
 	}
 }
 

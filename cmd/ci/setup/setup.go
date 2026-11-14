@@ -69,14 +69,13 @@ With --dry-run, it shows the planned resources and estimated monthly cost.`,
 			}
 			opts := optionsSource()
 			c := command{
-				runtime:    rt,
-				dryRun:     opts.DryRun,
-				assumeYes:  opts.AssumeYes,
-				out:        out,
-				costs:      fabricacost.Global,
-				readState:  func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
-				writeState: provision.StateWriter(cmd.Context(), rt),
-				confirm:    prompt.Confirm,
+				runtime:   rt,
+				dryRun:    opts.DryRun,
+				assumeYes: opts.AssumeYes,
+				out:       out,
+				costs:     fabricacost.Global,
+				readState: func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
+				confirm:   prompt.Confirm,
 			}
 			if rt.Provider != nil {
 				if rc := rt.Provider.Resources(); rc != nil {
@@ -109,6 +108,7 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 	defer releaseLock()
+	c.writeState = provision.BindStateWriter(ctx, c.runtime, c.writeState)
 
 	// Resolve the Horde URL from state if Horde is provisioned, so the project's
 	// default HORDE_URL is populated. Not required for setup to succeed.

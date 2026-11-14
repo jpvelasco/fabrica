@@ -79,14 +79,13 @@ and CodeBuild projects.`,
 			fixMode, _ := cmd.Flags().GetBool("fix")
 
 			c := command{
-				runtime:    rt,
-				jsonOut:    opts.JSONOutput,
-				fixMode:    fixMode,
-				assumeYes:  opts.AssumeYes,
-				out:        out,
-				readState:  func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
-				writeState: provision.StateWriter(cmd.Context(), rt),
-				confirm:    prompt.Confirm,
+				runtime:   rt,
+				jsonOut:   opts.JSONOutput,
+				fixMode:   fixMode,
+				assumeYes: opts.AssumeYes,
+				out:       out,
+				readState: func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
+				confirm:   prompt.Confirm,
 			}
 			if rt.Provider != nil {
 				homeRC := rt.Provider.Resources()
@@ -124,6 +123,7 @@ func (c *command) run(ctx context.Context, dryRun bool) error {
 		}
 	}
 	defer release()
+	c.writeState = provision.BindStateWriter(ctx, c.runtime, c.writeState)
 
 	st, err := c.readState()
 	if err != nil {
@@ -144,11 +144,10 @@ func (c *command) run(ctx context.Context, dryRun bool) error {
 		},
 	}
 
-	report := engine.Run(ctx)
-
 	if c.withRegion != nil {
 		engine.RegionResource = c.regionResource
 	}
+	report := engine.Run(ctx)
 
 	// Fix mode: plan remediation and optionally apply.
 	if c.fixMode {

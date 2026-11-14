@@ -169,6 +169,11 @@ func NewCobraCommand(spec CobraSpec, runtimeSource globals.RuntimeSource, option
 				Ready:          resolved.Ready,
 				ResourceByType: resolved.ResourceByType,
 			}
+			if c.Ready == nil {
+				c.Ready = func(ctx context.Context, observed *fabricastate.ModuleState) error {
+					return persistReady(ctx, rt, spec.ModuleName, observed)
+				}
+			}
 			if spec.ResolveState != nil {
 				c.ResolveState = func(m *fabricastate.ModuleState) (RuntimeSpec, error) { return spec.ResolveState(rt, cmd.Context(), m) }
 			}
@@ -180,6 +185,28 @@ func NewCobraCommand(spec CobraSpec, runtimeSource globals.RuntimeSource, option
 	}
 	cmd.Flags().BoolVarP(&wait, "wait", "w", false, "Poll until ready or 10 minutes elapsed")
 	return cmd
+}
+
+// persistReady merges a successful probe into current state under the account
+// lock, so a status snapshot cannot overwrite another command's inventory.
+func persistReady(ctx context.Context, rt globals.Runtime, module string, observed *fabricastate.ModuleState) error {
+	ctx, release, err := provision.AcquireStateLock(ctx, rt, module+" status ready")
+	if err != nil {
+		return err
+	}
+	defer release()
+	st, err := provision.ReadState(ctx, rt)
+	if err != nil {
+		return err
+	}
+	current := st.GetModule(module)
+	before, oldOK := stateutil.ResourceByType(observed, cloud.TypeAWSEC2Instance)
+	after, newOK := stateutil.ResourceByType(current, cloud.TypeAWSEC2Instance)
+	if !oldOK || !newOK || before.Identifier != after.Identifier || observed.Version != current.Version {
+		return fmt.Errorf("%s instance changed during readiness probe; run status again", module)
+	}
+	st.UpsertModule(module, current.Version, "ready", current.Resources)
+	return provision.StateWriter(ctx, rt)(st)
 }
 
 // Command runs a module status query. Func fields are seams the cmd layer wires
@@ -222,7 +249,10 @@ func (c Command) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		c.Spec.ProbePort, c.Renderer, c.ProbeContext, c.Ready = resolved.ProbePort, resolved.Renderer, resolved.ProbeContext, resolved.Ready
+		c.Spec.ProbePort, c.Renderer, c.ProbeContext = resolved.ProbePort, resolved.Renderer, resolved.ProbeContext
+		if resolved.Ready != nil {
+			c.Ready = resolved.Ready
+		}
 		c.ResourceByType = resolved.ResourceByType
 		if resolved.Probe != nil {
 			c.ProbeTCP = resolved.Probe

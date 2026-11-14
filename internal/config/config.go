@@ -360,7 +360,6 @@ type AWSIdentity struct {
 }
 
 // ResolveIdentity validates ownership for loaded and programmatic config.
-// Nondefault activation remains disabled until all ownership consumers are ready.
 func (c *Config) ResolveIdentity() (tags.Identity, error) {
 	value := ""
 	if c != nil {
@@ -369,9 +368,6 @@ func (c *Config) ResolveIdentity() (tags.Identity, error) {
 	identity, err := tags.ResolveIdentity(value)
 	if err != nil {
 		return tags.Identity{}, fmt.Errorf("cloud.aws.identity.managedBy: %w", err)
-	}
-	if identity.ManagedBy() != tags.ManagedByValue {
-		return tags.Identity{}, fmt.Errorf("custom ownership is not enabled; set cloud.aws.identity.managedBy to %q", tags.ManagedByValue)
 	}
 	return identity, nil
 }

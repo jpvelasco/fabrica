@@ -92,7 +92,6 @@ making any AWS calls.`,
 				confirm:      prompt.ConfirmExact,
 			}
 			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
-			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			if rt.Provider != nil {
 				c.createResource = rt.Provider.Resources().Create
 				if resolver, ok := rt.Provider.(cloud.AMIResolver); ok {
@@ -164,6 +163,7 @@ func (c command) run(ctx context.Context) error {
 // security group, IAM role, instance profile, and EC2 instance. State is persisted
 // after each successful creation so partial failures leave a recoverable record.
 func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *perforce.CreatePlan) error {
+	c.writeState = provision.BindStateWriter(ctx, c.runtime, c.writeState)
 	adminPass, err := c.generateAndWriteCredentials()
 	if err != nil {
 		return err

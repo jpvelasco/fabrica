@@ -85,12 +85,12 @@ func runRootAMIBuild(t *testing.T, module, content string) {
 	}
 }
 
-func TestAMIBuildRootKeepsCustomActivationGuard(t *testing.T) {
+func TestAMIBuildRootRejectsInvalidOwnership(t *testing.T) {
 	for _, module := range []string{"horde", "lore", "workstation"} {
 		t.Run(module, func(t *testing.T) {
 			dir := t.TempDir()
 			configPath := filepath.Join(dir, "fabrica.yaml")
-			if err := os.WriteFile(configPath, []byte("cloud:\n  aws:\n    identity:\n      managedBy: studio-tools\n"), 0600); err != nil {
+			if err := os.WriteFile(configPath, []byte("cloud:\n  aws:\n    identity:\n      managedBy: invalid owner\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
 			outputDir := filepath.Join(dir, "artifacts")
@@ -98,7 +98,7 @@ func TestAMIBuildRootKeepsCustomActivationGuard(t *testing.T) {
 			cmd.SilenceErrors = true
 			cmd.SetArgs([]string{"--config", configPath, module, "ami", "build", "--output-dir", outputDir})
 			err := cmd.ExecuteContext(t.Context())
-			if err == nil || !strings.Contains(err.Error(), "custom ownership is not enabled") {
+			if err == nil || !strings.Contains(err.Error(), "cloud.aws.identity.managedBy") {
 				t.Fatalf("custom configuration escaped activation guard: %v", err)
 			}
 			if _, err := os.Stat(outputDir); !os.IsNotExist(err) {

@@ -68,14 +68,13 @@ With --dry-run, shows the planned resources and estimated monthly cost.`,
 			}
 			opts := optionsSource()
 			c := command{
-				runtime:    rt,
-				dryRun:     opts.DryRun,
-				assumeYes:  opts.AssumeYes,
-				out:        out,
-				costs:      fabricacost.Global,
-				readState:  func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
-				writeState: provision.StateWriter(cmd.Context(), rt),
-				confirm:    prompt.Confirm,
+				runtime:   rt,
+				dryRun:    opts.DryRun,
+				assumeYes: opts.AssumeYes,
+				out:       out,
+				costs:     fabricacost.Global,
+				readState: func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) },
+				confirm:   prompt.Confirm,
 			}
 			if rt.Provider != nil {
 				if rc := rt.Provider.Resources(); rc != nil {
@@ -113,6 +112,7 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 	defer releaseLock()
+	c.writeState = provision.BindStateWriter(ctx, c.runtime, c.writeState)
 
 	c.printPlan(plan)
 	if !provision.ConfirmSetup(c.out, provision.CreateResourcesPrompt, c.assumeYes, c.confirm) {

@@ -282,7 +282,8 @@ func TestGenerateOutputRejectsUnpropagatedOwnership(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Cloud.AWS.Identity.ManagedBy = "Studio-Tools"
 	st := state.NewState("", "")
-	if _, err := GenerateOutput(CloudFormation, st, cfg); err == nil || !strings.Contains(err.Error(), "custom ownership is not enabled") {
+	st.ManagedBy = "fabrica"
+	if _, err := GenerateOutput(CloudFormation, st, cfg); err == nil || !strings.Contains(err.Error(), "state ownership mismatch") {
 		t.Fatalf("custom configuration exported default tags: %v", err)
 	}
 	foreign, err := state.ParseState([]byte(`{"managedBy":"Studio-Tools"}`), "", "")
@@ -4935,4 +4936,35 @@ func extractTFBlock(t *testing.T, output, resourceType, resourceName string) str
 		return ""
 	}
 	return rest[:end]
+}
+
+func TestCustomOwnershipExport(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.Identity.ManagedBy = "Studio-Tools"
+	cfg.Cloud.AWS.Tags = map[string]string{"ManagedBy": "forged"}
+	st := state.NewState("test-account", "us-east-1")
+	st.ManagedBy = "Studio-Tools"
+	for _, module := range []string{"horde", "perforce", "lore", "ddc", "workstation", "ci", "deploy"} {
+		st.UpsertModule(module, "ami-test", "provisioning", []state.ModuleResource{
+			{TypeName: "AWS::EC2::SecurityGroup", Identifier: module + "-sg"},
+			{TypeName: "AWS::IAM::Role", Identifier: module + "-role"},
+		})
+	}
+	for _, format := range []Format{CloudFormation, Terraform} {
+		output, err := GenerateOutput(format, st, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ownerTag, markerTag := "Value: Studio-Tools", "Key: FabricaOwnershipVersion"
+		if format == Terraform {
+			ownerTag, markerTag = `ManagedBy = "Studio-Tools"`, `FabricaOwnershipVersion = "1"`
+		}
+		if strings.Contains(string(output), "forged") || strings.Count(string(output), ownerTag) != 16 || strings.Count(string(output), markerTag) != 2 {
+			t.Fatalf("wrong exported ownership for %s: %s", format, output)
+		}
+	}
+	cfg.Cloud.AWS.Identity.ManagedBy = "invalid owner"
+	if _, err := GenerateOutput(CloudFormation, st, cfg); err == nil {
+		t.Fatal("invalid ownership accepted")
+	}
 }
