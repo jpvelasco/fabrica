@@ -88,6 +88,8 @@ type fakeStore struct {
 
 	buckets    map[string]bool
 	tables     map[string]bool
+	bucketTags map[string]map[string]string
+	tableTags  map[string]map[string]string
 	projects   map[string]bool
 	parameters map[string]string
 
@@ -136,6 +138,8 @@ func newFakeStore() *fakeStore {
 		counters:   make(map[string]int),
 		buckets:    make(map[string]bool),
 		tables:     make(map[string]bool),
+		bucketTags: make(map[string]map[string]string),
+		tableTags:  make(map[string]map[string]string),
 		projects:   make(map[string]bool),
 		parameters: make(map[string]string),
 		stateDocs:  make(map[string]string),
@@ -399,6 +403,7 @@ func (p *fakeProvider) DeleteStateBucket(_ context.Context, bucket string) (clou
 	defer p.store.mu.Unlock()
 	existed := p.store.buckets[bucket]
 	delete(p.store.buckets, bucket)
+	delete(p.store.bucketTags, bucket)
 	return cloud.StateBackendDeleteResult{Identifier: bucket, Deleted: existed, Missing: !existed}, nil
 }
 
@@ -407,14 +412,18 @@ func (p *fakeProvider) DeleteStateLockTable(_ context.Context, table string) (cl
 	defer p.store.mu.Unlock()
 	existed := p.store.tables[table]
 	delete(p.store.tables, table)
+	delete(p.store.tableTags, table)
 	return cloud.StateBackendDeleteResult{Identifier: table, Deleted: existed, Missing: !existed}, nil
 }
 
 // --- StateStore ---
 
-func (p *fakeProvider) GetStateDocument(_ context.Context, bucket, key string) ([]byte, error) {
+func (p *fakeProvider) GetStateDocument(ctx context.Context, bucket, key string) ([]byte, error) {
 	p.store.mu.Lock()
 	defer p.store.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if p.store.stateStoreGetErr != nil {
 		return nil, p.store.stateStoreGetErr
 	}
@@ -427,9 +436,12 @@ func (p *fakeProvider) GetStateDocument(_ context.Context, bucket, key string) (
 	return nil, cloud.ErrStateDocumentMissing
 }
 
-func (p *fakeProvider) PutStateDocument(_ context.Context, bucket, key string, data []byte) error {
+func (p *fakeProvider) PutStateDocument(ctx context.Context, bucket, key string, data []byte) error {
 	p.store.mu.Lock()
 	defer p.store.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if p.store.stateStorePutErr != nil {
 		return p.store.stateStorePutErr
 	}
