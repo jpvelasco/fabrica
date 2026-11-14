@@ -9,11 +9,13 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
 func TestCostResourcesPreservesPlanLabels(t *testing.T) {
@@ -46,21 +48,33 @@ func testApplyRuntime() globals.Runtime {
 	// Pre-set the account ID so saveAccountID is a no-op and the test never
 	// touches the filesystem.
 	cfg.Cloud.AWS.AccountID = "123456789012"
+	cfg.State.Bucket = fabricastate.DefaultBucket(cfg.Cloud.AWS.AccountID)
+	cfg.Cloud.AWS.Region = "us-east-1"
 	return globals.Runtime{
-		Provider: &testutil.NilResourceProvider{},
+		Provider: &testutil.BackendProvider{TestProvider: &testutil.TestProvider{AccountID: cfg.Cloud.AWS.AccountID, Region: cfg.Cloud.AWS.Region}},
 		Config:   cfg,
 	}
 }
 
-func okBootstrap(called *bool) func(context.Context, fabricac.Provider, *config.Config) ([]fabricastate.BootstrapResult, error) {
-	return func(_ context.Context, _ fabricac.Provider, _ *config.Config) ([]fabricastate.BootstrapResult, error) {
+func ownedApplyPlan(t *testing.T, target fabricastate.SetupPlan) fabricastate.BackendSetupApplyPlan {
+	t.Helper()
+	ownership := fabricastate.BackendOwnershipPlan{
+		Bucket: fabricastate.BackendComponentDecision{Action: fabricastate.BackendComponentCreate},
+		Table:  fabricastate.BackendComponentDecision{Action: fabricastate.BackendComponentCreate},
+	}
+	plan, err := fabricastate.PlanBackendSetup(target, tags.Identity{}, ownership, "test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan
+}
+
+func recordApply(called *bool) func(context.Context, fabricac.Provider, fabricastate.BackendSetupApplyPlan) ([]fabricastate.BootstrapResult, error) {
+	return func(ctx context.Context, provider fabricac.Provider, plan fabricastate.BackendSetupApplyPlan) ([]fabricastate.BootstrapResult, error) {
 		if called != nil {
 			*called = true
 		}
-		return []fabricastate.BootstrapResult{
-			{Name: "S3 bucket b", Existed: false},
-			{Name: "DynamoDB table t", Existed: false},
-		}, nil
+		return fabricastate.ApplyBackendSetup(ctx, provider, plan)
 	}
 }
 
@@ -68,11 +82,11 @@ func TestRunApplyConfirmYesCreates(t *testing.T) {
 	var buf strings.Builder
 	var bootstrapCalled bool
 	cmd := command{
-		runtime:   testApplyRuntime(),
-		out:       &buf,
-		costs:     fabricacost.Global,
-		bootstrap: okBootstrap(&bootstrapCalled),
-		confirm:   func(string) bool { return true },
+		runtime:      testApplyRuntime(),
+		out:          &buf,
+		costs:        fabricacost.Global,
+		applyBackend: recordApply(&bootstrapCalled),
+		confirm:      func(string) bool { return true },
 	}
 	plan := fabricastate.SetupPlan{
 		Account: "123456789012",
@@ -84,7 +98,7 @@ func TestRunApplyConfirmYesCreates(t *testing.T) {
 		},
 	}
 
-	if err := cmd.runApply(context.Background(), plan); err != nil {
+	if err := cmd.runApply(context.Background(), cmd.runtime, ownedApplyPlan(t, plan)); err != nil {
 		t.Fatalf("runApply: %v", err)
 	}
 	if !bootstrapCalled {
@@ -117,7 +131,7 @@ func TestRunApplyBootstrapErrorShowsRecovery(t *testing.T) {
 		runtime:   testApplyRuntime(),
 		assumeYes: true,
 		out:       &buf,
-		bootstrap: func(context.Context, fabricac.Provider, *config.Config) ([]fabricastate.BootstrapResult, error) {
+		applyBackend: func(context.Context, fabricac.Provider, fabricastate.BackendSetupApplyPlan) ([]fabricastate.BootstrapResult, error) {
 			return nil, errors.New("AccessDenied")
 		},
 		confirm: func(string) bool { return true },
@@ -128,7 +142,7 @@ func TestRunApplyBootstrapErrorShowsRecovery(t *testing.T) {
 		Backend: fabricastate.BackendNames{Bucket: "b", Table: "t"},
 	}
 
-	err := cmd.runApply(context.Background(), plan)
+	err := cmd.runApply(context.Background(), cmd.runtime, ownedApplyPlan(t, plan))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -142,14 +156,14 @@ func TestRunApplyConfirmNoCancels(t *testing.T) {
 	var buf strings.Builder
 	var bootstrapCalled bool
 	cmd := command{
-		runtime:   testApplyRuntime(),
-		out:       &buf,
-		bootstrap: okBootstrap(&bootstrapCalled),
-		confirm:   func(string) bool { return false },
+		runtime:      testApplyRuntime(),
+		out:          &buf,
+		applyBackend: recordApply(&bootstrapCalled),
+		confirm:      func(string) bool { return false },
 	}
-	plan := fabricastate.SetupPlan{Account: "123456789012", Region: "us-east-1"}
+	plan := fabricastate.NewSetupPlan(cmd.runtime.Config, cmd.runtime.Config.Cloud.AWS.AccountID, cmd.runtime.Config.Cloud.AWS.Region)
 
-	if err := cmd.runApply(context.Background(), plan); err != nil {
+	if err := cmd.runApply(context.Background(), cmd.runtime, ownedApplyPlan(t, plan)); err != nil {
 		t.Fatalf("runApply: %v", err)
 	}
 	if bootstrapCalled {
@@ -164,15 +178,15 @@ func TestRunApplyAssumeYesSkipsConfirm(t *testing.T) {
 	var buf strings.Builder
 	confirmCalled := false
 	cmd := command{
-		runtime:   testApplyRuntime(),
-		assumeYes: true,
-		out:       &buf,
-		bootstrap: okBootstrap(nil),
-		confirm:   func(string) bool { confirmCalled = true; return true },
+		runtime:      testApplyRuntime(),
+		assumeYes:    true,
+		out:          &buf,
+		applyBackend: recordApply(nil),
+		confirm:      func(string) bool { confirmCalled = true; return true },
 	}
-	plan := fabricastate.SetupPlan{Account: "123456789012", Region: "us-east-1"}
+	plan := fabricastate.NewSetupPlan(cmd.runtime.Config, cmd.runtime.Config.Cloud.AWS.AccountID, cmd.runtime.Config.Cloud.AWS.Region)
 
-	if err := cmd.runApply(context.Background(), plan); err != nil {
+	if err := cmd.runApply(context.Background(), cmd.runtime, ownedApplyPlan(t, plan)); err != nil {
 		t.Fatalf("runApply: %v", err)
 	}
 	if confirmCalled {
@@ -186,14 +200,14 @@ func TestRunApplyBootstrapErrorPropagates(t *testing.T) {
 		runtime:   testApplyRuntime(),
 		assumeYes: true,
 		out:       &buf,
-		bootstrap: func(context.Context, fabricac.Provider, *config.Config) ([]fabricastate.BootstrapResult, error) {
+		applyBackend: func(context.Context, fabricac.Provider, fabricastate.BackendSetupApplyPlan) ([]fabricastate.BootstrapResult, error) {
 			return nil, errors.New("boom")
 		},
 		confirm: func(string) bool { return true },
 	}
-	plan := fabricastate.SetupPlan{Account: "123456789012", Region: "us-east-1"}
+	plan := fabricastate.NewSetupPlan(cmd.runtime.Config, cmd.runtime.Config.Cloud.AWS.AccountID, cmd.runtime.Config.Cloud.AWS.Region)
 
-	if err := cmd.runApply(context.Background(), plan); err == nil {
+	if err := cmd.runApply(context.Background(), cmd.runtime, ownedApplyPlan(t, plan)); err == nil {
 		t.Fatal("expected error to propagate")
 	}
 }
@@ -217,10 +231,10 @@ func TestDryRunShowsRunWithoutDryRunHint(t *testing.T) {
 		},
 	}
 
-	cmd.printDryRun(plan, map[string]string{})
+	cmd.printDryRun(ownedApplyPlan(t, plan))
 
 	out := buf.String()
-	if !strings.Contains(out, "Run without --dry-run to create these resources.") {
+	if !strings.Contains(out, "Run without --dry-run to apply this plan.") {
 		t.Errorf("expected dry-run hint, got:\n%s", out)
 	}
 	if strings.Contains(out, "not yet implemented") {
@@ -394,47 +408,49 @@ func TestSaveBackendConfigRoundTripPreservesFile(t *testing.T) {
 func TestSetupRunLockHeldAborts(t *testing.T) {
 	var buf strings.Builder
 	bootstrapCalled := false
-	cmd := command{
-		runtime: testApplyRuntime(),
-		out:     &buf,
-		costs:   fabricacost.Global,
-		bootstrap: func(_ context.Context, _ fabricac.Provider, _ *config.Config) ([]fabricastate.BootstrapResult, error) {
-			bootstrapCalled = true
-			return nil, nil
-		},
-	}
 	rt := testApplyRuntime()
-	rt.Provider = &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}
-	cmd.runtime = rt
-
-	err := cmd.run(context.Background())
+	locker := &testutil.BackendLockingProvider{BackendProvider: rt.Provider.(*testutil.BackendProvider)}
+	locker.Table = fabricac.StateBackendMetadata{Exists: true, Tags: tags.Standard("setup", "old")}
+	rt.Provider = locker
+	_, release, err := provision.AcquireStateLock(context.Background(), rt, "contender")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	cmd := command{runtime: rt, out: &buf, costs: fabricacost.Global, version: "test", assumeYes: true,
+		applyBackend: recordApply(&bootstrapCalled)}
+	err = cmd.run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "another fabrica run holds the state lock") {
 		t.Fatalf("err = %v, want held-lock abort", err)
 	}
 	if bootstrapCalled {
-		t.Error("bootstrap ran despite held lock")
+		t.Error("backend apply ran despite held lock")
 	}
 }
 
 func TestSetupDryRunDoesNotAcquireLock(t *testing.T) {
 	var buf strings.Builder
-	locker := &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}
 	rt := testApplyRuntime()
+	locker := &testutil.BackendLockingProvider{BackendProvider: rt.Provider.(*testutil.BackendProvider)}
 	rt.Provider = locker
-	cmd := command{
-		runtime: rt,
-		dryRun:  true,
-		out:     &buf,
-		costs:   fabricacost.Global,
-		bootstrap: func(_ context.Context, _ fabricac.Provider, _ *config.Config) ([]fabricastate.BootstrapResult, error) {
-			t.Fatal("dry-run must not bootstrap")
-			return nil, nil
-		},
+	locker.Table = fabricac.StateBackendMetadata{Exists: true, Tags: tags.Standard("setup", "old")}
+	_, release, err := provision.AcquireStateLock(context.Background(), rt, "other holder")
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer release()
+	before := len(locker.BackendCalls)
+	cmd := command{runtime: rt, dryRun: true, out: &buf, costs: fabricacost.Global, version: "test",
+		applyBackend: func(context.Context, fabricac.Provider, fabricastate.BackendSetupApplyPlan) ([]fabricastate.BootstrapResult, error) {
+			t.Fatal("dry-run must not apply")
+			return nil, nil
+		}}
 	if err := cmd.run(context.Background()); err != nil {
 		t.Fatalf("dry-run must skip lock: %v", err)
 	}
-	if locker.Acquires != 0 {
-		t.Errorf("dry-run acquires = %d, want 0", locker.Acquires)
+	for _, call := range locker.BackendCalls[before:] {
+		if call.Operation == "acquire row" || strings.HasPrefix(call.Operation, "create ") || call.Operation == "put document" {
+			t.Fatalf("dry-run mutated the backend: %+v", call)
+		}
 	}
 }

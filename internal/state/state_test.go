@@ -673,7 +673,7 @@ func TestBootstrapResultString(t *testing.T) {
 		r    BootstrapResult
 		want string
 	}{
-		{BootstrapResult{Name: "S3 bucket foo", Existed: true}, "  S3 bucket foo already exists — skipping"},
+		{BootstrapResult{Name: "S3 bucket foo", Existed: true}, "  S3 bucket foo existing configuration reconciled"},
 		{BootstrapResult{Name: "S3 bucket bar", Existed: false}, "  created S3 bucket bar"},
 	}
 	for _, tt := range tests {

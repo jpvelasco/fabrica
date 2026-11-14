@@ -10,7 +10,6 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
-	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -20,14 +19,14 @@ import (
 )
 
 type command struct {
-	runtime   globals.Runtime
-	dryRun    bool
-	assumeYes bool
-	out       io.Writer
-	costs     *fabricacost.Registry
-	version   string
-	bootstrap func(ctx context.Context, provider fabricac.Provider, cfg *config.Config) ([]fabricastate.BootstrapResult, error)
-	confirm   func(prompt string) bool
+	runtime      globals.Runtime
+	dryRun       bool
+	assumeYes    bool
+	out          io.Writer
+	costs        *fabricacost.Registry
+	version      string
+	applyBackend func(context.Context, fabricac.Provider, fabricastate.BackendSetupApplyPlan) ([]fabricastate.BootstrapResult, error)
+	confirm      func(prompt string) bool
 }
 
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
@@ -62,42 +61,57 @@ estimated monthly cost without creating anything.`,
 			}
 			opts := optionsSource()
 			return command{
-				runtime:   rt,
-				dryRun:    opts.DryRun,
-				assumeYes: opts.AssumeYes,
-				out:       out,
-				costs:     fabricacost.Global,
-				version:   fabricav.Version,
-				bootstrap: fabricastate.Bootstrap,
-				confirm:   prompt.Confirm,
+				runtime:      rt,
+				dryRun:       opts.DryRun,
+				assumeYes:    opts.AssumeYes,
+				out:          out,
+				costs:        fabricacost.Global,
+				version:      fabricav.Version,
+				applyBackend: fabricastate.ApplyBackendSetup,
+				confirm:      prompt.Confirm,
 			}.run(cmd.Context())
 		},
 	}
 }
 
 func (c command) run(ctx context.Context) error {
-	account, _, region, err := c.runtime.Provider.Identity(ctx)
-	if err != nil {
-		c.printIdentityHelp()
-		return fmt.Errorf("could not resolve AWS identity: %w", err)
-	}
-
-	ctx, releaseLock, err := provision.AcquireStateLockUnlessDryRun(ctx, c.runtime, "setup", c.dryRun)
+	identity, err := c.runtime.Config.ResolveIdentity()
 	if err != nil {
 		return err
 	}
-	defer releaseLock()
-
-	cfg := c.runtime.Config
-	plan := fabricastate.NewSetupPlan(cfg, account, region)
-	tags := fabricatags.Merge("setup", c.version, cfg.Cloud.AWS.Tags)
-
+	effective, target, err := provision.PrepareSetupRuntime(ctx, c.runtime)
+	if err != nil {
+		c.printIdentityHelp()
+		return err
+	}
+	ownership, err := inspectSetup(ctx, effective, target, identity)
+	if err != nil {
+		return err
+	}
+	plan, err := fabricastate.PlanBackendSetup(target, identity, ownership, c.version, effective.Config.Cloud.AWS.Tags)
+	if err != nil {
+		return err
+	}
 	if c.dryRun {
-		c.printDryRun(plan, tags)
+		c.printDryRun(plan)
 		return nil
 	}
+	return c.runApply(ctx, effective, plan)
+}
 
-	return c.runApply(ctx, plan)
+// inspectSetup validates local state only after confirmed canonical absence.
+// Local inventory is never passed to the backend ownership classifier.
+func inspectSetup(ctx context.Context, rt globals.Runtime, target fabricastate.SetupPlan, identity fabricatags.Identity) (fabricastate.BackendOwnershipPlan, error) {
+	evidence, ownership, err := fabricastate.InspectBackendOwnership(ctx, rt.Provider, target, identity)
+	if err != nil {
+		return fabricastate.BackendOwnershipPlan{}, err
+	}
+	if evidence.Canonical == nil {
+		if _, err := provision.ReadLocalState(provision.StatePath(rt), target.Account, target.Region, identity); err != nil {
+			return fabricastate.BackendOwnershipPlan{}, fmt.Errorf("validating local setup cache: %w", err)
+		}
+	}
+	return ownership, nil
 }
 
 // printIdentityHelp lists the common causes of an identity failure so the user
@@ -111,22 +125,32 @@ func (c command) printIdentityHelp() {
 	fmt.Fprintln(c.out)
 }
 
-func (c command) printDryRun(plan fabricastate.SetupPlan, tags map[string]string) {
+func (c command) printDryRun(plan fabricastate.BackendSetupApplyPlan) {
 	fmt.Fprintln(c.out, "Setup (dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", 50))
-	fmt.Fprintf(c.out, "  Account:  %s\n", plan.Account)
-	fmt.Fprintf(c.out, "  Region:   %s\n", plan.Region)
+	fmt.Fprintf(c.out, "  Account:  %s\n", plan.Target.Account)
+	fmt.Fprintf(c.out, "  Region:   %s\n", plan.Target.Region)
 	fmt.Fprintln(c.out)
+	c.printBackendPlan(plan)
+	c.printCostReport(c.costs.EstimateAll(costResources(plan.Target.Resources)))
+	fmt.Fprintln(c.out, "Run without --dry-run to apply this plan.")
+}
 
-	fmt.Fprintln(c.out, "Resources to create:")
-	for _, r := range plan.Resources {
-		fmt.Fprintf(c.out, "  %-24s %s\n", r.Label+":", r.Identifier)
+func (c command) printBackendPlan(plan fabricastate.BackendSetupApplyPlan) {
+	actions := map[fabricastate.BackendComponentAction]string{
+		fabricastate.BackendComponentCreate:       "Create",
+		fabricastate.BackendComponentReconcile:    "Reconcile",
+		fabricastate.BackendComponentRepairLegacy: "Repair legacy ownership",
 	}
-	fmt.Fprintln(c.out)
-
-	c.printTags(tags)
-	c.printCostReport(c.costs.EstimateAll(costResources(plan.Resources)))
-	fmt.Fprintln(c.out, "Run without --dry-run to create these resources.")
+	for _, component := range []struct {
+		name   string
+		action fabricastate.BackendComponentAction
+		tags   map[string]string
+	}{{plan.Target.Backend.Bucket, plan.Ownership.Bucket.Action, plan.BucketTags},
+		{plan.Target.Backend.Table, plan.Ownership.Table.Action, plan.TableTags}} {
+		fmt.Fprintf(c.out, "  %s %s\n", actions[component.action], component.name)
+		c.printTags(component.tags)
+	}
 }
 
 func (c command) printTags(tags map[string]string) {
@@ -177,36 +201,84 @@ func costResources(resources []fabricastate.ResourcePlan) []fabricacost.Resource
 	return out
 }
 
-func (c command) runApply(ctx context.Context, plan fabricastate.SetupPlan) error {
-	c.printApplyHeader(plan)
-
-	if !provision.ConfirmSetup(c.out, "Create the S3 bucket and DynamoDB table shown above?", c.assumeYes, c.confirm) {
+func (c command) runApply(ctx context.Context, effective globals.Runtime, plan fabricastate.BackendSetupApplyPlan) error {
+	c.printApplyHeader(plan.Target)
+	c.printBackendPlan(plan)
+	if !provision.ConfirmSetup(c.out, "Apply the S3 bucket and DynamoDB table plan shown above?", c.assumeYes, c.confirm) {
 		return nil
 	}
 	if c.assumeYes {
 		fmt.Fprintln(c.out)
 	}
-
-	results, err := c.bootstrap(ctx, c.runtime.Provider, c.runtime.Config)
+	results, err := c.applyConfirmed(ctx, effective, plan)
 	if err != nil {
-		c.printRecovery(plan)
-		return fmt.Errorf("bootstrap failed: %w", err)
+		c.printBootstrapResults(results)
+		c.printRecovery(plan.Target)
+		return fmt.Errorf("setup failed: %w", err)
 	}
-
-	c.printBootstrapResults(results)
-	c.saveBackendConfig(plan)
-	c.printCompletion(plan, results)
 	return nil
 }
 
+func (c command) applyConfirmed(ctx context.Context, effective globals.Runtime, plan fabricastate.BackendSetupApplyPlan) ([]fabricastate.BootstrapResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if _, err := inspectSetup(ctx, effective, plan.Target, plan.Identity); err != nil {
+		return nil, err
+	}
+	_, requiresLock := effective.Provider.(fabricac.StateLockManager)
+	if plan.Ownership.Table.Observed.Exists {
+		acquired, release, err := provision.AcquireStateLock(ctx, effective, "setup")
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+		ctx = acquired
+		if requiresLock && !provision.StateLockHeld(ctx) {
+			return nil, fmt.Errorf("setup lock was not acquired; verify the existing lock table and repeat setup")
+		}
+	}
+	results, err := c.applyBackend(ctx, effective.Provider, plan)
+	if err != nil {
+		return results, err
+	}
+	if err := ctx.Err(); err != nil {
+		return results, err
+	}
+	if !provision.StateLockHeld(ctx) {
+		acquired, release, err := provision.AcquireStateLock(ctx, effective, "setup")
+		if err != nil {
+			return results, fmt.Errorf("acquiring setup lock after backend apply: %w", err)
+		}
+		defer release()
+		ctx = acquired
+	}
+	if requiresLock && !provision.StateLockHeld(ctx) {
+		return results, fmt.Errorf("setup completion has no live state lock; verify the created lock table and repeat setup")
+	}
+	final, err := inspectSetup(ctx, effective, plan.Target, plan.Identity)
+	if err != nil {
+		return results, fmt.Errorf("checking setup completion: %w", err)
+	}
+	if final.Bucket.Action != fabricastate.BackendComponentReconcile || final.Table.Action != fabricastate.BackendComponentReconcile {
+		return results, fmt.Errorf("setup completion changed backend actions; inspect both components and repeat the full preflight")
+	}
+	if err = ctx.Err(); err == nil {
+		c.printBootstrapResults(results)
+		c.saveBackendConfig(plan.Target)
+		c.printCompletion(plan.Target, results)
+	}
+	return results, err
+}
+
 // printRecovery explains how to recover from a partial bootstrap failure.
-// Setup is idempotent, so the fix is almost always "address the error and
-// re-run" — already-created resources are detected and left in place.
+// Compatible components may be reconciled on retry; ambiguous ownership needs
+// inspection before another apply, including an untagged crash-created bucket.
 func (c command) printRecovery(plan fabricastate.SetupPlan) {
 	fmt.Fprintln(c.out)
-	fmt.Fprintln(c.out, "Setup did not finish — but this is safe to recover from:")
+	fmt.Fprintln(c.out, "Setup did not finish — compatible resources are safe to recover:")
 	fmt.Fprintln(c.out, "  - setup is idempotent: fix the error above, then run 'fabrica setup' again.")
-	fmt.Fprintln(c.out, "    Any resource already created is detected and left untouched.")
+	fmt.Fprintln(c.out, "    Inspect existing components; only compatible ownership can be reconciled.")
 	fmt.Fprintln(c.out, "  - run 'fabrica doctor' to see which resources already exist.")
 	fmt.Fprintf(c.out, "  - expected resources: S3 bucket %s, DynamoDB table %s.\n", plan.Backend.Bucket, plan.Backend.Table)
 }
@@ -254,7 +326,7 @@ func (c command) saveBackendConfig(plan fabricastate.SetupPlan) {
 func (c command) printCompletion(plan fabricastate.SetupPlan, results []fabricastate.BootstrapResult) {
 	allExisted := allResourcesExisted(results)
 	if allExisted {
-		fmt.Fprintln(c.out, "Nothing to do — your state backend is already set up.")
+		fmt.Fprintln(c.out, "State backend verified and configured.")
 	} else {
 		fmt.Fprintln(c.out, "Setup complete — your state backend is ready.")
 	}
