@@ -17,7 +17,7 @@ type BootstrapResult struct {
 
 func (r BootstrapResult) String() string {
 	if r.Existed {
-		return fmt.Sprintf("  %s already exists — skipping", r.Name)
+		return fmt.Sprintf("  %s existing configuration reconciled", r.Name)
 	}
 	return fmt.Sprintf("  created %s", r.Name)
 }

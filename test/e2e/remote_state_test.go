@@ -37,6 +37,21 @@ func TestRemoteStateCanonical(t *testing.T) {
 	if !ok || doc == "" {
 		t.Fatalf("remote state document not written; docs = %v", store.stateDocs)
 	}
+	cache, err := os.ReadFile(".fabrica/state.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runCLI(t, "setup", "--yes"); err != nil {
+		t.Fatalf("setup rerun: %v\n%s", err, out)
+	} else {
+		assert.Contains(t, out, "State backend verified and configured")
+	}
+	if store.stateDocs[key] != doc {
+		t.Fatal("setup rerun rewrote canonical inventory/history")
+	}
+	if got, err := os.ReadFile(".fabrica/state.json"); err != nil || string(got) != string(cache) {
+		t.Fatalf("setup rerun rewrote cache bytes: %v", err)
+	}
 
 	t.Run("second directory reads inventory from remote", func(t *testing.T) {
 		t.Chdir(t.TempDir())

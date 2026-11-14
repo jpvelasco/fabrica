@@ -1,15 +1,17 @@
 package e2e
 
 import (
+	"os"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/assert"
+	"github.com/jpvelasco/fabrica/internal/state"
 )
 
 // TestFirstRun: a fresh account runs setup, then status reports the backend is
 // ready with no modules yet.
 func TestFirstRun(t *testing.T) {
-	setupE2E(t)
+	store := setupE2E(t)
 
 	// Before setup: status says nothing is provisioned.
 	out, err := runCLI(t, "status")
@@ -24,6 +26,12 @@ func TestFirstRun(t *testing.T) {
 		t.Fatalf("setup: %v\n%s", err, out)
 	}
 	assert.Contains(t, out, "Setup complete")
+	if len(store.stateDocs) != 0 {
+		t.Fatal("default setup created a canonical state document")
+	}
+	if _, err := os.Stat(state.DefaultStateFile); !os.IsNotExist(err) {
+		t.Fatalf("default setup created local state: %v", err)
+	}
 
 	// After setup: status reports the backend is ready but no modules.
 	out, err = runCLI(t, "status")

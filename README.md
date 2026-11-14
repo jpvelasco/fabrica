@@ -221,6 +221,8 @@ Checks your environment: Go version, AWS credentials, region, S3 state bucket, D
 
 Creates the state backend for this account: the S3 bucket (versioning, encryption, and public-access block) and the DynamoDB lock table. Idempotent — re-running reconciles configuration and leaves existing resources in place.
 
+Setup checks ownership before backend changes and asks for inspection when evidence is ambiguous. It preserves recorded state and local cache bytes, including on a compatible rerun.
+
 - `fabrica setup --dry-run` — preview resource names and estimated monthly cost (~$0.15), no changes.
 - `fabrica setup` — create the backend after a y/N confirmation.
 - `fabrica setup --yes` — skip the prompt (CI / automation).

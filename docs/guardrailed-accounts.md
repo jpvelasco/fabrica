@@ -284,6 +284,7 @@ Two statements look odd until you know why:
       "Effect": "Allow",
       "Action": [
         "s3:CreateBucket",
+        "s3:GetBucketTagging",
         "s3:PutBucketVersioning",
         "s3:PutBucketEncryption",
         "s3:PutBucketPublicAccessBlock",
@@ -314,6 +315,8 @@ Two statements look odd until you know why:
       "Action": [
         "dynamodb:CreateTable",
         "dynamodb:DescribeTable",
+        "dynamodb:ListTagsOfResource",
+        "dynamodb:TagResource",
         "dynamodb:DeleteTable",
         "dynamodb:PutItem",
         "dynamodb:DeleteItem"
@@ -411,6 +414,7 @@ What each statement covers:
 - **IAM name lookups + path writes** — the read grant covers the handler's by-name lookups (create, re-run detection, drift); the write grant covers role/profile lifecycle including the `iam:TagInstanceProfile` hook that tags the instance profile after create. `iam:PassRole` covers EC2 launches that attach the instance profile (Cloud Control instance create and the `volumeRequestTags` direct-launch path).
 - **EC2** — launches (Cloud Control instance handler and the `volumeRequestTags` direct-launch path), stop/start, terminate on destroy, tag writes, and the AMI/VPC resolution calls.
 - **S3 + DynamoDB** — `fabrica setup` bootstraps the state bucket (`fabrica-state-ACCOUNT`) and lock table (`fabrica-state-lock`) through the S3/DynamoDB SDK; Lore S3-store and DDC blob buckets and their DynamoDB tables go through Cloud Control. The purge path needs `s3:ListObjectVersions` plus `s3:DeleteObject`/`s3:DeleteObjectVersion`. Custom `lore.storeBucket` or `ddc.bucket` names outside the `fabrica-*` pattern need their own resource entries.
+- **Setup ownership inspection** — Setup reads S3 bucket tags with `s3:GetBucketTagging`, DynamoDB metadata with `dynamodb:DescribeTable` and `dynamodb:ListTagsOfResource`, and canonical state with `s3:GetObject`. Compatible reconciliation uses the existing S3 settings/`s3:PutBucketTagging` permissions and `dynamodb:TagResource`. Setup preserves state documents and local caches; ambiguous existing resources require inspection before retrying.
 - **Canonical state permissions** — Since v0.6.0, `<state.bucket>/state.json` is the canonical state document: commands that read provisioning state need `s3:GetObject`, and commands that mutate it need `s3:PutObject` on that key (or the bucket's `/*` object ARN). These are baseline operator permissions, including after setup. Custom `state.bucket` or `state.table` names outside `fabrica-*` need matching resource entries in `FabricaStateBucket`, `FabricaStateObjects`, and `FabricaTables`: include both the bucket ARN and object ARN for the custom bucket, and the table ARN for the custom lock table.
 - **SSM** — the workstation session-password SecureString (per-create `parameter/fabrica/workstation/*/dcv-password`) and the SSM command runner used to verify private instances (`SendCommand` on the `AWS-RunShellScript` document; if your account denies `GetCommandInvocation` on the document ARN, add the command ARN `command/*` to that statement's resources).
 - **CodeBuild + GameLift** — the `ci` and `deploy` modules; drop both statements if you do not run either.
