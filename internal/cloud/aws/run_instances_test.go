@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 
@@ -14,7 +15,44 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/tags"
 )
+
+func TestBuildRunInstancesInputRejectsReservedRequestTags(t *testing.T) {
+	for _, nonce := range []string{"", "trusted-nonce"} {
+		base := map[string]string{"ManagedBy": "Studio-A", "Name": "trusted-name"}
+		if nonce != "" {
+			base[fabricac.CreateNonceTag] = nonce
+		}
+		doc, err := json.Marshal(map[string]any{"ImageId": "ami-test", "InstanceType": "t3.micro", "Tags": sdkTrustedPairs(base)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		extra := map[string]string{"ManagedBy": "forged", "FabricaModule": "forged", "FabricaVersion": "forged",
+			"FabricaCreateNonce": "forged", "FabricaOwnershipVersion": "forged", "Name": "override", "Project": "ordinary"}
+		before := maps.Clone(extra)
+		input, err := BuildRunInstancesInput(doc, extra, "stable-token")
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertTagSpec(t, input, types.ResourceTypeInstance, "ManagedBy", "Studio-A")
+		assertTagSpec(t, input, types.ResourceTypeInstance, "Name", "trusted-name")
+		assertTagSpec(t, input, types.ResourceTypeInstance, "Project", "ordinary")
+		if nonce != "" {
+			assertTagSpec(t, input, types.ResourceTypeInstance, fabricac.CreateNonceTag, nonce)
+		}
+		for _, tag := range tagSpec(input, types.ResourceTypeInstance).Tags {
+			key, value := awssdk.ToString(tag.Key), awssdk.ToString(tag.Value)
+			if tags.IdentityKey(key) && base[key] != value {
+				t.Fatalf("request tags invented reserved metadata %s=%s (trusted=%v)", key, value, base)
+			}
+		}
+		assertSameTagSet(t, input)
+		if !maps.Equal(extra, before) || awssdk.ToString(input.ClientToken) != "stable-token" {
+			t.Fatal("request tags changed caller map or client token")
+		}
+	}
+}
 
 func TestCreate_VolumeRequestTagsSkipCloudControl(t *testing.T) {
 	rec := &recordingEC2{}
@@ -606,7 +644,7 @@ func hasNonceFilter(filters []types.Filter) bool {
 func TestAdoptFirstLookupErrorFailsTheCreate(t *testing.T) {
 	rec := &recordingEC2{describeErr: errors.New("describe denied")}
 	err := adoptRC(rec).Create(context.Background(), adoptedResource())
-	if err == nil || !strings.Contains(err.Error(), "lookup of existing fabrica instances failed") ||
+	if err == nil || !strings.Contains(err.Error(), "lookup of existing instances matching ManagedBy=fabrica and Name=fabrica-workstation") ||
 		!strings.Contains(err.Error(), "ec2:DescribeInstances grant") {
 		t.Fatalf("err = %v, want the lookup-failure error", err)
 	}
@@ -1219,4 +1257,12 @@ func TestRunInstancesInputCarriesEncryptedAcrossMappings(t *testing.T) {
 			}
 		})
 	}
+}
+
+func sdkTrustedPairs(values map[string]string) []map[string]string {
+	var pairs []map[string]string
+	for k, v := range values {
+		pairs = append(pairs, map[string]string{"Key": k, "Value": v})
+	}
+	return pairs
 }

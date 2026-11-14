@@ -16,6 +16,7 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/oplog"
+	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // postCreateCreateFakes wires a successful Cloud Control create whose waiter
@@ -266,13 +267,13 @@ func TestCreateStandaloneIngressMissingGroupIdSkipsTagging(t *testing.T) {
 func TestPostCreateTags(t *testing.T) {
 	// With Tags in the doc: the exact set applied to the resource.
 	withTags := json.RawMessage(`{"Tags":[{"Key":"ManagedBy","Value":"fabrica"},{"Key":"FabricaModule","Value":"ddc"},{"Key":"env","Value":"prod"}]}`)
-	got := postCreateTags(withTags, "0.5.0", map[string]string{"team": "platform"})
+	got := postCreateTags(tags.Identity{}, withTags, "0.5.0", map[string]string{"team": "platform"})
 	if got["FabricaModule"] != "ddc" || got["env"] != "prod" {
 		t.Errorf("doc Tags must win: %v", got)
 	}
 
 	// Without Tags: the protected standard set + additive operator extras.
-	fallback := postCreateTags(json.RawMessage(`{"InstanceProfileName":"p"}`), "0.5.0", map[string]string{"team": "platform", "ManagedBy": "operator"})
+	fallback := postCreateTags(tags.Identity{}, json.RawMessage(`{"InstanceProfileName":"p"}`), "0.5.0", map[string]string{"team": "platform", "ManagedBy": "operator"})
 	want := map[string]string{"ManagedBy": "fabrica", "FabricaModule": "fabrica", "FabricaVersion": "0.5.0", "team": "platform"}
 	if len(fallback) != len(want) {
 		t.Errorf("fallback = %v, want %v", fallback, want)
@@ -284,7 +285,7 @@ func TestPostCreateTags(t *testing.T) {
 	}
 
 	// Non-JSON: the protected standard set.
-	if got := postCreateTags(json.RawMessage(`not json`), "0.5.0", nil); got["ManagedBy"] != "fabrica" || got["FabricaVersion"] != "0.5.0" {
+	if got := postCreateTags(tags.Identity{}, json.RawMessage(`not json`), "0.5.0", nil); got["ManagedBy"] != "fabrica" || got["FabricaVersion"] != "0.5.0" {
 		t.Errorf("non-JSON fallback = %v", got)
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"maps"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // tagsAsMap extracts the "Tags" array from a desired-state JSON document into a
@@ -121,7 +123,7 @@ func TestInjectFabricaTags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := injectFabricaTags(tt.typeName, json.RawMessage(tt.state), tt.module, tt.version, tt.extra)
+			result := injectFabricaTags(tags.Identity{}, tt.typeName, json.RawMessage(tt.state), tt.module, tt.version, tt.extra)
 
 			if tt.wantTags == nil {
 				if string(result) != tt.state {
@@ -157,7 +159,7 @@ func TestInjectFabricaTags(t *testing.T) {
 func TestInjectFabricaTagsModuleShape(t *testing.T) {
 	state := `{"GroupName":"fabrica-horde-sg","Tags":[{"Key":"ManagedBy","Value":"fabrica"},{"Key":"Name","Value":"fabrica-horde-sg"}]}`
 
-	result := injectFabricaTags("AWS::EC2::SecurityGroup", json.RawMessage(state), "horde", "1.0.0", nil)
+	result := injectFabricaTags(tags.Identity{}, "AWS::EC2::SecurityGroup", json.RawMessage(state), "horde", "1.0.0", nil)
 
 	var m map[string]any
 	if err := json.Unmarshal(result, &m); err != nil {
@@ -199,7 +201,7 @@ func TestInjectFabricaTagsModuleShape(t *testing.T) {
 func TestInjectFabricaTagsRespectsPlanModule(t *testing.T) {
 	state := `{"Tags":[{"Key":"ManagedBy","Value":"fabrica"},{"Key":"FabricaModule","Value":"lore"}]}`
 
-	result := injectFabricaTags("AWS::EC2::SecurityGroup", json.RawMessage(state), "fabrica", "0.4.2", nil)
+	result := injectFabricaTags(tags.Identity{}, "AWS::EC2::SecurityGroup", json.RawMessage(state), "fabrica", "0.4.2", nil)
 
 	tags := tagsAsMap(t, result)
 	if tags["FabricaModule"] != "lore" {
@@ -229,7 +231,7 @@ func TestInjectFabricaTagsOperatorCannotShadowIdentityTags(t *testing.T) {
 	}
 	before := maps.Clone(extra)
 
-	result := injectFabricaTags("AWS::EC2::SecurityGroup", json.RawMessage(state), "fabrica", "1.0.0", extra)
+	result := injectFabricaTags(tags.Identity{}, "AWS::EC2::SecurityGroup", json.RawMessage(state), "fabrica", "1.0.0", extra)
 
 	tags := tagsAsMap(t, result)
 	if tags["env"] != "staging" {
