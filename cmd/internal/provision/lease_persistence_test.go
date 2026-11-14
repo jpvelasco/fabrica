@@ -368,8 +368,8 @@ func TestCustomPersistenceDetachedCallerCancelsDuringRemoteWrite(t *testing.T) {
 				}
 			case <-time.After(time.Second):
 				close(p.putUnblock)
-				<-done
-				t.Fatal("in-flight remote write survived actual lease loss via WithoutCancel")
+				err = <-done
+				t.Fatalf("in-flight remote write survived actual lease loss via WithoutCancel: %v", err)
 			}
 			if len(p.StateDocuments) != 0 {
 				t.Fatal("lost lease wrote remote state")
