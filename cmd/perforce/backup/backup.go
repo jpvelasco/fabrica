@@ -65,7 +65,6 @@ With no subcommand, creates a new backup.`,
 				now:         time.Now,
 			}
 			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
-			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			c.readCreds = func() (string, error) {
 				return credentials.ReadPerforceAdminPassword(credFile)
 			}
@@ -120,6 +119,7 @@ func (c createCommand) run(ctx context.Context) error {
 		return err
 	}
 	defer releaseLock()
+	c.writeState = provision.BindStateWriter(ctx, c.runtime, c.writeState)
 
 	target, err := perforceprovisioning.Resolve(c.readState)
 	if err != nil {

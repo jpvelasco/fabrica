@@ -79,7 +79,6 @@ With --dry-run, shows the plan and monthly cost estimate without AWS writes.`,
 				confirm:   prompt.Confirm,
 			}
 			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
-			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			c.writeEndpoints = credentials.WriteCredentials
 			if rt.Provider != nil {
 				c.createResource = rt.Provider.Resources().Create
@@ -147,6 +146,7 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 	defer releaseLock()
+	c.writeState = provision.BindStateWriter(ctx, c.runtime, c.writeState)
 
 	st, err := c.readState()
 	if err != nil {

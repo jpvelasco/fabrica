@@ -181,16 +181,16 @@ func TestStateWriter_PersistsDefaultOwnership(t *testing.T) {
 	}
 }
 
-func TestStateIO_ProgrammaticCustomConfigAndNilWriteRejected(t *testing.T) {
+func TestStateIO_InvalidConfigAndNilWriteRejected(t *testing.T) {
 	t.Chdir(t.TempDir())
 	provider := &testutil.TestProvider{StateStoreGetErr: errors.New("remote read must not run")}
 	rt := stateTestRuntime(t, provider)
-	rt.Config.Cloud.AWS.Identity.ManagedBy = "Studio-Tools"
-	if _, err := ReadState(context.Background(), rt); err == nil || !strings.Contains(err.Error(), "custom ownership is not enabled") {
+	rt.Config.Cloud.AWS.Identity.ManagedBy = "invalid owner"
+	if _, err := ReadState(context.Background(), rt); err == nil || !strings.Contains(err.Error(), "cloud.aws.identity.managedBy") {
 		t.Fatalf("programmatic custom read not blocked before remote I/O: %v", err)
 	}
 	st := fabricastate.NewState("", "")
-	if err := StateWriter(context.Background(), rt)(st); err == nil || !strings.Contains(err.Error(), "custom ownership is not enabled") || st.ManagedBy != "" {
+	if err := StateWriter(context.Background(), rt)(st); err == nil || !strings.Contains(err.Error(), "cloud.aws.identity.managedBy") || st.ManagedBy != "" {
 		t.Fatalf("programmatic custom write not blocked before binding: %v", err)
 	}
 	rt.Config.Cloud.AWS.Identity.ManagedBy = ""

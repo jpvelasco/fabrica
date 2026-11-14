@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/jpvelasco/fabrica/internal/iamrole"
+	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // RoleDesiredState returns the Cloud Control desired-state JSON for the IAM role
@@ -80,7 +81,7 @@ func FleetDesiredState(plan *PromotePlan, buildID string) (json.RawMessage, erro
 			},
 		},
 		"Tags": []map[string]string{
-			{"Key": "ManagedBy", "Value": "fabrica"},
+			{"Key": fabricatags.ManagedByKey, "Value": fabricatags.ManagedByValue},
 			{"Key": "Name", "Value": plan.FleetName},
 			{"Key": "BuildVersion", "Value": plan.BuildVersion},
 		},

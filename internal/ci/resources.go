@@ -7,6 +7,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/ec2state"
 	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/iamrole"
+	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // HordeTokenPolicyName is the CodeBuild-role inline policy that reads the
@@ -32,9 +33,9 @@ func ProjectSpec(plan *CreatePlan, roleARN, sgID string) cloud.CodeBuildProjectS
 			"FABRICA_REGION": plan.Region,
 		},
 		Tags: map[string]string{
-			"ManagedBy":     "fabrica",
-			"FabricaModule": "ci",
-			"Name":          plan.ProjectName,
+			fabricatags.ManagedByKey: fabricatags.ManagedByValue,
+			"FabricaModule":          "ci",
+			"Name":                   plan.ProjectName,
 		},
 	}
 	if plan.HordeTokenParameter != "" {

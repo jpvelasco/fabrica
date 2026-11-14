@@ -94,7 +94,6 @@ making any AWS calls.`,
 				confirm:      prompt.ConfirmExact,
 			}
 			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
-			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			if rt.Provider != nil {
 				c.createResource = rt.Provider.Resources().Create
 				if insp, ok := rt.Provider.(cloud.ImageInspector); ok {
@@ -188,6 +187,7 @@ func (c command) inspectAMI(ctx context.Context, amiID string) (string, error) {
 }
 
 func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *lore.CreatePlan) error {
+	c.writeState = provision.BindStateWriter(ctx, c.runtime, c.writeState)
 	if err := credentials.WriteCredentials(credFile, credentials.FormatLore(plan.GRPCPort, plan.HTTPPort)); err != nil {
 		return fmt.Errorf("writing credentials file: %w", err)
 	}

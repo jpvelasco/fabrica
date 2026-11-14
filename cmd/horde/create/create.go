@@ -105,7 +105,6 @@ making any AWS calls.`,
 				confirm:      prompt.ConfirmExact,
 			}
 			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
-			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			if rt.Provider != nil {
 				c.createResource = rt.Provider.Resources().Create
 				if insp, ok := rt.Provider.(cloud.ImageInspector); ok {
@@ -227,6 +226,7 @@ func (c command) inspectAMI(ctx context.Context, amiID string) (string, error) {
 }
 
 func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *horde.CreatePlan) error {
+	c.writeState = provision.BindStateWriter(ctx, c.runtime, c.writeState)
 	if c.putSecureParameter == nil || c.deleteParameter == nil {
 		return fmt.Errorf("storing the Horde service token requires a provider with SSM parameter support. Run 'fabrica setup' with the AWS provider.")
 	}

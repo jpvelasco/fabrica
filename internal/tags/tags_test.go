@@ -23,31 +23,6 @@ func TestStandard(t *testing.T) {
 	}
 }
 
-func TestMerge(t *testing.T) {
-	got := Merge("setup", "test-version", map[string]string{
-		"Project":   "studio",
-		"ManagedBy": "custom",
-	})
-
-	if got["Project"] != "studio" {
-		t.Errorf("extra tag not merged: %v", got)
-	}
-	if got["ManagedBy"] != "custom" {
-		t.Errorf("extra tag should override standard tag, got %q", got["ManagedBy"])
-	}
-	if got["FabricaModule"] != "setup" || got["FabricaVersion"] != "test-version" {
-		t.Errorf("standard tags lost after merge: %v", got)
-	}
-	if len(got) != 4 {
-		t.Errorf("len(tags) = %d, want 4", len(got))
-	}
-
-	empty := Merge("lore", "1.0.0", nil)
-	if len(empty) != 3 || empty["FabricaModule"] != "lore" {
-		t.Errorf("nil extra should yield standard tags only: %v", empty)
-	}
-}
-
 func TestIdentityKey(t *testing.T) {
 	for _, k := range []string{"ManagedBy", "FabricaModule", "FabricaVersion", "FabricaCreateNonce", "FabricaOwnershipVersion"} {
 		if !IdentityKey(k) {

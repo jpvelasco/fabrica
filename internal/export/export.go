@@ -24,6 +24,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
+	"github.com/jpvelasco/fabrica/internal/tags"
 	"github.com/jpvelasco/fabrica/internal/workstation"
 )
 
@@ -120,6 +121,10 @@ func GenerateOutput(format Format, st *state.State, cfg *config.Config) ([]byte,
 // re-derived from the same shared helpers create uses, scoped to this
 // account/region.
 func buildModules(st *state.State, cfg *config.Config) ([]ExportModule, error) {
+	identity, err := cfg.ResolveIdentity()
+	if err != nil {
+		return nil, err
+	}
 	if cfg != nil {
 		if err := cfg.ValidateIAM(); err != nil {
 			return nil, err
@@ -129,7 +134,7 @@ func buildModules(st *state.State, cfg *config.Config) ([]ExportModule, error) {
 
 	// State backend resources (always exported if account/region known).
 	if st.Account != "" || st.Region != "" {
-		sb, err := buildStateBackendModule(st, cfg)
+		sb, err := buildStateBackendModule(st, cfg, identity)
 		if err != nil {
 			return nil, fmt.Errorf("building state backend export: %w", err)
 		}
@@ -142,7 +147,7 @@ func buildModules(st *state.State, cfg *config.Config) ([]ExportModule, error) {
 	for _, ms := range st.Modules {
 		switch ms.Name {
 		case "horde", "perforce", "lore", "ddc", "workstation", "ci", "deploy":
-			mod := buildModule(ms, cfg, st.Account, st.Region)
+			mod := buildModule(ms, cfg, st.Account, st.Region, identity)
 			if ms.Name == "horde" {
 				if err := preserveHordeListeners(&mod, &ms, cfg); err != nil {
 					return nil, err
@@ -297,7 +302,7 @@ func typeNameShort(typeName string) string {
 }
 
 // buildStateBackendModule generates export resources for the state backend.
-func buildStateBackendModule(st *state.State, cfg *config.Config) (*ExportModule, error) {
+func buildStateBackendModule(st *state.State, cfg *config.Config, identity tags.Identity) (*ExportModule, error) {
 	names := state.ResolveBackendNames(cfg, st.Account)
 
 	mod := &ExportModule{
@@ -328,10 +333,7 @@ func buildStateBackendModule(st *state.State, cfg *config.Config) (*ExportModule
 						"IgnorePublicAcls":      true,
 						"RestrictPublicBuckets": true,
 					},
-					"Tags": []map[string]string{
-						{"Key": "ManagedBy", "Value": "fabrica"},
-						{"Key": "Name", "Value": names.Bucket},
-					},
+					"Tags": backendTags(names.Bucket, identity),
 				},
 			},
 			{
@@ -353,10 +355,7 @@ func buildStateBackendModule(st *state.State, cfg *config.Config) (*ExportModule
 						},
 					},
 					"BillingMode": "PAY_PER_REQUEST",
-					"Tags": []map[string]string{
-						{"Key": "ManagedBy", "Value": "fabrica"},
-						{"Key": "Name", "Value": names.Table},
-					},
+					"Tags":        backendTags(names.Table, identity),
 				},
 			},
 		},
@@ -364,10 +363,18 @@ func buildStateBackendModule(st *state.State, cfg *config.Config) (*ExportModule
 	return mod, nil
 }
 
+func backendTags(name string, identity tags.Identity) []map[string]string {
+	out := []map[string]string{{"Key": tags.ManagedByKey, "Value": identity.ManagedBy()}, {"Key": "Name", "Value": name}}
+	if identity.ManagedBy() != tags.ManagedByValue {
+		out = append(out, map[string]string{"Key": tags.OwnershipVersionKey, "Value": "1"})
+	}
+	return out
+}
+
 // buildModule generates export resources for any module. All modules share
 // the same transformation: iterate resources, assign logical IDs, sanitize
 // properties, and enrich with config-derived defaults via extractProperties.
-func buildModule(ms state.ModuleState, cfg *config.Config, account, region string) ExportModule {
+func buildModule(ms state.ModuleState, cfg *config.Config, account, region string, identity tags.Identity) ExportModule {
 	mod := ExportModule{
 		Name:   ms.Name,
 		Status: ms.Status,
@@ -388,7 +395,7 @@ func buildModule(ms state.ModuleState, cfg *config.Config, account, region strin
 			TypeName:   r.TypeName,
 			LogicalID:  logicalID,
 			Identifier: r.Identifier,
-			Properties: sanitize(extractProperties(ms.Name, *r, cfg, account, region, sessionPasswordParamName(ms))),
+			Properties: sanitize(extractProperties(ms.Name, *r, cfg, account, region, sessionPasswordParamName(ms), identity)),
 			Module:     ms.Name,
 		})
 	}
@@ -457,7 +464,7 @@ var internalStateKeys = map[string]struct{}{
 	"sessionPasswordParameter": {},
 }
 
-func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Config, account, region, sessionPasswordParameter string) map[string]any {
+func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Config, account, region, sessionPasswordParameter string, identity tags.Identity) map[string]any {
 	props := make(map[string]any)
 
 	// Copy state properties, normalizing camelCase keys to their IaC forms
@@ -514,7 +521,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		// Drop the internal key so it never leaks into output.
 		delete(props, "__volumeSize")
 		if _, ok := props["Tags"]; !ok {
-			props["Tags"] = defaultTags(moduleName)
+			props["Tags"] = defaultTags(moduleName, identity)
 		}
 		if _, ok := props["MetadataOptions"]; !ok {
 			props["MetadataOptions"] = map[string]any{
@@ -533,7 +540,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			props["SecurityGroupIngress"] = sgRulesForModule(moduleName, cfg)
 		}
 		if _, ok := props["Tags"]; !ok {
-			props["Tags"] = defaultTags(moduleName)
+			props["Tags"] = defaultTags(moduleName, identity)
 		}
 	case "AWS::IAM::Role":
 		if _, ok := props["RoleName"]; !ok {
@@ -560,7 +567,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			}
 		}
 		if _, ok := props["Tags"]; !ok {
-			props["Tags"] = defaultTags(moduleName)
+			props["Tags"] = defaultTags(moduleName, identity)
 		}
 		applyRoleIAM(props, moduleName, cfg)
 	case "AWS::IAM::InstanceProfile":
@@ -579,7 +586,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			props["BucketName"] = r.Identifier
 		}
 		if _, ok := props["Tags"]; !ok {
-			props["Tags"] = defaultTags(moduleName)
+			props["Tags"] = defaultTags(moduleName, identity)
 		}
 	case "AWS::DynamoDB::Table":
 		// Module-managed DynamoDB tables (Lore S3 store tables; the state
@@ -598,7 +605,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			props["BillingMode"] = "PAY_PER_REQUEST"
 		}
 		if _, ok := props["Tags"]; !ok {
-			props["Tags"] = defaultTags(moduleName)
+			props["Tags"] = defaultTags(moduleName, identity)
 		}
 	case "AWS::CodeBuild::Project":
 		// CI CodeBuild project — SDK-backed, so state may have limited properties.
@@ -629,7 +636,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			props["Name"] = "fabrica-" + moduleName + "-fleet"
 		}
 		if _, ok := props["Tags"]; !ok {
-			props["Tags"] = defaultTags(moduleName)
+			props["Tags"] = defaultTags(moduleName, identity)
 		}
 	case "AWS::GameLift::Build":
 		if _, ok := props["Name"]; !ok {
@@ -642,7 +649,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			props["AutoScalingGroupName"] = "fabrica-" + moduleName + "-agents-asg"
 		}
 		if _, ok := props["Tags"]; !ok {
-			props["Tags"] = defaultTags(moduleName)
+			props["Tags"] = defaultTags(moduleName, identity)
 		}
 	case "AWS::EC2::LaunchTemplate":
 		// Horde agent launch template — state stores the image/instance shape
@@ -1026,9 +1033,9 @@ func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, regio
 }
 
 // defaultTags returns the default tag list for a module resource.
-func defaultTags(module string) []map[string]string {
+func defaultTags(module string, identity tags.Identity) []map[string]string {
 	return []map[string]string{
-		{"Key": "ManagedBy", "Value": "fabrica"},
+		{"Key": tags.ManagedByKey, "Value": identity.ManagedBy()},
 		{"Key": "Name", "Value": "fabrica-" + module},
 		{"Key": "FabricaModule", "Value": module},
 	}

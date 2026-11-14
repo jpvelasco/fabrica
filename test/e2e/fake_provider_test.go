@@ -13,6 +13,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/cloud/aws"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // currentFake holds the in-memory store for the running test. resetFake installs
@@ -40,7 +41,11 @@ func init() {
 		if region == "" {
 			region = "us-east-1"
 		}
-		return &fakeProvider{store: currentFake, account: acct, region: region}, nil
+		identity, err := cfg.ResolveIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return &fakeProvider{store: currentFake, account: acct, region: region, identity: identity}, nil
 	})
 }
 
@@ -92,6 +97,7 @@ type fakeStore struct {
 	tableTags  map[string]map[string]string
 	projects   map[string]bool
 	parameters map[string]string
+	lockRows   map[string]map[string]string
 
 	// stateDocs holds the canonical remote state document per "bucket/key".
 	// A document is only readable when the bucket exists, mirroring S3.
@@ -142,6 +148,7 @@ func newFakeStore() *fakeStore {
 		tableTags:  make(map[string]map[string]string),
 		projects:   make(map[string]bool),
 		parameters: make(map[string]string),
+		lockRows:   make(map[string]map[string]string),
 		stateDocs:  make(map[string]string),
 	}
 }
@@ -157,9 +164,10 @@ func typeSlug(typeName string) string {
 }
 
 type fakeProvider struct {
-	store   *fakeStore
-	account string
-	region  string
+	identity tags.Identity
+	store    *fakeStore
+	account  string
+	region   string
 }
 
 // --- Provider ---
@@ -170,7 +178,9 @@ func (p *fakeProvider) Identity(context.Context) (string, string, string, error)
 	return p.account, "arn:aws:iam::" + p.account + ":user/e2e", p.region, nil
 }
 
-func (p *fakeProvider) Resources() cloud.ResourceClient { return &fakeRC{store: p.store} }
+func (p *fakeProvider) Resources() cloud.ResourceClient {
+	return &fakeRC{store: p.store, identity: p.identity}
+}
 
 var (
 	_ cloud.ImageInspector = (*fakeProvider)(nil)
@@ -219,7 +229,7 @@ func (p *fakeProvider) DeleteParameter(_ context.Context, name string) error {
 // the resolver returns deterministic fake VPC/subnet IDs.
 func (p *fakeProvider) WithRegion(_ context.Context, _ string) (cloud.RegionView, error) {
 	return cloud.RegionView{
-		Resources: &fakeRC{store: p.store},
+		Resources: &fakeRC{store: p.store, identity: p.identity},
 		VPCs:      &fakeVPCResolver{},
 		Images:    p,
 	}, nil
@@ -233,7 +243,10 @@ func (*fakeVPCResolver) ResolveDefaultVPC(context.Context) (string, string, erro
 
 // --- ResourceClient ---
 
-type fakeRC struct{ store *fakeStore }
+type fakeRC struct {
+	store    *fakeStore
+	identity tags.Identity
+}
 
 func (c *fakeRC) Create(_ context.Context, r *cloud.Resource) error {
 	c.store.mu.Lock()
@@ -266,6 +279,15 @@ func (c *fakeRC) Create(_ context.Context, r *cloud.Resource) error {
 	if r.TypeName == "AWS::EC2::Instance" {
 		sr.ec2Status = "running"
 	}
+	var desired struct{ Tags []struct{ Key, Value string } }
+	if err := json.Unmarshal(r.DesiredState, &desired); err != nil {
+		return err
+	}
+	base := make(map[string]string)
+	for _, tag := range desired.Tags {
+		base[tag.Key] = tag.Value
+	}
+	sr.tags = c.identity.MergeProtected(base, nil)
 	c.store.resources[id] = sr
 	return nil
 }
@@ -470,7 +492,7 @@ func (p *fakeProvider) BuildLog(_ context.Context, _ string) (string, error) { r
 // --- GameLiftManager ---
 
 func (p *fakeProvider) CreateFleetAsync(_ context.Context, r *cloud.Resource) error {
-	return (&fakeRC{store: p.store}).Create(context.Background(), r)
+	return (&fakeRC{store: p.store, identity: p.identity}).Create(context.Background(), r)
 }
 
 func (p *fakeProvider) FleetStatus(_ context.Context, fleetID string) (cloud.FleetInfo, error) {

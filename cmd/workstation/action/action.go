@@ -119,7 +119,6 @@ func newCobraCommand(commandSpec spec, runtimeSource globals.RuntimeSource, opti
 				readState: func() (*fabricastate.State, error) {
 					return provision.ReadState(cmd.Context(), rt)
 				},
-				writeState:    provision.StateWriter(cmd.Context(), rt),
 				executeAction: defaultExecuteAction(rt, commandSpec.verb),
 			})
 			return actionCommand.run(cmd.Context())
@@ -135,6 +134,7 @@ func (c *command) run(ctx context.Context) error {
 		return err
 	}
 	defer release()
+	c.writeState = provision.BindStateWriter(ctx, c.runtime, c.writeState)
 
 	st, instanceID, err := c.validatePreAction()
 	if err != nil {

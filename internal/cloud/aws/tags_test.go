@@ -3,8 +3,10 @@ package aws
 import (
 	"encoding/json"
 	"maps"
+	"strings"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
@@ -253,5 +255,38 @@ func TestInjectFabricaTagsOperatorCannotShadowIdentityTags(t *testing.T) {
 	}
 	if !maps.Equal(extra, before) {
 		t.Error("injectFabricaTags mutated operator tags")
+	}
+}
+
+func TestCustomOwnershipInAgentSchemas(t *testing.T) {
+	identity, err := tags.ResolveIdentity("Studio-Tools")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := &horde.AgentsCreatePlan{LaunchTemplateName: "test-lt", ASGName: "test-asg", VolumeRequestTags: map[string]string{"ManagedBy": "forged", "FabricaOwnershipVersion": "forged"}}
+	for _, typeName := range []string{"AWS::EC2::LaunchTemplate", "AWS::AutoScaling::AutoScalingGroup"} {
+		var raw json.RawMessage
+		if typeName == "AWS::EC2::LaunchTemplate" {
+			raw, err = horde.LaunchTemplateDesiredState(plan, "sg-test", "")
+		} else {
+			raw, err = horde.ASGDesiredState(plan, "lt-test")
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := injectFabricaTags(identity, typeName, raw, "horde", "test", nil)
+		if strings.Contains(string(got), `"Value":"fabrica"`) || strings.Contains(string(got), "forged") {
+			t.Fatalf("wrong nested ownership: %s", got)
+		}
+		want := 1
+		if typeName == "AWS::EC2::LaunchTemplate" {
+			want = 3
+		}
+		if strings.Count(string(got), `"Value":"Studio-Tools"`) != want {
+			t.Fatalf("missing nested owner: %s", got)
+		}
+		if typeName == "AWS::AutoScaling::AutoScalingGroup" && !strings.Contains(string(got), `"PropagateAtLaunch":true`) {
+			t.Fatal("ASG propagation lost")
+		}
 	}
 }

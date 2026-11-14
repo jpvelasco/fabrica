@@ -59,7 +59,6 @@ Confirmation phrase: restore perforce <account-id>`,
 				probeTCP:  modstatus.DefaultProbeTCP,
 			}
 			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
-			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			c.readCreds = func() (string, error) {
 				return credentials.ReadPerforceAdminPassword(credFile)
 			}
@@ -105,6 +104,7 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 	defer release()
+	c.writeState = provision.BindStateWriter(ctx, c.runtime, c.writeState)
 
 	target, err := perforceprovisioning.Resolve(c.readState)
 	if err != nil {

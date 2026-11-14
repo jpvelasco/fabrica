@@ -8,6 +8,8 @@ cloud:
     region: us-east-1         # AWS region for all resources
     profile: ""               # Named AWS profile, including IAM Identity Center / SSO profiles
     accountId: ""             # Auto-detected on first `fabrica setup`; leave empty initially
+    identity:
+      managedBy: fabrica      # Choose before setup; fixed once state is recorded
     tags: {}                  # Extra tags merged with standard Fabrica tags on every resource
     # iam applies to EC2-module roles (workstation, horde including agents,
     # lore, perforce, ddc) and the CI CodeBuild role. Deploy ignores these

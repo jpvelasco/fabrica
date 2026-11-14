@@ -6,6 +6,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
 func TestExtractPropertiesAppliesIAMToEC2Roles(t *testing.T) {
@@ -19,7 +20,7 @@ func TestExtractPropertiesAppliesIAMToEC2Roles(t *testing.T) {
 	role := extractProperties("workstation", state.ModuleResource{
 		TypeName:   "AWS::IAM::Role",
 		Identifier: "fabrica-workstation-role",
-	}, cfg, exportAccount, exportRegion, "")
+	}, cfg, exportAccount, exportRegion, "", tags.Identity{})
 	if role["Path"] != "/workstation/" {
 		t.Errorf("role path = %v, want /workstation/", role["Path"])
 	}
@@ -29,7 +30,7 @@ func TestExtractPropertiesAppliesIAMToEC2Roles(t *testing.T) {
 
 	profile := extractProperties("workstation", state.ModuleResource{
 		TypeName: "AWS::IAM::InstanceProfile",
-	}, cfg, exportAccount, exportRegion, "")
+	}, cfg, exportAccount, exportRegion, "", tags.Identity{})
 	if profile["Path"] != "/workstation/" {
 		t.Errorf("profile path = %v, want /workstation/", profile["Path"])
 	}
@@ -37,7 +38,7 @@ func TestExtractPropertiesAppliesIAMToEC2Roles(t *testing.T) {
 		t.Errorf("instance profile must not carry a boundary: %v", profile["PermissionsBoundary"])
 	}
 
-	ci := extractProperties("ci", state.ModuleResource{TypeName: "AWS::IAM::Role"}, cfg, exportAccount, exportRegion, "")
+	ci := extractProperties("ci", state.ModuleResource{TypeName: "AWS::IAM::Role"}, cfg, exportAccount, exportRegion, "", tags.Identity{})
 	if _, ok := ci["Path"]; ok {
 		t.Errorf("CI role inherited path %v", ci["Path"])
 	}
@@ -58,7 +59,7 @@ func TestExtractPropertiesKeepsRecordedIAM(t *testing.T) {
 			"Path":                "/already/",
 			"PermissionsBoundary": "arn:aws:iam::123456789012:policy/already",
 		},
-	}, cfg, exportAccount, exportRegion, "")
+	}, cfg, exportAccount, exportRegion, "", tags.Identity{})
 	if props["Path"] != "/already/" || props["PermissionsBoundary"] != "arn:aws:iam::123456789012:policy/already" {
 		t.Fatalf("recorded IAM was replaced: %#v", props)
 	}

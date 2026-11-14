@@ -8,6 +8,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/internal/ec2state"
 	"github.com/jpvelasco/fabrica/internal/iamrole"
+	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // AgentSGDesiredState returns the Cloud Control desired-state JSON for the
@@ -16,12 +17,7 @@ import (
 // to-coordinator traffic is authorized on the coordinator side (see
 // AgentToCoordinatorIngressDesiredState).
 func AgentSGDesiredState(plan *AgentsCreatePlan) (json.RawMessage, error) {
-	tags := []map[string]string{
-		{"Key": "ManagedBy", "Value": "fabrica"},
-		{"Key": "Name", "Value": plan.SGName},
-		{"Key": "FabricaModule", "Value": "horde"},
-		{"Key": "FabricaRole", "Value": "agent"},
-	}
+	tags := agentTags(plan.SGName)
 
 	doc := map[string]any{
 		"GroupName":        plan.SGName,
@@ -93,6 +89,7 @@ func AgentInstanceProfileDesiredState(plan *AgentsCreatePlan) (json.RawMessage, 
 func LaunchTemplateDesiredState(plan *AgentsCreatePlan, sgID, userData string) (json.RawMessage, error) {
 	doc := map[string]any{
 		"LaunchTemplateName": plan.LaunchTemplateName,
+		"TagSpecifications":  []map[string]any{{"ResourceType": "launch-template", "Tags": agentTags(plan.LaunchTemplateName)}},
 		"LaunchTemplateData": map[string]any{
 			"ImageId":            plan.AmiID,
 			"InstanceType":       plan.InstanceType,
@@ -113,12 +110,7 @@ func LaunchTemplateDesiredState(plan *AgentsCreatePlan, sgID, userData string) (
 // instance is not overwritten. Auto Scaling launches do not retry through
 // RunInstances.
 func agentTagSpecifications(plan *AgentsCreatePlan) []map[string]any {
-	tags := []map[string]string{
-		{"Key": "ManagedBy", "Value": "fabrica"},
-		{"Key": "Name", "Value": "fabrica-horde-agent"},
-		{"Key": "FabricaModule", "Value": "horde"},
-		{"Key": "FabricaRole", "Value": "agent"},
-	}
+	tags := agentTags("fabrica-horde-agent")
 	if plan == nil || len(plan.VolumeRequestTags) == 0 {
 		return []map[string]any{
 			{"ResourceType": "instance", "Tags": tags},
@@ -128,7 +120,17 @@ func agentTagSpecifications(plan *AgentsCreatePlan) []map[string]any {
 	merged := appendTagPairs(tags, plan.VolumeRequestTags)
 	return []map[string]any{
 		{"ResourceType": "instance", "Tags": merged},
-		{"ResourceType": "volume", "Tags": appendTagPairs(tags, plan.VolumeRequestTags)},
+		{"ResourceType": "volume", "Tags": merged},
+	}
+}
+
+// agentTags is shared by the agent group, launch template, and instances.
+func agentTags(name string) []map[string]string {
+	return []map[string]string{
+		{"Key": fabricatags.ManagedByKey, "Value": fabricatags.ManagedByValue},
+		{"Key": "Name", "Value": name},
+		{"Key": "FabricaModule", "Value": "horde"},
+		{"Key": "FabricaRole", "Value": "agent"},
 	}
 }
 
@@ -142,7 +144,7 @@ func appendTagPairs(base []map[string]string, extra map[string]string) []map[str
 		out = append(out, t)
 	}
 	for _, k := range slices.Sorted(maps.Keys(extra)) {
-		if k == "" {
+		if k == "" || fabricatags.IdentityKey(k) {
 			continue
 		}
 		if _, ok := seen[k]; ok {
@@ -163,6 +165,10 @@ func appendTagPairs(base []map[string]string, extra map[string]string) []map[str
 //
 // because it would add tags without PropagateAtLaunch.
 func ASGDesiredState(plan *AgentsCreatePlan, ltID string) (json.RawMessage, error) {
+	var propagated []map[string]any
+	for _, tag := range agentTags("fabrica-horde-agent") {
+		propagated = append(propagated, map[string]any{"Key": tag["Key"], "Value": tag["Value"], "PropagateAtLaunch": true})
+	}
 	doc := map[string]any{
 		"AutoScalingGroupName": plan.ASGName,
 		"MinSize":              fmt.Sprintf("%d", plan.MinSize),
@@ -175,12 +181,7 @@ func ASGDesiredState(plan *AgentsCreatePlan, ltID string) (json.RawMessage, erro
 			// we just created the template and it has exactly one version.
 			"Version": "1",
 		},
-		"Tags": []map[string]any{
-			{"Key": "ManagedBy", "Value": "fabrica", "PropagateAtLaunch": true},
-			{"Key": "Name", "Value": "fabrica-horde-agent", "PropagateAtLaunch": true},
-			{"Key": "FabricaModule", "Value": "horde", "PropagateAtLaunch": true},
-			{"Key": "FabricaRole", "Value": "agent", "PropagateAtLaunch": true},
-		},
+		"Tags": propagated,
 	}
 
 	// VPC subnets — Cloud Control expects an array of subnet IDs.

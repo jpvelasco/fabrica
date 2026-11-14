@@ -45,7 +45,7 @@ func TestGuardedSetupRefusesEveryUnsafePhase(t *testing.T) {
 		name, want string
 		attempts   int
 	}{
-		{"custom", "custom ownership", 0}, {"target", "target mismatch", 0}, {"identity", "injected", 0},
+		{"invalid-owner", "cloud.aws.identity.managedBy", 0}, {"target", "target mismatch", 0}, {"identity", "injected", 0},
 		{"version", "version tag", 0},
 		{"metadata-capability", "cannot inspect", 0}, {"store-capability", "cannot read", 0},
 		{"bucket-read", "injected", 0}, {"table-read", "injected", 0}, {"document-read", "injected", 0},
@@ -94,8 +94,8 @@ func TestGuardedSetupRefusesEveryUnsafePhase(t *testing.T) {
 				p.IdentityErr = errors.New("injected")
 			case "version":
 				c.version = ""
-			case "custom":
-				c.runtime.Config.Cloud.AWS.Identity.ManagedBy = "tools"
+			case "invalid-owner":
+				c.runtime.Config.Cloud.AWS.Identity.ManagedBy = "invalid owner"
 				p.IdentityErr = errors.New("provider must not be called")
 			case "target":
 				c.runtime.Config.Cloud.AWS.AccountID = "account-two"

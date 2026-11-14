@@ -6,6 +6,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/internal/ec2state"
 	"github.com/jpvelasco/fabrica/internal/iamrole"
+	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // SGDesiredState returns the Cloud Control desired-state JSON for the Lore
@@ -89,7 +90,7 @@ func StoreTableDesiredState(plan *CreatePlan, suffix string) (json.RawMessage, e
 		"AttributeDefinitions": attributeDefinitions,
 		"BillingMode":          "PAY_PER_REQUEST",
 		"Tags": []map[string]string{
-			{"Key": "ManagedBy", "Value": "fabrica"},
+			{"Key": fabricatags.ManagedByKey, "Value": fabricatags.ManagedByValue},
 			{"Key": "Name", "Value": plan.StoreBucket + "-" + suffix},
 			{"Key": "FabricaModule", "Value": "lore"},
 		},
@@ -126,7 +127,7 @@ func BucketDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 		},
 		"VersioningConfiguration": map[string]any{"Status": "Enabled"},
 		"Tags": []map[string]string{
-			{"Key": "ManagedBy", "Value": "fabrica"},
+			{"Key": fabricatags.ManagedByKey, "Value": fabricatags.ManagedByValue},
 			{"Key": "Name", "Value": plan.StoreBucket},
 			{"Key": "FabricaModule", "Value": "lore"},
 		},

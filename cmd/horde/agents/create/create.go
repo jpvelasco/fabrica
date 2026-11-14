@@ -132,7 +132,6 @@ without making any AWS calls.`,
 				confirm:           prompt.ConfirmExact,
 			}
 			c.readState = func() (*fabricastate.State, error) { return provision.ReadState(cmd.Context(), rt) }
-			c.writeState = provision.StateWriter(cmd.Context(), rt)
 			if rt.Provider != nil {
 				c.createResource = rt.Provider.Resources().Create
 				c.deleteResource = rt.Provider.Resources().Delete
@@ -165,6 +164,7 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 	defer releaseLock()
+	c.writeState = provision.BindStateWriter(ctx, c.runtime, c.writeState)
 
 	agentsCfg := c.runtime.Config.Horde.Agents
 	if c.amiID != "" {

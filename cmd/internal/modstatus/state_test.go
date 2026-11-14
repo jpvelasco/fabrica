@@ -8,8 +8,10 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
 )
@@ -83,6 +85,61 @@ func TestStateResolvedCobraProbeAndReadiness(t *testing.T) {
 			}
 			if mode == "ready failure" && !strings.Contains(out.String(), "state persistence failed") {
 				t.Fatal("write failure hidden")
+			}
+		})
+	}
+}
+
+func TestPersistReadyMergesCurrentInventory(t *testing.T) {
+	for _, mode := range []string{"merge", "custom", "changed", "read failure", "lock failure", "write failure"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			cfg := config.Defaults()
+			cfg.Cloud.AWS.AccountID = "test-account"
+			rt := globals.Runtime{Config: cfg, Provider: &testutil.TestProvider{}}
+			st := state.NewState("test-account", cfg.Cloud.AWS.Region)
+			resources := []state.ModuleResource{{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-test"}}
+			st.UpsertModule("lore", "ami-test", "provisioning", resources)
+			observed := *st.GetModule("lore")
+			observed.Resources = append([]state.ModuleResource(nil), resources...)
+			st.UpsertModule("ci", "test", "ready", nil)
+			if mode == "changed" {
+				st.GetModule("lore").Resources = []state.ModuleResource{{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-replaced"}}
+			}
+			if err := state.WriteStateTo(st, provision.StatePath(rt)); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "custom" {
+				cfg.Cloud.AWS.Identity.ManagedBy = "Studio-Tools"
+				st.ManagedBy = "Studio-Tools"
+				backend := state.ResolveBackendNames(cfg, st.Account)
+				metadata := cloud.StateBackendMetadata{Exists: true, Tags: map[string]string{"ManagedBy": "Studio-Tools", "FabricaOwnershipVersion": "1"}}
+				rt.Provider = &testutil.BackendLockingProvider{BackendProvider: &testutil.BackendProvider{
+					TestProvider: &testutil.TestProvider{AccountID: st.Account, Region: st.Region, StateDocuments: map[string]string{backend.Bucket + "/" + state.StateDocumentKey: string(state.EncodeState(st))}},
+					Bucket:       metadata, Table: metadata,
+				}}
+			}
+			switch mode {
+			case "read failure":
+				rt.Provider = &testutil.TestProvider{StateStoreGetErr: errors.New("read failed")}
+			case "lock failure":
+				rt.Provider = &testutil.LockingProvider{TestProvider: &testutil.TestProvider{}, Held: true}
+			case "write failure":
+				rt.Provider = &testutil.TestProvider{StateStorePutErr: errors.New("write failed")}
+			}
+			err := persistReady(t.Context(), rt, "lore", &observed)
+			if mode != "merge" && mode != "custom" {
+				if err == nil {
+					t.Fatal("unsafe ready update succeeded")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := state.ReadStateFile(provision.StatePath(rt), "test-account", cfg.Cloud.AWS.Region)
+			if err != nil || got.GetModule("lore").Status != "ready" || got.GetModule("ci") == nil {
+				t.Fatalf("ready lost current inventory: %+v %v", got, err)
 			}
 		})
 	}

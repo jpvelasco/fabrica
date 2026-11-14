@@ -12,12 +12,31 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
-func TestNewProviderRejectsProgrammaticCustomOwnership(t *testing.T) {
+func TestNewProviderRejectsProgrammaticInvalidOwnership(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.Identity.ManagedBy = "invalid owner"
+	p, err := newProvider(cfg)
+	if err == nil || p != nil || !strings.Contains(err.Error(), "cloud.aws.identity.managedBy") {
+		t.Fatalf("custom provider accepted: %v, %v", p, err)
+	}
+}
+
+func TestNewProviderAcceptsCustomOwnership(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Cloud.AWS.Identity.ManagedBy = "Studio-Tools"
-	p, err := newProvider(cfg)
-	if err == nil || p != nil || !strings.Contains(err.Error(), "custom ownership is not enabled") {
-		t.Fatalf("custom provider accepted: %v, %v", p, err)
+	provider, err := newProvider(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := provider.(*awsProvider)
+	view, err := p.WithRegion(t.Context(), "eu-west-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, captured := range []awsConfig{p.awsCfg, p.ec2.awsCfg, p.iam.awsCfg, p.Resources().(*resourceClients).awsCfg, view.Resources.(*resourceClients).awsCfg} {
+		if captured.identity.ManagedBy() != "Studio-Tools" {
+			t.Fatalf("provider lost custom ownership: %+v", captured)
+		}
 	}
 }
 

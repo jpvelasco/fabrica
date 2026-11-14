@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Configurable deployment ownership** — `cloud.aws.identity.managedBy` (default `fabrica`) now selects the protected owner consistently for setup, module creates, SDK paths, AMI artifacts, drift, and IaC export. Recorded state prevents ownership changes; custom module mutations require a compatible canonical backend and account lock. Status readiness updates merge under the lock, and drift repair persists with its acquired lease. (#637)
+
 - **Known-good AMI tables record verification, not account IDs** — `docs/horde-ami.md`, `docs/horde-agent-ami.md`, `docs/lore-ami.md`, and `docs/workstation-ami.md` listed real AMI IDs from a live account, all since deregistered; the tables now hold TBD rows carrying the verification notes, and the historical changelog entries describe the bakes without naming IDs. `internal/workstation` test fixtures use a placeholder account ID, matching the rest of the test suite.
 
 ## [0.6.1] - 2026-11-07

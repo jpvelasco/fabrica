@@ -7,7 +7,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
-func TestGetRejectsCustomOwnershipBeforeConstructor(t *testing.T) {
+func TestGetRejectsInvalidOwnershipBeforeConstructor(t *testing.T) {
 	name := t.Name()
 	called := false
 	Register(name, func(*config.Config) (Provider, error) {
@@ -20,8 +20,8 @@ func TestGetRejectsCustomOwnershipBeforeConstructor(t *testing.T) {
 		delete(reg.providers, name)
 	})
 	cfg := config.Defaults()
-	cfg.Cloud.AWS.Identity.ManagedBy = "Studio-Tools"
-	if _, err := Get(name, cfg); err == nil || !strings.Contains(err.Error(), "custom ownership is not enabled") || called {
+	cfg.Cloud.AWS.Identity.ManagedBy = "invalid owner"
+	if _, err := Get(name, cfg); err == nil || !strings.Contains(err.Error(), "cloud.aws.identity.managedBy") || called {
 		t.Fatalf("custom ownership reached constructor: called=%t, error=%v", called, err)
 	}
 	cfg.Cloud.AWS.Identity.ManagedBy = ""

@@ -11,6 +11,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/oplog"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
 type lockCtxKey int
@@ -90,7 +91,15 @@ func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string)
 		}
 		return ctx, noop, nil
 	}
+	identity, err := rt.Config.ResolveIdentity()
+	if err != nil {
+		return ctx, noop, err
+	}
+	custom := identity.ManagedBy() != tags.ManagedByValue
 	mgr, ok := rt.Provider.(cloud.StateLockManager)
+	if custom && !ok {
+		return ctx, noop, fmt.Errorf("custom ownership requires a provider with state locking; run setup with a provider supporting canonical state and account locks")
+	}
 	if !ok || rt.Config == nil {
 		return ctx, noop, nil
 	}
@@ -98,6 +107,16 @@ func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string)
 	account, region, err := ResolveIdentity(ctx, rt.Provider)
 	if err != nil {
 		return ctx, noop, fmt.Errorf("resolving account for state lock (%s): %w", operation, err)
+	}
+
+	if custom {
+		_, ownership, err := fabricastate.InspectBackendOwnership(ctx, rt.Provider, fabricastate.NewSetupPlan(rt.Config, account, region), identity)
+		if err != nil {
+			return ctx, noop, err
+		}
+		if operation != "setup" && (ownership.Bucket.Action != fabricastate.BackendComponentReconcile || ownership.Table.Action != fabricastate.BackendComponentReconcile) {
+			return ctx, noop, fmt.Errorf("custom ownership requires an existing compatible state bucket and lock table; run 'fabrica setup' before mutating modules")
+		}
 	}
 
 	lockID := "fabrica-state/" + account
@@ -117,7 +136,7 @@ func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string)
 
 	tok, err := store.Acquire(ctx, lockID, holder)
 	if err != nil {
-		if errors.Is(err, cloud.ErrLockTableMissing) {
+		if errors.Is(err, cloud.ErrLockTableMissing) && !custom {
 			// Bootstrap ordering: `setup` creates the lock table, so it (and
 			// any command on an unbootstrapped account) runs unlocked.
 			oplog.WithModule("state-lock").Warn(

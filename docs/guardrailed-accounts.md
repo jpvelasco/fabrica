@@ -173,6 +173,8 @@ A boundary policy that blocks any of the actions below breaks the affected flow 
 - `logs:CreateLogGroup` on `arn:aws:logs:REGION:ACCOUNT:log-group:/fabrica/ssm/*`
 - `logs:CreateLogStream`, `logs:PutLogEvents` on `arn:aws:logs:REGION:ACCOUNT:log-group:/fabrica/ssm/*` and `arn:aws:logs:REGION:ACCOUNT:log-group:/fabrica/ssm/*:*`
 
+The tag conditions and bake commands in this guide use the default owner `fabrica`. When `cloud.aws.identity.managedBy` selects another owner, use that exact case-sensitive value in `aws:RequestTag/ManagedBy` and `aws:ResourceTag/ManagedBy` conditions and in manual bake tags. The identity setting applies to setup and module resources; ordinary attribution tags cannot override it.
+
 **Operator-side (`fabrica` CLI identity)** — `workstation create` stores and tags the per-create session-password SecureString; `workstation terminate` deletes the recorded name:
 
 - `ssm:PutParameter` (create writes the SecureString)

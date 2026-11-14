@@ -14,20 +14,6 @@ func Standard(module, version string) map[string]string {
 	return (Identity{}).Standard(module, version)
 }
 
-// Merge returns the standard Fabrica tags for module/version with extra
-// operator tags layered on top. An operator tag overrides the standard tag
-// with the same key (for example ManagedBy).
-//
-// Retained for setup compatibility until backend provenance is validated.
-// Other resource paths must use protected merging.
-func Merge(module, version string, extra map[string]string) map[string]string {
-	tags := Standard(module, version)
-	for k, v := range extra {
-		tags[k] = v
-	}
-	return tags
-}
-
 // identityTagKeys are reserved for trusted resource metadata. Operator tags
 // may add ordinary metadata but cannot select or forge these values.
 var identityTagKeys = map[string]struct{}{
