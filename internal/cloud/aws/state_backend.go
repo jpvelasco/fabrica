@@ -13,8 +13,6 @@ import (
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
-	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
-	fabricav "github.com/jpvelasco/fabrica/internal/version"
 )
 
 var _ fabricac.StateBackendChecker = (*awsProvider)(nil)
@@ -181,51 +179,6 @@ func (p *awsProvider) DeleteStateLockTable(ctx context.Context, table string) (f
 	return result, nil
 }
 
-func (p *awsProvider) EnsureStateBucket(ctx context.Context, bucket, region string) (fabricac.StateBackendCreateResult, error) {
-	result := fabricac.StateBackendCreateResult{Identifier: bucket}
-	cfg, err := p.stateBackendConfig(ctx)
-	if err != nil {
-		return result, err
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
-	client := p.s3StateClient(cfg)
-
-	exists, err := p.bucketExists(ctx, client, bucket)
-	if err != nil {
-		return result, err
-	}
-	if !exists {
-		if err := p.createBucket(ctx, client, bucket, region); err != nil {
-			return result, err
-		}
-		result.Created = true
-	}
-
-	// Reconcile configuration on every run so re-running setup heals drift.
-	if err := p.configureBucket(ctx, client, bucket, p.stateBackendTags()); err != nil {
-		return result, err
-	}
-	return result, nil
-}
-
-func (p *awsProvider) bucketExists(ctx context.Context, client stateBackendS3Client, bucket string) (bool, error) {
-	_, err := client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(bucket)})
-	if err == nil {
-		return true, nil
-	}
-	var apiErr smithy.APIError
-	if errors.As(err, &apiErr) {
-		switch apiErr.ErrorCode() {
-		case "404", "NoSuchBucket", "NotFound":
-			return false, nil
-		}
-	}
-	return false, fmt.Errorf("checking S3 bucket %s: %w", bucket, err)
-}
-
 func (p *awsProvider) createBucket(ctx context.Context, client stateBackendS3Client, bucket, region string) error {
 	in := &s3.CreateBucketInput{Bucket: aws.String(bucket)}
 	// us-east-1 must omit the location constraint; every other region requires it.
@@ -238,16 +191,6 @@ func (p *awsProvider) createBucket(ctx context.Context, client stateBackendS3Cli
 		return fmt.Errorf("creating S3 bucket %s: %w — check the name is globally unique and you have s3:CreateBucket", bucket, err)
 	}
 	return nil
-}
-
-// stateBackendTags is the tag set applied to the state bucket and lock table:
-// the standard setup tags plus the operator's cloud.aws.tags.
-func (p *awsProvider) stateBackendTags() map[string]string {
-	extra := map[string]string{}
-	if p.cfg != nil {
-		extra = p.cfg.Cloud.AWS.Tags
-	}
-	return fabricatags.Merge("setup", fabricav.Version, extra)
 }
 
 func s3TagList(tags map[string]string) []s3types.Tag {
@@ -310,39 +253,6 @@ func (p *awsProvider) configureBucket(ctx context.Context, client stateBackendS3
 		return fmt.Errorf("tagging S3 bucket %s: %w", bucket, err)
 	}
 	return nil
-}
-
-func (p *awsProvider) EnsureStateLockTable(ctx context.Context, table string) (fabricac.StateBackendCreateResult, error) {
-	result := fabricac.StateBackendCreateResult{Identifier: table}
-	cfg, err := p.stateBackendConfig(ctx)
-	if err != nil {
-		return result, err
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, stateBackendDeleteTimeout)
-	defer cancel()
-
-	client := p.dynamoDBStateClient(cfg)
-
-	_, err = client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(table)})
-	if err == nil {
-		return result, nil // already exists
-	}
-	var apiErr smithy.APIError
-	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "ResourceNotFoundException" {
-		return result, fmt.Errorf("checking DynamoDB table %s: %w", table, err)
-	}
-
-	if err := createLockTable(ctx, client, table, p.stateBackendTags()); err != nil {
-		return result, err
-	}
-
-	waiter := p.tableExistsWaiter(client)
-	if err := waiter.Wait(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(table)}, 2*time.Minute); err != nil {
-		return result, fmt.Errorf("waiting for DynamoDB table %s to become active: %w", table, err)
-	}
-	result.Created = true
-	return result, nil
 }
 
 func createLockTable(ctx context.Context, client stateBackendDynamoDBClient, table string, desiredTags map[string]string) error {

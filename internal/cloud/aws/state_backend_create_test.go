@@ -261,16 +261,6 @@ func TestCreateStateBackendSDKExistingResourceErrors(t *testing.T) {
 	}
 }
 
-func TestEnsureStateLockTableSharedCreatePreservesWaitFailure(t *testing.T) {
-	h := newCreateHTTP(t, "DynamoDB")
-	h.stop, h.cause = "wait", errors.New("waiter unavailable")
-	bootstrapper := fabricac.Provider(h.provider()).(fabricac.StateBackendBootstrapper)
-	result, err := bootstrapper.EnsureStateLockTable(context.Background(), "test-backend")
-	if !errors.Is(err, h.cause) || result.Created || h.creates != 1 || h.mutations != 1 || h.postDescribes != 1 {
-		t.Fatalf("result=%+v error=%v creates=%d mutations=%d waits=%d", result, err, h.creates, h.mutations, h.postDescribes)
-	}
-}
-
 func createTrustedTags(owner string) map[string]string {
 	identity, err := tags.ResolveIdentity(owner)
 	if err != nil {

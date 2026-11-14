@@ -378,24 +378,6 @@ func (p *fakeProvider) StateLockTableExists(_ context.Context, table string) (bo
 	return p.store.tables[table], nil
 }
 
-// --- StateBackendBootstrapper ---
-
-func (p *fakeProvider) EnsureStateBucket(_ context.Context, bucket, _ string) (cloud.StateBackendCreateResult, error) {
-	p.store.mu.Lock()
-	defer p.store.mu.Unlock()
-	created := !p.store.buckets[bucket]
-	p.store.buckets[bucket] = true
-	return cloud.StateBackendCreateResult{Identifier: bucket, Created: created}, nil
-}
-
-func (p *fakeProvider) EnsureStateLockTable(_ context.Context, table string) (cloud.StateBackendCreateResult, error) {
-	p.store.mu.Lock()
-	defer p.store.mu.Unlock()
-	created := !p.store.tables[table]
-	p.store.tables[table] = true
-	return cloud.StateBackendCreateResult{Identifier: table, Created: created}, nil
-}
-
 // --- StateBackendDestroyer ---
 
 func (p *fakeProvider) DeleteStateBucket(_ context.Context, bucket string) (cloud.StateBackendDeleteResult, error) {
@@ -502,15 +484,14 @@ func (p *fakeProvider) FleetEvents(_ context.Context, _ string) ([]cloud.FleetEv
 // Compile-time assertions that the fake satisfies every interface the command
 // tree type-asserts.
 var (
-	_ cloud.Provider                 = (*fakeProvider)(nil)
-	_ cloud.EC2InstanceManager       = (*fakeProvider)(nil)
-	_ cloud.StateBackendChecker      = (*fakeProvider)(nil)
-	_ cloud.StateBackendBootstrapper = (*fakeProvider)(nil)
-	_ cloud.StateBackendDestroyer    = (*fakeProvider)(nil)
-	_ cloud.StateStore               = (*fakeProvider)(nil)
-	_ cloud.CodeBuildRunner          = (*fakeProvider)(nil)
-	_ cloud.GameLiftManager          = (*fakeProvider)(nil)
-	_ cloud.RemoteRunner             = (*fakeProvider)(nil)
-	_ cloud.RegionProvider           = (*fakeProvider)(nil)
-	_ cloud.ResourceClient           = (*fakeRC)(nil)
+	_ cloud.Provider              = (*fakeProvider)(nil)
+	_ cloud.EC2InstanceManager    = (*fakeProvider)(nil)
+	_ cloud.StateBackendChecker   = (*fakeProvider)(nil)
+	_ cloud.StateBackendDestroyer = (*fakeProvider)(nil)
+	_ cloud.StateStore            = (*fakeProvider)(nil)
+	_ cloud.CodeBuildRunner       = (*fakeProvider)(nil)
+	_ cloud.GameLiftManager       = (*fakeProvider)(nil)
+	_ cloud.RemoteRunner          = (*fakeProvider)(nil)
+	_ cloud.RegionProvider        = (*fakeProvider)(nil)
+	_ cloud.ResourceClient        = (*fakeRC)(nil)
 )

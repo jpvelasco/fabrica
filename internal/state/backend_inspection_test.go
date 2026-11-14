@@ -13,6 +13,14 @@ import (
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
+type plainProvider struct{ account string }
+
+func (plainProvider) Name() string { return "plain" }
+func (p plainProvider) Identity(context.Context) (string, string, string, error) {
+	return p.account, "arn", "us-west-2", nil
+}
+func (plainProvider) Resources() cloud.ResourceClient { return nil }
+
 type inspectionMetadataProvider struct {
 	plainProvider
 	bucket, table       cloud.StateBackendMetadata

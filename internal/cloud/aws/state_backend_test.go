@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"testing"
 	"time"
 
@@ -16,8 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
-	"github.com/jpvelasco/fabrica/internal/config"
-	fabricav "github.com/jpvelasco/fabrica/internal/version"
 )
 
 func TestStateBucketExistsUsesS3HeadBucket(t *testing.T) {
@@ -374,260 +371,6 @@ func newStateBackendTestProvider(s3Client *fakeS3StateBackendClient, ddbClient *
 	}
 }
 
-func newBootstrapTestProvider(s3Client *fakeS3StateBackendClient, ddbClient *fakeDynamoDBStateBackendClient, tableWaiter *fakeTableExistsWaiter, cfg *config.Config) *awsProvider {
-	return &awsProvider{
-		cfg: cfg,
-		awsCfg: awsConfig{
-			region:  "us-east-1",
-			profile: "unit-test",
-		},
-		loadConfig: func(ctx context.Context, region, profile string) (awssdk.Config, error) {
-			return awssdk.Config{Region: region}, nil
-		},
-		newS3StateClient: func(cfg awssdk.Config) stateBackendS3Client {
-			return s3Client
-		},
-		newDynamoDBStateClient: func(cfg awssdk.Config) stateBackendDynamoDBClient {
-			return ddbClient
-		},
-		newTableExistsWaiter: func(client dynamodb.DescribeTableAPIClient) stateBackendTableExistsWaiter {
-			return tableWaiter
-		},
-	}
-}
-
-func TestEnsureStateBucketCreatesWithConfig(t *testing.T) {
-	s3Client := &fakeS3StateBackendClient{headErr: apiErr("404")}
-	p := newBootstrapTestProvider(s3Client, nil, nil, nil)
-
-	res, err := p.EnsureStateBucket(context.Background(), "fabrica-state-123", "us-west-2")
-	if err != nil {
-		t.Fatalf("EnsureStateBucket: %v", err)
-	}
-	if !res.Created {
-		t.Error("Created = false, want true")
-	}
-	if !s3Client.createCalled || !s3Client.versioningCalled || !s3Client.encryptionCalled || !s3Client.pabCalled {
-		t.Errorf("expected all configure calls: %+v", s3Client)
-	}
-	if s3Client.locationConstraint != "us-west-2" {
-		t.Errorf("locationConstraint = %q, want us-west-2", s3Client.locationConstraint)
-	}
-	if s3Client.sseAlgorithm != "AES256" {
-		t.Errorf("sseAlgorithm = %q, want AES256", s3Client.sseAlgorithm)
-	}
-}
-
-func TestEnsureStateBucketUsEast1OmitsConstraint(t *testing.T) {
-	s3Client := &fakeS3StateBackendClient{headErr: apiErr("404")}
-	p := newBootstrapTestProvider(s3Client, nil, nil, nil)
-
-	if _, err := p.EnsureStateBucket(context.Background(), "b", "us-east-1"); err != nil {
-		t.Fatalf("EnsureStateBucket: %v", err)
-	}
-	if s3Client.locationConstraint != "" {
-		t.Errorf("locationConstraint = %q, want empty for us-east-1", s3Client.locationConstraint)
-	}
-}
-
-func TestEnsureStateBucketIdempotentReconciles(t *testing.T) {
-	s3Client := &fakeS3StateBackendClient{} // HeadBucket succeeds => exists
-	p := newBootstrapTestProvider(s3Client, nil, nil, nil)
-
-	res, err := p.EnsureStateBucket(context.Background(), "b", "us-west-2")
-	if err != nil {
-		t.Fatalf("EnsureStateBucket: %v", err)
-	}
-	if res.Created {
-		t.Error("Created = true, want false for existing bucket")
-	}
-	if s3Client.createCalled {
-		t.Error("CreateBucket should not be called for existing bucket")
-	}
-	if !s3Client.versioningCalled || !s3Client.encryptionCalled || !s3Client.pabCalled {
-		t.Error("config should be reconciled on existing bucket")
-	}
-}
-
-func TestEnsureStateBucketKMSEncryption(t *testing.T) {
-	cfg := config.Defaults()
-	cfg.State.KMSKeyID = "alias/fabrica"
-	s3Client := &fakeS3StateBackendClient{headErr: apiErr("404")}
-	p := newBootstrapTestProvider(s3Client, nil, nil, cfg)
-
-	if _, err := p.EnsureStateBucket(context.Background(), "b", "us-west-2"); err != nil {
-		t.Fatalf("EnsureStateBucket: %v", err)
-	}
-	if s3Client.sseAlgorithm != "aws:kms" {
-		t.Errorf("sseAlgorithm = %q, want aws:kms", s3Client.sseAlgorithm)
-	}
-	if s3Client.kmsKeyID != "alias/fabrica" {
-		t.Errorf("kmsKeyID = %q, want alias/fabrica", s3Client.kmsKeyID)
-	}
-}
-
-func TestEnsureStateBucketCreateErrorPropagates(t *testing.T) {
-	s3Client := &fakeS3StateBackendClient{headErr: apiErr("404"), createErr: fmt.Errorf("boom")}
-	p := newBootstrapTestProvider(s3Client, nil, nil, nil)
-
-	if _, err := p.EnsureStateBucket(context.Background(), "b", "us-west-2"); err == nil {
-		t.Fatal("expected error")
-	}
-	if s3Client.versioningCalled {
-		t.Error("versioning should not run after create failure")
-	}
-}
-
-func TestEnsureStateBucketPublicAccessBlockErrorPropagates(t *testing.T) {
-	s3Client := &fakeS3StateBackendClient{headErr: apiErr("404"), pabErr: fmt.Errorf("denied")}
-	p := newBootstrapTestProvider(s3Client, nil, nil, nil)
-
-	if _, err := p.EnsureStateBucket(context.Background(), "b", "us-west-2"); err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-func TestEnsureStateBucketAppliesTags(t *testing.T) {
-	cfg := config.Defaults()
-	cfg.Cloud.AWS.Tags = map[string]string{"Project": "studio", "ManagedBy": "ops"}
-	s3Client := &fakeS3StateBackendClient{headErr: apiErr("404")}
-	p := newBootstrapTestProvider(s3Client, nil, nil, cfg)
-
-	if _, err := p.EnsureStateBucket(context.Background(), "b", "us-west-2"); err != nil {
-		t.Fatalf("EnsureStateBucket: %v", err)
-	}
-	if !s3Client.taggingCalled {
-		t.Fatal("PutBucketTagging was not called")
-	}
-	if s3Client.taggedBucket != "b" {
-		t.Errorf("taggedBucket = %q, want b", s3Client.taggedBucket)
-	}
-	assertTagsContain(t, s3Client.bucketTags, map[string]string{
-		"ManagedBy":      "ops", // operator tag overrides the standard one
-		"Project":        "studio",
-		"FabricaModule":  "setup",
-		"FabricaVersion": fabricav.Version,
-	})
-}
-
-func TestEnsureStateBucketReconcilesTagsOnExistingBucket(t *testing.T) {
-	s3Client := &fakeS3StateBackendClient{} // HeadBucket succeeds => exists
-	p := newBootstrapTestProvider(s3Client, nil, nil, nil)
-
-	if _, err := p.EnsureStateBucket(context.Background(), "b", "us-west-2"); err != nil {
-		t.Fatalf("EnsureStateBucket: %v", err)
-	}
-	if s3Client.createCalled {
-		t.Error("CreateBucket should not be called for existing bucket")
-	}
-	if !s3Client.taggingCalled || len(s3Client.bucketTags) != 3 {
-		t.Errorf("tags should be reconciled on existing bucket: called=%v tags=%v", s3Client.taggingCalled, s3Client.bucketTags)
-	}
-}
-
-func TestEnsureStateBucketTaggingErrorPropagates(t *testing.T) {
-	s3Client := &fakeS3StateBackendClient{headErr: apiErr("404"), taggingErr: fmt.Errorf("denied")}
-	p := newBootstrapTestProvider(s3Client, nil, nil, nil)
-
-	_, err := p.EnsureStateBucket(context.Background(), "b", "us-west-2")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	assertStringContains(t, err.Error(), "tagging S3 bucket")
-}
-
-func TestEnsureStateLockTableCreatesAndWaits(t *testing.T) {
-	ddbClient := &fakeDynamoDBStateBackendClient{describeErr: apiErr("ResourceNotFoundException")}
-	waiter := &fakeTableExistsWaiter{}
-	p := newBootstrapTestProvider(nil, ddbClient, waiter, nil)
-
-	res, err := p.EnsureStateLockTable(context.Background(), "fabrica-state-lock")
-	if err != nil {
-		t.Fatalf("EnsureStateLockTable: %v", err)
-	}
-	if !res.Created || !ddbClient.createCalled || waiter.calls != 1 {
-		t.Errorf("expected create+wait: created=%v createCalled=%v waits=%d", res.Created, ddbClient.createCalled, waiter.calls)
-	}
-	if ddbClient.createKey != "LockID" {
-		t.Errorf("hash key = %q, want LockID", ddbClient.createKey)
-	}
-}
-
-func TestEnsureStateLockTableCreatedWithTags(t *testing.T) {
-	cfg := config.Defaults()
-	cfg.Cloud.AWS.Tags = map[string]string{"Project": "studio"}
-	ddbClient := &fakeDynamoDBStateBackendClient{describeErr: apiErr("ResourceNotFoundException")}
-	waiter := &fakeTableExistsWaiter{}
-	p := newBootstrapTestProvider(nil, ddbClient, waiter, cfg)
-
-	if _, err := p.EnsureStateLockTable(context.Background(), "fabrica-state-lock"); err != nil {
-		t.Fatalf("EnsureStateLockTable: %v", err)
-	}
-	if len(ddbClient.createTags) != 4 {
-		t.Fatalf("CreateTable tags = %d entries, want 4: %v", len(ddbClient.createTags), ddbTagMap(t, ddbClient.createTags))
-	}
-	assertTagsContain(t, ddbTagMap(t, ddbClient.createTags), map[string]string{
-		"ManagedBy":      "fabrica",
-		"Project":        "studio",
-		"FabricaModule":  "setup",
-		"FabricaVersion": fabricav.Version,
-	})
-}
-
-func TestEnsureStateLockTableIdempotent(t *testing.T) {
-	ddbClient := &fakeDynamoDBStateBackendClient{} // DescribeTable succeeds => exists
-	waiter := &fakeTableExistsWaiter{}
-	p := newBootstrapTestProvider(nil, ddbClient, waiter, nil)
-
-	res, err := p.EnsureStateLockTable(context.Background(), "t")
-	if err != nil {
-		t.Fatalf("EnsureStateLockTable: %v", err)
-	}
-	if res.Created || ddbClient.createCalled || waiter.calls != 0 {
-		t.Errorf("should be no-op for existing table: %+v", ddbClient)
-	}
-}
-
-func TestEnsureStateLockTableCreateErrorPropagates(t *testing.T) {
-	ddbClient := &fakeDynamoDBStateBackendClient{describeErr: apiErr("ResourceNotFoundException"), createErr: fmt.Errorf("denied")}
-	waiter := &fakeTableExistsWaiter{}
-	p := newBootstrapTestProvider(nil, ddbClient, waiter, nil)
-
-	if _, err := p.EnsureStateLockTable(context.Background(), "t"); err == nil {
-		t.Fatal("expected error")
-	}
-	if waiter.calls != 0 {
-		t.Error("waiter should not run after create failure")
-	}
-}
-
-func TestBucketExistsNotFoundErrorCode(t *testing.T) {
-	s3Client := &fakeS3StateBackendClient{headErr: apiErr("NotFound")}
-	p := newStateBackendTestProvider(s3Client, nil, nil, nil)
-
-	got, err := p.bucketExists(context.Background(), s3Client, "state-bucket")
-	if err != nil {
-		t.Fatalf("bucketExists: %v", err)
-	}
-	if got {
-		t.Fatal("exists = true, want false for NotFound error code")
-	}
-}
-
-func TestEnsureStateLockTableNonAPIError(t *testing.T) {
-	ddbClient := &fakeDynamoDBStateBackendClient{describeErr: fmt.Errorf("network error")}
-	waiter := &fakeTableExistsWaiter{}
-	p := newBootstrapTestProvider(nil, ddbClient, waiter, nil)
-
-	_, err := p.EnsureStateLockTable(context.Background(), "t")
-	if err == nil {
-		t.Fatal("expected error for non-API error")
-	}
-	if got := err.Error(); !strings.Contains(got, "checking DynamoDB table") {
-		t.Fatalf("error = %q, want substring %q", got, "checking DynamoDB table")
-	}
-}
-
 func TestS3StateClientDefaultConstructor(t *testing.T) {
 	p := &awsProvider{
 		awsCfg: awsConfig{region: "us-east-1"},
@@ -833,18 +576,6 @@ func (f *fakeDynamoDBStateBackendClient) CreateTable(ctx context.Context, in *dy
 	return &dynamodb.CreateTableOutput{}, f.createErr
 }
 
-type fakeTableExistsWaiter struct {
-	calls int
-	table string
-	err   error
-}
-
-func (f *fakeTableExistsWaiter) Wait(ctx context.Context, in *dynamodb.DescribeTableInput, maxWait time.Duration, optFns ...func(*dynamodb.TableExistsWaiterOptions)) error {
-	f.calls++
-	f.table = awssdk.ToString(in.TableName)
-	return f.err
-}
-
 type fakeBucketNotExistsWaiter struct {
 	calls   int
 	bucket  string
@@ -895,24 +626,6 @@ func assertStringContains(t *testing.T, s, substr string) {
 		}
 	}
 	t.Fatalf("%q does not contain %q", s, substr)
-}
-
-func assertTagsContain(t *testing.T, got, want map[string]string) {
-	t.Helper()
-	for k, v := range want {
-		if got[k] != v {
-			t.Errorf("tag %q = %q, want %q (all tags: %v)", k, got[k], v, got)
-		}
-	}
-}
-
-func ddbTagMap(t *testing.T, tags []dynamodbtypes.Tag) map[string]string {
-	t.Helper()
-	out := make(map[string]string, len(tags))
-	for _, tag := range tags {
-		out[awssdk.ToString(tag.Key)] = awssdk.ToString(tag.Value)
-	}
-	return out
 }
 
 // TestStateBackendDeleteTimeoutCoversWaiterBounds pins the invariant that the

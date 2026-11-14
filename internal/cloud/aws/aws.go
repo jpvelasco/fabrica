@@ -73,7 +73,6 @@ type resourceClients struct {
 
 var _ fabricac.Provider = (*awsProvider)(nil)
 var _ fabricac.EC2InstanceManager = (*awsProvider)(nil)
-var _ fabricac.StateBackendBootstrapper = (*awsProvider)(nil)
 var _ fabricac.AMIResolver = (*awsProvider)(nil)
 var _ fabricac.ImageInspector = (*awsProvider)(nil)
 var _ fabricac.VPCResolver = (*awsProvider)(nil)
