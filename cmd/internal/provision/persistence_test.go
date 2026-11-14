@@ -16,8 +16,9 @@ import (
 
 type contextStateProvider struct {
 	testutil.TestProvider
-	seen context.Context
-	puts int
+	seen           context.Context
+	puts           int
+	cancelAfterPut context.CancelFunc
 }
 
 func (p *contextStateProvider) PutStateDocument(ctx context.Context, bucket, key string, data []byte) error {
@@ -25,7 +26,39 @@ func (p *contextStateProvider) PutStateDocument(ctx context.Context, bucket, key
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return p.TestProvider.PutStateDocument(ctx, bucket, key, data)
+	err := p.TestProvider.PutStateDocument(ctx, bucket, key, data)
+	if p.cancelAfterPut != nil {
+		p.cancelAfterPut()
+	}
+	return err
+}
+
+func TestStatePersistenceCancellationAfterRemoteLeavesCacheUntouched(t *testing.T) {
+	t.Chdir(t.TempDir())
+	provider := &contextStateProvider{}
+	rt := stateTestRuntime(t, &provider.TestProvider)
+	rt.Provider = provider
+	st := fabricastate.NewState(stateTestAccount, "us-east-1")
+	if err := fabricastate.WriteStateTo(st, StatePath(rt)); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(StatePath(rt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	provider.cancelAfterPut = cancel
+	st.UpsertModule("lore", "test", "ready", nil)
+	outcome, err := NewStatePersistence(ctx, rt).Persist(st, StateWriteAllowLocal)
+	after, readErr := os.ReadFile(StatePath(rt))
+	if !errors.Is(err, context.Canceled) || !outcome.RemotePersisted || provider.puts != 1 || readErr != nil || string(after) != string(before) {
+		t.Fatalf("post-remote cancellation lost outcome or refreshed cache: %+v %v %v", outcome, err, readErr)
+	}
+	remote, err := fabricastate.ParseState([]byte(provider.StateDocuments[stateTestKey()]), stateTestAccount, "us-east-1")
+	if err != nil || remote.GetModule("lore") == nil {
+		t.Fatalf("actual successful remote write was lost: %v", err)
+	}
 }
 
 func TestStatePersistenceRequirementsAndOutcomes(t *testing.T) {
@@ -198,7 +231,7 @@ func TestStatePersistenceUsesCancelledCapturedContext(t *testing.T) {
 			} else {
 				outcome, err = writer.Persist(st, StateWriteRequireRemote)
 			}
-			if !errors.Is(err, context.Canceled) || outcome.RemotePersisted || p.seen != ctx || p.puts != 1 || len(p.StateDocuments) != 0 {
+			if !errors.Is(err, context.Canceled) || outcome.RemotePersisted || p.seen != nil || p.puts != 0 || st.ManagedBy != "" || len(p.StateDocuments) != 0 {
 				t.Fatalf("writer lost captured cancellation: outcome=%+v puts=%d err=%v", outcome, p.puts, err)
 			}
 			if _, err := os.Stat(StatePath(rt)); !errors.Is(err, os.ErrNotExist) {
