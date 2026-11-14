@@ -17,10 +17,32 @@ type lockCtxKey int
 
 const lockHeldKey lockCtxKey = 1
 
+// stateLockLease retains the actually acquired cancellation context even when
+// a caller derives a context that suppresses cancellation.
+type stateLockLease struct {
+	ctx     context.Context
+	account string
+	region  string
+	table   string
+}
+
+func (l stateLockLease) matchesTarget(account, region, table string) bool {
+	return (account == "" || account == l.account) && (region == "" || region == l.region) && table == l.table
+}
+
+func liveStateLock(ctx context.Context) (stateLockLease, bool) {
+	lease, ok := ctx.Value(lockHeldKey).(stateLockLease)
+	if !ok || ctx.Err() != nil || lease.ctx.Err() != nil {
+		return stateLockLease{}, false
+	}
+	return lease, true
+}
+
 // StateLockHeld reports whether ctx carries a live state-lock acquisition.
 // Cancellation and release make the acquired context cease to qualify.
 func StateLockHeld(ctx context.Context) bool {
-	return ctx.Err() == nil && ctx.Value(lockHeldKey) != nil
+	_, live := liveStateLock(ctx)
+	return live
 }
 
 // ErrStateLocked reports that another fabrica run currently holds the state
@@ -50,7 +72,22 @@ func AcquireStateLockUnlessDryRun(ctx context.Context, rt globals.Runtime, opera
 
 func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string) (context.Context, func(), error) {
 	noop := func() {}
+	if err := ctx.Err(); err != nil {
+		return ctx, noop, err
+	}
 	if ctx.Value(lockHeldKey) != nil {
+		lease, live := liveStateLock(ctx)
+		if !live {
+			return ctx, noop, fmt.Errorf("state lock is no longer live; acquire from the original live caller context before retrying")
+		}
+		if rt.Config != nil {
+			account := rt.Config.Cloud.AWS.AccountID
+			region := rt.Config.Cloud.AWS.Region
+			table := fabricastate.ResolveBackendNames(rt.Config, account).Table
+			if !lease.matchesTarget(account, region, table) {
+				return ctx, noop, fmt.Errorf("state lock belongs to a different account, home region or table; acquire the configured target lock before nesting")
+			}
+		}
 		return ctx, noop, nil
 	}
 	mgr, ok := rt.Provider.(cloud.StateLockManager)
@@ -58,7 +95,7 @@ func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string)
 		return ctx, noop, nil
 	}
 
-	account, _, err := ResolveIdentity(ctx, rt.Provider)
+	account, region, err := ResolveIdentity(ctx, rt.Provider)
 	if err != nil {
 		return ctx, noop, fmt.Errorf("resolving account for state lock (%s): %w", operation, err)
 	}
@@ -125,7 +162,7 @@ func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string)
 		// state.Release swallows takeover races and logs storage failures.
 		_ = store.Release(context.WithoutCancel(ctx), lockID, token)
 	}
-	return context.WithValue(mutateCtx, lockHeldKey, holder), release, nil
+	return context.WithValue(mutateCtx, lockHeldKey, stateLockLease{ctx: mutateCtx, account: account, region: region, table: table}), release, nil
 }
 
 // shortHostname trims the domain part off a machine hostname for compact

@@ -88,7 +88,8 @@ func StatePath(rt globals.Runtime) string {
 
 // StateWriter returns a write seam bound to the runtime's state backend.
 // Ownership is validated before storage changes; fresh compatible state is
-// bound to the configured owner. Every successful mutation is persisted remotely
+// bound to the configured owner. Custom ownership requires remote storage and a
+// live acquired lease through the same persistence engine. Mutations are persisted remotely
 // first (when the backend is available), then the local cache is refreshed.
 // A remote write failure fails the mutation and leaves the cache untouched so
 // a retry re-reads the last persisted state. A local cache failure after a
