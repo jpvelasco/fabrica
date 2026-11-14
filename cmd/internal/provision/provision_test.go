@@ -11,7 +11,57 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/tags"
 )
+
+func TestReadLocalStateValidatesWithoutWriting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "absent", "state.json")
+	st, err := ReadLocalState(path, "account-one", "us-west-2", tags.Identity{})
+	if err != nil || st == nil || st.Account != "account-one" || st.Region != "us-west-2" || st.ManagedBy != "" {
+		t.Fatalf("fresh local state was not unbound: %+v %v", st, err)
+	}
+	if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
+		t.Fatalf("read created the absent cache directory: %v", err)
+	}
+	const legacy = `{"account":"account-one","region":"us-west-2","modules":[{"name":"horde","resources":[{"identifier":"recorded"}]}],"history":[{"module":"horde","action":"create","count":1}],"created":"2026-11-01T00:00:00Z","updated":"2026-11-02T00:00:00Z"}`
+	for _, tc := range []struct{ name, doc, wantError string }{
+		{"legacy", legacy, ""},
+		{"explicit-default", `{"managedBy":"fabrica",` + legacy[1:], ""},
+		{"foreign-owner", `{"managedBy":"tools-owner",` + legacy[1:], "ownership mismatch"},
+		{"foreign-account", strings.Replace(legacy, "account-one", "account-two", 1), "state target mismatch"},
+		{"foreign-region", strings.Replace(legacy, "us-west-2", "us-east-1", 1), "state target mismatch"},
+		{"malformed", "{", "reading state file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "state.json")
+			if err := os.WriteFile(path, []byte(tc.doc), 0600); err != nil {
+				t.Fatal(err)
+			}
+			st, err := ReadLocalState(path, "account-one", "us-west-2", tags.Identity{})
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) || st != nil {
+					t.Fatalf("unsafe local state returned: %+v %v", st, err)
+				}
+			} else if err != nil || st == nil || st.ManagedBy != "fabrica" || len(st.Modules) != 1 ||
+				len(st.Modules[0].Resources) != 1 || st.Modules[0].Resources[0].Identifier != "recorded" || len(st.History) != 1 ||
+				st.History[0].Action != "create" || st.History[0].Count != 1 ||
+				st.Created.Format("2006-01-02") != "2026-11-01" || st.Updated.Format("2006-01-02") != "2026-11-02" {
+				t.Fatalf("compatible local inventory changed: %+v %v", st, err)
+			}
+			got, readErr := os.ReadFile(path)
+			if readErr != nil || string(got) != tc.doc {
+				t.Fatalf("read changed original cache bytes: %s %v", got, readErr)
+			}
+		})
+	}
+	directory := t.TempDir()
+	if st, err := ReadLocalState(directory, "", "", tags.Identity{}); err == nil || st != nil {
+		t.Fatalf("directory read failure ignored: %+v %v", st, err)
+	}
+	if entries, err := os.ReadDir(directory); err != nil || len(entries) != 0 {
+		t.Fatalf("failed read changed directory: %v %v", entries, err)
+	}
+}
 
 func TestConfirmPhrase(t *testing.T) {
 	if got := ConfirmPhrase("perforce", "123456789012"); got != "create perforce 123456789012" {

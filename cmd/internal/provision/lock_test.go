@@ -64,7 +64,7 @@ func TestAcquireStateLockNoCapabilityIsNoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected silent no-op: %v", err)
 	}
-	if ctx.Value(lockHeldKey) != nil {
+	if StateLockHeld(ctx) {
 		t.Error("sentinel must not be set for capability-less providers")
 	}
 	release()
@@ -77,13 +77,16 @@ func TestAcquireStateLockAcquiresAndReleases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	if ctx.Value(lockHeldKey) == nil {
+	if !StateLockHeld(ctx) {
 		t.Error("lock sentinel missing from returned context")
 	}
 	if locker.acquires.Load() != 1 {
 		t.Errorf("acquires = %d, want 1", locker.acquires.Load())
 	}
 	release()
+	if StateLockHeld(ctx) {
+		t.Error("released acquisition must not report a live lock")
+	}
 	if locker.releases.Load() != 1 {
 		t.Errorf("releases = %d, want 1", locker.releases.Load())
 	}
@@ -98,8 +101,8 @@ func TestAcquireStateLockNestedSkips(t *testing.T) {
 	}
 	defer release()
 
-	_, nestedRelease, err := AcquireStateLock(ctx, rt, "inner")
-	if err != nil {
+	nested, nestedRelease, err := AcquireStateLock(ctx, rt, "inner")
+	if err != nil || nested != ctx || !StateLockHeld(nested) {
 		t.Fatalf("nested acquire must inherit the outer lock: %v", err)
 	}
 	nestedRelease()
@@ -125,6 +128,23 @@ func TestAcquireStateLockHeldWrapsActionableError(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error missing %q: %v", want, err)
 		}
+	}
+}
+
+func TestStateLockHeldRejectsCancelledAcquisition(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx, release, err := AcquireStateLock(parent, testRuntimeWithLocker(&fakeLockManager{}), "op")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if !StateLockHeld(ctx) {
+		t.Fatal("real acquisition did not report a live lock")
+	}
+	cancel()
+	if StateLockHeld(ctx) {
+		t.Fatal("cancelled acquired context reported a live lock")
 	}
 }
 
@@ -207,7 +227,7 @@ func TestAcquireStateLockUnlessDryRunSkipsAcquire(t *testing.T) {
 	if locker.acquires.Load() != 0 {
 		t.Errorf("dry-run acquires = %d, want 0", locker.acquires.Load())
 	}
-	if ctx.Value(lockHeldKey) != nil {
+	if StateLockHeld(ctx) {
 		t.Error("dry-run must not set the lock sentinel")
 	}
 }
@@ -233,7 +253,7 @@ func TestAcquireStateLockMissingTableProceedsUnlocked(t *testing.T) {
 		t.Fatalf("missing lock table must proceed unlocked, got: %v", err)
 	}
 	release()
-	if ctx.Value(lockHeldKey) != nil {
+	if StateLockHeld(ctx) {
 		t.Error("sentinel must not be set when running unlocked")
 	}
 }
@@ -266,6 +286,9 @@ func TestAcquireStateLockTakeoverCancelsCommandContext(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("command context was not cancelled after confirmed takeover")
 	}
+	if StateLockHeld(ctx) {
+		t.Fatal("heartbeat-lost acquisition reported a live lock")
+	}
 }
 
 // TestAcquireStateLockTransientRenewLossCancelsAtLeaseLapse verifies that a
@@ -292,6 +315,9 @@ func TestAcquireStateLockTransientRenewLossCancelsAtLeaseLapse(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("command context was not cancelled after the lease lapsed")
+	}
+	if StateLockHeld(ctx) {
+		t.Fatal("lapsed lease reported a live lock")
 	}
 }
 
