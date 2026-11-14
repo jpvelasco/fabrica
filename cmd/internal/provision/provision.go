@@ -34,7 +34,7 @@ func ReadState(ctx context.Context, rt globals.Runtime) (*fabricastate.State, er
 	path := StatePath(rt)
 	store, bucket := stateStore(rt)
 	if store == nil {
-		return readLocalState(path, account, region, identity)
+		return ReadLocalState(path, account, region, identity)
 	}
 
 	doc, err := store.GetStateDocument(ctx, bucket, fabricastate.StateDocumentKey)
@@ -42,7 +42,7 @@ func ReadState(ctx context.Context, rt globals.Runtime) (*fabricastate.State, er
 		if !errors.Is(err, fabricac.ErrStateDocumentMissing) {
 			return nil, fmt.Errorf("reading remote state: %w", err)
 		}
-		st, err := readLocalState(path, account, region, identity)
+		st, err := ReadLocalState(path, account, region, identity)
 		if err != nil {
 			return nil, err
 		}
@@ -67,7 +67,9 @@ func ReadState(ctx context.Context, rt globals.Runtime) (*fabricastate.State, er
 	return st, nil
 }
 
-func readLocalState(path, account, region string, identity tags.Identity) (*fabricastate.State, error) {
+// ReadLocalState validates the local cache without binding or writing it.
+// Missing files return fresh unbound state; local state is not canonical proof.
+func ReadLocalState(path, account, region string, identity tags.Identity) (*fabricastate.State, error) {
 	st, err := fabricastate.ReadStateFile(path, account, region)
 	if err != nil {
 		return nil, err

@@ -17,6 +17,12 @@ type lockCtxKey int
 
 const lockHeldKey lockCtxKey = 1
 
+// StateLockHeld reports whether ctx carries a live state-lock acquisition.
+// Cancellation and release make the acquired context cease to qualify.
+func StateLockHeld(ctx context.Context) bool {
+	return ctx.Err() == nil && ctx.Value(lockHeldKey) != nil
+}
+
 // ErrStateLocked reports that another fabrica run currently holds the state
 // lock. Callers surface it verbatim; the message says what to do.
 var ErrStateLocked = errors.New("another fabrica run holds the state lock")
