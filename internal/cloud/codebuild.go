@@ -4,7 +4,7 @@ import "context"
 
 // CodeBuildRunner manages CodeBuild projects and builds through the CodeBuild
 // SDK — the same auxiliary-interface pattern as EC2InstanceManager and
-// StateBackendBootstrapper. CodeBuild project create/delete is here (not on the
+// StateBackendCreator. CodeBuild project create/delete is here (not on the
 // Cloud Control ResourceClient) because AWS::CodeBuild::Project does not support
 // the Cloud Control CREATE action.
 type CodeBuildRunner interface {
