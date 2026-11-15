@@ -1,6 +1,7 @@
 # Codecov configuration. See https://docs.codecov.com/docs/codecov-yaml
 #
-# Upload: Linux Test job in .github/workflows/ci.yml (OIDC + optional CODECOV_TOKEN).
+# Upload: every Test matrix leg (ubuntu/windows/macos) in .github/workflows/ci.yml,
+# via OIDC (no stored token); Codecov merges the legs.
 # CI must send override_commit/override_branch on every run (including push to
 # main) so Codecov stores base reports — otherwise PRs hit "Missing base commit"
 # / "Coverage data is unknown" (docs.codecov.com/docs/error-reference).

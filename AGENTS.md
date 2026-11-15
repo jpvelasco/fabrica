@@ -156,7 +156,7 @@ Reference: `cmd/perforce/` + `internal/perforce/` are the canonical Cloud-Contro
 
 **Tests:**
 - No real AWS calls — mock SDK interfaces
-- Coverage: new/changed code must meet the Codecov `patch` gate (≥90%, enforced in CI via `codecov.yml`); no new function ships at 0%
+- Coverage: new/changed code must meet the Codecov `patch` gate (≥90%, set in `codecov.yml` and reported as the `codecov/patch` PR status); no new function ships at 0%
 - Use `GenerateRaw` variants for testing base64-encoded outputs (e.g., cloud-init)
 - `cobra_test.go` must build a minimal root command to replicate the persistent-flag hierarchy (`--dry-run`, `--yes`, `--json` live on root)
 - E2E: `test/e2e/` drives the real command tree against an in-memory fake provider (registered as `"fake"`); it runs in the default `go test ./...` — no build tag, serial only
@@ -188,7 +188,7 @@ make vuln                              # govulncheck @v1.1.4 — same pin as the
 
 ### CI
 
-`.github/workflows/ci.yml` runs on every push/PR to `main`: Lint (linux) + Lint (windows), `gosec`, a govulncheck vulnerability scan (pinned `@v1.1.4` — `make vuln` matches), a Trivy filesystem scan (pinned `trivy-action` v0.36.0), Build + Test on an ubuntu/windows/macos matrix (`-race` only on linux/macos; coverage merged from the OS matrix, Codecov upload via OIDC from the linux leg), and a `goreleaser build --snapshot` + npm-shim validation job (build-only, never publishes). A separate `release-docs` job fails if the latest GitHub Release tag is missing from `README.md` or `ROADMAP.md`. Coverage is also pushed to Codacy (`.github/workflows/codacy-coverage.yml`).
+`.github/workflows/ci.yml` runs on every push/PR to `main`: Lint (linux) + Lint (windows), `gosec`, a govulncheck vulnerability scan (pinned `@v1.1.4` — `make vuln` matches), a Trivy filesystem scan (pinned `trivy-action` v0.36.0), Build + Test on an ubuntu/windows/macos matrix (`-race` only on linux/macos; every leg uploads coverage to Codecov via OIDC and Codecov merges them; JUnit test results upload from the linux leg), and a `goreleaser build --snapshot` + npm-shim validation job (build-only, never publishes). A separate `release-docs` job fails if the latest GitHub Release tag is missing from `README.md` or `ROADMAP.md`. Coverage is also pushed to Codacy (`.github/workflows/codacy-coverage.yml`).
 
 **Octopus Review threat model** — the Octopus action (`.github/workflows/octopus.yml`) triggers on `pull_request`, **not** `pull_request_target`. It runs in the standard PR-token context, never checks out the untrusted PR head, and the action is pinned by SHA with `contents: read` + `pull-requests: write`. Switching off `pull_request_target` removes the base-repo token context (the fork-PR attack surface) while keeping same-repo PRs reviewed. Fork PRs no longer receive this auto-review — an accepted trade-off, since Octopus needs read access to the fork to review it and the base-repo token is the only context that grants that.
 
