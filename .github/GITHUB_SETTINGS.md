@@ -183,10 +183,12 @@ gh api repos/OWNER/REPO/rulesets/RULESET_ID \
 
 Sister repos should match this pattern (see `.github/workflows/ci.yml` Test job):
 
-1. **Auth (XOR):** default **OIDC** (`permissions.id-token: write` + `use_oidc: ${{ secrets.CODECOV_TOKEN == '' }}`). If repo secret `CODECOV_TOKEN` is set, **disable OIDC** and use the upload token only — `codecov-action` documents that `use_oidc: true` **ignores** any token. Do not enable both at once.
+1. **Auth:** **OIDC** only (`permissions.id-token: write` + `use_oidc: true`); no `CODECOV_TOKEN` secret. Skip the upload steps on fork PRs (OIDC tokens are not issued to forked-repo runs). If a token is ever needed instead, drop `use_oidc` — `codecov-action` documents that `use_oidc: true` **ignores** any token. Do not enable both at once.
 2. **Action:** `codecov/codecov-action@v7` (pin full SHA) twice:
-   - coverage: `files: ./coverage.out`, `fail_ci_if_error: true`, `use_pypi: true`, `slug: OWNER/REPO`
-   - test analytics: `report_type: test_results`, `files: ./junit.xml`, `fail_ci_if_error: false`
+   - coverage (every matrix leg): `files: ./coverage.out`, `use_pypi: true`, `fail_ci_if_error: false`
+   - test analytics (Linux leg): `report_type: test_results`, `files: ./junit.xml`, `use_pypi: true`, `fail_ci_if_error: false`, `if: !cancelled()`
+
+   `fail_ci_if_error: false` keeps Codecov a soft gate, but it also means a rejected upload still shows a green step. Check the step log for `error -` lines (e.g. "This repository is deactivated") rather than trusting the step conclusion.
 3. **Identity (required):** always set
    - `override_commit: ${{ github.event.pull_request.head.sha || github.sha }}`
    - `override_branch: ${{ github.head_ref || github.ref_name }}`
@@ -194,7 +196,7 @@ Sister repos should match this pattern (see `.github/workflows/ci.yml` Test job)
    Without these, **push-to-main** uploads often omit SHA/branch (empty `CC_SHA` / `CC_BRANCH` in logs) and Codecov never stores a usable **base** report → PRs show “Missing base commit” / “Coverage data is unknown”.
 4. **Checkout:** `fetch-depth: 0` on the Test job so git history/path mapping is complete.
 5. **Do not** use deprecated `codecov/test-results-action`.
-6. **Coverage generation:** Linux leg with `gotestsum` + `-coverprofile` (product still **builds/tests** on Windows/macOS). Multi-OS *coverage uploads* only when you have platform-tagged packages that Linux cannot exercise (juggernaut).
+6. **Coverage generation:** every OS leg runs `go test -coverprofile=coverage.out -covermode=atomic` (`-race` on Linux/macOS) and uploads; Codecov merges the legs so platform-specific code paths count. Strip CR from `coverage.out` on Windows or Codecov rejects the report. `gotestsum` produces `junit.xml` on the Linux leg only. Repos without platform-specific code can upload from the Linux leg alone.
 7. **PR UI:** `codecov/patch` + `codecov[bot]` come from the Codecov GitHub App after both **base (main)** and **head** have processable reports ([Missing base](https://docs.codecov.com/docs/error-reference#section-missing-base-report) / [Missing head](https://docs.codecov.com/docs/error-reference#section-missing-head-commit)).
 8. **Dashboard:** App installed; after each `main` merge, open `https://app.codecov.io/gh/OWNER/REPO/commit/<main-sha>` and confirm a coverage **%** (not “unknown”).
 
