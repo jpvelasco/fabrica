@@ -186,7 +186,7 @@ Sister repos should match this pattern (see `.github/workflows/ci.yml` Test job)
 1. **Auth:** **OIDC** only (`permissions.id-token: write` + `use_oidc: true`); no `CODECOV_TOKEN` secret. Skip the upload steps on fork PRs (OIDC tokens are not issued to forked-repo runs). If a token is ever needed instead, drop `use_oidc` — `codecov-action` documents that `use_oidc: true` **ignores** any token. Do not enable both at once.
 2. **Action:** `codecov/codecov-action@v7` (pin full SHA) twice:
    - coverage (every matrix leg): `files: ./coverage.out`, `use_pypi: true`, `fail_ci_if_error: false`
-   - test analytics (Linux leg): `report_type: test_results`, `files: ./junit.xml`, `use_pypi: true`, `fail_ci_if_error: false`, `if: !cancelled()`
+   - test analytics (Linux leg): `report_type: test_results`, `files: ./junit.xml`, `use_pypi: true`, `fail_ci_if_error: false`, `if: ${{ !cancelled() }}`
 
    `fail_ci_if_error: false` keeps Codecov a soft gate, but it also means a rejected upload still shows a green step. Check the step log for `error -` lines (e.g. "This repository is deactivated") rather than trusting the step conclusion.
 3. **Identity (required):** always set
