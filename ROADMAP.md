@@ -30,7 +30,7 @@ These govern every structural decision and carry across all phases.
 
 ## Current Status
 
-**Current stable: v0.6.1** (2026-11-07). Follows v0.6.0 (2026-11-05) and adds authenticated Horde coordination: the baked stack runs MongoDB with `--auth` and Horde account auth, and `horde submit` / `ci` authenticate with a scoped service-account token. Phase 0, Phase 1, Lore (v0.3: AMI-first, S3 store backend provisioned, AMI build command, TLS on create, SSM on local store), DDC
+**Current stable: v0.7.0** (2026-11-15). Follows v0.6.1 (2026-11-07) and adds TLS-secured Horde operations, configurable deployment ownership (`cloud.aws.identity.managedBy`), safer state backend setup and persistence, and a `--version` flag. Phase 0, Phase 1, Lore (v0.3: AMI-first, S3 store backend provisioned, AMI build command, TLS on create, SSM on local store), DDC
 (V1 + multi-region edge nodes with live edge probes), and Horde Agents V1 (including queue-based autoscaling) are all complete. Export V2 covers all 8
 modules (state backend, Horde, Perforce, Lore, DDC, Workstation, CI, Deploy).
 Ops logging (`--verbose` / `FABRICA_LOG_LEVEL`) is available. Dedicated AMI build guides are available in `docs/horde-agent-ami.md` and `docs/lore-ami.md`.
