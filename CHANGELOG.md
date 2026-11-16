@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **npm install on Windows under PowerShell 7.** The `fabrica-cli` shim no longer fails with `Binary fabrica.exe not found in archive` when run from `pwsh`; it unzips with .NET directly instead of `Expand-Archive`, and extraction errors now fail loudly (#690).
+
 ## [0.6.1] - 2026-11-07
 
 ### Security

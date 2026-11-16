@@ -11,9 +11,12 @@ const {
   needsDownload,
   binaryName,
   MARKER,
+  extract,
   resolveWithin,
   validateDownloadUrl,
-  validateRedirectUrl
+  validateRedirectUrl,
+  windowsZipExtractArgs,
+  withoutPSModulePath,
 } = require("./install.js");
 
 test("getArchiveName: platform/arch matrix", () => {
@@ -217,4 +220,97 @@ test("validateRedirectUrl: rejects HTTP redirect", () => {
     () => validateRedirectUrl("http://github.com/redirect"),
     /must use HTTPS/
   );
+});
+
+// --- Windows zip extraction (issue #690) ---
+
+test("windowsZipExtractArgs: uses ZipFile directly and fails on error", () => {
+  const args = windowsZipExtractArgs("C:\\a'b\\x.zip", "C:\\out");
+  const command = args[args.length - 1];
+  assert.match(command, /^\$ErrorActionPreference = 'Stop'; /);
+  assert.match(command, /\[System\.IO\.Compression\.ZipFile\]::ExtractToDirectory\('C:\\a''b\\x\.zip', 'C:\\out'\)/);
+  assert.doesNotMatch(command, /Expand-Archive/);
+});
+
+test("withoutPSModulePath: drops PSModulePath in any case, keeps the rest", () => {
+  const env = withoutPSModulePath({ PSModulePath: "a", psmodulepath: "b", PATH: "p" });
+  assert.deepStrictEqual(env, { PATH: "p" });
+});
+
+// crc32 for the minimal stored-zip builder below.
+function crc32(buf) {
+  let crc = 0xffffffff;
+  for (const byte of buf) {
+    crc ^= byte;
+    for (let k = 0; k < 8; k++) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+// storedZip builds a single-entry, uncompressed zip archive.
+function storedZip(name, data) {
+  const nameBuf = Buffer.from(name);
+  const crc = crc32(data);
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt32LE(crc, 14);
+  local.writeUInt32LE(data.length, 18);
+  local.writeUInt32LE(data.length, 22);
+  local.writeUInt16LE(nameBuf.length, 26);
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt32LE(crc, 16);
+  central.writeUInt32LE(data.length, 20);
+  central.writeUInt32LE(data.length, 24);
+  central.writeUInt16LE(nameBuf.length, 28);
+  const localSize = local.length + nameBuf.length + data.length;
+  const centralSize = central.length + nameBuf.length;
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(localSize, 16);
+  return Buffer.concat([local, nameBuf, data, central, nameBuf, end]);
+}
+
+const onWindows = { skip: process.platform !== "win32" && "Windows-only zip path" };
+
+test("extract: unzips the binary even with a pwsh 7 PSModulePath", onWindows, () => {
+  // Same volume as the package dir, like the real bin/, so the rename works.
+  const binDir = fs.mkdtempSync(path.join(__dirname, ".test-bin-"));
+  const saved = process.env.PSModulePath;
+  // A pwsh 7 parent puts its own module directory first; Windows PowerShell
+  // must not pick up pwsh 7's Archive module from it.
+  const pwshModules = path.join(process.env.ProgramFiles || "C:\\Program Files", "PowerShell", "7", "Modules");
+  process.env.PSModulePath = [pwshModules, saved].filter(Boolean).join(path.delimiter);
+  try {
+    const payload = Buffer.from("fake fabrica binary");
+    extract(storedZip("fabrica.exe", payload), "fabrica_1.2.3_windows_amd64.zip", binDir);
+    assert.deepStrictEqual(fs.readFileSync(path.join(binDir, "fabrica.exe")), payload);
+  } finally {
+    if (saved === undefined) {
+      delete process.env.PSModulePath;
+    } else {
+      process.env.PSModulePath = saved;
+    }
+    fs.rmSync(binDir, { recursive: true, force: true });
+  }
+});
+
+test("extract: a corrupt zip surfaces the extraction error", onWindows, () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "fabrica-test-"));
+  try {
+    assert.throws(
+      () => extract(Buffer.from("not a zip"), "fabrica_1.2.3_windows_amd64.zip", binDir),
+      /zip extraction exited with code [1-9]/
+    );
+  } finally {
+    fs.rmSync(binDir, { recursive: true, force: true });
+  }
 });

@@ -26,10 +26,10 @@ status, tear down — with typed-phrase confirmations and recoverable partial st
 
 ## Current Status
 
-**Current stable: v0.6.1** (2026-11-07). Follows v0.6.0 (2026-11-05) and
-adds authenticated Horde coordination: the baked stack runs MongoDB with
-`--auth` and Horde account auth, and `horde submit` / `ci` authenticate with
-a scoped service-account token. Phase 0, Phase 1, Lore (v0.3: S3 store, `ami build`, TLS on
+**Current stable: v0.7.0** (2026-11-15). Follows v0.6.1 (2026-11-07) and
+adds TLS-secured Horde operations, configurable deployment ownership
+(`cloud.aws.identity.managedBy`), safer state backend setup and persistence,
+and a `--version` flag. Phase 0, Phase 1, Lore (v0.3: S3 store, `ami build`, TLS on
 create, SSM on local store), and DDC (V1 + multi-region edge nodes) are
 complete: Perforce, Horde, Lore, Distributed DDC (home + edge regions),
 Workstation, CI, Deploy, Cost, drift detection with auto-remediation (`--fix`),
