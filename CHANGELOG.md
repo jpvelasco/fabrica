@@ -5,11 +5,30 @@ All notable changes to Fabrica are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-11-15
+
+**Feature release.** Adds TLS-secured Horde operations and configurable deployment ownership, with safer state backend setup and persistence.
+
+### Added
+
+- **Horde TLS.** Horde can serve its web UI, REST API, and agent gRPC over one HTTPS port, with configurable trust for the CLI, native agents, and CodeBuild. The release adds gated coordinator bootstrap, TLS readiness checks, and verified migration/adoption workflows; certificate issuance, delivery, DNS, and renewal remain operator-managed.
+- **Configurable deployment ownership.** `cloud.aws.identity.managedBy` assigns a consistent owner across resources, state, AMI artifacts, drift detection, and exports. Ownership is pinned to the state backend; ambiguous or foreign backends fail closed, and teardown leaves unrelated owners alone.
+- **CLI version flag.** Adds `--version` for displaying the Fabrica version.
 
 ### Changed
 
-- **Known-good AMI tables record verification, not account IDs** — `docs/horde-ami.md`, `docs/horde-agent-ami.md`, `docs/lore-ami.md`, and `docs/workstation-ami.md` listed real AMI IDs from a live account, all since deregistered; the tables now hold TBD rows carrying the verification notes, and the historical changelog entries describe the bakes without naming IDs. `internal/workstation` test fixtures use a placeholder account ID, matching the rest of the test suite.
+- **State backend setup and persistence.** `fabrica setup` inspects existing backend ownership before creating or reconciling components. Remote state reads and writes now validate the persistence target, and lock leases remain valid across long-running persistence operations.
+
+### Fixed
+
+- **AWS ownership propagation.** SDK-created resources and instance adoption preserve the selected ownership identity instead of dropping or misattributing it.
+- **Horde TLS and state recovery.** Status recovery, CI/agent connections, and export retain the recorded TLS contract; failed TLS preflight and state persistence paths now stop rather than report success.
+
+### Documentation
+
+- **AMI verification records.** Public known-good AMI tables now use verification placeholders rather than stale account-specific AMI values.
+
+## [Unreleased]
 
 ## [0.6.1] - 2026-11-07
 
@@ -521,7 +540,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/jpvelasco/fabrica/releases/tag/v0.7.0
 [0.6.1]: https://github.com/jpvelasco/fabrica/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/jpvelasco/fabrica/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jpvelasco/fabrica/compare/v0.4.6...v0.5.0
