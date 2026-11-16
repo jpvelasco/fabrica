@@ -5,6 +5,16 @@ All notable changes to Fabrica are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.7.1] - 2026-11-15
+
+**Patch release.** Fixes `npm install -g fabrica-cli` on Windows when run from PowerShell 7.
+
+### Fixed
+
+- **npm install on Windows under PowerShell 7.** The `fabrica-cli` shim no longer fails with `Binary fabrica.exe not found in archive` when run from `pwsh`; it unzips with .NET directly instead of `Expand-Archive`, and extraction errors now fail loudly (#690).
+
 ## [0.7.0] - 2026-11-15
 
 **Feature release.** Adds TLS-secured Horde operations and configurable deployment ownership, with safer state backend setup and persistence.
@@ -27,12 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - **AMI verification records.** Public known-good AMI tables now use verification placeholders rather than stale account-specific AMI values.
-
-## [Unreleased]
-
-### Fixed
-
-- **npm install on Windows under PowerShell 7.** The `fabrica-cli` shim no longer fails with `Binary fabrica.exe not found in archive` when run from `pwsh`; it unzips with .NET directly instead of `Expand-Archive`, and extraction errors now fail loudly (#690).
 
 ## [0.6.1] - 2026-11-07
 
@@ -544,7 +548,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/jpvelasco/fabrica/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/jpvelasco/fabrica/releases/tag/v0.7.0
 [0.6.1]: https://github.com/jpvelasco/fabrica/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/jpvelasco/fabrica/compare/v0.5.0...v0.6.0
