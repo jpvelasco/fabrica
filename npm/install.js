@@ -204,13 +204,39 @@ function psEscape(s) {
   return s.replace(/'/g, "''");
 }
 
-function spawnOrFail(cmd, args, label) {
+// windowsZipExtractArgs builds the Windows PowerShell arguments that unzip
+// archivePath into destDir. It calls .NET's ZipFile directly instead of
+// Expand-Archive: a Windows PowerShell child of a pwsh 7 session would
+// otherwise auto-load pwsh 7's incompatible Archive module, whose failure is
+// non-terminating and leaves the process exiting 0 (issue #690). Stop makes
+// any error exit non-zero.
+function windowsZipExtractArgs(archivePath, destDir) {
+  return [
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    "$ErrorActionPreference = 'Stop'; " +
+      "Add-Type -AssemblyName System.IO.Compression.FileSystem; " +
+      `[System.IO.Compression.ZipFile]::ExtractToDirectory('${psEscape(archivePath)}', '${psEscape(destDir)}')`,
+  ];
+}
+
+// withoutPSModulePath returns a copy of env without PSModulePath (matched
+// case-insensitively, as Windows env names are) so Windows PowerShell uses its
+// own default module path rather than one inherited from pwsh 7.
+function withoutPSModulePath(env) {
+  return Object.fromEntries(
+    Object.entries(env).filter(([key]) => key.toLowerCase() !== "psmodulepath")
+  );
+}
+
+function spawnOrFail(cmd, args, label, env = process.env) {
   // Whitelist check — only allow known-safe commands.
   if (!ALLOWED_COMMANDS.has(cmd)) {
     throw new Error(`Command not allowed: ${cmd}`);
   }
   // nosemgrep: cmd is validated against ALLOWED_COMMANDS whitelist above
-  const result = spawnSync(cmd, args, { stdio: "pipe", windowsVerbatimArguments: true });
+  const result = spawnSync(cmd, args, { stdio: "pipe", windowsVerbatimArguments: true, env });
   if (result.error) {
     throw new Error(`${label}: ${result.error.message}`);
   }
@@ -247,12 +273,9 @@ function extract(buffer, archiveName, binDir) {
       if (process.platform === "win32") {
         spawnOrFail(
           "powershell",
-          [
-            "-NoProfile",
-            "-Command",
-            `Expand-Archive -Force -Path '${psEscape(archivePath)}' -DestinationPath '${psEscape(tmpDir)}'`,
-          ],
-          "Expand-Archive"
+          windowsZipExtractArgs(archivePath, tmpDir),
+          "zip extraction",
+          withoutPSModulePath(process.env)
         );
       } else {
         spawnOrFail("unzip", ["-o", archivePath, "-d", tmpDir], "unzip");
@@ -328,7 +351,10 @@ module.exports = {
   binaryName,
   MARKER,
   // Exported for testing only.
+  extract,
   resolveWithin,
+  windowsZipExtractArgs,
+  withoutPSModulePath,
   validateDownloadUrl,
   validateRedirectUrl,
 };
