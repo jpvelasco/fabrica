@@ -1,18 +1,22 @@
 package aws
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
+	smithycbor "github.com/aws/smithy-go/encoding/cbor"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/tags"
@@ -247,6 +251,11 @@ func (h *providerIdentityHTTP) respond(req *http.Request) (*http.Response, error
 	if err != nil {
 		h.t.Fatal(err)
 	}
+	// CodeBuild 1.79+ prefers Smithy RPC v2 CBOR. The operation is the last
+	// path segment and the body is CBOR, so X-Amz-Target never arrives.
+	if req.Header.Get("Smithy-Protocol") == "rpc-v2-cbor" {
+		return h.respondRPCV2(req, body)
+	}
 	target := req.Header.Get("X-Amz-Target")
 	op := target
 	op = op[strings.LastIndex(op, ".")+1:]
@@ -261,7 +270,7 @@ func (h *providerIdentityHTTP) respond(req *http.Request) (*http.Response, error
 	response := "{}"
 	var in struct {
 		DesiredState string
-		Tags         []struct{ Key, Value string }
+		Tags         []sdkTag
 	}
 	if target != "" {
 		if err := json.Unmarshal(body, &in); err != nil {
@@ -281,11 +290,7 @@ func (h *providerIdentityHTTP) respond(req *http.Request) (*http.Response, error
 	case "BatchGetProjects":
 		response = `{"projects":[]}`
 	case "CreateProject", "AddTagsToResource":
-		h.written = map[string]string{}
-		for _, tag := range in.Tags {
-			h.written[tag.Key] = tag.Value
-			h.tagOrder = append(h.tagOrder, tag.Key)
-		}
+		h.recordTags(in.Tags)
 	case "PutParameter":
 	case "DescribeVolumes":
 		response = "<volumeSet><item><volumeId>vol-test</volumeId></item></volumeSet>"
@@ -332,4 +337,151 @@ func (h *providerIdentityHTTP) respond(req *http.Request) (*http.Response, error
 		response = "<" + op + "Response>" + response + "</" + op + "Response>"
 	}
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(response))}, nil
+}
+
+type sdkTag struct{ Key, Value string }
+
+func (h *providerIdentityHTTP) recordTags(tags []sdkTag) {
+	h.written = map[string]string{}
+	for _, tag := range tags {
+		h.written[tag.Key] = tag.Value
+		h.tagOrder = append(h.tagOrder, tag.Key)
+	}
+}
+
+func (h *providerIdentityHTTP) respondRPCV2(req *http.Request, body []byte) (*http.Response, error) {
+	op := rpcV2Operation(req.URL.Path)
+	h.calls = append(h.calls, op)
+	switch op {
+	case "BatchGetProjects":
+	case "CreateProject":
+		tags, err := rpcV2CodeBuildTags(body)
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		h.recordTags(tags)
+	default:
+		h.t.Fatalf("unexpected SDK operation %s", op)
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/cbor"}},
+		Body:       io.NopCloser(bytes.NewReader(nil)),
+	}, nil
+}
+
+func rpcV2Operation(path string) string {
+	const marker = "/operation/"
+	i := strings.LastIndex(path, marker)
+	if i < 0 {
+		return ""
+	}
+	return path[i+len(marker):]
+}
+
+func rpcV2CodeBuildTags(body []byte) ([]sdkTag, error) {
+	decoded, err := smithycbor.Decode(body)
+	if err != nil {
+		return nil, fmt.Errorf("decode CodeBuild RPC v2 body: %w", err)
+	}
+	doc, ok := decoded.(smithycbor.Map)
+	if !ok {
+		return nil, fmt.Errorf("CodeBuild RPC v2 body is %T, want a CBOR map", decoded)
+	}
+	raw, ok := doc["tags"]
+	if !ok {
+		return nil, nil
+	}
+	list, ok := raw.(smithycbor.List)
+	if !ok {
+		return nil, fmt.Errorf("CodeBuild tags are %T, want a CBOR list", raw)
+	}
+	tags := make([]sdkTag, 0, len(list))
+	for _, item := range list {
+		member, ok := item.(smithycbor.Map)
+		if !ok {
+			return nil, fmt.Errorf("CodeBuild tag is %T, want a CBOR map", item)
+		}
+		key, ok := member["key"].(smithycbor.String)
+		value, vok := member["value"].(smithycbor.String)
+		if !ok || !vok {
+			return nil, fmt.Errorf("CodeBuild tag key/value are not CBOR strings")
+		}
+		tags = append(tags, sdkTag{Key: string(key), Value: string(value)})
+	}
+	return tags, nil
+}
+
+func TestProviderIdentityHTTPRPCV2CodeBuild(t *testing.T) {
+	createBody := smithycbor.Encode(smithycbor.Map{
+		"name": smithycbor.String("test-project"),
+		"tags": smithycbor.List{
+			smithycbor.Map{"key": smithycbor.String("ManagedBy"), "value": smithycbor.String("fabrica")},
+			smithycbor.Map{"key": smithycbor.String("Project"), "value": smithycbor.String("selected")},
+		},
+	})
+	listBody := smithycbor.Encode(smithycbor.Map{
+		"names": smithycbor.List{smithycbor.String("test-project")},
+	})
+	tests := []struct {
+		name, path string
+		body       []byte
+		wantOp     string
+		wantTags   map[string]string
+		wantOrder  string
+	}{
+		{
+			name: "create", path: "/service/CodeBuild_20161006/operation/CreateProject", body: createBody,
+			wantOp: "CreateProject", wantTags: map[string]string{"ManagedBy": "fabrica", "Project": "selected"},
+			wantOrder: "ManagedBy,Project",
+		},
+		{
+			name: "batch", path: "/service/CodeBuild_20161006/operation/BatchGetProjects", body: listBody,
+			wantOp: "BatchGetProjects",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &providerIdentityHTTP{t: t}
+			req := httptest.NewRequest(http.MethodPost, "https://codebuild.eu-west-1.amazonaws.com"+tt.path, bytes.NewReader(tt.body))
+			req.Header.Set("Smithy-Protocol", "rpc-v2-cbor")
+			resp, err := h.respond(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			got, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(h.calls) != 1 || h.calls[0] != tt.wantOp || len(got) != 0 || resp.Header.Get("Content-Type") != "application/cbor" {
+				t.Fatalf("calls=%v body=%q type=%s", h.calls, got, resp.Header.Get("Content-Type"))
+			}
+			if tt.wantTags != nil && (!maps.Equal(h.written, tt.wantTags) || strings.Join(h.tagOrder, ",") != tt.wantOrder) {
+				t.Fatalf("written=%v order=%v", h.written, h.tagOrder)
+			}
+		})
+	}
+}
+
+func TestRPCV2CodeBuildTagsRejectsMalformedBody(t *testing.T) {
+	empty, err := rpcV2CodeBuildTags(smithycbor.Encode(smithycbor.Map{}))
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("missing tags: %v %v", empty, err)
+	}
+	cases := [][]byte{
+		{0xff},
+		smithycbor.Encode(smithycbor.String("nope")),
+		smithycbor.Encode(smithycbor.Map{"tags": smithycbor.String("nope")}),
+		smithycbor.Encode(smithycbor.Map{"tags": smithycbor.List{smithycbor.String("nope")}}),
+		smithycbor.Encode(smithycbor.Map{"tags": smithycbor.List{smithycbor.Map{"key": smithycbor.Uint(1)}}}),
+	}
+	for _, body := range cases {
+		if _, err := rpcV2CodeBuildTags(body); err == nil {
+			t.Fatalf("accepted %x", body)
+		}
+	}
+	if rpcV2Operation("/service/CodeBuild_20161006/operation/CreateProject") != "CreateProject" || rpcV2Operation("/") != "" {
+		t.Fatal("operation path parse failed")
+	}
 }
