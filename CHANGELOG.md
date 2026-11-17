@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-16
+
+**Patch release.** Updates the AWS SDK group. The provider identity tests now read CodeBuild Smithy RPC v2 requests.
+
+### Other
+
+- **AWS SDK group.** Direct modules move forward, including `aws-sdk-go-v2` 1.47.7 → 1.48.0 (retry mode 2.1 is now the SDK default), `codebuild` 1.78.10 → 1.79.0 (prefers Smithy RPC v2 CBOR), and `smithy-go` 1.28.8 → 1.28.9. (#694)
+
+### Verification
+
+- **CodeBuild RPC v2 identity fixture.** The provider identity test reads the operation from the RPC v2 path and project tags from the CBOR body. (#693)
+
 ## [0.7.1] - 2026-11-15
 
 **Patch release.** Fixes `npm install -g fabrica-cli` on Windows when run from PowerShell 7.
@@ -548,7 +560,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/jpvelasco/fabrica/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/jpvelasco/fabrica/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/jpvelasco/fabrica/releases/tag/v0.7.0
 [0.6.1]: https://github.com/jpvelasco/fabrica/compare/v0.6.0...v0.6.1
