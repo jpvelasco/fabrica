@@ -9,10 +9,8 @@ func TestPerforceAptRepoShellExportsOnlyThePinnedKey(t *testing.T) {
 	got := PerforceAptRepoShell()
 	for _, want := range []string{
 		"install -m 0755 -d /etc/apt/keyrings",
-		`wget -q https://package.perforce.com/perforce.pubkey -O "$p4_gnupg/perforce.pubkey"`,
-		`GNUPGHOME="$p4_gnupg" gpg --batch --quiet --import`,
-		`GNUPGHOME="$p4_gnupg" gpg --batch --export E58131C0AEA7B082C6DC4C937123CB760FF18869 > /etc/apt/keyrings/perforce.gpg`,
-		"chmod a+r /etc/apt/keyrings/perforce.gpg",
+		`wget -q https://package.perforce.com/perforce.pubkey -O "$p4_key"`,
+		PinnedKeyringShell("$p4_key", "E58131C0AEA7B082C6DC4C937123CB760FF18869", "/etc/apt/keyrings/perforce.gpg"),
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("PerforceAptRepoShell missing %q", want)
@@ -27,8 +25,8 @@ func TestPerforceAptRepoShellExportsOnlyThePinnedKey(t *testing.T) {
 
 func TestPerforceAptRepoShellFailsClosedWithoutThePinnedKey(t *testing.T) {
 	got := PerforceAptRepoShell()
-	exportIdx := strings.Index(got, "gpg --batch --export")
-	checkIdx := strings.Index(got, "test -s /etc/apt/keyrings/perforce.gpg || {")
+	exportIdx := strings.Index(got, "gpg --batch --quiet --export")
+	checkIdx := strings.Index(got, `--show-keys --with-colons "/etc/apt/keyrings/perforce.gpg"`)
 	exitIdx := strings.Index(got, "exit 1; }")
 	sourceIdx := strings.Index(got, "sources.list.d")
 	if exportIdx < 0 || checkIdx < exportIdx || exitIdx < checkIdx || sourceIdx < exitIdx {
@@ -75,5 +73,24 @@ func TestPerforceAptRepoShellRefreshesIndexAndAvoidsAptKey(t *testing.T) {
 func TestPerforceAptRepoShellHasNoTemplateActions(t *testing.T) {
 	if strings.Contains(PerforceAptRepoShell(), "{{") {
 		t.Error("fragment is concatenated into a text/template; it must not contain template actions")
+	}
+}
+
+func TestPinnedKeyringShellExportsOnlyTheFingerprint(t *testing.T) {
+	got := PinnedKeyringShell("$key", "ABCDEF0123456789ABCDEF0123456789ABCDEF01", "/etc/apt/keyrings/x.gpg")
+	for _, want := range []string{
+		`GNUPGHOME="$gnupg_home" gpg --batch --quiet --import "$key"`,
+		`gpg --batch --quiet --export ABCDEF0123456789ABCDEF0123456789ABCDEF01 > "/etc/apt/keyrings/x.gpg"`,
+		`gpg --batch --show-keys --with-colons "/etc/apt/keyrings/x.gpg"`,
+		`END{exit !(n==1 && f=="ABCDEF0123456789ABCDEF0123456789ABCDEF01")}' || {`,
+		"exit 1; }",
+		`chmod a+r "/etc/apt/keyrings/x.gpg"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("PinnedKeyringShell missing %q in:\n%s", want, got)
+		}
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Error("PinnedKeyringShell must end with a newline so callers can concatenate it")
 	}
 }
