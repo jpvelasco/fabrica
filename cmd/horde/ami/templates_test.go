@@ -208,8 +208,8 @@ func TestRenderComponentTemplate_Docker(t *testing.T) {
 	if !strings.Contains(s, "BakeHordeStack") {
 		t.Error("docker component should have a BakeHordeStack step")
 	}
-	if !strings.Contains(s, "InstallAwsCliV2") {
-		t.Error("docker component should install the AWS CLI v2 (stock jammy has none)")
+	if !strings.Contains(s, "VerifyAwsCliV2") {
+		t.Error("docker component should verify the AWS CLI v2 is present (stock jammy has none)")
 	}
 	if strings.Contains(s, "InstallDotNet") {
 		t.Error("docker component should not have InstallDotNet step")
@@ -263,8 +263,8 @@ func TestRenderComponentTemplate_Native(t *testing.T) {
 	if !strings.Contains(s, "InstallHordeBinary") {
 		t.Error("native component should have InstallHordeBinary step")
 	}
-	if !strings.Contains(s, "InstallAwsCliV2") {
-		t.Error("native component should install the AWS CLI v2 (stock jammy has none; aws s3 sync needs it)")
+	if !strings.Contains(s, "VerifyAwsCliV2") {
+		t.Error("native component should verify the AWS CLI v2 is present (stock jammy has none; aws s3 sync needs it)")
 	}
 	if strings.Contains(s, "InstallDocker") {
 		t.Error("native component should not have InstallDocker step")
