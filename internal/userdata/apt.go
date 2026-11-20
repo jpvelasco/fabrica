@@ -2,11 +2,11 @@ package userdata
 
 import "strings"
 
-// perforceAptKeyFingerprint is the primary-key fingerprint of the Perforce
+// perforceRepoSignerFingerprint is the primary-key fingerprint of the Perforce
 // package signing key served at package.perforce.com/perforce.pubkey. The
 // fragment refuses to trust any other key. Rotating the key means updating
 // this pin in a reviewed change.
-const perforceAptKeyFingerprint = "E58131C0AEA7B082C6DC4C937123CB760FF18869"
+const perforceRepoSignerFingerprint = "E58131C0AEA7B082C6DC4C937123CB760FF18869"
 
 // PinnedKeyringShell imports keyFile into a throwaway GNUPGHOME and exports
 // only the key whose primary fingerprint is fpr into keyring. keyFile may hold
@@ -34,7 +34,7 @@ func PinnedKeyringShell(keyFile, fpr, keyring string) string {
 // release.
 //
 // The download is imported into a throwaway GNUPGHOME and only the key with
-// perforceAptKeyFingerprint is exported into a dedicated keyring, so a key
+// perforceRepoSignerFingerprint is exported into a dedicated keyring, so a key
 // file carrying extra keys cannot widen what apt trusts. Only this
 // repository's source line references the keyring (signed-by=); nothing goes
 // into the global apt-key keyring. A missing pinned key exits the script
@@ -48,7 +48,7 @@ func PerforceAptRepoShell() string {
 	return "install -m 0755 -d /etc/apt/keyrings\n" +
 		`p4_key="$(mktemp)"` + "\n" +
 		`wget -q https://package.perforce.com/perforce.pubkey -O "$p4_key"` + "\n" +
-		PinnedKeyringShell("$p4_key", perforceAptKeyFingerprint, "/etc/apt/keyrings/perforce.gpg") +
+		PinnedKeyringShell("$p4_key", perforceRepoSignerFingerprint, "/etc/apt/keyrings/perforce.gpg") +
 		`rm -f "$p4_key"` + "\n" +
 		". /etc/os-release\n" +
 		`echo "deb [signed-by=/etc/apt/keyrings/perforce.gpg] https://package.perforce.com/apt/ubuntu ${VERSION_CODENAME} release" > /etc/apt/sources.list.d/perforce.list` + "\n" +
