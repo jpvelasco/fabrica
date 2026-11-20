@@ -101,11 +101,11 @@ fabrica lore ami build `
   --include-packer
 ```
 
-`--lore-version` defaults to `0.8.6`. Only versions with a SHA-256 pinned in
-`cmd/lore/ami/lore_checksums.go` are accepted, and `latest` is rejected. The
-component verifies the downloaded `loreserver` tarball against that digest
-before it extracts anything. To bake another release, record its
-`x86_64-unknown-linux-gnu` asset digest from the GitHub release in that table.
+`--lore-version` defaults to `0.8.6`. Only releases whose tarball SHA-256 is
+pinned in fabrica are accepted, and `latest` is rejected. The component verifies
+the downloaded `loreserver` tarball against that digest before it extracts
+anything. Contributors add a release by recording its `x86_64-unknown-linux-gnu`
+asset digest from the GitHub release in `cmd/lore/ami/lore_checksums.go`.
 
 The output directory contains:
 

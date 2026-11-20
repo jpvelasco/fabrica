@@ -20,7 +20,7 @@ func pinnedLoreSHA256(version string) (string, error) {
 	if digest, ok := loreTarballSHA256[version]; ok {
 		return digest, nil
 	}
-	return "", fmt.Errorf("--lore-version %q has no pinned SHA-256, so fabrica will not bake it (supported versions: %s); to add it, record the x86_64-unknown-linux-gnu asset digest from the GitHub release in loreTarballSHA256 in cmd/lore/ami/lore_checksums.go", version, supportedLoreVersions())
+	return "", fmt.Errorf("--lore-version %q has no pinned SHA-256, so fabrica will not bake it (supported versions: %s); pick a supported version, or upgrade fabrica to one that pins this release", version, supportedLoreVersions())
 }
 
 func supportedLoreVersions() string {

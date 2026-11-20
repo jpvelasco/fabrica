@@ -124,7 +124,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&cfg.Version, "lore-version", defaultLoreVersion, "Lore server version in X.Y.Z format; only versions with a pinned SHA-256 are accepted (see lore_checksums.go)")
+	cmd.Flags().StringVar(&cfg.Version, "lore-version", defaultLoreVersion, "Lore server version (X.Y.Z); only releases with a pinned tarball SHA-256 are accepted")
 	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", defaultBaseImage, "Base Ubuntu 22.04 LTS AMI ID")
 	cmd.Flags().StringVar(&cfg.Region, "region", defaultRegion, "AWS region for the AMI build (used in component ARNs)")
 	cmd.Flags().StringVar(&cfg.Name, "name", "", `AMI name (default: "fabrica-lore-<version>")`)

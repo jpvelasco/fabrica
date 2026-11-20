@@ -24,7 +24,7 @@ func TestPinnedLoreSHA256RejectsUnpinnedVersions(t *testing.T) {
 			if err == nil {
 				t.Fatalf("pinnedLoreSHA256(%q) expected error, got nil", version)
 			}
-			for _, want := range []string{"supported versions: 0.8.6", "loreTarballSHA256", "lore_checksums.go"} {
+			for _, want := range []string{"supported versions: 0.8.6", "upgrade fabrica"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error %q does not contain %q", err, want)
 				}
