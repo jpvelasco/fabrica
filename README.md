@@ -342,7 +342,7 @@ Key flags: `--horde-version`, `--base-image`, `--region`, `--output-dir`, `--inc
 
 #### `fabrica horde agents create`
 
-Provisions a pool of Horde build agents on AWS. Creates an Auto Scaling Group with a Launch Template that launches agent instances in private subnets. The agents enroll against the existing Horde coordinator using its private IP address.
+Provisions a pool of Horde build agents on AWS. Creates an Auto Scaling Group with a Launch Template that launches agent instances in the configured subnet (`horde.agents.subnetId`, or the default VPC). Use a private subnet for production. The agents enroll against the existing Horde coordinator using its private IP address.
 
 **AMI requirement:** `horde.agents.amiId` must be a **dedicated agent AMI** — not the coordinator AMI (`horde.amiId`). The agent AMI should contain only the Horde agent binary (or container), SSM agent, and Ubuntu 22.04. It must NOT include MongoDB, Redis, or the full Horde server stack. Fabrica fails `agents create` with a clear error if `horde.agents.amiId` is not set — it does not silently fall back to the coordinator AMI. See [docs/horde-agent-ami.md](docs/horde-agent-ami.md) for the build guide.
 

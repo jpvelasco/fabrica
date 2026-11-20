@@ -845,8 +845,11 @@ func TestPrintPostCreate(t *testing.T) {
 	if !strings.Contains(got, "asg-created") {
 		t.Error("post create should mention ASG ID")
 	}
-	if !strings.Contains(got, "Systems Manager") {
-		t.Error("post create should mention SSM access")
+	if !strings.Contains(got, "Operator access is via AWS Systems Manager Session Manager.") {
+		t.Error("post create should state operator access via Session Manager")
+	}
+	if strings.Contains(got, "private subnet") {
+		t.Error("post create must not assert a subnet placement")
 	}
 }
 
