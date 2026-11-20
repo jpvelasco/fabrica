@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Horde agent pool ignored `cloud.aws.tags`.** `horde agents create` now tags the agent launch template, Auto Scaling group, instances, and volumes with `cloud.aws.tags`, so a shared account that scopes ownership by a project tag sees the pool's own resources. Identity tags (`ManagedBy`, `Name`, `FabricaModule`, `FabricaRole`) still win on conflict, and `volumeRequestTags` still wins over `cloud.aws.tags` on the instance and volume. The create output no longer says agents launch in private subnets; it states only that operator access is via Session Manager. (#706)
+
 ## [0.7.2] - 2026-11-16
 
 **Patch release.** Updates the AWS SDK group. The provider identity tests now read CodeBuild Smithy RPC v2 requests.
