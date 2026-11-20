@@ -50,16 +50,17 @@ func AssertSGID(t *testing.T, doc map[string]any, want string) {
 	}
 }
 
-// imdsReporter is the minimal *testing.T surface AssertIMDSv2 needs. It lets
-// the in-package unit test pass a recorder and exercise the error branches.
-type imdsReporter interface {
+// errorReporter is the minimal *testing.T surface the non-fatal assertions
+// need. It lets the in-package unit tests pass a recorder and exercise the
+// error branches.
+type errorReporter interface {
 	Helper()
 	Errorf(format string, args ...any)
 }
 
 // AssertIMDSv2 checks that MetadataOptions requires IMDSv2 tokens with hop
 // limit 1.
-func AssertIMDSv2(t imdsReporter, doc map[string]any) {
+func AssertIMDSv2(t errorReporter, doc map[string]any) {
 	t.Helper()
 	meta, ok := doc["MetadataOptions"].(map[string]any)
 	if !ok || meta["HttpTokens"] != "required" {
@@ -87,6 +88,29 @@ func AssertEBS(t *testing.T, doc map[string]any, wantSize int, wantDelete bool) 
 	}
 	if ebs["DeleteOnTermination"] != wantDelete {
 		t.Errorf("EBS DeleteOnTermination = %v, want %v", ebs["DeleteOnTermination"], wantDelete)
+	}
+}
+
+// AssertDataAndEncryptedRoot checks the two-mapping layout of modules whose
+// cloud-init mounts a separate data disk: an encrypted wantSize GiB data
+// volume on /dev/sdf, then an encrypted root on rootDevice that keeps the
+// AMI's own size (#696).
+func AssertDataAndEncryptedRoot(t errorReporter, doc map[string]any, rootDevice string, wantSize int) {
+	t.Helper()
+	bdms, ok := doc["BlockDeviceMappings"].([]any)
+	if !ok || len(bdms) != 2 {
+		t.Errorf("BlockDeviceMappings = %v, want a data volume and an encrypted root", doc["BlockDeviceMappings"])
+		return
+	}
+	data, _ := bdms[0].(map[string]any)
+	root, _ := bdms[1].(map[string]any)
+	dataEBS, _ := data["Ebs"].(map[string]any)
+	rootEBS, _ := root["Ebs"].(map[string]any)
+	if data["DeviceName"] != "/dev/sdf" || dataEBS["VolumeSize"] != float64(wantSize) || dataEBS["Encrypted"] != true {
+		t.Errorf("data mapping = %v, want an encrypted %d GiB volume on /dev/sdf", data, wantSize)
+	}
+	if _, sized := rootEBS["VolumeSize"]; root["DeviceName"] != rootDevice || sized || rootEBS["Encrypted"] != true {
+		t.Errorf("root mapping = %v, want %s encrypted with the AMI's own size", root, rootDevice)
 	}
 }
 
