@@ -314,11 +314,12 @@ Verifies an operator-installed Docker TLS coordinator over SSM and pinned privat
 
 #### `fabrica horde submit`
 
-Parses a BuildGraph XML file and POSTs the job to the recorded Horde endpoint (private IP for HTTP; configured DNS identity for TLS). The target is resolved from the XML (first `<Agent>`'s first `<Node>` name). Use `examples/BuildGraph.sample.xml` as a starting point. Options:
+Parses a BuildGraph XML file and POSTs the job to the recorded Horde endpoint (private IP for HTTP; configured DNS identity for TLS). The target is the first `<Aggregate>` in the XML, or the first `<Node>` of the first `<Agent>` when there is no aggregate. Use `examples/BuildGraph.sample.xml` as a starting point. Options:
 
 ```
 --wait         Poll until the job completes (exits non-zero if the job errors, the wait times out, or polling is cancelled)
---dry-run      Preview the job and coordinator address without submitting
+--dry-run      Preview the job, the chosen target and why, and the coordinator address without submitting
+--target NAME  Run this <Aggregate> or <Node> name instead of the default (warns if the name is not in the file)
 ```
 
 Requires VPN or same-VPC access; no public IP is assigned in V1.
