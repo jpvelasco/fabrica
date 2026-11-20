@@ -106,7 +106,7 @@ making any AWS calls.`,
 	}
 
 	cmd.Flags().StringVar(&instanceType, "instance-type", "", "EC2 instance type (default: m5.xlarge)")
-	cmd.Flags().StringVar(&version, "version", "", "Helix Core version: \"latest\", \"2024.2\", or \"2024.2/BUILD\" (default: 2024.2)")
+	cmd.Flags().StringVar(&version, "version", "", "Helix Core version: \"latest\", \"YYYY.N\", or \"YYYY.N/BUILD\"; create fails if the Perforce repo lacks it (default: "+perforce.DefaultHelixVersion+")")
 	cmd.Flags().IntVar(&volumeSize, "volume-size", 0, "EBS data volume size in GiB (default: 500)")
 	return cmd
 }
