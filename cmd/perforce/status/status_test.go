@@ -40,9 +40,12 @@ func TestRenderText_RunningWithIP(t *testing.T) {
 		Reachable:      true,
 	})
 	got := out.String()
-	for _, want := range []string{"(running)", "m5.xlarge", "10.0.1.42", "P4PORT:        tcp:10.0.1.42:1666", "responding"} {
+	for _, want := range []string{"(running)", "m5.xlarge", "10.0.1.42", "P4PORT:        tcp:10.0.1.42:1666", "Helix Core:    responding", "Version:       2024.2 (configured)"} {
 		assert.Contains(t, got, want)
 	}
+	// The probe cannot see the installed version, so it must not vouch for
+	// the configured one (#699).
+	assert.NoneOf(t, got, "2024.2 (responding)")
 }
 
 func TestRenderText_Unreachable(t *testing.T) {

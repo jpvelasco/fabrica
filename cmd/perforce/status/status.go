@@ -67,9 +67,9 @@ func printText(out io.Writer, info modstatus.Info) {
 	}
 	modstatus.WriteSecurityGroup(out, info.SGID)
 	if info.Version != "" {
-		fmt.Fprintf(out, "  Version:       %s\n", info.Version)
+		fmt.Fprintf(out, "  Version:       %s (configured)\n", info.Version)
 	}
-	modstatus.WriteProbeStatusText(out, info, "Helix Core", info.Version)
+	modstatus.WriteProbeStatusText(out, info, "Helix Core", "")
 	printBackupStatus(out, info)
 }
 
