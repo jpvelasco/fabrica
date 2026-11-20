@@ -380,7 +380,6 @@ func (c command) printDryRun(plan *horde.CreatePlan) {
 		{Key: "AMI ID", Value: plan.AmiID},
 		{Key: "HTTP port", Value: fmt.Sprintf("%d", plan.Port)},
 		{Key: "gRPC port", Value: fmt.Sprintf("%d", plan.GRPCPort)},
-		{Key: "Allowed CIDR", Value: plan.AllowedCIDR},
 	}
 	if plan.RootDeviceName != "" {
 		extraFields = append(extraFields, provision.PlanField{Key: "Root volume", Value: plan.RootDeviceName + " (encrypted)"})
