@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Horde agents are configured through the native environment contract, HTTP included (breaking for custom agent AMIs).** `horde agents create` no longer writes `/etc/horde/coordinator.conf`, exports `HORDE_COORDINATOR_*` variables, or falls back to Docker. Every agent, HTTP or TLS, gets `/etc/horde/fabrica-agent.env` (`Horde__ServerProfiles__fabrica__Url`) and a systemd `EnvironmentFile` drop-in. Cloud-init probes the coordinator up to 30 times, 10 seconds apart: TLS fails closed, while HTTP keeps the service running and exits 1 without the sentinel. The readiness sentinel is now `/etc/horde/agent-configured`, replacing `/var/lib/cloud/instance/horde-agent-ready`. **Custom agent AMIs built for the INI contract must add** `/etc/horde/fabrica-native-agent-contract` containing `1`, run `horde-agent.service` as a non-root `User=`, and make `/opt/horde-agent/Data` and the service user's `$HOME/.local/share` writable. See [docs/horde-agent-ami.md](docs/horde-agent-ami.md). (#701)
+
 ### Fixed
 
 - **Lore and DDC instances get their data volume back.** `lore create`, `ddc setup` (coordinator and Scylla), and `ddc region add` mapped the configured volume size onto the encrypted root device and attached no data volume, so cloud-init stopped with `data volume not found` and the server never started. The data volume is back on `/dev/sdf` next to a separate encrypted root, as Perforce does. While a module is still `provisioning`, a failed status probe now points at `/var/log/cloud-init-output.log` over SSM first, instead of only suggesting a VPN or network problem. (#696)
