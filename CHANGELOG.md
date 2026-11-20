@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Lore and DDC instances get their data volume back.** `lore create`, `ddc setup` (coordinator and Scylla), and `ddc region add` mapped the configured volume size onto the encrypted root device and attached no data volume, so cloud-init stopped with `data volume not found` and the server never started. The data volume is back on `/dev/sdf` next to a separate encrypted root, as Perforce does. While a module is still `provisioning`, a failed status probe now points at `/var/log/cloud-init-output.log` over SSM first, instead of only suggesting a VPN or network problem. (#696)
+
+- **`fabrica lore ami build` recipe now passes `CreateImageRecipe`.** The generated recipe drops `supportedOsVersions`, a component-only field, and recipe validation rejects unknown keys. The default `--lore-version` is now 0.8.6 (it was 5.5.0, which is not a release), and the component verifies the loreserver tarball's SHA-256 before extracting it. Versions without a pinned digest are refused. (#698)
+
 ### Security
 
 - **The Perforce apt key is pinned by fingerprint and scoped to its own keyring.** Perforce and workstation cloud-init no longer trust the package key globally through `apt-key`. The script refuses to continue unless the key matches the pinned Perforce fingerprint, and the repository is signed-by that keyring over HTTPS. The workstation script also no longer adds the `focal` repository on a jammy base; the codename comes from `/etc/os-release` (#703)
