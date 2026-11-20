@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`fabrica lore ami build` recipe now passes `CreateImageRecipe`.** The generated recipe drops `supportedOsVersions`, a component-only field, and recipe validation rejects unknown keys. The default `--lore-version` is now 0.8.6 (it was 5.5.0, which is not a release), and the component verifies the loreserver tarball's SHA-256 before extracting it. Versions without a pinned digest are refused. (#698)
+
 ## [0.7.2] - 2026-11-16
 
 **Patch release.** Updates the AWS SDK group. The provider identity tests now read CodeBuild Smithy RPC v2 requests.

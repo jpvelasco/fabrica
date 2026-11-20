@@ -16,6 +16,7 @@ phases:
               umask 022
               mkdir -p /tmp/lore-bin
               curl -fsSL --retry 5 -o /tmp/lore-bin/loreserver.tgz "https://github.com/EpicGames/lore/releases/download/v{{ .Version }}/loreserver-v{{ .Version }}-x86_64-unknown-linux-gnu.tar.gz"
+              echo "{{ .LoreSHA256 }}  /tmp/lore-bin/loreserver.tgz" | sha256sum -c -
               tar -xzf /tmp/lore-bin/loreserver.tgz -C /tmp/lore-bin
               rm -f /tmp/lore-bin/loreserver.tgz
               # The OSS tarball ships loreserver mode 0644; make it

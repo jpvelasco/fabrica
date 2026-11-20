@@ -27,7 +27,7 @@ var templateFS embed.FS
 const (
 	maxNameLength      = 127
 	defaultBaseImage   = "ami-0c7217cdde317cfec"
-	defaultLoreVersion = "5.5.0"
+	defaultLoreVersion = "0.8.6"
 	defaultRegion      = "us-east-1"
 	defaultOutputDir   = "lore-ami"
 )
@@ -62,6 +62,7 @@ type buildCommand struct {
 
 type templateData struct {
 	BuildConfig
+	LoreSHA256                string
 	InstallScript             string
 	BakeVerificationScript    string
 	RuntimeVerificationScript string
@@ -89,7 +90,7 @@ Examples:
   fabrica lore ami build
 
   # Target a specific Lore version
-  fabrica lore ami build --lore-version 5.5.0
+  fabrica lore ami build --lore-version 0.8.6
 
   # Pin a specific region and output directory
   fabrica lore ami build --region us-west-2 --output-dir build/lore-ami
@@ -123,7 +124,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&cfg.Version, "lore-version", defaultLoreVersion, `Lore server version in X.Y or X.Y.Z format, or "latest"`)
+	cmd.Flags().StringVar(&cfg.Version, "lore-version", defaultLoreVersion, "Lore server version in X.Y.Z format; only versions with a pinned SHA-256 are accepted (see lore_checksums.go)")
 	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", defaultBaseImage, "Base Ubuntu 22.04 LTS AMI ID")
 	cmd.Flags().StringVar(&cfg.Region, "region", defaultRegion, "AWS region for the AMI build (used in component ARNs)")
 	cmd.Flags().StringVar(&cfg.Name, "name", "", `AMI name (default: "fabrica-lore-<version>")`)
@@ -208,8 +209,11 @@ func (b *buildCommand) validate() error {
 	if b.cfg.Version == "" {
 		return errors.New("--lore-version is required")
 	}
-	if b.cfg.Version != "latest" && !versionRE.MatchString(b.cfg.Version) {
-		return fmt.Errorf("--lore-version must be in the format X.Y or X.Y.Z (e.g. 5.5.0), or the literal %q; got %q", "latest", b.cfg.Version)
+	if !versionRE.MatchString(b.cfg.Version) {
+		return fmt.Errorf("--lore-version must be in the format X.Y or X.Y.Z, got %q (supported versions: %s)", b.cfg.Version, supportedLoreVersions())
+	}
+	if _, err := pinnedLoreSHA256(b.cfg.Version); err != nil {
+		return err
 	}
 	if !amiRE.MatchString(b.cfg.BaseImage) {
 		return fmt.Errorf("--base-image must be a valid AMI ID (ami- followed by 8+ hex digits); got %q", b.cfg.BaseImage)
@@ -262,6 +266,10 @@ func (b *buildCommand) templateData() (templateData, error) {
 	if contractFn == nil {
 		contractFn = lore.DefaultAMIContract
 	}
+	digest, err := pinnedLoreSHA256(b.cfg.Version)
+	if err != nil {
+		return templateData{}, err
+	}
 	contract := contractFn()
 	installScript, err := contract.InstallScript("/tmp/lore-bin")
 	if err != nil {
@@ -277,6 +285,7 @@ func (b *buildCommand) templateData() (templateData, error) {
 	}
 	return templateData{
 		BuildConfig:               b.cfg,
+		LoreSHA256:                digest,
 		InstallScript:             installScript,
 		BakeVerificationScript:    bakeVerificationScript,
 		RuntimeVerificationScript: runtimeVerificationScript,

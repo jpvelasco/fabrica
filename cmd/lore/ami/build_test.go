@@ -29,23 +29,23 @@ func TestBuildValidate(t *testing.T) {
 		},
 		{
 			name:    "invalid ami",
-			cfg:     BuildConfig{Version: "5.5.0", BaseImage: "not-an-ami", OutputDir: "out"},
+			cfg:     BuildConfig{Version: "0.8.6", BaseImage: "not-an-ami", OutputDir: "out"},
 			wantErr: "--base-image must be a valid AMI ID",
 		},
 		{
 			name:    "invalid region",
-			cfg:     BuildConfig{Version: "5.5.0", BaseImage: defaultBaseImage, Region: "not-a-region", OutputDir: "out"},
+			cfg:     BuildConfig{Version: "0.8.6", BaseImage: defaultBaseImage, Region: "not-a-region", OutputDir: "out"},
 			wantErr: "--region must be a valid AWS region",
 		},
 		{
 			name:    "invalid name characters",
-			cfg:     BuildConfig{Version: "5.5.0", BaseImage: defaultBaseImage, Region: defaultRegion, Name: "bad name!", OutputDir: "out"},
+			cfg:     BuildConfig{Version: "0.8.6", BaseImage: defaultBaseImage, Region: defaultRegion, Name: "bad name!", OutputDir: "out"},
 			wantErr: "--name can only contain letters, numbers, dots, underscores, and hyphens",
 		},
 		{
 			name: "name too long",
 			cfg: BuildConfig{
-				Version:   "5.5.0",
+				Version:   "0.8.6",
 				BaseImage: defaultBaseImage,
 				Region:    defaultRegion,
 				Name:      strings.Repeat("a", 200),
@@ -55,13 +55,13 @@ func TestBuildValidate(t *testing.T) {
 		},
 		{
 			name:    "empty output dir",
-			cfg:     BuildConfig{Version: "5.5.0", BaseImage: defaultBaseImage, Region: defaultRegion},
+			cfg:     BuildConfig{Version: "0.8.6", BaseImage: defaultBaseImage, Region: defaultRegion},
 			wantErr: "--output-dir is required",
 		},
 		{
 			name: "valid defaults",
 			cfg: BuildConfig{
-				Version:   "5.5.0",
+				Version:   "0.8.6",
 				BaseImage: defaultBaseImage,
 				Region:    defaultRegion,
 				OutputDir: "out",
@@ -69,14 +69,24 @@ func TestBuildValidate(t *testing.T) {
 			wantErr: "",
 		},
 		{
-			name: "valid latest",
+			name: "latest is rejected as unpinned",
 			cfg: BuildConfig{
 				Version:   "latest",
 				BaseImage: defaultBaseImage,
 				Region:    defaultRegion,
 				OutputDir: "out",
 			},
-			wantErr: "",
+			wantErr: "supported versions: 0.8.6",
+		},
+		{
+			name: "unpinned version is rejected",
+			cfg: BuildConfig{
+				Version:   "0.8.5",
+				BaseImage: defaultBaseImage,
+				Region:    defaultRegion,
+				OutputDir: "out",
+			},
+			wantErr: "supported versions: 0.8.6",
 		},
 	}
 
@@ -101,13 +111,38 @@ func TestBuildValidate(t *testing.T) {
 	}
 }
 
+func TestBuildRunRejectsUnpinnedVersionBeforeWriting(t *testing.T) {
+	var out bytes.Buffer
+	writes := 0
+	b := &buildCommand{
+		out: &out,
+		cfg: BuildConfig{
+			Version:   "0.8.5",
+			BaseImage: defaultBaseImage,
+			Region:    defaultRegion,
+			OutputDir: "out",
+		},
+		mkdirAll: func(path string, perm os.FileMode) error { return nil },
+		writeFile: func(path string, data []byte, perm os.FileMode) error {
+			writes++
+			return nil
+		},
+	}
+	if err := b.run(); err == nil {
+		t.Fatal("run() with unpinned version expected error, got nil")
+	}
+	if writes != 0 {
+		t.Errorf("unpinned version must fail before any file is written, got %d writes", writes)
+	}
+}
+
 func TestBuildRun_DefaultName(t *testing.T) {
 	outputDir := t.TempDir()
 	var out bytes.Buffer
 	b := &buildCommand{
 		out: &out,
 		cfg: BuildConfig{
-			Version:   "5.5.0",
+			Version:   "0.8.6",
 			BaseImage: defaultBaseImage,
 			Region:    defaultRegion,
 			OutputDir: outputDir,
@@ -121,11 +156,11 @@ func TestBuildRun_DefaultName(t *testing.T) {
 	}
 	// The default name embeds the dotted version, but Image Builder rejects
 	// dots — the header and every generated name must be dot-free.
-	if !bytes.Contains(out.Bytes(), []byte("AMI name:       fabrica-lore-5-5-0")) {
+	if !bytes.Contains(out.Bytes(), []byte("AMI name:       fabrica-lore-0-8-6")) {
 		t.Errorf("header should show the sanitized default name, got:\n%s", out.String())
 	}
-	if b.cfg.Name != "fabrica-lore-5-5-0" {
-		t.Errorf("default name = %q, want fabrica-lore-5-5-0", b.cfg.Name)
+	if b.cfg.Name != "fabrica-lore-0-8-6" {
+		t.Errorf("default name = %q, want fabrica-lore-0-8-6", b.cfg.Name)
 	}
 }
 
@@ -135,10 +170,10 @@ func TestBuildRun_DottedVersionName(t *testing.T) {
 	b := &buildCommand{
 		out: &out,
 		cfg: BuildConfig{
-			Version:   "5.8.0",
+			Version:   "0.8.6",
 			BaseImage: defaultBaseImage,
 			Region:    defaultRegion,
-			Name:      "my-lore.5.8.0",
+			Name:      "my-lore.0.8.6",
 			OutputDir: outputDir,
 		},
 		mkdirAll:  func(path string, perm os.FileMode) error { return nil },
@@ -148,10 +183,10 @@ func TestBuildRun_DottedVersionName(t *testing.T) {
 	if err := b.run(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if b.cfg.Name != "my-lore-5-8-0" {
-		t.Errorf("explicit dotted name = %q, want my-lore-5-8-0", b.cfg.Name)
+	if b.cfg.Name != "my-lore-0-8-6" {
+		t.Errorf("explicit dotted name = %q, want my-lore-0-8-6", b.cfg.Name)
 	}
-	if bytes.Contains(out.Bytes(), []byte("my-lore.5.8.0")) {
+	if bytes.Contains(out.Bytes(), []byte("my-lore.0.8.6")) {
 		t.Error("output must not carry the unsanitized dotted name")
 	}
 }
@@ -161,10 +196,10 @@ func TestBuildDryRun(t *testing.T) {
 	b := &buildCommand{
 		out: &out,
 		cfg: BuildConfig{
-			Version:   "5.5.0",
+			Version:   "0.8.6",
 			BaseImage: defaultBaseImage,
 			Region:    defaultRegion,
-			Name:      "fabrica-lore-5.5.0",
+			Name:      "fabrica-lore-0.8.6",
 			OutputDir: "lore-ami",
 			DryRun:    true,
 		},
@@ -190,8 +225,8 @@ func TestBuildDryRun(t *testing.T) {
 	if !bytes.Contains([]byte(got), []byte("Dry run")) {
 		t.Errorf("expected 'Dry run' in output, got:\n%s", got)
 	}
-	if !bytes.Contains([]byte(got), []byte("5.5.0")) {
-		t.Errorf("expected version '5.5.0' in output, got:\n%s", got)
+	if !bytes.Contains([]byte(got), []byte("0.8.6")) {
+		t.Errorf("expected version '0.8.6' in output, got:\n%s", got)
 	}
 	if !bytes.Contains([]byte(got), []byte("Would write 6 files")) {
 		t.Errorf("expected shared contract artifacts in output, got:\n%s", got)
@@ -224,10 +259,10 @@ func TestBuildRunMkdirError(t *testing.T) {
 	b := &buildCommand{
 		out: &out,
 		cfg: BuildConfig{
-			Version:   "5.5.0",
+			Version:   "0.8.6",
 			BaseImage: defaultBaseImage,
 			Region:    defaultRegion,
-			Name:      "fabrica-lore-5.5.0",
+			Name:      "fabrica-lore-0.8.6",
 			OutputDir: "/nonexistent/impossible/path",
 		},
 		mkdirAll: func(path string, perm os.FileMode) error {
@@ -248,10 +283,10 @@ func TestBuildRunWriteError(t *testing.T) {
 	b := &buildCommand{
 		out: &out,
 		cfg: BuildConfig{
-			Version:   "5.5.0",
+			Version:   "0.8.6",
 			BaseImage: defaultBaseImage,
 			Region:    defaultRegion,
-			Name:      "fabrica-lore-5.5.0",
+			Name:      "fabrica-lore-0.8.6",
 			OutputDir: "out",
 		},
 		mkdirAll: func(path string, perm os.FileMode) error { return nil },
@@ -285,10 +320,10 @@ func TestBuildRunWriteErrorPerFile(t *testing.T) {
 			b := &buildCommand{
 				out: &out,
 				cfg: BuildConfig{
-					Version:       "5.5.0",
+					Version:       "0.8.6",
 					BaseImage:     defaultBaseImage,
 					Region:        defaultRegion,
-					Name:          "fabrica-lore-5.5.0",
+					Name:          "fabrica-lore-0.8.6",
 					OutputDir:     "out",
 					IncludePacker: true,
 				},
@@ -319,7 +354,7 @@ func TestBuildRunContractError(t *testing.T) {
 	b := &buildCommand{
 		out: &bytes.Buffer{},
 		cfg: BuildConfig{
-			Version:   "5.5.0",
+			Version:   "0.8.6",
 			BaseImage: defaultBaseImage,
 			Region:    defaultRegion,
 			OutputDir: "out",
@@ -351,10 +386,10 @@ func TestBuildRunInvalidTemplate(t *testing.T) {
 	b := &buildCommand{
 		out: &out,
 		cfg: BuildConfig{
-			Version:   "5.5.0",
+			Version:   "0.8.6",
 			BaseImage: defaultBaseImage,
 			Region:    defaultRegion,
-			Name:      "fabrica-lore-5.5.0",
+			Name:      "fabrica-lore-0.8.6",
 			OutputDir: "out",
 		},
 		mkdirAll:  func(path string, perm os.FileMode) error { return nil },
@@ -374,10 +409,10 @@ func TestBuildRunWithPacker(t *testing.T) {
 	b := &buildCommand{
 		out: &out,
 		cfg: BuildConfig{
-			Version:       "5.5.0",
+			Version:       "0.8.6",
 			BaseImage:     defaultBaseImage,
 			Region:        defaultRegion,
-			Name:          "fabrica-lore-5.5.0",
+			Name:          "fabrica-lore-0.8.6",
 			OutputDir:     "out",
 			IncludePacker: true,
 		},
@@ -408,10 +443,10 @@ func TestBuildRunEmitsSharedContractArtifacts(t *testing.T) {
 	b := &buildCommand{
 		out: &bytes.Buffer{},
 		cfg: BuildConfig{
-			Version:       "5.5.0",
+			Version:       "0.8.6",
 			BaseImage:     defaultBaseImage,
 			Region:        defaultRegion,
-			Name:          "fabrica-lore-5.5.0",
+			Name:          "fabrica-lore-0.8.6",
 			OutputDir:     outputDir,
 			IncludePacker: true,
 		},
@@ -460,8 +495,8 @@ func TestBuildRunEmitsSharedContractArtifacts(t *testing.T) {
 	for _, want := range []string{
 		"DownloadPinnedLoreRelease",
 		"curl -fsSL --retry 5",
-		"https://github.com/EpicGames/lore/releases/download/v5.5.0/",
-		"loreserver-v5.5.0-x86_64-unknown-linux-gnu.tar.gz",
+		"https://github.com/EpicGames/lore/releases/download/v0.8.6/",
+		"loreserver-v0.8.6-x86_64-unknown-linux-gnu.tar.gz",
 		"cp -a /tmp/lore-bin/. /opt/loreserver/",
 		"systemctl is-enabled --quiet loreserver.service",
 	} {

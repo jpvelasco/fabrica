@@ -91,7 +91,7 @@ only local files.
 $BuildDir = "./.fabrica/lore-ami"
 $BaseAMI = "ami-REPLACE_WITH_REGION_LOCAL_JAMMY_X86_64"
 $Region = "us-west-2"
-$LoreVersion = "studio-lore-release-or-commit"
+$LoreVersion = "0.8.6"
 
 fabrica lore ami build `
   --base-image $BaseAMI `
@@ -100,6 +100,12 @@ fabrica lore ami build `
   --output-dir $BuildDir `
   --include-packer
 ```
+
+`--lore-version` defaults to `0.8.6`. Only versions with a SHA-256 pinned in
+`cmd/lore/ami/lore_checksums.go` are accepted, and `latest` is rejected. The
+component verifies the downloaded `loreserver` tarball against that digest
+before it extracts anything. To bake another release, record its
+`x86_64-unknown-linux-gnu` asset digest from the GitHub release in that table.
 
 The output directory contains:
 
