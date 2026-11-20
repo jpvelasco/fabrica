@@ -19,7 +19,9 @@ root device with `Encrypted=true` on both launch paths (Cloud Control and the
 direct `RunInstances` path). `fabrica ddc region add` inspects the edge AMI the
 same way through the edge region's client. The root volume is encrypted even
 when the AMI's snapshot is unencrypted and the account's default EBS encryption
-is off.
+is off. Each root keeps its AMI's own size; the configured volume size goes to
+the separate encrypted gp3 data volume on `/dev/sdf` that cloud-init mounts as
+the store.
 
 The command fails closed, before the state lock and any resource or state is
 written, when an AMI reports no root device name, a name that is not an EC2

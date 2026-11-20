@@ -93,7 +93,7 @@ provisioned hosts, and (for npm installs) GitHub Releases.
 | `awscli.amazonaws.com` | AWS CLI v2 download (generated docker bakes) | `cmd/horde/ami/docker_bake.go` |
 | `github.com` (`EpicGames/lore` releases) | Lore binary download (Lore Image Builder bakes) | `cmd/lore/ami/templates/component.yaml.tmpl` |
 | `d1uj6qtbmh3dt5.cloudfront.net` | NICE DCV GPG key + pinned versioned tarball (workstation bakes) | `cmd/workstation/ami/templates/component.yaml.tmpl` |
-| `package.perforce.com` | Helix Core apt key + repo (Perforce + workstation cloud-init) | `internal/perforce/userdata.go`, `internal/workstation/userdata.go` |
+| `package.perforce.com` | Helix Core apt key (pinned by fingerprint, dedicated keyring) + repo (Perforce + workstation cloud-init) | `internal/userdata/apt.go` (used by `internal/perforce/userdata.go`, `internal/workstation/userdata.go`) |
 
 **Keep this list current:** whenever a new network destination is added to the
 CLI or to any generated artifact (cloud-init, Image Builder components, Packer

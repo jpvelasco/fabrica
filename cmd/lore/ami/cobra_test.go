@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
@@ -47,6 +48,9 @@ func TestAMIBuildDefaults(t *testing.T) {
 	got := out.String()
 	if !bytes.Contains([]byte(got), []byte("Generated 6 files")) {
 		t.Errorf("expected 'Generated 6 files', got:\n%s", got)
+	}
+	if !bytes.Contains([]byte(got), []byte("Lore version:   0.8.6")) {
+		t.Errorf("expected default --lore-version 0.8.6, got:\n%s", got)
 	}
 
 	// Check files were created
@@ -95,13 +99,25 @@ func TestAMIBuildInvalidVersion(t *testing.T) {
 	}
 }
 
+func TestAMIBuildRejectsUnpinnedVersion(t *testing.T) {
+	root, _ := setupCmd(t)
+	root.SetArgs([]string{"ami", "build", "--lore-version", "5.5.0", "--output-dir", filepath.Join(t.TempDir(), "lore-ami")})
+	err := root.ExecuteContext(t.Context())
+	if err == nil {
+		t.Fatal("expected error for unpinned version 5.5.0, got nil")
+	}
+	if !strings.Contains(err.Error(), "supported versions: 0.8.6") {
+		t.Errorf("error %q must name the supported versions", err)
+	}
+}
+
 func TestAMIBuildCustomFlags(t *testing.T) {
 	root, out := setupCmd(t)
 	tmpDir := t.TempDir()
 	outputDir := filepath.Join(tmpDir, "lore-ami")
 	root.SetArgs([]string{
 		"ami", "build",
-		"--lore-version", "5.4.0",
+		"--lore-version", "0.8.6",
 		"--region", "eu-west-1",
 		"--output-dir", outputDir,
 		"--name", "my-lore-ami",
@@ -114,7 +130,7 @@ func TestAMIBuildCustomFlags(t *testing.T) {
 	if !bytes.Contains([]byte(got), []byte("my-lore-ami")) {
 		t.Errorf("expected custom name in output, got:\n%s", got)
 	}
-	if !bytes.Contains([]byte(got), []byte("5.4.0")) {
+	if !bytes.Contains([]byte(got), []byte("0.8.6")) {
 		t.Errorf("expected custom version in output, got:\n%s", got)
 	}
 }

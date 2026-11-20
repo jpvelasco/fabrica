@@ -46,7 +46,9 @@ in the known-good table when verification passes.
 and requests exactly that device with `Encrypted=true` on both launch paths
 (Cloud Control and the direct `RunInstances` path). The root volume is encrypted
 even when the AMI's snapshot is unencrypted and the account's default EBS
-encryption is off.
+encryption is off. The root keeps the AMI's own size; `lore.volumeSize` sizes the
+separate encrypted gp3 data volume on `/dev/sdf` that cloud-init mounts as the
+store, and without which `loreserver` does not start.
 
 Create fails closed, before the state lock and any resource or state is written,
 when the AMI reports no root device name, a name that is not an EC2 device name,
@@ -91,7 +93,7 @@ only local files.
 $BuildDir = "./.fabrica/lore-ami"
 $BaseAMI = "ami-REPLACE_WITH_REGION_LOCAL_JAMMY_X86_64"
 $Region = "us-west-2"
-$LoreVersion = "studio-lore-release-or-commit"
+$LoreVersion = "0.8.6"
 
 fabrica lore ami build `
   --base-image $BaseAMI `
@@ -100,6 +102,12 @@ fabrica lore ami build `
   --output-dir $BuildDir `
   --include-packer
 ```
+
+`--lore-version` defaults to `0.8.6`. Only releases whose tarball SHA-256 is
+pinned in fabrica are accepted, and `latest` is rejected. The component verifies
+the downloaded `loreserver` tarball against that digest before it extracts
+anything. Contributors add a release by recording its `x86_64-unknown-linux-gnu`
+asset digest from the GitHub release in `cmd/lore/ami/lore_checksums.go`.
 
 The output directory contains:
 
