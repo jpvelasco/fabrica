@@ -64,12 +64,13 @@ func TestBakesHaveNoPipeToShellOrUnverifiedDownloads(t *testing.T) {
 	})
 }
 
-// A grep on the colon-format fingerprint line is not a trust gate: a file that
-// also carries another key still passes it, and signed-by would trust both. The
-// bake must instead export only the pinned key.
+// A grep on the downloaded file's colon-format fingerprint line is not a trust
+// gate: a file that also carries another key still passes it, and signed-by
+// would trust both. The bake must export only the pinned key, then check the
+// exported keyring holds exactly that one primary (userdata.PinnedKeyringShell).
 func TestBakesDoNotUseFingerprintGrepAsTrustGate(t *testing.T) {
 	forEachBakeOutput(t, func(t *testing.T, _, _, rendered string) {
-		for _, bad := range []string{"grep -x 'fpr", "--show-keys", "signed-by=/etc/apt/keyrings/docker.asc"} {
+		for _, bad := range []string{"grep -x 'fpr", "--show-keys --with-colons /etc/apt/keyrings/docker.asc", "signed-by=/etc/apt/keyrings/docker.asc"} {
 			if strings.Contains(rendered, bad) {
 				t.Errorf("rendered bake must not use fingerprint grep or an armored keyring (found %q)", bad)
 			}

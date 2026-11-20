@@ -2,14 +2,14 @@ package ami
 
 import "strings"
 
-// awsCliKeyFingerprint is the primary fingerprint of the AWS CLI Team release
+// awsCliSignerFingerprint is the primary fingerprint of the AWS CLI Team release
 // key (aws-cli@amazon.com) published on the AWS CLI install guide.
-const awsCliKeyFingerprint = "FB5DB77FD5C118B80511ADA8A6310ACC4672475C"
+const awsCliSignerFingerprint = "FB5DB77FD5C118B80511ADA8A6310ACC4672475C"
 
 // awsCliPublicKey is that key, copied from
 // https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
 // (all four PGP blocks on the page carry the same fingerprint). The bake exports
-// only the awsCliKeyFingerprint key from it into the verification keyring.
+// only the awsCliSignerFingerprint key from it into the verification keyring.
 const awsCliPublicKey = `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mQINBF2Cr7UBEADJZHcgusOJl7ENSyumXh85z0TRV0xJorM2B/JL0kHOyigQluUG
@@ -61,7 +61,7 @@ func awsCliVerifiedInstallScript() string {
 		`curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "$work/awscliv2.zip"`,
 		`curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip.sig" -o "$work/awscliv2.zip.sig"`,
 		"cat >\"$work/aws-cli-public-key.asc\" <<'KEY'\n" + awsCliPublicKey + "KEY",
-		pinnedKeyringCommands("$work/aws-cli-public-key.asc", awsCliKeyFingerprint, "$work/aws-cli.gpg"),
+		pinnedKeyringCommands("$work/aws-cli-public-key.asc", awsCliSignerFingerprint, "$work/aws-cli.gpg"),
 		// Verify against a keyring that holds only the pinned key, so no other
 		// key in the default keyring or the downloaded file can satisfy it.
 		`gpg --batch --no-default-keyring --keyring "$work/aws-cli.gpg" --verify "$work/awscliv2.zip.sig" "$work/awscliv2.zip"`,

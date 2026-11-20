@@ -1,6 +1,10 @@
 package ami
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/jpvelasco/fabrica/internal/userdata"
+)
 
 // aptRepo is a third-party apt repository whose signing key is pinned by
 // primary-key fingerprint. The bake downloads the vendor key, exports only the
@@ -38,21 +42,10 @@ var (
 	}
 )
 
-// pinnedKeyringCommands imports keyFile into a throwaway GNUPGHOME and exports
-// only the key whose fingerprint is fpr into keyring. keyFile may hold other
-// keys: they are imported but never exported, so the keyring (and therefore
-// signed-by or --keyring) can only ever contain the pinned key. An empty export
-// means keyFile lacks the pinned key; the step fails before anything is trusted.
-// keyFile and keyring are shell paths and are quoted here.
+// pinnedKeyringCommands is userdata.PinnedKeyringShell without its trailing
+// newline, so it can sit in a strings.Join line list.
 func pinnedKeyringCommands(keyFile, fpr, keyring string) string {
-	return strings.Join([]string{
-		`gnupg_home="$(mktemp -d)"`,
-		`GNUPGHOME="$gnupg_home" gpg --batch --quiet --import "` + keyFile + `"`,
-		`GNUPGHOME="$gnupg_home" gpg --batch --quiet --export ` + fpr + ` > "` + keyring + `"`,
-		`rm -rf "$gnupg_home"`,
-		`test -s "` + keyring + `" || { echo "ERROR: key ` + fpr + ` not found in ` + keyFile + `; refusing to trust it" >&2; exit 1; }`,
-		`chmod a+r "` + keyring + `"`,
-	}, "\n")
+	return strings.TrimSuffix(userdata.PinnedKeyringShell(keyFile, fpr, keyring), "\n")
 }
 
 // setupScript downloads the vendor key, pins it, and writes the signed-by
