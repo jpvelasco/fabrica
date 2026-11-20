@@ -90,6 +90,28 @@ func AssertEBS(t *testing.T, doc map[string]any, wantSize int, wantDelete bool) 
 	}
 }
 
+// AssertDataAndEncryptedRoot checks the two-mapping layout of modules whose
+// cloud-init mounts a separate data disk: an encrypted wantSize GiB data
+// volume on /dev/sdf, then an encrypted root on rootDevice that keeps the
+// AMI's own size (#696).
+func AssertDataAndEncryptedRoot(t *testing.T, doc map[string]any, rootDevice string, wantSize int) {
+	t.Helper()
+	bdms, ok := doc["BlockDeviceMappings"].([]any)
+	if !ok || len(bdms) != 2 {
+		t.Fatalf("BlockDeviceMappings = %v, want a data volume and an encrypted root", doc["BlockDeviceMappings"])
+	}
+	data, root := bdms[0].(map[string]any), bdms[1].(map[string]any)
+	AssertStringField(t, data, "DeviceName", "/dev/sdf")
+	AssertStringField(t, root, "DeviceName", rootDevice)
+	dataEBS, rootEBS := data["Ebs"].(map[string]any), root["Ebs"].(map[string]any)
+	if dataEBS["VolumeSize"] != float64(wantSize) || dataEBS["Encrypted"] != true {
+		t.Errorf("data Ebs = %v, want %d GiB encrypted", dataEBS, wantSize)
+	}
+	if _, sized := rootEBS["VolumeSize"]; sized || rootEBS["Encrypted"] != true {
+		t.Errorf("root Ebs = %v, want encrypted with the AMI's own size", rootEBS)
+	}
+}
+
 // AssertManagedByTag checks that the Tags array contains ManagedBy=fabrica.
 func AssertManagedByTag(t *testing.T, raw json.RawMessage) {
 	t.Helper()

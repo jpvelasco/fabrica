@@ -46,7 +46,9 @@ in the known-good table when verification passes.
 and requests exactly that device with `Encrypted=true` on both launch paths
 (Cloud Control and the direct `RunInstances` path). The root volume is encrypted
 even when the AMI's snapshot is unencrypted and the account's default EBS
-encryption is off.
+encryption is off. The root keeps the AMI's own size; `lore.volumeSize` sizes the
+separate encrypted gp3 data volume on `/dev/sdf` that cloud-init mounts as the
+store, and without which `loreserver` does not start.
 
 Create fails closed, before the state lock and any resource or state is written,
 when the AMI reports no root device name, a name that is not an EC2 device name,

@@ -56,7 +56,7 @@ func TestRenderText_Unreachable(t *testing.T) {
 		ProbeAttempted: true,
 		Reachable:      false,
 	})
-	assert.Contains(t, out.String(), "unreachable from this machine")
+	assert.Contains(t, out.String(), "server may not have started")
 }
 
 func TestRenderJSON_Fields(t *testing.T) {

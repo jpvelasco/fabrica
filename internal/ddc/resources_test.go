@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/ec2state"
 )
 
 func testPlan(backend string) *SetupPlan {
@@ -135,28 +137,14 @@ func TestScyllaInstanceDesiredState(t *testing.T) {
 	}
 }
 
-// TestInstanceDesiredStatesEncryptedRoot pins #513: the DDC coordinator,
-// Scylla, and edge instances each request Encrypted=true on the AMI's own
-// root device, so the root volume is encrypted even when the AMI snapshot
-// is not.
+// TestInstanceDesiredStatesEncryptedRoot pins #513 and #696: the DDC
+// coordinator, Scylla, and edge instances each request Encrypted=true on the
+// AMI's own root device, and keep the data volume cloud-init mounts on
+// /dev/sdf.
 func TestInstanceDesiredStatesEncryptedRoot(t *testing.T) {
-	check := func(t *testing.T, raw json.RawMessage, dev string) {
+	check := func(t *testing.T, raw json.RawMessage, dev string, size int) {
 		t.Helper()
-		var doc map[string]any
-		if err := json.Unmarshal(raw, &doc); err != nil {
-			t.Fatalf("invalid desired state: %v", err)
-		}
-		bdms, ok := doc["BlockDeviceMappings"].([]any)
-		if !ok || len(bdms) != 1 {
-			t.Fatalf("BlockDeviceMappings = %v, want only the root", doc["BlockDeviceMappings"])
-		}
-		m0 := bdms[0].(map[string]any)
-		if m0["DeviceName"] != dev {
-			t.Errorf("DeviceName = %v, want %s", m0["DeviceName"], dev)
-		}
-		if enc, ok := m0["Ebs"].(map[string]any)["Encrypted"].(bool); !ok || !enc {
-			t.Errorf("Ebs.Encrypted = %v, want true", m0["Ebs"])
-		}
+		ec2state.AssertDataAndEncryptedRoot(t, ec2state.UnmarshalDesiredState(t, raw), dev, size)
 	}
 
 	t.Run("coordinator", func(t *testing.T) {
@@ -166,7 +154,7 @@ func TestInstanceDesiredStatesEncryptedRoot(t *testing.T) {
 		if err != nil {
 			t.Fatalf("InstanceDesiredState: %v", err)
 		}
-		check(t, raw, "/dev/xvda1")
+		check(t, raw, "/dev/xvda1", plan.VolumeSize)
 	})
 
 	t.Run("scylla", func(t *testing.T) {
@@ -176,7 +164,7 @@ func TestInstanceDesiredStatesEncryptedRoot(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ScyllaInstanceDesiredState: %v", err)
 		}
-		check(t, raw, "/dev/xvdb")
+		check(t, raw, "/dev/xvdb", plan.ScyllaVolumeSize)
 	})
 
 	t.Run("edge", func(t *testing.T) {
@@ -186,7 +174,7 @@ func TestInstanceDesiredStatesEncryptedRoot(t *testing.T) {
 		if err != nil {
 			t.Fatalf("EdgeInstanceDesiredState: %v", err)
 		}
-		check(t, raw, "/dev/xvda1")
+		check(t, raw, "/dev/xvda1", plan.VolumeSize)
 	})
 
 	t.Run("empty root device refuses", func(t *testing.T) {
