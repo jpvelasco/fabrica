@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/assert"
+	"github.com/jpvelasco/fabrica/internal/userdata"
 )
 
 // testWSParamName mirrors the per-create name shape minted by the create
@@ -266,6 +267,18 @@ func TestGenerateRawMountPerforceInjectsP4Config(t *testing.T) {
 	} {
 		assert.Contains(t, got, want)
 	}
+}
+
+func TestGenerateRawMountPerforceAptKeyringPinned(t *testing.T) {
+	cfg := testUserData()
+	cfg.MountPerforce = true
+	cfg.PerforceServerAddr = "10.0.1.5:1666"
+	got, err := GenerateRaw(cfg)
+	if err != nil {
+		t.Fatalf("GenerateRaw: %v", err)
+	}
+	assert.Contains(t, got, userdata.PerforceAptRepoShell())
+	assert.NoneOf(t, got, "apt-key", "focal", "http://package.perforce.com")
 }
 
 func TestGenerateRawNoMountPerforceNoP4Block(t *testing.T) {

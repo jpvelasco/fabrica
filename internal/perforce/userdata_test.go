@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/assert"
+	"github.com/jpvelasco/fabrica/internal/userdata"
 )
 
 func TestGenerateRaw_LatestVersion(t *testing.T) {
@@ -310,4 +311,13 @@ func TestGenerate_DefaultsApplied(t *testing.T) {
 	if !strings.Contains(string(decoded), "fabrica-perforce") {
 		t.Error("default ServerID should appear in decoded output")
 	}
+}
+
+func TestGenerateRaw_PerforceAptKeyringPinned(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{Version: "latest", AdminPass: "testpass"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assert.Contains(t, got, userdata.PerforceAptRepoShell())
+	assert.NoneOf(t, got, "apt-key", "focal", "http://package.perforce.com")
 }

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **The Perforce apt key is pinned by fingerprint and scoped to its own keyring.** Perforce and workstation cloud-init no longer trust the package key globally through `apt-key`. The script refuses to continue unless the key matches the pinned Perforce fingerprint, and the repository is signed-by that keyring over HTTPS. The workstation script also no longer adds the `focal` repository on a jammy base; the codename comes from `/etc/os-release` (#703)
+
 ## [0.7.2] - 2026-11-16
 
 **Patch release.** Updates the AWS SDK group. The provider identity tests now read CodeBuild Smithy RPC v2 requests.
