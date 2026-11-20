@@ -17,22 +17,26 @@ type UserDataConfig struct {
 }
 
 var userDataRenderer = userdata.New(template.Must(template.New("userdata").Parse(
-	perforceUserData + userdata.ScrubShell("configure", "admin password", ".fabrica/perforce-credentials.yaml"),
+	perforceUserDataHead +
+		userdata.PerforceAptRepoShell() +
+		perforceUserDataBody +
+		userdata.ScrubShell("configure", "admin password", ".fabrica/perforce-credentials.yaml"),
 )))
 
 // ADMIN_PASS still rides UserData. It can adopt the workstation Parameter Store
 // seam (cloud.ParameterStore) later; this module does not.
-const perforceUserData = `#!/bin/bash
+const perforceUserDataHead = `#!/bin/bash
 set -euo pipefail
 
 ADMIN_PASS="{{ .AdminPass }}"
 SERVER_ID="{{ .ServerID }}"
 DATA_MOUNT="{{ .DataMount }}"
 
-wget -qO - https://package.perforce.com/perforce.pubkey | apt-key add -
-add-apt-repository "deb http://package.perforce.com/apt/ubuntu jammy release"
-apt-get update -qq
-{{ if eq .Version "latest" -}}
+`
+
+// perforceUserDataBody follows the apt repo fragment (which ends by
+// refreshing the apt index).
+const perforceUserDataBody = `{{ if eq .Version "latest" -}}
 apt-get install -y helix-p4d
 {{- else -}}
 # Pinned versions rot out of Perforce's release archive; fall back to the
