@@ -129,8 +129,75 @@ func TestInstanceDesiredState_EBSNotDeletedOnTermination(t *testing.T) {
 	}
 }
 
+// adminPasswordPlan is a role plan with the per-create admin-password
+// parameter the create command mints before building the role.
+func adminPasswordPlan(extra CreatePlan) *CreatePlan {
+	extra.RoleName = "fabrica-perforce-role"
+	extra.Region = "us-west-2"
+	extra.Account = "123456789012"
+	extra.AdminPasswordParameter = "/fabrica/perforce/0123456789abcdef0123456789abcdef/admin-password"
+	return &extra
+}
+
+// TestRoleDesiredState_AdminPasswordReadPolicy pins #700: the instance role
+// may read exactly its own admin-password parameter and nothing else.
+func TestRoleDesiredState_AdminPasswordReadPolicy(t *testing.T) {
+	plan := adminPasswordPlan(CreatePlan{})
+	raw, err := RoleDesiredState(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Policies []struct {
+			PolicyName     string `json:"PolicyName"`
+			PolicyDocument struct {
+				Statement []struct {
+					Action   []string `json:"Action"`
+					Resource []string `json:"Resource"`
+				} `json:"Statement"`
+			} `json:"PolicyDocument"`
+		} `json:"Policies"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, p := range doc.Policies {
+		if p.PolicyName != AdminPasswordPolicyName {
+			continue
+		}
+		found = true
+		if len(p.PolicyDocument.Statement) != 1 {
+			t.Fatalf("admin-password policy has %d statements, want 1", len(p.PolicyDocument.Statement))
+		}
+		st := p.PolicyDocument.Statement[0]
+		if len(st.Action) != 1 || st.Action[0] != "ssm:GetParameter" {
+			t.Errorf("Action = %v, want only ssm:GetParameter", st.Action)
+		}
+		want := []string{"arn:aws:ssm:us-west-2:123456789012:parameter/fabrica/perforce/0123456789abcdef0123456789abcdef/admin-password"}
+		if len(st.Resource) != 1 || st.Resource[0] != want[0] {
+			t.Errorf("Resource = %v, want exactly %v", st.Resource, want)
+		}
+	}
+	if !found {
+		t.Fatalf("role has no %s policy: %s", AdminPasswordPolicyName, raw)
+	}
+}
+
+// TestRoleDesiredState_AdminPasswordRequiresScopedName refuses to build a role
+// whose read grant would be unscoped or point outside the perforce scope.
+func TestRoleDesiredState_AdminPasswordRequiresScopedName(t *testing.T) {
+	for _, name := range []string{"", "/fabrica/perforce/admin-password", "/fabrica/workstation/0123456789abcdef0123456789abcdef/dcv-password"} {
+		plan := adminPasswordPlan(CreatePlan{})
+		plan.AdminPasswordParameter = name
+		if _, err := RoleDesiredState(plan); err == nil {
+			t.Errorf("RoleDesiredState with parameter %q: expected an error", name)
+		}
+	}
+}
+
 func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
-	plan := &CreatePlan{RoleName: "fabrica-perforce-role"}
+	plan := adminPasswordPlan(CreatePlan{})
 	raw, err := RoleDesiredState(plan)
 	if err != nil {
 		t.Fatal(err)
@@ -148,8 +215,8 @@ func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 	if !ok {
 		t.Fatal("Policies not found in role")
 	}
-	if len(policies) != 1 {
-		t.Fatalf("Policies len = %d, want 1 (SSM output)", len(policies))
+	if len(policies) != 2 {
+		t.Fatalf("Policies len = %d, want 2 (SSM output + admin password)", len(policies))
 	}
 	if pm := policies[0].(map[string]any); pm["PolicyName"] != "fabrica-ssm-output" {
 		t.Errorf("Policies[0] = %v, want fabrica-ssm-output", pm["PolicyName"])
@@ -157,12 +224,11 @@ func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 }
 
 func TestRoleDesiredState_S3ExportPolicy(t *testing.T) {
-	plan := &CreatePlan{
-		RoleName:       "fabrica-perforce-role",
+	plan := adminPasswordPlan(CreatePlan{
 		BackupS3Export: true,
 		BackupS3Bucket: "my-bucket",
 		BackupS3Prefix: "p4/",
-	}
+	})
 	raw, err := RoleDesiredState(plan)
 	if err != nil {
 		t.Fatal(err)
@@ -177,8 +243,8 @@ func TestRoleDesiredState_S3ExportPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	policies := doc["Policies"].([]any)
-	if len(policies) != 2 {
-		t.Fatalf("Policies len = %d, want 2 (SSM output + S3 backup)", len(policies))
+	if len(policies) != 3 {
+		t.Fatalf("Policies len = %d, want 3 (SSM output + admin password + S3 backup)", len(policies))
 	}
 	found := false
 	for _, p := range policies {
@@ -192,12 +258,11 @@ func TestRoleDesiredState_S3ExportPolicy(t *testing.T) {
 }
 
 func TestRoleDesiredState_S3ExportDefaultPrefix(t *testing.T) {
-	plan := &CreatePlan{
-		RoleName:       "fabrica-perforce-role",
+	plan := adminPasswordPlan(CreatePlan{
 		BackupS3Export: true,
 		BackupS3Bucket: "bkt",
 		BackupS3Prefix: "", // hits DefaultS3Prefix branch
-	}
+	})
 	raw, err := RoleDesiredState(plan)
 	if err != nil {
 		t.Fatal(err)
@@ -303,7 +368,7 @@ func TestDesiredStatesStampFabricaModule(t *testing.T) {
 		t.Errorf("instance FabricaModule = %q, want perforce", got)
 	}
 
-	roleRaw, err := RoleDesiredState(&CreatePlan{RoleName: "fabrica-perforce-role"})
+	roleRaw, err := RoleDesiredState(adminPasswordPlan(CreatePlan{}))
 	if err != nil {
 		t.Fatalf("RoleDesiredState: %v", err)
 	}

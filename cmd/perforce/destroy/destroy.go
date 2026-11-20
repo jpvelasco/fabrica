@@ -6,6 +6,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/perforce"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -18,14 +19,21 @@ var spec = teardown.Spec{
 	NotProvisioned: "Perforce is not provisioned. Nothing to destroy.",
 	PlanHeader:     "Perforce Helix Core — destroy plan",
 	DryRunHeader:   "Perforce Helix Core (destroy dry run)",
-	Irreversible: "IRREVERSIBLE: This deletes the Perforce instance, security group, and IAM profile/role. " +
+	Irreversible: "IRREVERSIBLE: This deletes the Perforce instance, security group, IAM profile/role, and the admin password SecureString. " +
 		"The data volume is retained (DeleteOnTermination=false) so local backups survive as an orphan EBS volume. " +
 		"S3 exports are not deleted. Delete backups explicitly if you intend a full purge.",
 	SuccessMessage: "Perforce Helix Core destroyed. Data volume (and any local backups on it) retained; S3 exports untouched.",
-	// Instance → profile → role → SG (reverse of create: SG → role → profile → instance).
+	// Admin-password SecureString → instance → profile → role → SG. The
+	// parameter is the first in the order; see perforceResourceOrder.
 	ResourceOrder: perforceResourceOrder,
+	WireCommand:   teardown.WireParameterDelete,
 }
 
+// perforceResourceOrder deletes the recorded admin-password SecureString first.
+// Its name lives only on the instance record, which the teardown engine drops
+// from state as soon as the instance is deleted, so a parameter delete that ran
+// after the instance could orphan the secret on a failed or interrupted run
+// (the #524 pattern). A pre-#700 instance records no name and is skipped.
 func perforceResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 	order := []string{
 		"AWS::EC2::Instance",
@@ -37,7 +45,11 @@ func perforceResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 	for _, r := range m.Resources {
 		byType[r.TypeName] = r
 	}
-	out := make([]cloud.Resource, 0, len(order))
+	out := make([]cloud.Resource, 0, len(order)+1)
+	inst := byType[cloud.TypeAWSEC2Instance]
+	if r, ok := teardown.RecordedParameter("perforce", inst.Properties["adminPasswordParameter"], perforce.AdminPasswordScope.IsName); ok {
+		out = append(out, r)
+	}
 	for _, t := range order {
 		if r, ok := byType[t]; ok && r.Identifier != "" {
 			out = append(out, cloud.Resource{TypeName: r.TypeName, Identifier: r.Identifier})
@@ -61,11 +73,18 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Short: "Permanently delete the Perforce Helix Core server",
 		Long: `Permanently delete the Perforce Helix Core server and all its AWS resources.
 
-Resources are deleted in reverse-creation order to respect dependencies:
-  1. EC2 Instance (terminated first)
-  2. IAM Instance Profile
-  3. IAM Role
-  4. EC2 Security Group
+Resources are deleted in dependency order:
+  1. SSM Parameter Store SecureString (the Helix Core admin password, first so a
+     failed or interrupted run cannot orphan it)
+  2. EC2 Instance (terminated second)
+  3. IAM Instance Profile
+  4. IAM Role
+  5. EC2 Security Group
+
+The admin-password SecureString (/fabrica/perforce/<create-nonce>/admin-password)
+is deleted by name, as recorded on the instance. An instance created before the
+password moved to SSM records no name, so there is nothing to delete. A parameter
+already gone is success.
 
 The data volume is retained (DeleteOnTermination=false). S3 exports are not deleted.
 

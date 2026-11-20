@@ -252,7 +252,7 @@ Runs the Fabrica MCP (Model Context Protocol) server over stdio transport. Expos
 
 #### `fabrica perforce create`
 
-Provisions a Perforce Helix Core server: creates an EC2 security group (port 1666) and launches an EC2 instance (IMDSv2 required, hop limit 1). Generates credentials to `.fabrica/perforce-credentials.yaml` (mode 0600). The admin password is passed to Helix configure in UserData. After configure and the service start succeed, cloud-init truncates the local cloud-init copies and wipes the rendered script file (`scripts/part-001`) as the last step. The EC2 user-data attribute itself is unchanged (AWS replaces it only on a stopped instance). Writes state incrementally so partial failures are recoverable.
+Provisions a Perforce Helix Core server: creates an EC2 security group (port 1666) and launches an EC2 instance (IMDSv2 required, hop limit 1). Generates credentials to `.fabrica/perforce-credentials.yaml` (mode 0600). Stores the admin password in a per-create SSM SecureString (`/fabrica/perforce/<create-nonce>/admin-password`, never EC2 UserData). Cloud-init fetches it at boot and passes it to Helix configure. The instance role may `ssm:GetParameter` on that one parameter ARN only, and `perforce destroy` deletes the parameter before the instance. Writes state incrementally so partial failures are recoverable.
 
 #### `fabrica perforce status`
 
