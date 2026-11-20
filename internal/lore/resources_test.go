@@ -88,19 +88,16 @@ func TestInstanceDesiredStateShape(t *testing.T) {
 	ec2state.AssertStringField(t, doc, "InstanceType", "m5.xlarge")
 	ec2state.AssertSGID(t, doc, "sg-abc")
 
-	bdm := doc["BlockDeviceMappings"].([]any)
-	ebs := bdm[0].(map[string]any)["Ebs"].(map[string]any)
-	if ebs["VolumeSize"] != float64(500) {
-		t.Errorf("VolumeSize = %v", ebs["VolumeSize"])
-	}
-	if ebs["DeleteOnTermination"] != true {
-		t.Errorf("DeleteOnTermination = %v, want true (destroy deletes store with instance)", ebs["DeleteOnTermination"])
+	ec2state.AssertDataAndEncryptedRoot(t, doc, "/dev/sda1", 500)
+	data := doc["BlockDeviceMappings"].([]any)[0].(map[string]any)
+	if data["Ebs"].(map[string]any)["DeleteOnTermination"] != true {
+		t.Errorf("data Ebs = %v, want DeleteOnTermination (destroy deletes store with instance)", data["Ebs"])
 	}
 }
 
-// TestInstanceDesiredStateEncryptedRoot pins #513: the lore root volume is
-// requested with Encrypted=true on the AMI's own root device, so it is
-// encrypted even when the AMI snapshot is not.
+// TestInstanceDesiredStateEncryptedRoot pins #513 and #696: the lore root
+// volume is requested with Encrypted=true on the AMI's own root device, and
+// the data volume cloud-init mounts stays on /dev/sdf.
 func TestInstanceDesiredStateEncryptedRoot(t *testing.T) {
 	mk := func(root string) *CreatePlan {
 		return &CreatePlan{
@@ -119,17 +116,7 @@ func TestInstanceDesiredStateEncryptedRoot(t *testing.T) {
 			if err != nil {
 				t.Fatalf("InstanceDesiredState: %v", err)
 			}
-			bdms := ec2state.UnmarshalDesiredState(t, raw)["BlockDeviceMappings"].([]any)
-			if len(bdms) != 1 {
-				t.Fatalf("BlockDeviceMappings = %v, want only the root", bdms)
-			}
-			m0 := bdms[0].(map[string]any)
-			if m0["DeviceName"] != dev {
-				t.Errorf("DeviceName = %v, want %s", m0["DeviceName"], dev)
-			}
-			if enc, ok := m0["Ebs"].(map[string]any)["Encrypted"].(bool); !ok || !enc {
-				t.Errorf("Ebs.Encrypted = %v, want true", m0["Ebs"])
-			}
+			ec2state.AssertDataAndEncryptedRoot(t, ec2state.UnmarshalDesiredState(t, raw), dev, 500)
 		})
 	}
 
@@ -138,7 +125,7 @@ func TestInstanceDesiredStateEncryptedRoot(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected an error for an empty root device")
 		}
-		if !strings.Contains(err.Error(), "EC2 block device name is empty") {
+		if !strings.Contains(err.Error(), "EC2 root device name is empty") {
 			t.Errorf("err = %v", err)
 		}
 	})

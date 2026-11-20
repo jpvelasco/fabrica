@@ -59,10 +59,10 @@ func newRenderTestCommand(includePacker bool) *buildCommand {
 	return &buildCommand{
 		out: &bytes.Buffer{},
 		cfg: BuildConfig{
-			Version:       "5.5.0",
+			Version:       "0.8.6",
 			BaseImage:     defaultBaseImage,
 			Region:        "us-west-2",
-			Name:          "fabrica-lore-5.5.0",
+			Name:          "fabrica-lore-0.8.6",
 			OutputDir:     "lore-ami",
 			IncludePacker: includePacker,
 		},
@@ -83,25 +83,24 @@ func TestRenderTemplates(t *testing.T) {
 		{
 			template: "image-builder.json.tmpl",
 			wantSubstr: []string{
-				`"name": "fabrica-lore-5.5.0"`,
+				`"name": "fabrica-lore-0.8.6"`,
 				`"parentImage": "ami-0c7217cdde317cfec"`,
-				`"LoreVersion": "5.5.0"`,
+				`"LoreVersion": "0.8.6"`,
 				"REPLACE_WITH_CUSTOM_COMPONENT_ARN",
 				`"ManagedBy": "fabrica"`,
-				`"supportedOsVersions": ["Ubuntu 22"]`,
 			},
 		},
 		{
 			template: "component.yaml.tmpl",
 			wantSubstr: []string{
 				"schemaVersion: 1.0",
-				"name: fabrica-lore-5.5.0",
-				"loreserver 5.5.0",
+				"name: fabrica-lore-0.8.6",
+				"loreserver 0.8.6",
 				"DownloadPinnedLoreRelease",
 				"umask 022",
 				"curl -fsSL --retry 5",
-				"https://github.com/EpicGames/lore/releases/download/v5.5.0/",
-				"loreserver-v5.5.0-x86_64-unknown-linux-gnu.tar.gz",
+				"https://github.com/EpicGames/lore/releases/download/v0.8.6/",
+				"loreserver-v0.8.6-x86_64-unknown-linux-gnu.tar.gz",
 				"chmod 0755 /tmp/lore-bin/loreserver",
 				"cp -a /tmp/lore-bin/. /opt/loreserver/",
 				"amazon-ssm-agent.service",
@@ -115,7 +114,7 @@ func TestRenderTemplates(t *testing.T) {
 		{
 			template: "build-guide.md.tmpl",
 			wantSubstr: []string{
-				"Lore **5.5.0**",
+				"Lore **0.8.6**",
 				"us-west-2",
 				"fabrica lore create",
 				"REPLACE_WITH_CUSTOM_COMPONENT_ARN",
@@ -124,14 +123,14 @@ func TestRenderTemplates(t *testing.T) {
 				// #509: the Image Builder bake must tag the output AMI's
 				// snapshots for identification and operator cleanup.
 				"aws ec2 create-tags --region us-west-2",
-				"Key=ManagedBy,Value=fabrica Key=FabricaModule,Value=lore Key=Name,Value=fabrica-lore-5.5.0",
+				"Key=ManagedBy,Value=fabrica Key=FabricaModule,Value=lore Key=Name,Value=fabrica-lore-0.8.6",
 				"Images[0].BlockDeviceMappings[?Ebs].Ebs.SnapshotId",
 			},
 		},
 		{
 			template: "packer.hcl.tmpl",
 			wantSubstr: []string{
-				"fabrica-lore-5.5.0",
+				"fabrica-lore-0.8.6",
 				"us-west-2",
 				"m7i.xlarge",
 				"ami-0c7217cdde317cfec",
@@ -264,6 +263,21 @@ func TestValidateImageBuilderJSON(t *testing.T) {
 			json:    `not json`,
 			wantErr: true,
 		},
+		{
+			name:    "component-only key supportedOsVersions rejected",
+			json:    `{"name":"test","semanticVersion":"1.0.0","parentImage":"ami-123","supportedOsVersions":["Ubuntu 22"],"components":[{"componentArn":"REPLACE_WITH_CUSTOM_COMPONENT_ARN"}]}`,
+			wantErr: true,
+		},
+		{
+			name:    "unknown nested ebs key rejected",
+			json:    `{"name":"test","semanticVersion":"1.0.0","parentImage":"ami-123","blockDeviceMappings":[{"deviceName":"/dev/sda1","ebs":{"volumeSize":50,"bogus":true}}],"components":[{"componentArn":"REPLACE_WITH_CUSTOM_COMPONENT_ARN"}]}`,
+			wantErr: true,
+		},
+		{
+			name:    "emitted block device mappings accepted",
+			json:    `{"name":"test","semanticVersion":"1.0.0","parentImage":"ami-123","blockDeviceMappings":[{"deviceName":"/dev/sda1","ebs":{"volumeSize":50,"volumeType":"gp3","deleteOnTermination":true,"encrypted":true}}],"components":[{"componentArn":"REPLACE_WITH_CUSTOM_COMPONENT_ARN"}]}`,
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -273,6 +287,45 @@ func TestValidateImageBuilderJSON(t *testing.T) {
 				t.Errorf("validateImageBuilderJSON() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestRenderedRecipeIsStrictlyValid(t *testing.T) {
+	b := newRenderTestCommand(false)
+	data, err := b.templateData()
+	if err != nil {
+		t.Fatalf("templateData() error: %v", err)
+	}
+	recipe, err := b.renderTemplate("image-builder.json.tmpl", data)
+	if err != nil {
+		t.Fatalf("renderTemplate(image-builder.json.tmpl) error: %v", err)
+	}
+	if err := validateImageBuilderJSON(recipe); err != nil {
+		t.Errorf("rendered recipe must pass strict validation: %v\n%s", err, recipe)
+	}
+}
+
+func TestComponentVerifiesTarballSHA256BeforeExtract(t *testing.T) {
+	b := newRenderTestCommand(false)
+	data, err := b.templateData()
+	if err != nil {
+		t.Fatalf("templateData() error: %v", err)
+	}
+	rendered, err := b.renderTemplate("component.yaml.tmpl", data)
+	if err != nil {
+		t.Fatalf("renderTemplate(component.yaml.tmpl) error: %v", err)
+	}
+	component := string(rendered)
+
+	check := `echo "` + v086Digest + `  /tmp/lore-bin/loreserver.tgz" | sha256sum -c -`
+	download := strings.Index(component, "curl -fsSL --retry 5")
+	verify := strings.Index(component, check)
+	extract := strings.Index(component, "tar -xzf /tmp/lore-bin/loreserver.tgz")
+	if verify < 0 {
+		t.Fatalf("component.yaml missing digest check %q", check)
+	}
+	if download >= verify || verify >= extract {
+		t.Errorf("digest check must sit between download (%d) and extract (%d), got %d", download, extract, verify)
 	}
 }
 

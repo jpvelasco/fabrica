@@ -1,6 +1,7 @@
 package ami
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -8,16 +9,38 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// imageBuilderRecipe mirrors the structure of an EC2 Image Builder recipe document
-// for validation. The canonical output is the rendered template.
+// imageBuilderRecipe mirrors the CreateImageRecipe input shape for validation.
+// Every key the recipe template emits must appear here: validation decodes
+// strictly, so an unknown key (for example a CreateComponent-only field) fails.
 type imageBuilderRecipe struct {
-	Name                string               `json:"name"`
-	SemanticVersion     string               `json:"semanticVersion"`
-	Description         string               `json:"description"`
-	ParentImage         string               `json:"parentImage"`
-	SupportedOsVersions []string             `json:"supportedOsVersions"`
-	Components          []componentReference `json:"components"`
-	Tags                map[string]string    `json:"tags"`
+	Name                            string                   `json:"name"`
+	SemanticVersion                 string                   `json:"semanticVersion"`
+	Description                     string                   `json:"description"`
+	ParentImage                     string                   `json:"parentImage"`
+	BlockDeviceMappings             []blockDeviceMapping     `json:"blockDeviceMappings"`
+	Components                      []componentReference     `json:"components"`
+	AdditionalInstanceConfiguration additionalInstanceConfig `json:"additionalInstanceConfiguration"`
+	Tags                            map[string]string        `json:"tags"`
+}
+
+type blockDeviceMapping struct {
+	DeviceName string    `json:"deviceName"`
+	Ebs        ebsVolume `json:"ebs"`
+}
+
+type ebsVolume struct {
+	VolumeSize          int    `json:"volumeSize"`
+	VolumeType          string `json:"volumeType"`
+	DeleteOnTermination bool   `json:"deleteOnTermination"`
+	Encrypted           bool   `json:"encrypted"`
+}
+
+type additionalInstanceConfig struct {
+	SystemsManagerAgent systemsManagerAgent `json:"systemsManagerAgent"`
+}
+
+type systemsManagerAgent struct {
+	UninstallAfterBuild bool `json:"uninstallAfterBuild"`
 }
 
 type componentReference struct {
@@ -54,8 +77,10 @@ func validateComponentYAML(data []byte) error {
 // since the user is expected to substitute it before submitting to AWS.
 func validateImageBuilderJSON(data []byte) error {
 	var r imageBuilderRecipe
-	if err := json.Unmarshal(data, &r); err != nil {
-		return fmt.Errorf("invalid Image Builder JSON: %w", err)
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&r); err != nil {
+		return fmt.Errorf("invalid Image Builder recipe JSON (remove any key CreateImageRecipe does not accept): %w", err)
 	}
 	if r.Name == "" {
 		return fmt.Errorf("name is required")

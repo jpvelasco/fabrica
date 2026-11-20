@@ -114,20 +114,20 @@ func checkStr(t *testing.T, d map[string]any, key, want string) {
 	}
 }
 
-// imdsErrorRecorder captures AssertIMDSv2 errors without failing the test,
-// so the in-package test can exercise the helper's error branches.
-type imdsErrorRecorder struct {
+// errorRecorder captures assertion-helper errors without failing the test,
+// so the in-package tests can exercise the helpers' error branches.
+type errorRecorder struct {
 	errs []string
 }
 
-func (r *imdsErrorRecorder) Helper() {}
+func (r *errorRecorder) Helper() {}
 
-func (r *imdsErrorRecorder) Errorf(format string, args ...any) {
+func (r *errorRecorder) Errorf(format string, args ...any) {
 	r.errs = append(r.errs, fmt.Sprintf(format, args...))
 }
 
 func TestAssertIMDSv2AcceptsHopLimitOne(t *testing.T) {
-	rec := &imdsErrorRecorder{}
+	rec := &errorRecorder{}
 	AssertIMDSv2(rec, map[string]any{
 		"MetadataOptions": map[string]any{"HttpTokens": "required", "HttpPutResponseHopLimit": float64(1)},
 	})
@@ -137,7 +137,7 @@ func TestAssertIMDSv2AcceptsHopLimitOne(t *testing.T) {
 }
 
 func TestAssertIMDSv2RejectsWrongHopLimit(t *testing.T) {
-	rec := &imdsErrorRecorder{}
+	rec := &errorRecorder{}
 	AssertIMDSv2(rec, map[string]any{
 		"MetadataOptions": map[string]any{"HttpTokens": "required", "HttpPutResponseHopLimit": float64(2)},
 	})
@@ -147,10 +147,42 @@ func TestAssertIMDSv2RejectsWrongHopLimit(t *testing.T) {
 }
 
 func TestAssertIMDSv2RejectsMissingMetadataOptions(t *testing.T) {
-	rec := &imdsErrorRecorder{}
+	rec := &errorRecorder{}
 	AssertIMDSv2(rec, map[string]any{})
 	if len(rec.errs) == 0 || !strings.Contains(rec.errs[0], "HttpTokens") {
 		t.Errorf("AssertIMDSv2 should report missing MetadataOptions, got %v", rec.errs)
+	}
+}
+
+func TestAssertDataAndEncryptedRoot(t *testing.T) {
+	good, err := Build(testSpec(), WithEncryptedVolume(), WithEncryptedRoot("/dev/sda1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootOnly, err := Build(testSpec(), WithDeviceName("/dev/sda1"), WithEncryptedVolume())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name     string
+		raw      json.RawMessage
+		root     string
+		size     int
+		wantErrs int
+	}{
+		{"data and encrypted root", good, "/dev/sda1", testSpec().VolumeSize, 0},
+		{"root-only mapping (#696)", rootOnly, "/dev/sda1", testSpec().VolumeSize, 1},
+		{"wrong data size", good, "/dev/sda1", testSpec().VolumeSize + 1, 1},
+		{"wrong root device", good, "/dev/xvda", testSpec().VolumeSize, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &errorRecorder{}
+			AssertDataAndEncryptedRoot(rec, UnmarshalDesiredState(t, tc.raw), tc.root, tc.size)
+			if len(rec.errs) != tc.wantErrs {
+				t.Errorf("errors = %v, want %d", rec.errs, tc.wantErrs)
+			}
+		})
 	}
 }
 

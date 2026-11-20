@@ -123,8 +123,8 @@ func EdgeInstanceDesiredState(plan *EdgePlan, sgID, userData string) (json.RawMe
 		InstanceName:    plan.InstanceName,
 	}
 	dsOpts := []ec2state.DesiredStateOption{
-		ec2state.WithDeviceName(plan.RootDeviceName),
 		ec2state.WithEncryptedVolume(),
+		ec2state.WithEncryptedRoot(plan.RootDeviceName),
 		ec2state.WithExtraTags("FabricaModule", "ddc"),
 		ec2state.WithExtraTags("FabricaRole", "edge"),
 		ec2state.WithIAMProfile(plan.InstanceProfileName),
@@ -133,8 +133,9 @@ func EdgeInstanceDesiredState(plan *EdgePlan, sgID, userData string) (json.RawMe
 }
 
 // ec2DesiredState builds the home-region DDC / Scylla instance desired-state.
-// The root volume mapping goes on the AMI's own root device (rootDevice, read
-// from the AMI at create time) and is encrypted at launch (#513).
+// The data volume stays on /dev/sdf, where cloud-init mounts the store, and an
+// encrypted root is mapped on the AMI's own root device (rootDevice, read from
+// the AMI at create time) without overriding its size (#513, #696).
 func ec2DesiredState(amiID, instanceType, subnetID, sgID, userData, profileName string, volumeSize int, name, rootDevice string) (json.RawMessage, error) {
 	spec := ec2state.InstanceSpec{
 		ImageID:         amiID,
@@ -146,8 +147,8 @@ func ec2DesiredState(amiID, instanceType, subnetID, sgID, userData, profileName 
 		InstanceName:    name,
 	}
 	dsOpts := []ec2state.DesiredStateOption{
-		ec2state.WithDeviceName(rootDevice),
 		ec2state.WithEncryptedVolume(),
+		ec2state.WithEncryptedRoot(rootDevice),
 		ec2state.WithExtraTags("FabricaModule", "ddc"),
 	}
 	if profileName != "" {
