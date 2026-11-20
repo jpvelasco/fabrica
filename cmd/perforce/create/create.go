@@ -328,7 +328,6 @@ func (c command) printDryRun(plan *perforce.CreatePlan) {
 		},
 		ExtraFields: []provision.PlanField{
 			{Key: "Helix Core", Value: versionLabel},
-			{Key: "Allowed CIDR", Value: plan.AllowedCIDR},
 		},
 		Resources: append([]string{
 			"Security Group:   " + plan.SGName,

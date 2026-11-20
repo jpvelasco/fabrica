@@ -49,6 +49,9 @@ type DryRunSpec struct {
 	Resources     []string
 	CostResources []fabricacost.Resource
 	Costs         *fabricacost.Registry
+	// OmitVolume skips the Data volume line when the module has no volume
+	// of its own to report (e.g. the agent pool, whose volume comes from the AMI).
+	OmitVolume bool
 	// CidrWarning is the module-specific warning printed when AllowedCIDR is
 	// "0.0.0.0/0". Pass empty string to suppress.
 	CidrWarning string
@@ -61,8 +64,8 @@ type DryRunSpec struct {
 }
 
 // DryRun prints the full dry-run plan: title with "(dry run)" suffix,
-// common fields (account, region, instance type, volume), module-specific
-// extra fields, CIDR warning when applicable, VPC line, any raw output from
+// common fields (account, region, instance type, volume, allowed CIDR),
+// module-specific extra fields, CIDR warning when applicable, VPC line, any raw output from
 // RawBetween, resource list, cost estimate, and the "run without --dry-run" footer.
 func DryRun(out io.Writer, spec DryRunSpec) {
 	fmt.Fprintln(out, spec.Title+" (dry run)")
@@ -70,7 +73,12 @@ func DryRun(out io.Writer, spec DryRunSpec) {
 	fmt.Fprintf(out, "  AWS account:      %s\n", spec.Info.Account)
 	fmt.Fprintf(out, "  AWS region:       %s\n", spec.Info.Region)
 	fmt.Fprintf(out, "  Instance type:    %s\n", spec.Info.InstanceType)
-	fmt.Fprintf(out, "  Data volume:      %d GiB gp3\n", spec.Info.VolumeSize)
+	if !spec.OmitVolume {
+		fmt.Fprintf(out, "  Data volume:      %d GiB gp3\n", spec.Info.VolumeSize)
+	}
+	if spec.Info.AllowedCIDR != "" {
+		fmt.Fprintf(out, "  Allowed CIDR:     %s\n", spec.Info.AllowedCIDR)
+	}
 	for _, f := range spec.ExtraFields {
 		fmt.Fprintf(out, "  %-18s%s\n", f.Key+":", f.Value)
 	}

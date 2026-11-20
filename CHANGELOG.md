@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dry-run plan gaps.** `workstation create --dry-run` now prints the allowed CIDR, which defaults to `10.0.0.0/8`, and every create dry run prints it exactly once. `horde agents create --dry-run` and its apply plan now show the account, Region, and instance type, and omit the misleading `0 GiB` data volume. (#704)
+
 ## [0.7.2] - 2026-11-16
 
 **Patch release.** Updates the AWS SDK group. The provider identity tests now read CodeBuild Smithy RPC v2 requests.

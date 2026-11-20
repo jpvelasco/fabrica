@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -12,6 +13,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/lore"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -318,6 +320,21 @@ func TestCreateFlagOverridesConfig(t *testing.T) {
 	}
 	assert.Contains(t, out.String(), "m5.2xlarge")
 	assert.Contains(t, out.String(), "1000 GiB")
+}
+
+func TestCreateDryRunPrintsAllowedCIDROnce(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCommand(&out, &testutil.InspectorProvider{}, testutil.NewTestState())
+	c.printDryRun(&lore.CreatePlan{
+		Account: "1", Region: "us-east-1", InstanceType: "m7i.large", VolumeSize: 100,
+		AllowedCIDR: "10.0.0.0/8", VPCID: "vpc-x", AmiID: "ami-x", StoreBackend: lore.StoreBackendLocal,
+		SGName: "sg", RoleName: "role", InstanceProfileName: "prof", InstanceName: "inst",
+	})
+	got := out.String()
+	assert.Contains(t, got, "Allowed CIDR:     10.0.0.0/8")
+	if n := strings.Count(got, "Allowed CIDR:"); n != 1 {
+		t.Fatalf("Allowed CIDR printed %d times, want 1:\n%s", n, got)
+	}
 }
 
 func TestCreateTLSDryRunShowsAMIPaths(t *testing.T) {
