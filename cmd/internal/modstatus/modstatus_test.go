@@ -557,6 +557,15 @@ func TestWriteProbeStatusText(t *testing.T) {
 			t.Errorf("unexpected output: %q", buf.String())
 		}
 	})
+	t.Run("unreachable while provisioning points at the bootstrap log", func(t *testing.T) {
+		var buf bytes.Buffer
+		info := Info{ModuleStatus: "provisioning", ProbeAttempted: true}
+		WriteProbeStatusText(&buf, info, "Lore", "")
+		out := buf.String()
+		if !strings.Contains(out, "server may not have started: check /var/log/cloud-init-output.log over SSM") || strings.Contains(out, "unreachable from this machine") {
+			t.Errorf("want bootstrap-log guidance, got %q", out)
+		}
+	})
 	t.Run("provisioning", func(t *testing.T) {
 		var buf bytes.Buffer
 		info := Info{ModuleStatus: "provisioning"}

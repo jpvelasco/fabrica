@@ -485,6 +485,10 @@ func WriteProbeStatusText(out io.Writer, info Info, label, version string) {
 			fmt.Fprintln(out, "  "+label+":    responding")
 			return
 		}
+		if info.ModuleStatus == "provisioning" {
+			fmt.Fprintln(out, "  "+label+":    unreachable (server may not have started: check /var/log/cloud-init-output.log over SSM; from outside the VPC, check VPN/network)")
+			return
+		}
 		fmt.Fprintln(out, "  "+label+":    unreachable from this machine (check VPN/network)")
 		return
 	}
