@@ -5,35 +5,40 @@ import (
 	"testing"
 )
 
-func TestPerforceAptRepoShellPinsFingerprintInKeyring(t *testing.T) {
+func TestPerforceAptRepoShellExportsOnlyThePinnedKey(t *testing.T) {
 	got := PerforceAptRepoShell()
 	for _, want := range []string{
 		"install -m 0755 -d /etc/apt/keyrings",
-		"wget -q https://package.perforce.com/perforce.pubkey -O /etc/apt/keyrings/perforce.asc",
-		"grep -x 'fpr:::::::::E58131C0AEA7B082C6DC4C937123CB760FF18869:'",
-		"ERROR: could not verify the Perforce apt key",
-		"chmod a+r /etc/apt/keyrings/perforce.asc",
+		`wget -q https://package.perforce.com/perforce.pubkey -O "$p4_gnupg/perforce.pubkey"`,
+		`GNUPGHOME="$p4_gnupg" gpg --batch --quiet --import`,
+		`GNUPGHOME="$p4_gnupg" gpg --batch --export E58131C0AEA7B082C6DC4C937123CB760FF18869 > /etc/apt/keyrings/perforce.gpg`,
+		"chmod a+r /etc/apt/keyrings/perforce.gpg",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("PerforceAptRepoShell missing %q", want)
 		}
 	}
+	// A grep for the pinned fpr passes a key file that also carries other
+	// keys; exporting by fingerprint is what keeps them out of the keyring.
+	if strings.Contains(got, "grep -x 'fpr") {
+		t.Error("PerforceAptRepoShell must export the pinned key, not grep for its fingerprint")
+	}
 }
 
-func TestPerforceAptRepoShellFailsClosedOnFingerprintMismatch(t *testing.T) {
+func TestPerforceAptRepoShellFailsClosedWithoutThePinnedKey(t *testing.T) {
 	got := PerforceAptRepoShell()
-	checkIdx := strings.Index(got, "grep -x")
-	failIdx := strings.Index(got, "|| {")
+	exportIdx := strings.Index(got, "gpg --batch --export")
+	checkIdx := strings.Index(got, "test -s /etc/apt/keyrings/perforce.gpg || {")
 	exitIdx := strings.Index(got, "exit 1; }")
-	chmodIdx := strings.Index(got, "chmod a+r")
-	if checkIdx < 0 || failIdx < checkIdx || exitIdx < failIdx || chmodIdx < exitIdx {
-		t.Error("the fingerprint check must exit 1 before the key is made readable or any source list is written")
+	sourceIdx := strings.Index(got, "sources.list.d")
+	if exportIdx < 0 || checkIdx < exportIdx || exitIdx < checkIdx || sourceIdx < exitIdx {
+		t.Error("an empty export must exit 1 before any source list is written")
 	}
 }
 
 func TestPerforceAptRepoShellSignedByAndHTTPS(t *testing.T) {
 	got := PerforceAptRepoShell()
-	want := "deb [signed-by=/etc/apt/keyrings/perforce.asc] https://package.perforce.com/apt/ubuntu ${VERSION_CODENAME} release"
+	want := "deb [signed-by=/etc/apt/keyrings/perforce.gpg] https://package.perforce.com/apt/ubuntu ${VERSION_CODENAME} release"
 	if !strings.Contains(got, want) {
 		t.Errorf("PerforceAptRepoShell missing repo line %q", want)
 	}
