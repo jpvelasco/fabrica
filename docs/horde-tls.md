@@ -108,9 +108,9 @@ each parent directory. Store agent trust separately from coordinator private
 keys when both services share a test host.
 
 `/etc/horde/agent-configured` means configuration and service start succeeded;
-verify actual enrollment and an active Horde session separately. Approval or
-your existing registration credential is still required. The CI service token
-is never used for agent enrollment.
+verify actual enrollment and an active Horde session separately. Approve the
+pending enrollment with `fabrica horde agents approve`. The CI service token is
+never used for agent enrollment.
 
 ## Migrate an existing coordinator
 

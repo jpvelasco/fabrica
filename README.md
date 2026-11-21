@@ -362,6 +362,10 @@ Prints `horde.agents.spot` and the weekly on/off window (`horde.agents.schedule`
 
 Prints the CloudWatch metric name/namespace agents must publish for queue-based autoscaling (default `ASGQueueDepth` in `Fabrica/HordeAgents`). Fabrica does not scrape Horde.
 
+#### `fabrica horde agents approve`
+
+Lists the agents waiting for enrollment on the recorded coordinator and approves them. With no selector it only lists. Approve exact hostNames with `--host` (repeatable) or every pending agent with `--all`; `--host` and `--all` are mutually exclusive. Approval is all-or-nothing: if any requested host is not pending, or is pending more than once, nothing is approved. `--dry-run` lists and previews the selection without approving; `--yes` skips the prompt; `--json` prints the report. The command runs over SSM and prints only hostnames and counts, so enrollment keys and the Admin password never leave the coordinator. It does not take the Fabrica state lock because it changes Horde state, not Fabrica state.
+
 #### `fabrica horde agents destroy`
 
 Permanently deletes the agent pool and its AWS resources (ASG, launch template, IAM role/profile, security group) in reverse-creation order. The Horde coordinator is not affected. Typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview.

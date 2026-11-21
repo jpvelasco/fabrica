@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/horde/agents/approve"
 	"github.com/jpvelasco/fabrica/cmd/horde/agents/create"
 	"github.com/jpvelasco/fabrica/cmd/horde/agents/destroy"
 	"github.com/jpvelasco/fabrica/cmd/horde/agents/status"
@@ -28,6 +29,7 @@ Available operations:
   create    Provision an agent pool (ASG + Launch Template)
   status    Show agent pool capacity and coordinator endpoint
   schedule  Show Spot / weekly on-off window
+  approve   List or approve pending agent enrollments on the coordinator
   destroy   Permanently delete the agent pool and its AWS resources
   metrics   Show queue-depth metric names for alerts and scaling`,
 	}
@@ -35,6 +37,7 @@ Available operations:
 	cmd.AddCommand(status.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(newSchedule(runtimeSource, optionsSource, out))
 	cmd.AddCommand(newMetrics(runtimeSource, optionsSource, out))
+	cmd.AddCommand(approve.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(destroy.New(runtimeSource, optionsSource, out))
 	return cmd
 }
