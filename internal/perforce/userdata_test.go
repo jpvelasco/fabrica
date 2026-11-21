@@ -47,8 +47,13 @@ func TestGenerateRaw_PinnedVersionFailsClosed(t *testing.T) {
 				}
 			}
 			errIdx := strings.Index(got, "is not in the Perforce apt repo")
-			if exitIdx := strings.Index(got[errIdx:], "exit 1"); errIdx < 0 || exitIdx < 0 {
-				t.Error("an unavailable pin must exit 1")
+			if errIdx < 0 {
+				t.Fatal("missing unavailable-pin error message")
+			}
+			installIdx := strings.Index(got, `apt-get install -y "helix-p4d=$HELIX_DEB_VERSION"`)
+			exitIdx := strings.Index(got[errIdx:], "exit 1")
+			if exitIdx < 0 || installIdx < 0 || errIdx+exitIdx > installIdx {
+				t.Error("an unavailable pin must exit 1 before the pinned install")
 			}
 			for _, banned := range []string{"falling back", "apt-get install -y helix-p4d\n", `"helix-p4d=` + tc.pin + `"`} {
 				if strings.Contains(got, banned) {
