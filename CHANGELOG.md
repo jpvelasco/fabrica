@@ -9,9 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A pinned Helix Core version installs that version or fails.** apt compares `helix-p4d=<pin>` against the full Debian version (`2025.2-3148719~jammy`), so a bare release never matched and every pinned create silently installed the latest server. Cloud-init now resolves the pin against the Perforce repo, installs that exact build, and stops with the list of available versions when the repo lacks it. `perforce status` labels the version `(configured)` instead of printing it next to the probe result, and the `--version` help default now matches `DefaultHelixVersion` (2025.2). (#699)
+
 - **Lore and DDC instances get their data volume back.** `lore create`, `ddc setup` (coordinator and Scylla), and `ddc region add` mapped the configured volume size onto the encrypted root device and attached no data volume, so cloud-init stopped with `data volume not found` and the server never started. The data volume is back on `/dev/sdf` next to a separate encrypted root, as Perforce does. While a module is still `provisioning`, a failed status probe now points at `/var/log/cloud-init-output.log` over SSM first, instead of only suggesting a VPN or network problem. (#696)
 
 - **`fabrica lore ami build` recipe now passes `CreateImageRecipe`.** The generated recipe drops `supportedOsVersions`, a component-only field, and recipe validation rejects unknown keys. The default `--lore-version` is now 0.8.6 (it was 5.5.0, which is not a release), and the component verifies the loreserver tarball's SHA-256 before extracting it. Versions without a pinned digest are refused. (#698)
+
+- **Dry-run plan gaps.** `workstation create --dry-run` now prints the allowed CIDR, which defaults to `10.0.0.0/8`, and every create dry run prints it exactly once. `horde agents create --dry-run` and its apply plan now show the account, Region, and instance type, and omit the misleading `0 GiB` data volume. (#704)
+
+- **Horde agent pool ignored `cloud.aws.tags`.** `horde agents create` now tags the agent launch template, Auto Scaling group, instances, and volumes with `cloud.aws.tags`, so a shared account that scopes ownership by a project tag sees the pool's own resources. Identity tags (`ManagedBy`, `Name`, `FabricaModule`, `FabricaRole`) still win on conflict, and `volumeRequestTags` still wins over `cloud.aws.tags` on the instance and volume. The create output no longer says agents launch in private subnets; it states only that operator access is via Session Manager. (#706)
 
 ### Security
 

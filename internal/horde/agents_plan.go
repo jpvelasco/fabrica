@@ -96,7 +96,11 @@ type AgentsCreatePlan struct {
 
 	// IAM is the resolved path and permissions boundary. Agents share horde.iam.
 	IAM config.IAM
+	// OperatorTags are cloud.aws.tags. The launch template, Auto Scaling group,
+	// instances, and volumes carry them; identity tags always win on conflict.
+	OperatorTags map[string]string
 	// VolumeRequestTags are copied onto the launch template for instance and volume.
+	// They win over OperatorTags on the instance and volume.
 	VolumeRequestTags map[string]string
 
 	CostResources []cost.Resource

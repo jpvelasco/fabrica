@@ -514,6 +514,89 @@ func TestDryRunMultipleExtraFields(t *testing.T) {
 	}
 }
 
+func TestDryRunPrintsAllowedCIDROnce(t *testing.T) {
+	var out bytes.Buffer
+	DryRun(&out, DryRunSpec{
+		Title: "Test Module",
+		Info: PlanInfo{
+			Account:      "123456789012",
+			Region:       "us-east-1",
+			InstanceType: "m5.xlarge",
+			VolumeSize:   500,
+			AllowedCIDR:  "10.0.0.0/8",
+		},
+		ExtraFields: []PlanField{{Key: "Helix Core", Value: "2024.2"}},
+		Resources:   []string{"EC2 Instance:     fabrica-test"},
+		Costs:       fabricacost.Global,
+	})
+
+	got := out.String()
+	if !strings.Contains(got, "  Allowed CIDR:     10.0.0.0/8\n") {
+		t.Errorf("missing Allowed CIDR line, got:\n%s", got)
+	}
+	if n := strings.Count(got, "Allowed CIDR:"); n != 1 {
+		t.Errorf("Allowed CIDR printed %d times, want 1, got:\n%s", n, got)
+	}
+}
+
+func TestDryRunOmitsAllowedCIDRWhenEmpty(t *testing.T) {
+	var out bytes.Buffer
+	DryRun(&out, DryRunSpec{
+		Title:     "Test Module",
+		Info:      PlanInfo{Account: "123456789012", Region: "us-east-1", InstanceType: "m5.xlarge", VolumeSize: 500},
+		Resources: []string{"EC2 Instance:     fabrica-test"},
+		Costs:     fabricacost.Global,
+	})
+
+	if got := out.String(); strings.Contains(got, "Allowed CIDR") {
+		t.Errorf("expected no Allowed CIDR line when empty, got:\n%s", got)
+	}
+}
+
+func TestDryRunCIDRWarningKeepsAllowedCIDRLine(t *testing.T) {
+	var out bytes.Buffer
+	DryRun(&out, DryRunSpec{
+		Title: "Test Module",
+		Info: PlanInfo{
+			Account:      "123456789012",
+			Region:       "us-east-1",
+			InstanceType: "m5.xlarge",
+			VolumeSize:   500,
+			AllowedCIDR:  "0.0.0.0/0",
+		},
+		CidrWarning: "port 8443 open to the entire internet.",
+		Resources:   []string{"EC2 Instance:     fabrica-test"},
+		Costs:       fabricacost.Global,
+	})
+
+	got := out.String()
+	if !strings.Contains(got, "  Allowed CIDR:     0.0.0.0/0\n") {
+		t.Errorf("missing Allowed CIDR line, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Warning:          port 8443 open to the entire internet.") {
+		t.Errorf("missing CIDR warning, got:\n%s", got)
+	}
+}
+
+func TestDryRunOmitVolume(t *testing.T) {
+	var out bytes.Buffer
+	DryRun(&out, DryRunSpec{
+		Title: "Test Module",
+		Info: PlanInfo{
+			Account:      "123456789012",
+			Region:       "us-east-1",
+			InstanceType: "m5.xlarge",
+		},
+		OmitVolume: true,
+		Resources:  []string{"EC2 Instance:     fabrica-test"},
+		Costs:      fabricacost.Global,
+	})
+
+	if got := out.String(); strings.Contains(got, "Data volume") || strings.Contains(got, "GiB") {
+		t.Errorf("OmitVolume must suppress the Data volume line, got:\n%s", got)
+	}
+}
+
 func TestLineWidth(t *testing.T) {
 	if lineWidth != 58 {
 		t.Errorf("lineWidth = %d, want 58", lineWidth)

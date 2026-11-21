@@ -496,7 +496,9 @@ falls back to the account default VPC and `agents create` logs a warning.
 
 ## Network Connectivity
 
-Agent instances run in **private subnets** with no inbound internet traffic.
+Agent instances run in the configured subnet (`horde.agents.subnetId`, or the
+default VPC). Use a **private subnet** with no inbound internet traffic for
+production.
 The agent security group:
 - Allows **no inbound** from the internet
 - Allows **outbound** to the coordinator security group on port 5000 (HTTP) and 5002 (gRPC)
