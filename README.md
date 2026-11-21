@@ -87,10 +87,10 @@ provisioned hosts, and (for npm installs) GitHub Releases.
 
 | Destination | Why | Source |
 |-------------|-----|--------|
-| `get.docker.com` | Docker Engine install (Horde/agent docker bakes) | `cmd/horde/ami/templates/component.yaml.tmpl` |
-| `packages.microsoft.com` | Docker MS repo key (same bakes) | `cmd/horde/ami/templates/component.yaml.tmpl` |
-| `www.mongodb.org` + `repo.mongodb.org` | MongoDB 7.0 key + apt repo (same bakes) | `cmd/horde/ami/templates/component.yaml.tmpl` |
-| `awscli.amazonaws.com` | AWS CLI v2 download (generated docker bakes) | `cmd/horde/ami/docker_bake.go` |
+| `download.docker.com` | Docker Engine apt key + repo (Horde/agent docker bakes); key pinned by fingerprint | `cmd/horde/ami/pinned_apt.go` |
+| `packages.microsoft.com` | .NET 8 apt key + repo (Horde native bakes); key pinned by fingerprint | `cmd/horde/ami/pinned_apt.go` |
+| `www.mongodb.org` + `repo.mongodb.org` | MongoDB 7.0 apt key + repo (Horde native bakes); key pinned by fingerprint | `cmd/horde/ami/pinned_apt.go` |
+| `awscli.amazonaws.com` | AWS CLI v2 zip + detached signature (Horde Packer bakes; signature checked against a pinned key) | `cmd/horde/ami/awscli_install.go` |
 | `github.com` (`EpicGames/lore` releases) | Lore binary download (Lore Image Builder bakes) | `cmd/lore/ami/templates/component.yaml.tmpl` |
 | `d1uj6qtbmh3dt5.cloudfront.net` | NICE DCV GPG key + pinned versioned tarball (workstation bakes) | `cmd/workstation/ami/templates/component.yaml.tmpl` |
 | `package.perforce.com` | Helix Core apt key (pinned by fingerprint, dedicated keyring) + repo (Perforce + workstation cloud-init) | `internal/userdata/apt.go` (used by `internal/perforce/userdata.go`, `internal/workstation/userdata.go`) |

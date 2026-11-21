@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Horde AMI bakes no longer pipe scripts from the internet or trust unverified downloads** — the docker bake installs Docker from Docker's apt repository instead of `get.docker.com | sh`, and the native bake takes the .NET (Microsoft) and MongoDB 7.0 apt keys from fingerprint-pinned keyrings instead of an unchecked `.deb` and an unchecked key. Each key is exported only by its pinned fingerprint, so `signed-by` cannot trust a second key in the download. The Packer path verifies the AWS CLI zip against AWS's detached signature with a pinned key before it runs the installer. The Image Builder path checks that the managed `aws-cli-version-2-linux` component installed the CLI instead of downloading a second copy. AMIs baked before this change keep the old installs; re-run `fabrica horde ami build`. (#697)
+
 - **The Perforce apt key is pinned by fingerprint and scoped to its own keyring.** Perforce and workstation cloud-init no longer trust the package key globally through `apt-key`. The script refuses to continue unless the key matches the pinned Perforce fingerprint, and the repository is signed-by that keyring over HTTPS. The workstation script also no longer adds the `focal` repository on a jammy base; the codename comes from `/etc/os-release` (#703)
 
 ## [0.7.2] - 2026-11-16
