@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Dry-run plan gaps.** `workstation create --dry-run` now prints the allowed CIDR, which defaults to `10.0.0.0/8`, and every create dry run prints it exactly once. `horde agents create --dry-run` and its apply plan now show the account, Region, and instance type, and omit the misleading `0 GiB` data volume. (#704)
 
+- **Horde agent pool ignored `cloud.aws.tags`.** `horde agents create` now tags the agent launch template, Auto Scaling group, instances, and volumes with `cloud.aws.tags`, so a shared account that scopes ownership by a project tag sees the pool's own resources. Identity tags (`ManagedBy`, `Name`, `FabricaModule`, `FabricaRole`) still win on conflict, and `volumeRequestTags` still wins over `cloud.aws.tags` on the instance and volume. The create output no longer says agents launch in private subnets; it states only that operator access is via Session Manager. (#706)
+
 ### Security
 
 - **The Perforce apt key is pinned by fingerprint and scoped to its own keyring.** Perforce and workstation cloud-init no longer trust the package key globally through `apt-key`. The script refuses to continue unless the key matches the pinned Perforce fingerprint, and the repository is signed-by that keyring over HTTPS. The workstation script also no longer adds the `focal` repository on a jammy base; the codename comes from `/etc/os-release` (#703)

@@ -226,6 +226,7 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 	plan.IAM = resolvedIAM
+	plan.OperatorTags = maps.Clone(c.runtime.Config.Cloud.AWS.Tags)
 	plan.VolumeRequestTags = maps.Clone(c.runtime.Config.Cloud.AWS.VolumeRequestTags)
 	plan.Connection, err = horde.ConnectionFromConfig(c.runtime.Config.Horde)
 	if err != nil {
@@ -742,8 +743,7 @@ func (c command) printPostCreate(plan *horde.AgentsCreatePlan, asgID string) {
 		},
 		RawAfter: func(w io.Writer) {
 			fmt.Fprintln(w)
-			fmt.Fprintln(w, "  Note: Agents are launched in private subnets. Operator access")
-			fmt.Fprintln(w, "        is via AWS Systems Manager Session Manager.")
+			fmt.Fprintln(w, "  Note: Operator access is via AWS Systems Manager Session Manager.")
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, "  If agents don't enroll within 5 minutes, check:")
 			fmt.Fprintln(w, "    /var/log/fabrica-horde-agent-init.log  on each agent instance")
