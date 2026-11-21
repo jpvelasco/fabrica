@@ -226,6 +226,7 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 	plan.IAM = resolvedIAM
+	plan.OperatorTags = maps.Clone(c.runtime.Config.Cloud.AWS.Tags)
 	plan.VolumeRequestTags = maps.Clone(c.runtime.Config.Cloud.AWS.VolumeRequestTags)
 	plan.Connection, err = horde.ConnectionFromConfig(c.runtime.Config.Horde)
 	if err != nil {
@@ -667,11 +668,12 @@ func (c command) printDryRun(plan *horde.AgentsCreatePlan) {
 
 	spec := provision.DryRunSpec{
 		Title:         "Horde build agent pool",
-		Info:          provision.PlanInfo{},
+		Info:          agentsPlanInfo(plan),
 		ExtraFields:   extraFields,
 		Resources:     resources,
 		CostResources: plan.CostResources,
 		Costs:         c.costs,
+		OmitVolume:    true,
 	}
 	if plan.ScalingEnabled {
 		spec.RawBetween = func(w io.Writer) {
@@ -691,18 +693,30 @@ func (c command) printApplyPlan(plan *horde.AgentsCreatePlan) {
 	if plan.VPCID != "" {
 		fields = append(fields, provision.PlanField{Key: "Placement", Value: plan.VPCID + " / " + plan.SubnetID})
 	}
-	provision.ApplyPlan(c.out, "Horde build agent pool", provision.PlanInfo{
+	provision.WriteApplyPlan(c.out, provision.ApplyPlanSpec{
+		Title:       "Horde build agent pool",
+		Info:        agentsPlanInfo(plan),
+		ExtraFields: fields,
+		OmitVolume:  true,
+		Resources: append([]string{
+			"Agent Security Group:   " + plan.SGName,
+			"Agent IAM Role:         " + plan.RoleName,
+			"Agent Instance Profile: " + plan.InstanceProfileName,
+			"Launch Template:        " + plan.LaunchTemplateName,
+			"Auto Scaling Group:     " + plan.ASGName,
+		}, provision.IAMResourceLines(plan.IAM)...),
+	})
+}
+
+// agentsPlanInfo is the header shared by the agent-pool dry run and apply plan.
+// The launch template sets no data volume (the AMI supplies it), so both
+// callers pass OmitVolume.
+func agentsPlanInfo(plan *horde.AgentsCreatePlan) provision.PlanInfo {
+	return provision.PlanInfo{
 		Account:      plan.Account,
 		Region:       plan.Region,
 		InstanceType: plan.InstanceType,
-		VolumeSize:   0,
-	}, fields, append([]string{
-		"Agent Security Group:   " + plan.SGName,
-		"Agent IAM Role:         " + plan.RoleName,
-		"Agent Instance Profile: " + plan.InstanceProfileName,
-		"Launch Template:        " + plan.LaunchTemplateName,
-		"Auto Scaling Group:     " + plan.ASGName,
-	}, provision.IAMResourceLines(plan.IAM)...))
+	}
 }
 
 func (c command) printPostCreate(plan *horde.AgentsCreatePlan, asgID string) {
@@ -729,8 +743,7 @@ func (c command) printPostCreate(plan *horde.AgentsCreatePlan, asgID string) {
 		},
 		RawAfter: func(w io.Writer) {
 			fmt.Fprintln(w)
-			fmt.Fprintln(w, "  Note: Agents are launched in private subnets. Operator access")
-			fmt.Fprintln(w, "        is via AWS Systems Manager Session Manager.")
+			fmt.Fprintln(w, "  Note: Operator access is via AWS Systems Manager Session Manager.")
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, "  If agents don't enroll within 5 minutes, check:")
 			fmt.Fprintln(w, "    /var/log/fabrica-horde-agent-init.log  on each agent instance")

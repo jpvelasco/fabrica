@@ -355,7 +355,6 @@ func (c command) printDryRun(plan *lore.CreatePlan) {
 		{Key: "gRPC/QUIC port", Value: fmt.Sprintf("%d (tcp+udp)", plan.GRPCPort)},
 		{Key: "HTTP port", Value: fmt.Sprintf("%d", plan.HTTPPort)},
 		{Key: "Store backend", Value: plan.StoreBackend},
-		{Key: "Allowed CIDR", Value: plan.AllowedCIDR},
 	}, tlsPlanFields(plan)...)
 	if plan.RootDeviceName != "" {
 		extraFields = append(extraFields, provision.PlanField{Key: "Root volume", Value: plan.RootDeviceName + " (encrypted)"})

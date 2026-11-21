@@ -72,6 +72,21 @@ func TestCreateDryRunExplicitVPCNoDefault(t *testing.T) {
 	}
 }
 
+func TestCreateDryRunPrintsAllowedCIDROnce(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCommand(&out, &testutil.TestProvider{}, testutil.NewTestState())
+	c.printDryRun(&perforce.CreatePlan{
+		Account: "1", Region: "us-east-1", InstanceType: "m5.xlarge",
+		HelixVersion: "2024.2", VolumeSize: 500, AllowedCIDR: "10.0.0.0/8", VPCID: "vpc-x",
+		SGName: "sg", RoleName: "role", InstanceProfileName: "prof", InstanceName: "inst",
+	})
+	got := out.String()
+	assert.Contains(t, got, "Allowed CIDR:     10.0.0.0/8")
+	if n := strings.Count(got, "Allowed CIDR:"); n != 1 {
+		t.Fatalf("Allowed CIDR printed %d times, want 1:\n%s", n, got)
+	}
+}
+
 func TestCreatePasswordGenError(t *testing.T) {
 	c := newTestCommand(&bytes.Buffer{}, &testutil.TestProvider{}, testutil.NewTestState())
 	c.assumeYes = true
