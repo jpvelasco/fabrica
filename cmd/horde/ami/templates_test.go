@@ -38,14 +38,14 @@ func TestOwnershipTemplates(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.Count(string(packer), `ManagedBy     = "`+want+`"`) != 2 {
+			if strings.Count(string(packer), `"ManagedBy" = "`+want+`"`) != 1 || !strings.Contains(string(packer), "tags = local.common_tags") || !strings.Contains(string(packer), "snapshot_tags = local.common_tags") {
 				t.Fatalf("AMI and snapshot tags must both select %q:\n%s", want, packer)
 			}
 			guide, err := b.renderTemplate("build-guide.md.tmpl", b.cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(string(guide), "Key=ManagedBy,Value="+want+" Key=FabricaModule,Value=horde Key=Name,Value="+b.cfg.Name) {
+			if !strings.Contains(string(guide), `{"Key":"ManagedBy","Value":"`+want+`"}`) {
 				t.Fatalf("snapshot tag command must select %q:\n%s", want, guide)
 			}
 		})
@@ -284,7 +284,7 @@ func TestRenderPackerTemplate_Docker(t *testing.T) {
 	bc := buildCommand{cfg: BuildConfig{
 		Version:   "5.5.0",
 		Install:   "docker",
-		BaseImage: "ami-packer123",
+		BaseImage: "ami-0123456789abcdef0",
 		Region:    "us-west-2",
 		Name:      "fabrica-horde-packer",
 	}}
@@ -295,8 +295,8 @@ func TestRenderPackerTemplate_Docker(t *testing.T) {
 	}
 
 	s := string(out)
-	if !strings.Contains(s, "ami-packer123") {
-		t.Error("packer template should contain base image ID")
+	if !strings.Contains(s, `source_ami    = "ami-0123456789abcdef0"`) {
+		t.Error("packer template should pin the explicit base image ID")
 	}
 	if !strings.Contains(s, "5.5.0") {
 		t.Error("packer template should contain horde version")
@@ -319,7 +319,7 @@ func TestRenderPackerTemplate_Docker(t *testing.T) {
 	}
 	// #509: the snapshots the bake takes must carry the AMI tag set so
 	// tags support identification and operator cleanup.
-	if !strings.Contains(s, "snapshot_tags = {") {
+	if !strings.Contains(s, "snapshot_tags = local.common_tags") {
 		t.Error("packer template should declare snapshot_tags mirroring the AMI tag set")
 	}
 	// Bare # comments inside inline = [...] list literals are invalid HCL.
@@ -377,7 +377,7 @@ func TestRenderPackerTemplate_Native(t *testing.T) {
 		t.Error("native packer template should not reference GITHUB_PAT")
 	}
 	// #509: snapshot_tags on the native path as well.
-	if !strings.Contains(s, "snapshot_tags = {") {
+	if !strings.Contains(s, "snapshot_tags = local.common_tags") {
 		t.Error("native packer template should declare snapshot_tags mirroring the AMI tag set")
 	}
 }
@@ -415,7 +415,7 @@ func TestRenderBuildGuideTemplate_Docker(t *testing.T) {
 	if !strings.Contains(s, "aws ec2 create-tags --region us-east-1") {
 		t.Error("build guide should include the snapshot create-tags loop")
 	}
-	if !strings.Contains(s, "Key=ManagedBy,Value=fabrica Key=FabricaModule,Value=horde Key=Name,Value=test-horde") {
+	if !strings.Contains(s, `{"Key":"FabricaModule","Value":"horde"}`) || !strings.Contains(s, `{"Key":"Name","Value":"test-horde"}`) || !strings.Contains(s, `{"Key":"ManagedBy","Value":"fabrica"}`) {
 		t.Error("snapshot tag loop should carry the ManagedBy + horde identity tags and the image name")
 	}
 	if !strings.Contains(s, "Images[0].BlockDeviceMappings[?Ebs].Ebs.SnapshotId") {

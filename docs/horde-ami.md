@@ -160,6 +160,14 @@ Bake these into the AMI at `/etc/horde/`:
 
 Guardrailed accounts: the bake needs the request-tag-gated Image Builder grant in [guardrailed-accounts.md](guardrailed-accounts.md#operator-policy-minimal-example); pass `--tags`/`--resource-tags` with `ManagedBy=fabrica` on each create.
 
+`fabrica horde ami build` defaults `--region` to `cloud.aws.region` (else
+`us-east-1`) and `--base-image` to the Canonical Ubuntu 22.04 SSM parameter;
+`--base-image ami-…` pins a specific image. The Packer template reads that
+parameter through an `amazon-parameterstore` data source, so the Packer build
+identity needs `ssm:GetParameter` on it, and `AWS_REGION` must match `--region`
+(the data source has no region argument). Recipes, AMI tags, and snapshot tags
+carry `cloud.aws.tags` with `ManagedBy` set to the owner.
+
 `fabrica horde ami build --install docker` generates a `component.yaml` that is
 now a **complete** jobs-capable bake: it installs the AWS CLI v2 + `unzip`,
 Docker CE, writes `/etc/horde/docker-compose.yml` + `globals.json` (Build

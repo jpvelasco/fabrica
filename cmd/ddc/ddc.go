@@ -35,7 +35,7 @@ Available operations:
 	cmd.AddCommand(status.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(region.New(runtimeSource, optionsSource, out))
 	cmd.AddCommand(destroy.New(runtimeSource, optionsSource, out))
-	cmd.AddCommand(ami.New(out))
+	cmd.AddCommand(ami.New(runtimeSource, out))
 	cmd.AddCommand(newTopology(runtimeSource, optionsSource, out))
 	return cmd
 }

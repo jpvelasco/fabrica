@@ -15,7 +15,9 @@ import (
 	"text/template"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/amirecipe"
 	"github.com/jpvelasco/fabrica/internal/amissm"
+	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/jpvelasco/fabrica/internal/tags"
 	"github.com/spf13/cobra"
@@ -26,22 +28,21 @@ var templateFS embed.FS
 
 const (
 	maxNameLength      = 127
-	defaultBaseImage   = "ami-0c7217cdde317cfec"
+	defaultBaseImage   = amirecipe.DefaultBaseImage
 	defaultLoreVersion = "0.8.6"
-	defaultRegion      = "us-east-1"
+	defaultRegion      = config.DefaultAWSRegion
 	defaultOutputDir   = "lore-ami"
 )
 
 var (
 	versionRE = regexp.MustCompile(`^[0-9]+\.[0-9]+(\.[0-9]+)?$`)
-	amiRE     = regexp.MustCompile(`^ami-[0-9a-f]{8,}$`)
-	regionRE  = regexp.MustCompile(`^[a-z]{2}-[a-z]+-[0-9]$`)
 	nameRE    = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 )
 
 // BuildConfig holds the parameters for AMI file generation.
 type BuildConfig struct {
 	Identity      tags.Identity
+	CloudTags     map[string]string
 	Version       string
 	BaseImage     string
 	Region        string
@@ -49,6 +50,15 @@ type BuildConfig struct {
 	OutputDir     string
 	IncludePacker bool
 	DryRun        bool
+}
+
+// RecipeTags is the tag set for the AMI, its recipe, and its snapshots.
+func (c BuildConfig) RecipeTags() map[string]string {
+	return amirecipe.Tags(c.Identity, c.CloudTags, map[string]string{
+		"Name":          c.Name,
+		"FabricaModule": "lore",
+		"LoreVersion":   c.Version,
+	})
 }
 
 type buildCommand struct {
@@ -110,6 +120,8 @@ Examples:
 				return err
 			}
 			cfg.Identity = identity
+			cfg.Region = amirecipe.ResolveRegion(cfg.Region, rt.Config.Cloud.AWS.Region)
+			cfg.CloudTags = rt.Config.Cloud.AWS.Tags
 			if f := cmd.InheritedFlags().Lookup("dry-run"); f != nil && f.Value.String() == "true" {
 				cfg.DryRun = true
 			}
@@ -125,8 +137,8 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&cfg.Version, "lore-version", defaultLoreVersion, "Lore server version (X.Y.Z); only releases with a pinned tarball SHA-256 are accepted")
-	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", defaultBaseImage, "Base Ubuntu 22.04 LTS AMI ID")
-	cmd.Flags().StringVar(&cfg.Region, "region", defaultRegion, "AWS region for the AMI build (used in component ARNs)")
+	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", defaultBaseImage, "Base Ubuntu 22.04 LTS AMI ID, or the default SSM parameter that resolves the latest Canonical image")
+	cmd.Flags().StringVar(&cfg.Region, "region", "", "AWS region for the AMI build (default: cloud.aws.region, else us-east-1)")
 	cmd.Flags().StringVar(&cfg.Name, "name", "", `AMI name (default: "fabrica-lore-<version>")`)
 	cmd.Flags().StringVar(&cfg.OutputDir, "output-dir", defaultOutputDir, "Directory to write generated files to")
 	cmd.Flags().BoolVar(&cfg.IncludePacker, "include-packer", false, "Also generate a Packer HCL template")
@@ -215,11 +227,11 @@ func (b *buildCommand) validate() error {
 	if _, err := pinnedLoreSHA256(b.cfg.Version); err != nil {
 		return err
 	}
-	if !amiRE.MatchString(b.cfg.BaseImage) {
-		return fmt.Errorf("--base-image must be a valid AMI ID (ami- followed by 8+ hex digits); got %q", b.cfg.BaseImage)
+	if err := amirecipe.ValidateBaseImage(b.cfg.BaseImage); err != nil {
+		return err
 	}
-	if !regionRE.MatchString(b.cfg.Region) {
-		return fmt.Errorf("--region must be a valid AWS region (e.g. us-east-1, eu-west-2); got %q", b.cfg.Region)
+	if err := amirecipe.ValidateRegion(b.cfg.Region); err != nil {
+		return err
 	}
 	if b.cfg.Name != "" {
 		if !nameRE.MatchString(b.cfg.Name) {
@@ -326,7 +338,7 @@ func (b *buildCommand) renderTemplate(name string, data any) ([]byte, error) {
 		return nil, fmt.Errorf("reading template %s: %w", name, err)
 	}
 	raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
-	tmpl, err := template.New(name).Funcs(template.FuncMap{"indent": indent}).Option("missingkey=error").Parse(string(raw))
+	tmpl, err := template.New(name).Funcs(amirecipe.TemplateFuncs()).Funcs(template.FuncMap{"indent": indent}).Option("missingkey=error").Parse(string(raw))
 	if err != nil {
 		return nil, fmt.Errorf("parsing template %s: %w", name, err)
 	}

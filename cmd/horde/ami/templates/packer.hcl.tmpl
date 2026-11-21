@@ -13,12 +13,6 @@ variable "aws_region" {
   description = "AWS region to build the AMI in."
 }
 
-variable "horde_version" {
-  type        = string
-  default     = "{{ .Version }}"
-  description = "Horde server version recorded in AMI tags."
-}
-
 variable "instance_type" {
   type        = string
   default     = "m7i.xlarge"
@@ -32,13 +26,16 @@ variable "horde_source_dir" {
 {{ end }}
 locals {
   ami_name = "{{ .Name }}-${formatdate("YYYYMMDD-hhmmss", timestamp())}"
+  # The AMI, its snapshots, and the builder instance carry the same tag set.
+  common_tags = merge({{ hclMap .RecipeTags }}, { Name = local.ami_name })
 }
 
+{{ packerData .BaseImage }}
 source "amazon-ebs" "horde" {
   ami_name      = local.ami_name
   instance_type = var.instance_type
   region        = var.aws_region
-  source_ami    = "{{ .BaseImage }}"
+  {{ packerSource .BaseImage }}
   ssh_username  = "ubuntu"
 
   ami_block_device_mappings {
@@ -49,21 +46,14 @@ source "amazon-ebs" "horde" {
     encrypted             = true
   }
 
-  tags = {
-    ManagedBy     = "{{ .Identity.ManagedBy }}"
-    HordeVersion  = var.horde_version
-    InstallMethod = "{{ .Install }}"
-    Name          = local.ami_name
-  }
+  tags = local.common_tags
 
   # Keep the AMI tag set on its snapshots for identification and operator
   # cleanup (`tags` alone tags the AMI only).
-  snapshot_tags = {
-    ManagedBy     = "{{ .Identity.ManagedBy }}"
-    HordeVersion  = var.horde_version
-    InstallMethod = "{{ .Install }}"
-    Name          = local.ami_name
-  }
+  snapshot_tags = local.common_tags
+
+  # Tag the builder instance too, so tag-gated RunInstances policies pass.
+  run_tags = local.common_tags
 }
 
 # Docker install: the bake script (shared with component.yaml via

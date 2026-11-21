@@ -69,7 +69,7 @@ cleanup instructions, follow the repository runbook: `docs/lore-ami.md`.
    for s in $(aws ec2 describe-images --region {{ .Region }} --image-ids "$AMI" \
        --query 'Images[0].BlockDeviceMappings[?Ebs].Ebs.SnapshotId' --output text); do
      aws ec2 create-tags --region {{ .Region }} --resources "$s" \
-       --tags Key=ManagedBy,Value={{ .Identity.ManagedBy }} Key=FabricaModule,Value=lore Key=Name,Value={{ .Name }}
+       --tags {{ cliTags .RecipeTags }}
    done
    ```
 4. Launch through `fabrica lore create`. Verify SSM registration on the private
