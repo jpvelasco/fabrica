@@ -16,18 +16,6 @@ import (
 // fabrica-horde-server:latest.
 const hordeVersionPlaceholder = "__HORDE_VERSION__"
 
-// awsCliInstallScript installs the AWS CLI v2 and unzip. The stock jammy base
-// ships neither: the ECR pull (docker install) and the S3 binary sync (native
-// install) both need the CLI. The installer drops the binary into
-// /usr/local/bin, which is not on the SSM session PATH — SSM payloads must
-// call /usr/local/bin/aws by full path (see docs/horde-ami.md).
-const awsCliInstallScript = `apt-get update -q
-apt-get install -y unzip
-curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip
-unzip -q /tmp/awscliv2.zip -d /tmp/awscli
-/tmp/awscli/aws/install --update
-rm -rf /tmp/awscli /tmp/awscliv2.zip`
-
 // hordeDockerBakeScript writes the compose stack and configs under /etc/horde
 // — the directory the horde systemd unit and the cloud-init script
 // (internal/horde) start docker compose from — then pulls and tags the Horde

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/assert"
+	"github.com/jpvelasco/fabrica/internal/userdata"
 )
 
 func TestGenerateRaw_LatestVersion(t *testing.T) {
@@ -21,27 +22,45 @@ func TestGenerateRaw_LatestVersion(t *testing.T) {
 	}
 }
 
-func TestGenerateRaw_PinnedVersion(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: "testpass"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(got, `helix-p4d=2025.2`) {
-		t.Errorf("expected version pin 'helix-p4d=2025.2', got:\n%s", got)
-	}
-	// Pinned installs must fall back to the repo version when the pin rotted.
-	if !strings.Contains(got, "falling back to the latest available version") {
-		t.Error("missing pinned-install fallback")
-	}
-}
-
-func TestGenerateRaw_PinnedVersionWithBuild(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{Version: "2024.2/2659294", AdminPass: "testpass"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(got, `helix-p4d=2024.2/2659294`) {
-		t.Errorf("expected version pin 'helix-p4d=2024.2/2659294', got:\n%s", got)
+// TestGenerateRaw_PinnedVersionFailsClosed pins #699: a pin resolves to an
+// exact repo version and never falls back to an unpinned install.
+func TestGenerateRaw_PinnedVersionFailsClosed(t *testing.T) {
+	for _, tc := range []struct{ version, pin string }{
+		{"2025.2", "2025.2"},
+		{"2024.2/3084003", "2024.2/3084003"},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			got, err := GenerateRaw(UserDataConfig{Version: tc.version, AdminPass: "testpass"})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			for _, want := range []string{
+				`HELIX_PIN="$(echo '` + tc.pin + `' | tr / -)"`,
+				"apt-cache madison helix-p4d",
+				`if [ -z "$HELIX_DEB_VERSION" ]; then`,
+				"ERROR: Helix Core " + tc.pin + " is not in the Perforce apt repo",
+				`apt-get install -y "helix-p4d=$HELIX_DEB_VERSION"`,
+				`echo "Installed helix-p4d $(dpkg-query -W -f='${Version}' helix-p4d)"`,
+			} {
+				if !strings.Contains(got, want) {
+					t.Errorf("pinned userdata missing %q", want)
+				}
+			}
+			errIdx := strings.Index(got, "is not in the Perforce apt repo")
+			if errIdx < 0 {
+				t.Fatal("missing unavailable-pin error message")
+			}
+			installIdx := strings.Index(got, `apt-get install -y "helix-p4d=$HELIX_DEB_VERSION"`)
+			exitIdx := strings.Index(got[errIdx:], "exit 1")
+			if exitIdx < 0 || installIdx < 0 || errIdx+exitIdx > installIdx {
+				t.Error("an unavailable pin must exit 1 before the pinned install")
+			}
+			for _, banned := range []string{"falling back", "apt-get install -y helix-p4d\n", `"helix-p4d=` + tc.pin + `"`} {
+				if strings.Contains(got, banned) {
+					t.Errorf("pinned userdata must not contain %q", banned)
+				}
+			}
+		})
 	}
 }
 
@@ -310,4 +329,13 @@ func TestGenerate_DefaultsApplied(t *testing.T) {
 	if !strings.Contains(string(decoded), "fabrica-perforce") {
 		t.Error("default ServerID should appear in decoded output")
 	}
+}
+
+func TestGenerateRaw_PerforceAptKeyringPinned(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{Version: "latest", AdminPass: "testpass"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assert.Contains(t, got, userdata.PerforceAptRepoShell())
+	assert.NoneOf(t, got, "apt-key", "focal", "http://package.perforce.com")
 }

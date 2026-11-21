@@ -236,9 +236,6 @@ func TestLaunchTemplateDesiredState(t *testing.T) {
 }
 
 func TestLaunchTemplateVolumeRequestTags(t *testing.T) {
-	if specs := agentTagSpecifications(nil); len(specs) != 1 {
-		t.Fatalf("nil plan tags = %v", specs)
-	}
 	plan := newTestAgentsPlan()
 	plan.VolumeRequestTags = map[string]string{"Project": "fabrica-e2e", "": "skip", "ManagedBy": "other"}
 	plan.IAM.Path = "/horde/"
@@ -487,5 +484,173 @@ func TestScaleInAlarmDesiredState(t *testing.T) {
 	}
 	if actionARN != testPolicyARN {
 		t.Errorf("AlarmAction ARN = %q, want %q", actionARN, testPolicyARN)
+	}
+}
+
+// decodeDoc unmarshals a desired-state document into a generic map.
+func decodeDoc(t *testing.T, raw json.RawMessage) map[string]any {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal desired state: %v", err)
+	}
+	return doc
+}
+
+// tagValues decodes a Cloud Control Tags array into key→value and fails on
+// a duplicate key, which Cloud Control rejects.
+func tagValues(t *testing.T, raw any) map[string]string {
+	t.Helper()
+	pairs, ok := raw.([]any)
+	if !ok {
+		t.Fatalf("Tags = %T, want array", raw)
+	}
+	out := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		m := p.(map[string]any)
+		key := m["Key"].(string)
+		if _, dup := out[key]; dup {
+			t.Errorf("duplicate tag key %q in %v", key, pairs)
+		}
+		out[key] = m["Value"].(string)
+	}
+	return out
+}
+
+// tagSpecsByType decodes TagSpecifications into resource type → tag values.
+func tagSpecsByType(t *testing.T, raw any) map[string]map[string]string {
+	t.Helper()
+	specs, ok := raw.([]any)
+	if !ok {
+		t.Fatalf("TagSpecifications = %T, want array", raw)
+	}
+	out := make(map[string]map[string]string, len(specs))
+	for _, s := range specs {
+		m := s.(map[string]any)
+		out[m["ResourceType"].(string)] = tagValues(t, m["Tags"])
+	}
+	return out
+}
+
+func launchTemplateDoc(t *testing.T, plan *AgentsCreatePlan) map[string]any {
+	t.Helper()
+	raw, err := LaunchTemplateDesiredState(plan, "sg-agent123", "dXNlci1kYXRh")
+	if err != nil {
+		t.Fatalf("LaunchTemplateDesiredState: %v", err)
+	}
+	return decodeDoc(t, raw)
+}
+
+func asgDoc(t *testing.T, plan *AgentsCreatePlan) map[string]any {
+	t.Helper()
+	raw, err := ASGDesiredState(plan, "lt-12345")
+	if err != nil {
+		t.Fatalf("ASGDesiredState: %v", err)
+	}
+	return decodeDoc(t, raw)
+}
+
+// assertIdentityTags fails unless tags carry the protected identity values.
+func assertIdentityTags(t *testing.T, where string, tags map[string]string, name string) {
+	t.Helper()
+	want := map[string]string{
+		"ManagedBy":     "fabrica",
+		"FabricaModule": "horde",
+		"FabricaRole":   "agent",
+		"Name":          name,
+	}
+	for k, v := range want {
+		if tags[k] != v {
+			t.Errorf("%s: %s = %q, want %q (tags %v)", where, k, tags[k], v, tags)
+		}
+	}
+}
+
+func TestOperatorTagsReachLaunchTemplateInstancesVolumesAndASG(t *testing.T) {
+	plan := newTestAgentsPlan()
+	plan.OperatorTags = map[string]string{"project": "studio"}
+
+	lt := launchTemplateDoc(t, plan)
+	if got := tagSpecsByType(t, lt["TagSpecifications"])["launch-template"]["project"]; got != "studio" {
+		t.Errorf("launch template project tag = %q, want studio", got)
+	}
+	data := lt["LaunchTemplateData"].(map[string]any)
+	specs := tagSpecsByType(t, data["TagSpecifications"])
+	for _, rt := range []string{"instance", "volume"} {
+		if got := specs[rt]["project"]; got != "studio" {
+			t.Errorf("%s project tag = %q, want studio (specs %v)", rt, got, specs)
+		}
+	}
+
+	asg := asgDoc(t, plan)
+	tags := asg["Tags"].([]any)
+	if got := tagValues(t, tags)["project"]; got != "studio" {
+		t.Errorf("ASG project tag = %q, want studio", got)
+	}
+	for _, tag := range tags {
+		if tag.(map[string]any)["PropagateAtLaunch"] != true {
+			t.Errorf("ASG tag %v must propagate at launch", tag)
+		}
+	}
+}
+
+func TestVolumeRequestTagsOverrideOperatorTagsOnInstanceAndVolume(t *testing.T) {
+	plan := newTestAgentsPlan()
+	plan.OperatorTags = map[string]string{"Project": "ops", "CostCenter": "finance"}
+	plan.VolumeRequestTags = map[string]string{"Project": "volume"}
+
+	lt := launchTemplateDoc(t, plan)
+	specs := tagSpecsByType(t, lt["LaunchTemplateData"].(map[string]any)["TagSpecifications"])
+	for _, rt := range []string{"instance", "volume"} {
+		if got := specs[rt]["Project"]; got != "volume" {
+			t.Errorf("%s Project = %q, want volumeRequestTags value volume", rt, got)
+		}
+		if got := specs[rt]["CostCenter"]; got != "finance" {
+			t.Errorf("%s CostCenter = %q, want operator value finance", rt, got)
+		}
+	}
+	if got := tagSpecsByType(t, lt["TagSpecifications"])["launch-template"]["Project"]; got != "ops" {
+		t.Errorf("launch template Project = %q, want operator value ops", got)
+	}
+	if got := tagValues(t, asgDoc(t, plan)["Tags"])["Project"]; got != "ops" {
+		t.Errorf("ASG Project = %q, want operator value ops", got)
+	}
+}
+
+func TestOperatorTagsCannotOverrideIdentityTags(t *testing.T) {
+	plan := newTestAgentsPlan()
+	hijack := map[string]string{
+		"ManagedBy":     "other",
+		"FabricaModule": "lore",
+		"FabricaRole":   "ops",
+		"Name":          "hijack",
+		"":              "skip",
+	}
+	plan.OperatorTags = hijack
+	plan.VolumeRequestTags = hijack
+
+	lt := launchTemplateDoc(t, plan)
+	specs := tagSpecsByType(t, lt["TagSpecifications"])
+	assertIdentityTags(t, "launch template", specs["launch-template"], plan.LaunchTemplateName)
+
+	data := lt["LaunchTemplateData"].(map[string]any)
+	instanceSpecs := tagSpecsByType(t, data["TagSpecifications"])
+	for _, rt := range []string{"instance", "volume"} {
+		assertIdentityTags(t, rt, instanceSpecs[rt], "fabrica-horde-agent")
+	}
+	assertIdentityTags(t, "ASG", tagValues(t, asgDoc(t, plan)["Tags"]), "fabrica-horde-agent")
+
+	for _, tags := range []map[string]string{specs["launch-template"], instanceSpecs["instance"]} {
+		if _, ok := tags[""]; ok {
+			t.Errorf("empty operator tag key was applied: %v", tags)
+		}
+	}
+}
+
+func TestAgentInstanceTagSpecificationsWithoutOperatorTags(t *testing.T) {
+	lt := launchTemplateDoc(t, newTestAgentsPlan())
+	specs := tagSpecsByType(t, lt["LaunchTemplateData"].(map[string]any)["TagSpecifications"])
+	for _, rt := range []string{"instance", "volume"} {
+		assertIdentityTags(t, rt, specs[rt], "fabrica-horde-agent")
 	}
 }
