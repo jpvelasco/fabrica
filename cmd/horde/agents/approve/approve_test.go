@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -214,6 +215,28 @@ func TestSelectionFailsBeforeAnyApproval(t *testing.T) {
 				t.Fatal("rejected selection must never reach the approval call")
 			}
 		})
+	}
+}
+
+// The per-run host cap is checked with the rest of the selection, so --all
+// over a large pool fails before the confirmation prompt and on --dry-run.
+func TestAllOverHostCapFailsBeforeConfirmation(t *testing.T) {
+	pending := make([]string, 101)
+	for i := range pending {
+		pending[i] = fmt.Sprintf("agent-%d", i)
+	}
+	for _, dry := range []bool{false, true} {
+		fake := &fakeEnrollment{pending: pending}
+		c, _ := newTestCommand(t, fake)
+		c.all, c.dryRun, c.assumeYes = true, dry, false
+		c.confirm = func(string) bool { t.Fatal("confirm must not be reached"); return false }
+		err := c.run(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "approve them in batches with --host") {
+			t.Fatalf("dryRun=%v: err = %v, want the batch hint", dry, err)
+		}
+		if fake.approveCalls() != 0 {
+			t.Fatal("an over-cap selection must never reach the approval call")
+		}
 	}
 }
 

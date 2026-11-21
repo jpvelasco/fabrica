@@ -151,9 +151,21 @@ func (c command) run(ctx context.Context) error {
 	return c.emit(base)
 }
 
-// selection resolves --host or --all against the pending list. Every check
-// happens here, before any approval call is sent.
+// selection resolves --host or --all against the pending list. Every check,
+// including the per-run host cap, happens here: before the confirmation
+// prompt and on --dry-run, so no check is left for after the operator agrees.
 func (c command) selection(pending horde.EnrollmentReport) ([]string, error) {
+	hosts, err := c.pick(pending)
+	if err != nil {
+		return nil, err
+	}
+	if err := horde.ValidateEnrollmentHosts(hosts); err != nil {
+		return nil, fmt.Errorf("the selection has %d pending agents: %w; approve them in batches with --host", len(hosts), err)
+	}
+	return hosts, nil
+}
+
+func (c command) pick(pending horde.EnrollmentReport) ([]string, error) {
 	counts := make(map[string]int, len(pending.Pending))
 	for _, name := range pending.Pending {
 		counts[name]++
