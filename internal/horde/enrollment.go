@@ -205,7 +205,7 @@ fi
 python3 -I - "$WORK" <<'PY'
 import base64, json, os, re, sys
 
-HOST = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$")
+HOST = re.compile(r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*", re.ASCII)
 HOST_FIELD = os.environ["HOST_FIELD"]
 KEY_FIELD = os.environ["KEY_FIELD"]
 AGENTS_FIELD = os.environ["AGENTS_FIELD"]
@@ -247,7 +247,7 @@ def pending_enrollments(doc):
         host_found, host = find(entry, HOST_FIELD)
         if not (key_found and host_found) or not isinstance(key, str) or not key:
             fail("enrollment entry lacks the " + HOST_FIELD + " or " + KEY_FIELD + " field; pin the 5.8.4 field names from a live coordinator")
-        valid = isinstance(host, str) and len(host) <= 253 and HOST.match(host) is not None
+        valid = isinstance(host, str) and len(host) <= 253 and HOST.fullmatch(host) is not None
         result.append((host if valid else None, key))
     return result
 

@@ -317,6 +317,18 @@ func TestEnrollmentPlanIsAllOrNothing(t *testing.T) {
 	}
 }
 
+// Python's $ also matches before a trailing newline; the coordinator check
+// must match Go's RE2 semantics, so such a name counts as unnamed.
+func TestEnrollmentPlanTreatsTrailingNewlineHostAsUnnamed(t *testing.T) {
+	res := runPlanStep(t, EnrollmentList, nil, `[{"hostName":"agent-1\n","key":"A"}]`)
+	if res.runError != nil {
+		t.Fatalf("list failed: %v", res.runError)
+	}
+	if len(res.summary.Pending) != 0 || res.summary.Unnamed != 1 {
+		t.Fatalf("summary = %+v, want the newline host counted as unnamed", res.summary)
+	}
+}
+
 func TestEnrollmentPlanFailsLoudlyOnUnexpectedShapes(t *testing.T) {
 	for _, tc := range []struct {
 		name string
