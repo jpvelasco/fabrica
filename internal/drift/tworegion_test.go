@@ -14,6 +14,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/ddc"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -464,7 +465,7 @@ func TestRebuildEdgeInstanceDesiredState_Full(t *testing.T) {
 		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
 	}
 	rec := &mod.Resources[2]
-	ds, err := rebuildEdgeInstanceDesiredState(rec, mod, st, cfg)
+	ds, err := rebuildEdgeInstanceDesiredState(naming.Default, rec, mod, st, cfg)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -500,7 +501,7 @@ func TestRebuildEdgeInstanceDesiredState_TypeFallback(t *testing.T) {
 
 	cfg := config.Defaults()
 	cfg.DDC.InstanceType = "m7i.2xlarge"
-	ds, err := rebuildEdgeInstanceDesiredState(rec, mod, st, cfg)
+	ds, err := rebuildEdgeInstanceDesiredState(naming.Default, rec, mod, st, cfg)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -513,7 +514,7 @@ func TestRebuildEdgeInstanceDesiredState_TypeFallback(t *testing.T) {
 	}
 
 	cfg2 := config.Defaults()
-	ds, err = rebuildEdgeInstanceDesiredState(rec, mod, st, cfg2)
+	ds, err = rebuildEdgeInstanceDesiredState(naming.Default, rec, mod, st, cfg2)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -537,7 +538,7 @@ func TestRebuildEdgeInstanceDesiredState_MissingInputs(t *testing.T) {
 		TypeName:   cloud.TypeAWSEC2Instance,
 		Properties: map[string]string{"region": edgeTestRegion, "role": ddc.RoleEdge, "subnetId": "subnet-edge"},
 	}
-	if _, err := rebuildEdgeInstanceDesiredState(noAMI, mod, st, cfg); err == nil {
+	if _, err := rebuildEdgeInstanceDesiredState(naming.Default, noAMI, mod, st, cfg); err == nil {
 		t.Error("expected error without recorded AMI")
 	} else if !strings.Contains(err.Error(), "no AMI recorded") {
 		t.Errorf("unexpected error: %v", err)
@@ -547,7 +548,7 @@ func TestRebuildEdgeInstanceDesiredState_MissingInputs(t *testing.T) {
 		TypeName:   cloud.TypeAWSEC2Instance,
 		Properties: map[string]string{"region": edgeTestRegion, "role": ddc.RoleEdge, "imageId": "ami-edge"},
 	}
-	if _, err := rebuildEdgeInstanceDesiredState(noSubnet, mod, st, cfg); err == nil {
+	if _, err := rebuildEdgeInstanceDesiredState(naming.Default, noSubnet, mod, st, cfg); err == nil {
 		t.Error("expected error without recorded subnet")
 	} else if !strings.Contains(err.Error(), "no subnet recorded") {
 		t.Errorf("unexpected error: %v", err)
@@ -562,7 +563,7 @@ func TestRebuildEdgeInstanceDesiredState_MissingInputs(t *testing.T) {
 	noSGMod := &state.ModuleState{Name: "ddc", Resources: []state.ModuleResource{
 		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-ddc-profile"},
 	}}
-	if _, err := rebuildEdgeInstanceDesiredState(noSG, noSGMod, st, cfg); err == nil {
+	if _, err := rebuildEdgeInstanceDesiredState(naming.Default, noSG, noSGMod, st, cfg); err == nil {
 		t.Error("expected error without a recorded edge security group")
 	} else if !strings.Contains(err.Error(), "no security group recorded") {
 		t.Errorf("unexpected error: %v", err)
@@ -573,7 +574,7 @@ func TestRebuildEdgeInstanceDesiredState_MissingInputs(t *testing.T) {
 	edgeSGOnly := &state.ModuleState{Name: "ddc", Resources: []state.ModuleResource{
 		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-edge", Properties: map[string]string{"region": edgeTestRegion, "role": ddc.RoleEdge}},
 	}}
-	if _, err := rebuildEdgeInstanceDesiredState(noSG, edgeSGOnly, st, cfg); err == nil {
+	if _, err := rebuildEdgeInstanceDesiredState(naming.Default, noSG, edgeSGOnly, st, cfg); err == nil {
 		t.Error("expected error without a recorded IAM instance profile")
 	} else if !strings.Contains(err.Error(), "no IAM instance profile recorded") {
 		t.Errorf("unexpected error: %v", err)
@@ -594,7 +595,7 @@ func TestRebuildEdgeInstanceDesiredState_MissingRootDevice(t *testing.T) {
 		Properties: map[string]string{"region": edgeTestRegion, "role": ddc.RoleEdge, "imageId": "ami-edge", "subnetId": "subnet-edge"},
 	}
 	want := "no root device recorded for the DDC edge instance " + edgeTestRegion + " (Properties.rootDevice); re-run 'fabrica ddc region add " + edgeTestRegion + "'"
-	if _, err := rebuildEdgeInstanceDesiredState(rec, mod, st, cfg); err == nil {
+	if _, err := rebuildEdgeInstanceDesiredState(naming.Default, rec, mod, st, cfg); err == nil {
 		t.Error("expected error without a recorded root device")
 	} else if !strings.Contains(err.Error(), want) {
 		t.Errorf("unexpected error: %v", err)
@@ -607,7 +608,7 @@ func TestRebuildDDCSG_EdgeWithoutVPCFails(t *testing.T) {
 		TypeName:   cloud.TypeAWSEC2SecurityGroup,
 		Properties: map[string]string{"region": edgeTestRegion, "role": ddc.RoleEdge},
 	}
-	_, err := rebuildDDCSG(rec, cfg)
+	_, err := rebuildDDCSG(naming.Default, rec, cfg)
 	if err == nil {
 		t.Fatal("expected error for edge SG without recorded VPC")
 	}

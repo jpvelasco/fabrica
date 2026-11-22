@@ -12,6 +12,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -82,7 +83,7 @@ func makeInstanceActualState(stateName, privateIP, instanceType string) json.Raw
 }
 
 func TestNewEdgePlanDefaults(t *testing.T) {
-	plan, err := NewEdgePlan(context.Background(), config.DDCConfig{
+	plan, err := NewEdgePlan(context.Background(), naming.Default, config.DDCConfig{
 		AmiID:    "ami-ddc",
 		VPCId:    "vpc-home",
 		SubnetId: "subnet-home",
@@ -124,7 +125,7 @@ func TestNewEdgePlanDefaults(t *testing.T) {
 }
 
 func TestNewEdgePlanOverrides(t *testing.T) {
-	plan, err := NewEdgePlan(context.Background(), config.DDCConfig{
+	plan, err := NewEdgePlan(context.Background(), naming.Default, config.DDCConfig{
 		AmiID:        "ami-home",
 		InstanceType: "m7i.xlarge",
 		VolumeSize:   500,
@@ -150,7 +151,7 @@ func TestNewEdgePlanOverrides(t *testing.T) {
 
 func TestNewEdgePlanResolvesVPCFromResolver(t *testing.T) {
 	resolver := &cloud.TestVPCResolver{VPCID: "vpc-eu", SubnetID: "subnet-eu"}
-	plan, err := NewEdgePlan(context.Background(), config.DDCConfig{
+	plan, err := NewEdgePlan(context.Background(), naming.Default, config.DDCConfig{
 		AmiID: "ami-ddc", VPCId: "vpc-home", SubnetId: "subnet-home",
 	}, "1", "us-east-1", "eu-west-1", EdgeOptions{}, resolver)
 	if err != nil {
@@ -169,7 +170,7 @@ func TestNewEdgePlanResolvesVPCFromResolver(t *testing.T) {
 
 func TestNewEdgePlanSkipsResolverWhenFlagsSet(t *testing.T) {
 	resolver := &cloud.TestVPCResolver{VPCID: "vpc-other"}
-	_, err := NewEdgePlan(context.Background(), config.DDCConfig{
+	_, err := NewEdgePlan(context.Background(), naming.Default, config.DDCConfig{
 		AmiID: "ami-ddc", VPCId: "vpc-home", SubnetId: "subnet-home",
 	}, "1", "us-east-1", "eu-west-1", EdgeOptions{VPCID: "vpc-set", SubnetID: "subnet-set"}, resolver)
 	if err != nil {
@@ -194,7 +195,7 @@ func TestNewEdgePlanValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := NewEdgePlan(context.Background(), cfg, "1", tc.home, tc.region, EdgeOptions{}, nil)
+			_, err := NewEdgePlan(context.Background(), naming.Default, cfg, "1", tc.home, tc.region, EdgeOptions{}, nil)
 			if err == nil || !strings.Contains(err.Error(), tc.wantSubstr) {
 				t.Fatalf("err = %v, want substr %q", err, tc.wantSubstr)
 			}
@@ -203,7 +204,7 @@ func TestNewEdgePlanValidation(t *testing.T) {
 }
 
 func TestNewEdgePlanRequiresAmi(t *testing.T) {
-	_, err := NewEdgePlan(context.Background(), config.DDCConfig{}, "1", "us-east-1", "eu-west-1", EdgeOptions{}, nil)
+	_, err := NewEdgePlan(context.Background(), naming.Default, config.DDCConfig{}, "1", "us-east-1", "eu-west-1", EdgeOptions{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "--ami-id") {
 		t.Fatalf("err = %v", err)
 	}

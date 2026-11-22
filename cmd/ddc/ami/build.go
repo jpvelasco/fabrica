@@ -8,6 +8,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/amirecipe"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/spf13/cobra"
 )
 
@@ -45,16 +46,29 @@ ddc.amiId / copy it for edge regions.`,
 				return err
 			}
 			cfg.Region = amirecipe.ResolveRegion(cfg.Region, rt.Config.Cloud.AWS.Region)
+			prefix, err := rt.Config.ResolveNamePrefix()
+			if err != nil {
+				return err
+			}
+			if cfg.Name == "" {
+				cfg.Name = defaultImageName(prefix)
+			}
 			c := buildCommand{out: out, cfg: cfg, writeFile: os.WriteFile, mkdirAll: os.MkdirAll}
 			return c.run()
 		},
 	}
 	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", amirecipe.DefaultBaseImage, "Base AMI ID, or the default SSM parameter that resolves the latest Canonical Ubuntu 22.04 image")
 	cmd.Flags().StringVar(&cfg.Region, "region", "", "AWS region (default: cloud.aws.region, else us-east-1)")
-	cmd.Flags().StringVar(&cfg.Name, "name", "fabrica-ddc", "Image name prefix")
+	cmd.Flags().StringVar(&cfg.Name, "name", "", `Image name prefix (default: "<namePrefix>-ddc")`)
 	cmd.Flags().StringVar(&cfg.OutputDir, "output-dir", defaultOutputDir, "Output directory")
 	cmd.Flags().StringVar(&cfg.Backend, "backend", "zen", "Documented backend: zen or scylla")
 	return cmd
+}
+
+// defaultImageName is the image name when --name is unset, following the
+// configured resource-name prefix (#705).
+func defaultImageName(prefix naming.Prefix) string {
+	return prefix.For("ddc")
 }
 
 func (c buildCommand) run() error {

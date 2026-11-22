@@ -131,7 +131,11 @@ func (c command) run(ctx context.Context, region string) error {
 		return fmt.Errorf("binding DDC region %s: %w", region, err)
 	}
 
-	plan, err := ddc.NewEdgePlan(ctx, c.runtime.Config.DDC, account, homeRegion, region, c.opts, view.VPCs)
+	prefix, err := c.runtime.Config.ResolveNamePrefix()
+	if err != nil {
+		return err
+	}
+	plan, err := ddc.NewEdgePlan(ctx, prefix, c.runtime.Config.DDC, account, homeRegion, region, c.opts, view.VPCs)
 	if err != nil {
 		return fmt.Errorf("building edge plan: %w", err)
 	}

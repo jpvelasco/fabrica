@@ -6,10 +6,11 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestNewSetupPlanZenDefaults(t *testing.T) {
-	plan, err := NewSetupPlan(context.Background(), config.DDCConfig{
+	plan, err := NewSetupPlan(context.Background(), naming.Default, config.DDCConfig{
 		AmiID:    "ami-ddc",
 		VPCId:    "vpc-1",
 		SubnetId: "subnet-1",
@@ -38,14 +39,14 @@ func TestNewSetupPlanZenDefaults(t *testing.T) {
 }
 
 func TestNewSetupPlanRequiresAmi(t *testing.T) {
-	_, err := NewSetupPlan(context.Background(), config.DDCConfig{}, "1", "us-east-1", nil)
+	_, err := NewSetupPlan(context.Background(), naming.Default, config.DDCConfig{}, "1", "us-east-1", nil)
 	if err == nil || !strings.Contains(err.Error(), "amiId") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestNewSetupPlanScyllaRequiresAmi(t *testing.T) {
-	_, err := NewSetupPlan(context.Background(), config.DDCConfig{
+	_, err := NewSetupPlan(context.Background(), naming.Default, config.DDCConfig{
 		AmiID:    "ami-ddc",
 		Backend:  BackendScylla,
 		VPCId:    "vpc-1",
@@ -57,7 +58,7 @@ func TestNewSetupPlanScyllaRequiresAmi(t *testing.T) {
 }
 
 func TestNewSetupPlanScyllaOK(t *testing.T) {
-	plan, err := NewSetupPlan(context.Background(), config.DDCConfig{
+	plan, err := NewSetupPlan(context.Background(), naming.Default, config.DDCConfig{
 		AmiID:       "ami-ddc",
 		ScyllaAmiID: "ami-scylla",
 		Backend:     BackendScylla,
@@ -73,7 +74,7 @@ func TestNewSetupPlanScyllaOK(t *testing.T) {
 }
 
 func TestNewSetupPlanOIDCRequiresIssuer(t *testing.T) {
-	_, err := NewSetupPlan(context.Background(), config.DDCConfig{
+	_, err := NewSetupPlan(context.Background(), naming.Default, config.DDCConfig{
 		AmiID: "ami-ddc", VPCId: "vpc-1", SubnetId: "subnet-1",
 		OIDC: config.DDCOIDCConfig{Enabled: true, ClientID: "ddc"},
 	}, "1", "us-east-1", nil)
@@ -83,7 +84,7 @@ func TestNewSetupPlanOIDCRequiresIssuer(t *testing.T) {
 }
 
 func TestNewSetupPlanOIDCRequiresClientID(t *testing.T) {
-	_, err := NewSetupPlan(context.Background(), config.DDCConfig{
+	_, err := NewSetupPlan(context.Background(), naming.Default, config.DDCConfig{
 		AmiID: "ami-ddc", VPCId: "vpc-1", SubnetId: "subnet-1",
 		OIDC: config.DDCOIDCConfig{Enabled: true, Issuer: "https://idp.example"},
 	}, "1", "us-east-1", nil)
@@ -93,7 +94,7 @@ func TestNewSetupPlanOIDCRequiresClientID(t *testing.T) {
 }
 
 func TestNewSetupPlanOIDCOK(t *testing.T) {
-	_, err := NewSetupPlan(context.Background(), config.DDCConfig{
+	_, err := NewSetupPlan(context.Background(), naming.Default, config.DDCConfig{
 		AmiID: "ami-ddc", VPCId: "vpc-1", SubnetId: "subnet-1",
 		OIDC: config.DDCOIDCConfig{Enabled: true, Issuer: "https://idp.example", ClientID: "ddc"},
 	}, "1", "us-east-1", nil)
@@ -103,7 +104,7 @@ func TestNewSetupPlanOIDCOK(t *testing.T) {
 }
 
 func TestNewSetupPlanBadBackend(t *testing.T) {
-	_, err := NewSetupPlan(context.Background(), config.DDCConfig{
+	_, err := NewSetupPlan(context.Background(), naming.Default, config.DDCConfig{
 		AmiID: "ami-x", Backend: "mongo", VPCId: "v", SubnetId: "s",
 	}, "1", "r", nil)
 	if err == nil {

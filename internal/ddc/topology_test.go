@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestValidateProductionTopology(t *testing.T) {
@@ -40,8 +41,8 @@ func TestBuildTopologyPlanProduction(t *testing.T) {
 }
 
 func TestCostResourcesProductionScylla(t *testing.T) {
-	one := CostResources(config.DDCConfig{Backend: BackendScylla})
-	three := CostResources(config.DDCConfig{Backend: BackendScylla, Scylla: config.DDCScyllaConfig{Nodes: 3}})
+	one := CostResources(naming.Default, config.DDCConfig{Backend: BackendScylla})
+	three := CostResources(naming.Default, config.DDCConfig{Backend: BackendScylla, Scylla: config.DDCScyllaConfig{Nodes: 3}})
 	if len(three) <= len(one) {
 		t.Fatalf("3-node should add cost lines: one=%d three=%d", len(one), len(three))
 	}
