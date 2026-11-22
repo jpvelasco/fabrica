@@ -44,10 +44,14 @@ func perforceModuleFixture() *state.ModuleState {
 		Resources: []state.ModuleResource{
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-pf"},
 			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-perforce-profile"},
-			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf", "rootDevice": "/dev/sda1"}},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf", "rootDevice": "/dev/sda1", "adminPasswordParameter": testPerforceAdminParam}},
 		},
 	}
 }
+
+// testPerforceAdminParam is the per-create admin-password name a create records
+// on the instance (#700). Drift rebuilds read it from there, never from .fabrica.
+const testPerforceAdminParam = "/fabrica/perforce/0123456789abcdef0123456789abcdef/admin-password"
 
 func hordeModuleFixture() *state.ModuleState {
 	return &state.ModuleState{
@@ -87,7 +91,6 @@ func TestRebuildInstanceDesiredState_Perforce_VersionFromConfig(t *testing.T) {
 	mod := perforceModuleFixture()
 	mod.Version = ""
 	st := state.NewState("123456789012", "us-east-1")
-	withPerforcePassword(t, func(string) (string, error) { return "p4-admin", nil })
 
 	ds, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, st, cfg, nil)
 	if err != nil {
@@ -105,7 +108,6 @@ func TestRebuildInstanceDesiredState_Perforce_VersionDefault(t *testing.T) {
 	mod := perforceModuleFixture()
 	mod.Version = ""
 	st := state.NewState("123456789012", "us-east-1")
-	withPerforcePassword(t, func(string) (string, error) { return "p4-admin", nil })
 
 	ds, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, st, config.Defaults(), nil)
 	if err != nil {
@@ -129,12 +131,12 @@ func TestRebuildInstanceDesiredState_Perforce_MissingSecurityGroup(t *testing.T)
 	}
 }
 
-// An empty admin password must fail the rebuild with a render error, not
-// launch an instance with an unusable password.
-func TestRebuildInstanceDesiredState_Perforce_EmptyAdminPassword(t *testing.T) {
+// A recorded admin-password name that is not a per-create name must fail the
+// rebuild with a render error, never reach the boot script.
+func TestRebuildInstanceDesiredState_Perforce_MalformedAdminPasswordParameter(t *testing.T) {
 	mod := perforceModuleFixture()
+	mod.Resources[2].Properties["adminPasswordParameter"] = "/fabrica/perforce/admin-password"
 	st := state.NewState("123456789012", "us-east-1")
-	withPerforcePassword(t, func(string) (string, error) { return "", nil })
 
 	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, st, config.Defaults(), nil)
 	if err == nil || !strings.Contains(err.Error(), "rendering perforce cloud-init") {

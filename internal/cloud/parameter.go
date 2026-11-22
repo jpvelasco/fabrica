@@ -15,8 +15,8 @@ type SecureParameter struct {
 }
 
 // ParameterStore writes and deletes SecureString parameters. Commands
-// type-assert it on the provider. Workstation (DCV session password) and Horde
-// (service token) are callers.
+// type-assert it on the provider. Workstation (DCV session password), Horde
+// (service token), and Perforce (admin password, #700) are callers.
 type ParameterStore interface {
 	// PutSecureParameter creates or overwrites the named SecureString.
 	// A parameter left behind by a failed create is replaced, not rejected.

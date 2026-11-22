@@ -9,7 +9,7 @@ import (
 
 // UserDataConfig is the input shape for the DCV cloud-init script.
 // The session password is not a field: cloud-init reads it from SSM at boot
-// so the value never lands in UserData.
+// so the value never lands in UserData. Perforce uses the same pattern (#700).
 type UserDataConfig struct {
 	SessionPasswordParameter string // required; SSM name cloud-init reads
 	Region                   string // required; region of that parameter

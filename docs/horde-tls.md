@@ -103,6 +103,10 @@ unit, service-user access to the CA file and coordinator HTTPS/HTTP2. It writes
 restarts the service. It uses the stock
 `Horde__Server` and `Horde__ServerProfiles__fabrica__...` settings.
 
+Cloud-init probes the coordinator listener up to 30 times, 10 seconds apart,
+before it writes agent configuration. If the probe never passes, it writes
+nothing and exits 1.
+
 The service user needs read access to its CA file and traversal access to
 each parent directory. Store agent trust separately from coordinator private
 keys when both services share a test host.

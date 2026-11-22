@@ -32,7 +32,7 @@ func WireParameterDelete(tc *Command, rt globals.Runtime) {
 // RecordedParameter returns a recorded per-create SecureString as a teardown
 // resource. The name lives on the instance record, not as a state resource, so
 // the module appends the result to its resource order ahead of the instance.
-// An empty name (no parameter recorded) is skipped silently. A name that
+// An empty name (pre-create or pre-#700 state) is skipped silently. A name that
 // wellFormed rejects is skipped with a warning naming module, so a hand-edited
 // state entry cannot widen the delete target.
 func RecordedParameter(module, name string, wellFormed func(string) bool) (cloud.Resource, bool) {
