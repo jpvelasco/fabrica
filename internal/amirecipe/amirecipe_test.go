@@ -85,3 +85,64 @@ func TestTemplateFuncsExposeTagHelpers(t *testing.T) {
 		t.Fatalf("cliTags = %s", got)
 	}
 }
+
+func TestResolveRegion(t *testing.T) {
+	cases := []struct {
+		name, flag, configured, want string
+	}{
+		{name: "flag wins", flag: "eu-west-1", configured: "us-west-2", want: "eu-west-1"},
+		{name: "config when no flag", configured: "us-west-2", want: "us-west-2"},
+		{name: "default when neither", want: "us-east-1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ResolveRegion(tc.flag, tc.configured); got != tc.want {
+				t.Fatalf("ResolveRegion() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateBaseImage(t *testing.T) {
+	for _, ok := range []string{DefaultBaseImage, "ami-0123456789abcdef0"} {
+		if err := ValidateBaseImage(ok); err != nil {
+			t.Errorf("ValidateBaseImage(%q) = %v, want nil", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "not-an-ami", "ssm:/other/parameter", "ami-XYZ"} {
+		err := ValidateBaseImage(bad)
+		if err == nil || !strings.HasPrefix(err.Error(), "--base-image must be a valid AMI ID") {
+			t.Errorf("ValidateBaseImage(%q) = %v, want --base-image error", bad, err)
+		}
+	}
+}
+
+func TestValidateRegion(t *testing.T) {
+	if err := ValidateRegion("us-west-2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateRegion("bogus"); err == nil || !strings.HasPrefix(err.Error(), "--region must be a valid AWS region") {
+		t.Fatalf("ValidateRegion(bogus) = %v", err)
+	}
+}
+
+func TestPackerSourceReadsSSMParameterByDefault(t *testing.T) {
+	if got := PackerSource(DefaultBaseImage); got != "source_ami    = data.amazon-parameterstore.ubuntu_jammy.value" {
+		t.Fatalf("PackerSource(default) = %s", got)
+	}
+	data := PackerData(DefaultBaseImage)
+	want := "data \"amazon-parameterstore\" \"ubuntu_jammy\" {\n  name = \"/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id\"\n}"
+	if data != want {
+		t.Fatalf("PackerData(default) = %s\nwant %s", data, want)
+	}
+}
+
+func TestPackerSourcePinsExplicitAMI(t *testing.T) {
+	const ami = "ami-0123456789abcdef0"
+	if got := PackerSource(ami); got != `source_ami    = "ami-0123456789abcdef0"` {
+		t.Fatalf("PackerSource(ami) = %s", got)
+	}
+	if got := PackerData(ami); got != "" {
+		t.Fatalf("PackerData(ami) = %q, want no data source", got)
+	}
+}

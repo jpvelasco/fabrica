@@ -5,17 +5,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 
+	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/amirecipe"
 	"github.com/spf13/cobra"
 )
 
 const defaultOutputDir = "ddc-ami"
-
-var (
-	amiRE    = regexp.MustCompile(`^ami-[0-9a-f]{8,}$`)
-	regionRE = regexp.MustCompile(`^[a-z]{2}-[a-z]+-[0-9]$`)
-)
 
 type BuildConfig struct {
 	BaseImage string
@@ -33,7 +29,7 @@ type buildCommand struct {
 	mkdirAll  func(path string, perm os.FileMode) error
 }
 
-func newBuildCmd(out io.Writer) *cobra.Command {
+func newBuildCmd(runtimeSource globals.RuntimeSource, out io.Writer) *cobra.Command {
 	var cfg BuildConfig
 	cmd := &cobra.Command{
 		Use:   "build",
@@ -44,12 +40,17 @@ Writes a build-guide.md describing the AMI contract (Jupiter unit, health
 endpoints, fabrica.env). No AWS calls. Record the resulting AMI ID in
 ddc.amiId / copy it for edge regions.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			rt, err := runtimeSource()
+			if err != nil {
+				return err
+			}
+			cfg.Region = amirecipe.ResolveRegion(cfg.Region, rt.Config.Cloud.AWS.Region)
 			c := buildCommand{out: out, cfg: cfg, writeFile: os.WriteFile, mkdirAll: os.MkdirAll}
 			return c.run()
 		},
 	}
-	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", "ami-0c7217cdde317cfec", "Base AMI ID")
-	cmd.Flags().StringVar(&cfg.Region, "region", "us-east-1", "AWS region")
+	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", amirecipe.DefaultBaseImage, "Base AMI ID, or the default SSM parameter that resolves the latest Canonical Ubuntu 22.04 image")
+	cmd.Flags().StringVar(&cfg.Region, "region", "", "AWS region (default: cloud.aws.region, else us-east-1)")
 	cmd.Flags().StringVar(&cfg.Name, "name", "fabrica-ddc", "Image name prefix")
 	cmd.Flags().StringVar(&cfg.OutputDir, "output-dir", defaultOutputDir, "Output directory")
 	cmd.Flags().StringVar(&cfg.Backend, "backend", "zen", "Documented backend: zen or scylla")
@@ -57,11 +58,11 @@ ddc.amiId / copy it for edge regions.`,
 }
 
 func (c buildCommand) run() error {
-	if !amiRE.MatchString(c.cfg.BaseImage) {
-		return fmt.Errorf("base-image %q is not an AMI id", c.cfg.BaseImage)
+	if err := amirecipe.ValidateBaseImage(c.cfg.BaseImage); err != nil {
+		return err
 	}
-	if !regionRE.MatchString(c.cfg.Region) {
-		return fmt.Errorf("region %q is invalid", c.cfg.Region)
+	if err := amirecipe.ValidateRegion(c.cfg.Region); err != nil {
+		return err
 	}
 	if c.cfg.Backend != "zen" && c.cfg.Backend != "scylla" {
 		return fmt.Errorf("backend must be zen or scylla, got %q", c.cfg.Backend)

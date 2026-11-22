@@ -13,12 +13,6 @@ variable "aws_region" {
   description = "AWS region to build the AMI in."
 }
 
-variable "source_ami" {
-  type        = string
-  default     = "{{ .BaseImage }}"
-  description = "Region-local Ubuntu 22.04 x86_64 base AMI ID."
-}
-
 variable "instance_type" {
   type        = string
   default     = "m7i.xlarge"
@@ -36,11 +30,12 @@ locals {
   common_tags = merge({{ hclMap .RecipeTags }}, { Name = local.ami_name })
 }
 
+{{ packerData .BaseImage }}
 source "amazon-ebs" "lore" {
   ami_name      = local.ami_name
   instance_type = var.instance_type
   region        = var.aws_region
-  source_ami    = var.source_ami
+  {{ packerSource .BaseImage }}
   ssh_username  = "ubuntu"
 
   ami_block_device_mappings {
