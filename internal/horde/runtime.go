@@ -123,9 +123,14 @@ func systemdQuote(value string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value) + `"`
 }
 
-// ListenerCheckScript validates the token-free endpoint and HTTP/2 negotiation.
-// Options are initialized by the caller and also used for authenticated calls.
+// ListenerCheckScript validates the token-free endpoint. TLS also asserts the
+// single-port HTTPS/HTTP2 report; plain HTTP asserts only the HTTP port. Options
+// are initialized by the caller and also used for authenticated calls.
 func ListenerCheckScript(c Connection) string {
+	if !c.TLS {
+		return fmt.Sprintf(`curl "${CURL_OPTS[@]}" -w '\n%%{http_code}' "$HORDE_URL/api/v1/server/ports" | python3 -c 'import json,sys; body,code=sys.stdin.read().rsplit("\n",1); p=json.loads(body); sys.exit(0 if code=="200" and type(p.get("http")) is int and p.get("http")==%d else "Horde HTTP listener mismatch")'
+`, c.Port)
+	}
 	return fmt.Sprintf(`curl "${CURL_OPTS[@]}" -w '\n%%{http_code}' "$HORDE_URL/api/v1/server/ports" | python3 -c 'import json,sys; body,code=sys.stdin.read().rsplit("\n",1); p=json.loads(body); sys.exit(0 if code=="200" and all(type(p.get(k)) is int for k in ("http","https","unencryptedHttp2")) and p.get("http")==0 and p.get("https")==%d and p.get("unencryptedHttp2")==0 else "Horde TLS listener mismatch")'
 test "$(curl "${CURL_OPTS[@]}" --http2 -o /dev/null -w '%%{http_code} %%{http_version}' "$HORDE_URL/api/v1/server/ports")" = '200 2'
 `, c.Port)

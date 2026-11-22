@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **TLS Horde agents retry the coordinator probe before configuring.** Cloud-init probes the HTTPS listener up to 30 times, 10 seconds apart, before it writes agent configuration. It still fails closed: if the probe never passes, the agent writes nothing and exits 1.
+
 ### Fixed
 
 - **A pinned Helix Core version installs that version or fails.** apt compares `helix-p4d=<pin>` against the full Debian version (`2025.2-3148719~jammy`), so a bare release never matched and every pinned create silently installed the latest server. Cloud-init now resolves the pin against the Perforce repo, installs that exact build, and stops with the list of available versions when the repo lacks it. `perforce status` labels the version `(configured)` instead of printing it next to the probe result, and the `--version` help default now matches `DefaultHelixVersion` (2025.2). (#699)
