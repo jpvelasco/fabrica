@@ -75,7 +75,8 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 Creates an Auto Scaling Group with a Launch Template that launches agent
 instances. HTTP agents use the existing coordinator's private IP address.
 TLS agents require the native-agent AMI contract and use the recorded DNS
-endpoint and agent-side trust bundle. Verify enrollment in Horde separately.
+endpoint and agent-side trust bundle. Agents wait for enrollment approval;
+approve them with 'fabrica horde agents approve'.
 
 **AMI requirement:** horde.agents.amiId must be a dedicated agent AMI — not
 the coordinator AMI (horde.amiId). The agent AMI should contain only the
@@ -739,6 +740,7 @@ func (c command) printPostCreate(plan *horde.AgentsCreatePlan, asgID string) {
 		Details:      details,
 		NextSteps: []string{
 			"fabrica horde agents status    Check agent pool status",
+			"fabrica horde agents approve   Approve pending agent enrollments",
 			"fabrica horde status           Check coordinator health",
 		},
 		RawAfter: func(w io.Writer) {
@@ -747,6 +749,7 @@ func (c command) printPostCreate(plan *horde.AgentsCreatePlan, asgID string) {
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, "  If agents don't enroll within 5 minutes, check:")
 			fmt.Fprintln(w, "    /var/log/fabrica-horde-agent-init.log  on each agent instance")
+			fmt.Fprintln(w, "  Agents that reach Horde wait for approval: fabrica horde agents approve")
 			if plan.ScalingEnabled {
 				fmt.Fprintln(w)
 				fmt.Fprintln(w, "  "+horde.ScalingPublisherNote)

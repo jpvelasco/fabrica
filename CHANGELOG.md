@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`fabrica horde agents approve` lists and approves pending agent enrollments.** Stock Horde agents wait for approval on the coordinator. The command runs one SSM script there: it reads the Admin password on the coordinator, lists `GET /api/v1/enrollment`, and POSTs only the keys of the hosts you name with `--host` or `--all`. Approval is all-or-nothing; `--dry-run`, `--yes`, and `--json` are supported. Enrollment keys and the password never leave the coordinator. The enrollment field names target Horde 5.8.4 and are pending confirmation against a live coordinator. (#701)
+
 ### Changed
 
 - **TLS Horde agents retry the coordinator probe before configuring.** Cloud-init probes the HTTPS listener up to 30 times, 10 seconds apart, before it writes agent configuration. It still fails closed: if the probe never passes, the agent writes nothing and exits 1.
