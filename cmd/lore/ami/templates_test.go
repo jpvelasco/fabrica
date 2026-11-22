@@ -41,14 +41,14 @@ func TestOwnershipTemplates(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.Count(string(packer), `ManagedBy   = "`+want+`"`) != 2 {
+			if strings.Count(string(packer), `"ManagedBy" = "`+want+`"`) != 1 || !strings.Contains(string(packer), "tags = local.common_tags") || !strings.Contains(string(packer), "snapshot_tags = local.common_tags") {
 				t.Fatalf("AMI and snapshot tags must both select %q:\n%s", want, packer)
 			}
 			guide, err := b.renderTemplate("build-guide.md.tmpl", data)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(string(guide), "Key=ManagedBy,Value="+want+" Key=FabricaModule,Value=lore Key=Name,Value="+b.cfg.Name) {
+			if !strings.Contains(string(guide), `{"Key":"ManagedBy","Value":"`+want+`"}`) {
 				t.Fatalf("snapshot tag command must select %q:\n%s", want, guide)
 			}
 		})
@@ -88,6 +88,7 @@ func TestRenderTemplates(t *testing.T) {
 				`"LoreVersion": "0.8.6"`,
 				"REPLACE_WITH_CUSTOM_COMPONENT_ARN",
 				`"ManagedBy": "fabrica"`,
+				`"amiTags": {`,
 			},
 		},
 		{
@@ -123,7 +124,8 @@ func TestRenderTemplates(t *testing.T) {
 				// #509: the Image Builder bake must tag the output AMI's
 				// snapshots for identification and operator cleanup.
 				"aws ec2 create-tags --region us-west-2",
-				"Key=ManagedBy,Value=fabrica Key=FabricaModule,Value=lore Key=Name,Value=fabrica-lore-0.8.6",
+				`{"Key":"FabricaModule","Value":"lore"}`,
+				`{"Key":"Name","Value":"fabrica-lore-0.8.6"}`,
 				"Images[0].BlockDeviceMappings[?Ebs].Ebs.SnapshotId",
 			},
 		},
@@ -139,7 +141,8 @@ func TestRenderTemplates(t *testing.T) {
 				"install-lore.sh",
 				"verify-lore-ami-bake.sh",
 				// #509: snapshots the bake takes carry the AMI tag set.
-				"snapshot_tags = {",
+				"snapshot_tags = local.common_tags",
+				"run_tags = local.common_tags",
 			},
 		},
 	}

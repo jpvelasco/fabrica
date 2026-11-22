@@ -20,6 +20,7 @@ type imageBuilderRecipe struct {
 	BlockDeviceMappings             []blockDeviceMapping     `json:"blockDeviceMappings"`
 	Components                      []componentReference     `json:"components"`
 	AdditionalInstanceConfiguration additionalInstanceConfig `json:"additionalInstanceConfiguration"`
+	AMITags                         map[string]string        `json:"amiTags"`
 	Tags                            map[string]string        `json:"tags"`
 }
 

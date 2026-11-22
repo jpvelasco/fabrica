@@ -29,6 +29,7 @@ const (
 type command struct {
 	runtime        globals.Runtime
 	buildGraphPath string
+	target         string
 	dryRun         bool
 	wait           bool
 	out            io.Writer
@@ -45,13 +46,16 @@ type command struct {
 // New returns the "horde submit" subcommand.
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
 	var wait bool
+	var target string
 	cmd := &cobra.Command{
 		Use:   "submit <buildgraph-file>",
 		Short: "Submit a BuildGraph job to the Horde coordinator",
 		Long: `Submit a BuildGraph XML file as a job to the Horde build coordinator.
 
 Parses the BuildGraph file to extract the job name and target, then POSTs to
-the Horde REST API. By default, submits and returns immediately (fire-and-forget).
+the Horde REST API. The target is the first <Aggregate>, or the first <Node>
+of the first <Agent> when there is no aggregate; --target overrides it.
+By default, submits and returns immediately (fire-and-forget).
 
 Use --wait / -w to poll every 30 seconds until the job completes or errors
 (times out after 60 minutes). With --wait the command exits non-zero when
@@ -77,6 +81,7 @@ Run 'fabrica horde status' to confirm the coordinator is ready.`,
 			c := command{
 				runtime:        rt,
 				buildGraphPath: args[0],
+				target:         target,
 				dryRun:         opts.DryRun,
 				wait:           wait,
 				out:            out,
@@ -91,6 +96,7 @@ Run 'fabrica horde status' to confirm the coordinator is ready.`,
 		},
 	}
 	cmd.Flags().BoolVarP(&wait, "wait", "w", false, "Poll until job completes or 60 minutes elapsed")
+	cmd.Flags().StringVar(&target, "target", "", "BuildGraph <Aggregate> or <Node> name to run (default: first <Aggregate>, else first <Node>)")
 	return cmd
 }
 
@@ -99,6 +105,10 @@ func (c command) run(ctx context.Context) error {
 	job, err := buildgraph.ParseBuildGraph(c.buildGraphPath)
 	if err != nil {
 		return err
+	}
+	choice := buildgraph.ResolveTarget(job, c.target)
+	if choice.Warning != "" {
+		fmt.Fprintf(c.out, "Warning: %s\n", choice.Warning)
 	}
 	if err := buildgraph.ValidateJob(job); err != nil {
 		return err
@@ -142,7 +152,7 @@ func (c command) run(ctx context.Context) error {
 	}
 
 	if c.dryRun {
-		c.printDryRun(job, baseURL, tokenParam)
+		c.printDryRun(job, choice, baseURL, tokenParam)
 		return nil
 	}
 
@@ -206,11 +216,11 @@ func (c command) serviceToken(ctx context.Context, name string) (string, error) 
 }
 
 // printDryRun previews the job submission without contacting the coordinator.
-func (c command) printDryRun(job *buildgraph.BuildGraphJob, baseURL, tokenParam string) {
+func (c command) printDryRun(job *buildgraph.BuildGraphJob, choice buildgraph.TargetChoice, baseURL, tokenParam string) {
 	fmt.Fprintln(c.out, "Horde submit (dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "  job:    %s\n", job.Name)
-	fmt.Fprintf(c.out, "  target: %s\n", job.Target)
+	fmt.Fprintf(c.out, "  target: %s (%s)\n", choice.Name, choice.Reason)
 	if baseURL != "" {
 		fmt.Fprintf(c.out, "  coordinator: %s\n", baseURL)
 	}
