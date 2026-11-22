@@ -799,6 +799,65 @@ func TestPrintDryRun_WithoutScaling(t *testing.T) {
 	}
 }
 
+func agentsPlanForPrint() *horde.AgentsCreatePlan {
+	return &horde.AgentsCreatePlan{
+		Account:              "123456789012",
+		Region:               "us-west-2",
+		InstanceType:         "c7i.xlarge",
+		ASGName:              "asg-test",
+		LaunchTemplateName:   "lt-test",
+		InstanceProfileName:  "profile-test",
+		RoleName:             "role-test",
+		SGName:               "sg-test",
+		CoordinatorPrivateIP: "10.0.1.50",
+		CoordinatorPort:      5000,
+		AmiID:                "ami-123",
+		MinSize:              0,
+		DesiredCapacity:      1,
+		MaxSize:              2,
+	}
+}
+
+func TestPrintDryRun_FillsAccountRegionInstanceTypeAndOmitsVolume(t *testing.T) {
+	var out bytes.Buffer
+	c := command{out: &out, costs: fabricacost.Global}
+	c.printDryRun(agentsPlanForPrint())
+
+	got := out.String()
+	for _, want := range []string{
+		"AWS account:      123456789012",
+		"AWS region:       us-west-2",
+		"Instance type:    c7i.xlarge",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("dry run missing %q, got:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "GiB") || strings.Contains(got, "Data volume") {
+		t.Errorf("agent dry run must not print a data volume line, got:\n%s", got)
+	}
+}
+
+func TestPrintApplyPlan_FillsAccountRegionInstanceTypeAndOmitsVolume(t *testing.T) {
+	var out bytes.Buffer
+	c := command{out: &out}
+	c.printApplyPlan(agentsPlanForPrint())
+
+	got := out.String()
+	for _, want := range []string{
+		"AWS account:      123456789012",
+		"AWS region:       us-west-2",
+		"Instance type:    c7i.xlarge",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("apply plan missing %q, got:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "GiB") || strings.Contains(got, "Data volume") {
+		t.Errorf("agent apply plan must not print a data volume line, got:\n%s", got)
+	}
+}
+
 func TestPrintApplyPlan(t *testing.T) {
 	var out bytes.Buffer
 	plan := &horde.AgentsCreatePlan{
@@ -845,8 +904,11 @@ func TestPrintPostCreate(t *testing.T) {
 	if !strings.Contains(got, "asg-created") {
 		t.Error("post create should mention ASG ID")
 	}
-	if !strings.Contains(got, "Systems Manager") {
-		t.Error("post create should mention SSM access")
+	if !strings.Contains(got, "Operator access is via AWS Systems Manager Session Manager.") {
+		t.Error("post create should state operator access via Session Manager")
+	}
+	if strings.Contains(got, "private subnet") {
+		t.Error("post create must not assert a subnet placement")
 	}
 }
 

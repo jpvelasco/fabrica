@@ -195,23 +195,41 @@ aws ec2 run-instances \
 
 ### Step 2: Install the AWS CLI v2
 
-The stock jammy base has **no `aws` CLI and no `unzip`**. The generated bake
-installs both; a manual bake should too (the instance-role ECR pull below needs
-it, and it lands at `/usr/local/bin/aws` — see the SSM PATH note in
-[Jammy base and SSM footguns](#jammy-base-and-ssm-footguns)):
+The stock jammy base has **no `aws` CLI and no `unzip`**. The generated Packer
+bake installs both and checks the release zip against AWS's detached signature
+before it runs anything; a manual bake should do the same. The instance-role ECR
+pull below needs the CLI, and it lands at `/usr/local/bin/aws` (see the SSM PATH
+note in [Jammy base and SSM footguns](#jammy-base-and-ssm-footguns)). The
+generated Image Builder bake does not install the CLI itself: it expects the
+AWS-managed `aws-cli-version-2-linux` component to have run first.
 
 ```bash
 sudo apt-get update -q
-sudo apt-get install -y unzip
-curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip
-unzip -q /tmp/awscliv2.zip -d /tmp/awscli
-/tmp/awscli/aws/install --update
-rm -rf /tmp/awscli /tmp/awscliv2.zip
+sudo apt-get install -y unzip gnupg
+work="$(mktemp -d)"
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "$work/awscliv2.zip"
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip.sig" -o "$work/awscliv2.zip.sig"
+# Save the "AWS CLI Team" PGP public key from the install guide
+# (https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+# as $work/aws-cli-public-key.asc, then export only the pinned key:
+gnupg_home="$(mktemp -d)"
+GNUPGHOME="$gnupg_home" gpg --batch --quiet --import "$work/aws-cli-public-key.asc"
+GNUPGHOME="$gnupg_home" gpg --batch --quiet --export FB5DB77FD5C118B80511ADA8A6310ACC4672475C > "$work/aws-cli.gpg"
+rm -rf "$gnupg_home"
+test -s "$work/aws-cli.gpg"
+gpg --batch --no-default-keyring --keyring "$work/aws-cli.gpg" --verify "$work/awscliv2.zip.sig" "$work/awscliv2.zip"
+unzip -q "$work/awscliv2.zip" -d "$work"
+sudo "$work/aws/install" --update
+rm -rf "$work"
 ```
+
+The exported keyring holds only the pinned primary key `FB5D B77F D5C1 18B8 0511 ADA8 A631 0ACC 4672 475C`;
+`test -s` fails if the key file does not contain it. `gpg --verify` must print
+`Good signature from "AWS CLI Team"` before the installer runs.
 
 > If you extract the installer with `python3 -m zipfile -e` instead of `unzip`,
 > the `install` script **loses its exec bit** — run
-> `chmod +x /tmp/awscli/aws/install` before invoking it.
+> `chmod +x "$work/aws/install"` before invoking it.
 
 ### Step 3: Build the Horde server image
 
@@ -370,7 +388,7 @@ The generated `component.yaml` / `packer.pkr.hcl` already work around them.
 
 Install AWS CLI v2 first (Step 2). It lands at `/usr/local/bin/aws`. If you
 extract the installer zip with `python3 -m zipfile -e` (no `unzip` yet), the
-`install` script loses its exec bit — `chmod +x /tmp/awscli/aws/install` before
+`install` script loses its exec bit — `chmod +x "$work/aws/install"` before
 running it.
 
 ### SSM sessions do not see `/usr/local/bin` on `PATH`

@@ -46,7 +46,7 @@ Command-specific flags for `create`:
 | Flag | Default | Effect |
 |---|---|---|
 | `--instance-type` | `m5.xlarge` | EC2 instance type |
-| `--version` | `2024.2` | Helix Core version: `latest`, `YYYY.N`, or `YYYY.N/BUILD` |
+| `--version` | `2025.2` | Helix Core version: `latest`, `YYYY.N`, or `YYYY.N/BUILD`. A pin installs the newest repo build of that release (or the exact build); cloud-init fails if the Perforce repo no longer carries it |
 | `--volume-size` | `500` | EBS data volume size in GiB |
 
 ## Architecture notes
