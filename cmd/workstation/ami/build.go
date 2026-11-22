@@ -14,6 +14,7 @@ import (
 	"text/template"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/amirecipe"
 	"github.com/jpvelasco/fabrica/internal/amissm"
 	"github.com/jpvelasco/fabrica/internal/ec2state"
 	"github.com/jpvelasco/fabrica/internal/tags"
@@ -40,11 +41,20 @@ var (
 
 type BuildConfig struct {
 	Identity   tags.Identity
+	CloudTags  map[string]string
 	BaseImage  string
 	Region     string
 	Name       string
 	OutputDir  string
 	RootDevice string
+}
+
+// RecipeTags is the tag set for the AMI, its recipe, and its snapshots.
+func (c BuildConfig) RecipeTags() map[string]string {
+	return amirecipe.Tags(c.Identity, c.CloudTags, map[string]string{
+		"Name":          c.Name,
+		"FabricaModule": "workstation",
+	})
 }
 
 type buildCommand struct {
@@ -83,6 +93,7 @@ No AWS calls. Record the resulting AMI ID in workstation.amiId.`,
 				return err
 			}
 			cfg.Identity = identity
+			cfg.CloudTags = rt.Config.Cloud.AWS.Tags
 			c := buildCommand{out: out, cfg: cfg, writeFile: os.WriteFile, mkdirAll: os.MkdirAll}
 			return c.run()
 		},
@@ -201,7 +212,7 @@ func (c buildCommand) render(name string, data any) ([]byte, error) {
 		return nil, fmt.Errorf("reading template %s: %w", name, err)
 	}
 	raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
-	tmpl, err := template.New(name).Funcs(template.FuncMap{
+	tmpl, err := template.New(name).Funcs(amirecipe.TemplateFuncs()).Funcs(template.FuncMap{
 		"indent": indent,
 	}).Option("missingkey=error").Parse(string(raw))
 	if err != nil {

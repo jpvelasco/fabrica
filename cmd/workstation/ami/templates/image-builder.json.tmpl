@@ -27,13 +27,6 @@
       "uninstallAfterBuild": false
     }
   },
-  "amiTags": {
-    "ManagedBy": "{{ .Identity.ManagedBy }}",
-    "FabricaModule": "workstation",
-    "Name": "{{ .Name }}"
-  },
-  "tags": {
-    "ManagedBy": "{{ .Identity.ManagedBy }}",
-    "Name": "{{ .Name }}"
-  }
+  "amiTags": {{ jsonMap .RecipeTags }},
+  "tags": {{ jsonMap .RecipeTags }}
 }

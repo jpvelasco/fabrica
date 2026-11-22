@@ -33,9 +33,6 @@
       "uninstallAfterBuild": false
     }
   },
-  "tags": {
-    "ManagedBy": "{{ .Identity.ManagedBy }}",
-    "HordeVersion": "{{ .Version }}",
-    "InstallMethod": "{{ .Install }}"
-  }
+  "amiTags": {{ jsonMap .RecipeTags }},
+  "tags": {{ jsonMap .RecipeTags }}
 }
