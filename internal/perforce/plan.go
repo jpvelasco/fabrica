@@ -8,6 +8,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
 
@@ -23,12 +24,11 @@ const DefaultInstanceType = "m5.xlarge"
 // configured.
 const DefaultAllowedCIDR = "10.0.0.0/8"
 
-// DefaultSGName is the Perforce security group name.
-const DefaultSGName = "fabrica-perforce-sg"
-
 // CreatePlan holds everything needed to provision Perforce: resolved names,
 // resource specs, cost inputs. No AWS SDK types — callers execute the plan.
 type CreatePlan struct {
+	// Prefix is the resource-name prefix every physical name derives from.
+	Prefix       naming.Prefix
 	Account      string
 	Region       string
 	InstanceType string
@@ -81,7 +81,7 @@ func (p CreatePlan) RequiredResources() []string {
 // NewCreatePlan validates inputs and builds a CreatePlan. VPCResolver is called
 // only when VPCId/SubnetId are absent from cfg; pass nil to skip resolution
 // (dry-run with explicit VPC values, or tests).
-func NewCreatePlan(ctx context.Context, cfg config.PerforceConfig, account, region, version string, resolver cloud.VPCResolver) (*CreatePlan, error) {
+func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.PerforceConfig, account, region, version string, resolver cloud.VPCResolver) (*CreatePlan, error) {
 	if err := validateVersion(version); err != nil {
 		return nil, err
 	}
@@ -109,6 +109,7 @@ func NewCreatePlan(ctx context.Context, cfg config.PerforceConfig, account, regi
 
 	s3Prefix := ResolveS3Prefix(cfg.Backup.S3Prefix)
 	return &CreatePlan{
+		Prefix:              prefix,
 		Account:             account,
 		Region:              region,
 		InstanceType:        instanceType,
@@ -118,10 +119,10 @@ func NewCreatePlan(ctx context.Context, cfg config.PerforceConfig, account, regi
 		VPCID:               vpcID,
 		SubnetID:            subnetID,
 		DefaultVPC:          defaultVPC,
-		SGName:              DefaultSGName,
-		InstanceName:        "fabrica-perforce",
-		RoleName:            "fabrica-perforce-role",
-		InstanceProfileName: "fabrica-perforce-profile",
+		SGName:              prefix.SG("perforce"),
+		InstanceName:        prefix.Instance("perforce"),
+		RoleName:            prefix.Role("perforce"),
+		InstanceProfileName: prefix.Profile("perforce"),
 		BackupS3Export:      cfg.Backup.S3Export,
 		BackupS3Bucket:      cfg.Backup.S3Bucket,
 		BackupS3Prefix:      s3Prefix,

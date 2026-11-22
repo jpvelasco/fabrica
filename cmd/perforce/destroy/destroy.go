@@ -6,6 +6,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
@@ -24,9 +25,21 @@ var spec = teardown.Spec{
 		"S3 exports are not deleted. Delete backups explicitly if you intend a full purge.",
 	SuccessMessage: "Perforce Helix Core destroyed. Data volume (and any local backups on it) retained; S3 exports untouched.",
 	// Admin-password SecureString → instance → profile → role → SG. The
-	// parameter is the first in the order; see perforceResourceOrder.
-	ResourceOrder: perforceResourceOrder,
-	WireCommand:   teardown.WireParameterDelete,
+	// parameter is the first in the order; see wirePerforce.
+	WireCommand: wirePerforce,
+}
+
+// wirePerforce attaches the SDK parameter delete and installs the resource
+// order, which needs the configured name prefix to validate the recorded
+// admin-password name (#705).
+func wirePerforce(tc *teardown.Command, rt globals.Runtime) {
+	teardown.WireParameterDelete(tc, rt)
+	tc.Spec.ResourceOrder = func(m *fabricastate.ModuleState) []cloud.Resource {
+		// Load rejects non-default prefixes until #705 is enabled, so this
+		// error cannot occur on a loaded config.
+		prefix, _ := rt.Config.ResolveNamePrefix()
+		return perforceResourceOrder(m, prefix)
+	}
 }
 
 // perforceResourceOrder deletes the recorded admin-password SecureString first.
@@ -34,7 +47,7 @@ var spec = teardown.Spec{
 // from state as soon as the instance is deleted, so a parameter delete that ran
 // after the instance could orphan the secret on a failed or interrupted run
 // (the #524 pattern). A pre-#700 instance records no name and is skipped.
-func perforceResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
+func perforceResourceOrder(m *fabricastate.ModuleState, prefix naming.Prefix) []cloud.Resource {
 	order := []string{
 		"AWS::EC2::Instance",
 		"AWS::IAM::InstanceProfile",
@@ -47,7 +60,7 @@ func perforceResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 	}
 	out := make([]cloud.Resource, 0, len(order)+1)
 	inst := byType[cloud.TypeAWSEC2Instance]
-	if r, ok := teardown.RecordedParameter("perforce", inst.Properties["adminPasswordParameter"], perforce.AdminPasswordScope.IsName); ok {
+	if r, ok := teardown.RecordedParameter("perforce", inst.Properties["adminPasswordParameter"], perforce.AdminPasswordScope(prefix).IsName); ok {
 		out = append(out, r)
 	}
 	for _, t := range order {
@@ -81,10 +94,10 @@ Resources are deleted in dependency order:
   4. IAM Role
   5. EC2 Security Group
 
-The admin-password SecureString (/fabrica/perforce/<create-nonce>/admin-password)
-is deleted by name, as recorded on the instance. An instance created before the
-password moved to SSM records no name, so there is nothing to delete. A parameter
-already gone is success.
+The admin-password SecureString (/<namePrefix>/perforce/<create-nonce>/admin-password,
+/fabrica/perforce/... by default) is deleted by name, as recorded on the instance.
+An instance created before the password moved to SSM records no name, so there is
+nothing to delete. A parameter already gone is success.
 
 The data volume is retained (DeleteOnTermination=false). S3 exports are not deleted.
 

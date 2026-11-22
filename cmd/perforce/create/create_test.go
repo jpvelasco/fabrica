@@ -16,6 +16,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
@@ -800,7 +801,7 @@ func TestCreateStoresAdminPasswordInSSMNotUserData(t *testing.T) {
 		t.Fatalf("PutParameters = %d, want 1", len(provider.PutParameters))
 	}
 	put := provider.PutParameters[0]
-	if !perforce.AdminPasswordScope.IsName(put.Name) {
+	if !perforce.AdminPasswordScope(naming.Default).IsName(put.Name) {
 		t.Fatalf("parameter name %q is not a per-create admin-password name", put.Name)
 	}
 	if put.Value != "s3cret-admin" {
@@ -828,7 +829,7 @@ func TestCreateStoresAdminPasswordInSSMNotUserData(t *testing.T) {
 	}
 
 	role := createdDesiredState(t, provider, cloud.TypeAWSIAMRole)
-	if !strings.Contains(role, perforce.AdminPasswordPolicyName) {
+	if !strings.Contains(role, perforce.AdminPasswordPolicyName(naming.Default)) {
 		t.Error("the instance role must carry the admin-password read policy")
 	}
 

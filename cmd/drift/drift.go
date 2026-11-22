@@ -202,6 +202,11 @@ func planActionAttrs(a drift.RemediationAction) []any {
 
 func (c *command) runFix(ctx context.Context, dryRun bool, st *fabricastate.State, report *drift.DriftReport) error {
 	var opts []drift.PlanOption
+	prefix, err := c.runtime.Config.ResolveNamePrefix()
+	if err != nil {
+		return err
+	}
+	opts = append(opts, drift.WithNamePrefix(prefix))
 	// Workstation rebuilds need the AMI's root device; providers that can
 	// inspect AMIs supply the capability, others fail those rebuilds closed.
 	if insp, ok := c.runtime.Provider.(cloud.ImageInspector); ok {

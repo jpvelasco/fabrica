@@ -123,6 +123,11 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 
+	prefix, err := c.runtime.Config.ResolveNamePrefix()
+	if err != nil {
+		return err
+	}
+
 	// Resolve version: flag > config > default
 	pfCfg := c.runtime.Config.Perforce
 	effectiveVersion := perforce.ResolveVersion(c.version, pfCfg.Version)
@@ -139,7 +144,7 @@ func (c command) run(ctx context.Context) error {
 	}
 	pfCfg.IAM = resolvedIAM
 
-	plan, err := perforce.NewCreatePlan(ctx, pfCfg, account, region, effectiveVersion, provision.VPCResolver(c.runtime.Provider))
+	plan, err := perforce.NewCreatePlan(ctx, prefix, pfCfg, account, region, effectiveVersion, provision.VPCResolver(c.runtime.Provider))
 	if err != nil {
 		return fmt.Errorf("building create plan: %w", err)
 	}
@@ -147,7 +152,7 @@ func (c command) run(ctx context.Context) error {
 	// Mint the per-create admin-password name before any plan is printed or
 	// applied, so the role (scoped to this name) and cloud-init (which reads it
 	// at boot) agree with the SecureString apply writes (#700).
-	if plan.AdminPasswordParameter, err = perforce.AdminPasswordScope.NewName(); err != nil {
+	if plan.AdminPasswordParameter, err = perforce.AdminPasswordScope(plan.Prefix).NewName(); err != nil {
 		return fmt.Errorf("building create plan: %w", err)
 	}
 
@@ -276,6 +281,7 @@ func (c command) resolveLaunch(ctx context.Context, plan *perforce.CreatePlan) (
 		ServerID:               plan.InstanceName,
 		Region:                 plan.Region,
 		AdminPasswordParameter: plan.AdminPasswordParameter,
+		NamePrefix:             plan.Prefix,
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("generating user data: %w", err)

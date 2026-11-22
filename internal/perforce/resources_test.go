@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/ec2state"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestSGDesiredState_Port1666(t *testing.T) {
@@ -349,7 +350,7 @@ func TestRoleDesiredState_AdminPasswordReadPolicy(t *testing.T) {
 	}
 	var found bool
 	for _, p := range policies {
-		if p["PolicyName"] != AdminPasswordPolicyName {
+		if p["PolicyName"] != AdminPasswordPolicyName(naming.Default) {
 			continue
 		}
 		found = true
@@ -367,7 +368,7 @@ func TestRoleDesiredState_AdminPasswordReadPolicy(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("role has no %s policy", AdminPasswordPolicyName)
+		t.Fatalf("role has no %s policy", AdminPasswordPolicyName(naming.Default))
 	}
 }
 
@@ -379,8 +380,8 @@ func TestRoleDesiredState_NoAdminPasswordPolicyWhenUnset(t *testing.T) {
 		t.Fatalf("Policies len = %d, want 1 (SSM output only)", len(policies))
 	}
 	for _, p := range policies {
-		if p["PolicyName"] == AdminPasswordPolicyName {
-			t.Fatalf("unset plan granted %s", AdminPasswordPolicyName)
+		if p["PolicyName"] == AdminPasswordPolicyName(naming.Default) {
+			t.Fatalf("unset plan granted %s", AdminPasswordPolicyName(naming.Default))
 		}
 	}
 }

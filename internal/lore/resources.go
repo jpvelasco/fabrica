@@ -148,18 +148,18 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 		// without ssm:PutParameter or logs:*, so the instance role needs an
 		// explicit least-privilege policy to publish SSM command output to
 		// the MDS parameter and the /fabrica/ssm/* CloudWatch Logs sink.
-		iamrole.SSMOutputPolicy(region, account),
+		iamrole.SSMOutputPolicyFor(plan.Prefix, region, account),
 	}
 	if plan.StoreBackend == StoreBackendS3 {
 		policies = append([]map[string]any{
-			iamrole.S3BucketPolicy("fabrica-lore-store-s3", plan.StoreBucket,
+			iamrole.S3BucketPolicy(plan.Prefix.For("lore", "store", "s3"), plan.StoreBucket,
 				[]string{"s3:ListBucket", "s3:GetBucketLocation", "s3:ListBucketVersions"},
 				[]string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"},
 				"*",
 			),
 		}, policies...)
 		if len(plan.StoreTables) > 0 {
-			policies = append(policies, StoreDynamoDBPolicy(region, account, plan.StoreBucket, plan.StoreTables))
+			policies = append(policies, StoreDynamoDBPolicy(plan.Prefix, region, account, plan.StoreBucket, plan.StoreTables))
 		}
 	}
 	return iamrole.RoleDocument(

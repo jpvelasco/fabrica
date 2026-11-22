@@ -7,6 +7,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/horde"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -24,7 +25,7 @@ func TestHordeTLSRecoveryPreservesTransport(t *testing.T) {
 		}
 	}
 	withHordePassword(t, func(string) (string, error) { return "not-rendered", nil })
-	ds, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, state.NewState("", ""), cfg, nil)
+	ds, err := rebuildInstanceDesiredState(context.Background(), naming.Default, &mod.Resources[2], mod, state.NewState("", ""), cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +42,7 @@ func TestHordeTLSRecoveryPreservesTransport(t *testing.T) {
 	if _, err := rebuildHordeInstance(&mod.Resources[2], mod, cfg); err == nil {
 		t.Fatal("instance downgrade")
 	}
-	if _, err := rebuildSGDesiredState(&mod.Resources[0], mod, cfg); err == nil {
+	if _, err := rebuildSGDesiredState(naming.Default, &mod.Resources[0], mod, cfg); err == nil {
 		t.Fatal("SG downgrade")
 	}
 }

@@ -9,11 +9,12 @@ import (
 	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestNewCreatePlan_Defaults(t *testing.T) {
 	cfg := config.PerforceConfig{}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -50,7 +51,7 @@ func TestNewCreatePlan_AllowedCIDR(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := config.PerforceConfig{AllowedCIDR: tc.cidr}
-			plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
+			plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -63,7 +64,7 @@ func TestNewCreatePlan_AllowedCIDR(t *testing.T) {
 
 func TestNewCreatePlan_CustomInstanceType(t *testing.T) {
 	cfg := config.PerforceConfig{InstanceType: "c5.2xlarge"}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,7 +75,7 @@ func TestNewCreatePlan_CustomInstanceType(t *testing.T) {
 
 func TestNewCreatePlan_CostResourceTypeNames(t *testing.T) {
 	cfg := config.PerforceConfig{}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -107,7 +108,7 @@ func TestNewCreatePlan_VersionValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.version, func(t *testing.T) {
-			_, err := NewCreatePlan(context.Background(), config.PerforceConfig{}, "123456789012", "us-east-1", tc.version, nil)
+			_, err := NewCreatePlan(context.Background(), naming.Default, config.PerforceConfig{}, "123456789012", "us-east-1", tc.version, nil)
 			if tc.wantErr && err == nil {
 				t.Errorf("version %q: expected error, got nil", tc.version)
 			}
@@ -138,7 +139,7 @@ func TestResolveVersion(t *testing.T) {
 func TestNewCreatePlan_VPCResolver(t *testing.T) {
 	resolver := &cloud.TestVPCResolver{VPCID: "vpc-abc", SubnetID: "subnet-abc"}
 	cfg := config.PerforceConfig{}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, resolver)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", DefaultHelixVersion, resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -155,7 +156,7 @@ func TestNewCreatePlan_VPCResolver(t *testing.T) {
 
 func TestNewCreatePlan_ExplicitVPC(t *testing.T) {
 	cfg := config.PerforceConfig{VPCId: "vpc-explicit", SubnetId: "subnet-explicit"}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -180,7 +181,7 @@ func TestNewCreatePlan_VolumeSize(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(fmt.Sprintf("cfg=%d", tc.cfgVolume), func(t *testing.T) {
 			cfg := config.PerforceConfig{VolumeSize: tc.cfgVolume}
-			plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
+			plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -194,7 +195,7 @@ func TestNewCreatePlan_VolumeSize(t *testing.T) {
 func TestNewCreatePlan_VPCResolverError(t *testing.T) {
 	resolver := &cloud.TestVPCResolver{Err: fmt.Errorf("no default VPC")}
 	cfg := config.PerforceConfig{}
-	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, resolver)
+	_, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", DefaultHelixVersion, resolver)
 	if err == nil {
 		t.Fatal("expected error when VPC resolver fails")
 	}
@@ -204,7 +205,7 @@ func TestNewCreatePlan_VPCResolverError(t *testing.T) {
 func TestNewCreatePlan_ExplicitVPCSkipsResolver(t *testing.T) {
 	resolver := &cloud.TestVPCResolver{VPCID: "vpc-skip", SubnetID: "subnet-skip"}
 	cfg := config.PerforceConfig{VPCId: "vpc-explicit", SubnetId: "subnet-explicit"}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, resolver)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", DefaultHelixVersion, resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -218,7 +219,7 @@ func TestNewCreatePlan_ExplicitVPCSkipsResolver(t *testing.T) {
 
 func TestNewCreatePlan_AccountAndRegionPropagated(t *testing.T) {
 	cfg := config.PerforceConfig{}
-	plan, err := NewCreatePlan(context.Background(), cfg, "999999999999", "eu-west-1", DefaultHelixVersion, nil)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "999999999999", "eu-west-1", DefaultHelixVersion, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -232,7 +233,7 @@ func TestNewCreatePlan_AccountAndRegionPropagated(t *testing.T) {
 
 func TestNewCreatePlan_CostResourceNamesReflectInputs(t *testing.T) {
 	cfg := config.PerforceConfig{InstanceType: "c5.2xlarge", VolumeSize: 1000}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", DefaultHelixVersion, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

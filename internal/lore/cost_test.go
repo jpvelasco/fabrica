@@ -5,10 +5,11 @@ import (
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestCostResourcesDefaults(t *testing.T) {
-	res := CostResources(config.LoreConfig{})
+	res := CostResources(naming.Default, config.LoreConfig{})
 	if len(res) != 2 {
 		t.Fatalf("len = %d, want 2", len(res))
 	}
@@ -21,7 +22,7 @@ func TestCostResourcesDefaults(t *testing.T) {
 }
 
 func TestCostResourcesExplicit(t *testing.T) {
-	res := CostResources(config.LoreConfig{
+	res := CostResources(naming.Default, config.LoreConfig{
 		InstanceType: "m5.2xlarge",
 		VolumeSize:   1000,
 	})
@@ -34,7 +35,7 @@ func TestCostResourcesExplicit(t *testing.T) {
 }
 
 func TestCostResourcesS3Store(t *testing.T) {
-	res := CostResources(config.LoreConfig{
+	res := CostResources(naming.Default, config.LoreConfig{
 		StoreBackend: "s3",
 	})
 	if len(res) != 7 {
@@ -64,7 +65,7 @@ func TestCostResourcesS3Store(t *testing.T) {
 }
 
 func TestCostResourcesS3StoreCustomBucket(t *testing.T) {
-	res := CostResources(config.LoreConfig{
+	res := CostResources(naming.Default, config.LoreConfig{
 		StoreBackend: "s3",
 		StoreBucket:  "my-custom-bucket",
 	})
@@ -80,7 +81,7 @@ func TestCostResourcesS3StoreCustomBucket(t *testing.T) {
 }
 
 func TestCostResourcesLocalStoreNoBucket(t *testing.T) {
-	res := CostResources(config.LoreConfig{
+	res := CostResources(naming.Default, config.LoreConfig{
 		StoreBackend: "local",
 	})
 	if len(res) != 2 {

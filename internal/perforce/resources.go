@@ -61,13 +61,13 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName,
 // ssm:GetParameter on the per-create admin-password parameter when the plan
 // names one (#700) + optional S3 backup export).
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
-	policies := []map[string]any{iamrole.SSMOutputPolicy(plan.Region, plan.Account)}
+	policies := []map[string]any{iamrole.SSMOutputPolicyFor(plan.Prefix, plan.Region, plan.Account)}
 	if plan.AdminPasswordParameter != "" {
-		adminARN, err := AdminPasswordScope.ARN(plan.Region, plan.Account, plan.AdminPasswordParameter)
+		adminARN, err := AdminPasswordScope(plan.Prefix).ARN(plan.Region, plan.Account, plan.AdminPasswordParameter)
 		if err != nil {
 			return nil, err
 		}
-		policies = append(policies, iamrole.SSMParameterReadPolicy(AdminPasswordPolicyName, adminARN))
+		policies = append(policies, iamrole.SSMParameterReadPolicy(AdminPasswordPolicyName(plan.Prefix), adminARN))
 	}
 	if plan.BackupS3Export && plan.BackupS3Bucket != "" {
 		prefix := plan.BackupS3Prefix
@@ -75,7 +75,7 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 			prefix = DefaultS3Prefix
 		}
 		policies = append(policies, iamrole.S3BucketPolicy(
-			"fabrica-perforce-backup-s3",
+			plan.Prefix.For("perforce", "backup", "s3"),
 			plan.BackupS3Bucket,
 			[]string{"s3:ListBucket"},
 			[]string{"s3:PutObject", "s3:GetObject", "s3:DeleteObject"},

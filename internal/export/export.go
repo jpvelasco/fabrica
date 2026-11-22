@@ -21,6 +21,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/iamrole"
 	"github.com/jpvelasco/fabrica/internal/lore"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
@@ -1001,7 +1002,7 @@ func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, regio
 	case "horde":
 		return []map[string]any{iamrole.SSMOutputPolicy(region, account)}
 	case "lore":
-		bucket := lore.ResolveStoreBucket(cfg.Lore.StoreBucket, account, region, cfg.Lore.StoreBackend)
+		bucket := lore.ResolveStoreBucket(naming.Default, cfg.Lore.StoreBucket, account, region, cfg.Lore.StoreBackend)
 		if bucket == "" {
 			return nil
 		}
@@ -1012,7 +1013,7 @@ func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, regio
 				"*",
 			),
 			iamrole.SSMOutputPolicy(region, account),
-			lore.StoreDynamoDBPolicy(region, account, bucket, lore.StoreTableNames(bucket)),
+			lore.StoreDynamoDBPolicy(naming.Default, region, account, bucket, lore.StoreTableNames(bucket)),
 		}
 		return policies
 	case "ddc":

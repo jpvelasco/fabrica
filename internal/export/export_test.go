@@ -11,6 +11,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/ddc"
 	"github.com/jpvelasco/fabrica/internal/iamrole"
 	"github.com/jpvelasco/fabrica/internal/lore"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/workstation"
@@ -4131,7 +4132,7 @@ func TestIAMRoleInlinePoliciesPerModule(t *testing.T) {
 					"*",
 				),
 				iamrole.SSMOutputPolicy(exportRegion, exportAccount),
-				lore.StoreDynamoDBPolicy(exportRegion, exportAccount, "fabrica-lore-store-123456789012-us-east-1",
+				lore.StoreDynamoDBPolicy(naming.Default, exportRegion, exportAccount, "fabrica-lore-store-123456789012-us-east-1",
 					lore.StoreTableNames("fabrica-lore-store-123456789012-us-east-1")),
 			},
 		},

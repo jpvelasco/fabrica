@@ -128,13 +128,18 @@ func (c command) run(ctx context.Context) error {
 		cidrResolver = cr
 	}
 
+	prefix, err := c.runtime.Config.ResolveNamePrefix()
+	if err != nil {
+		return err
+	}
+
 	resolvedIAM, err := config.ResolveIAM(c.runtime.Config.Cloud.AWS.IAM, loreCfg.IAM)
 	if err != nil {
 		return err
 	}
 	loreCfg.IAM = resolvedIAM
 
-	plan, err := lore.NewCreatePlan(ctx, loreCfg, account, region, provision.VPCResolver(c.runtime.Provider), cidrResolver)
+	plan, err := lore.NewCreatePlan(ctx, prefix, loreCfg, account, region, provision.VPCResolver(c.runtime.Provider), cidrResolver)
 	if err != nil {
 		return fmt.Errorf("building create plan: %w", err)
 	}

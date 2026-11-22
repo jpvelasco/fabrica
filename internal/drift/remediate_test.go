@@ -12,6 +12,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/ddc"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -583,7 +584,7 @@ func TestApplyRemediation_NothingToFix(t *testing.T) {
 // test on a rebuild error or malformed JSON.
 func rebuildSGDoc(t *testing.T, rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) map[string]any {
 	t.Helper()
-	ds, err := rebuildSGDesiredState(rec, mod, cfg)
+	ds, err := rebuildSGDesiredState(naming.Default, rec, mod, cfg)
 	if err != nil {
 		t.Fatalf("rebuildSGDesiredState: %v", err)
 	}
@@ -893,7 +894,7 @@ func TestRebuildSGDesiredState_NoVPCKnown(t *testing.T) {
 
 // withSGDispatch swaps the per-module SG dispatch seam for the duration of a
 // test, restoring it on cleanup.
-func withSGDispatch(t *testing.T, fn func(*state.ModuleResource, *state.ModuleState, *config.Config) (json.RawMessage, error)) {
+func withSGDispatch(t *testing.T, fn func(naming.Prefix, *state.ModuleResource, *state.ModuleState, *config.Config) (json.RawMessage, error)) {
 	t.Helper()
 	orig := moduleSGDispatch
 	moduleSGDispatch = fn
@@ -901,10 +902,10 @@ func withSGDispatch(t *testing.T, fn func(*state.ModuleResource, *state.ModuleSt
 }
 
 func TestRebuildSGDesiredState_BuilderError(t *testing.T) {
-	withSGDispatch(t, func(*state.ModuleResource, *state.ModuleState, *config.Config) (json.RawMessage, error) {
+	withSGDispatch(t, func(naming.Prefix, *state.ModuleResource, *state.ModuleState, *config.Config) (json.RawMessage, error) {
 		return nil, errors.New("builder exploded")
 	})
-	_, err := rebuildSGDesiredState(
+	_, err := rebuildSGDesiredState(naming.Default,
 		&state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup},
 		&state.ModuleState{Name: "horde"},
 		config.Defaults(),
@@ -919,7 +920,7 @@ func TestRebuildResource_SGRebuildError(t *testing.T) {
 	st.UpsertModule("horde", "ami-fake", "ready", []state.ModuleResource{
 		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
 	})
-	withSGDispatch(t, func(*state.ModuleResource, *state.ModuleState, *config.Config) (json.RawMessage, error) {
+	withSGDispatch(t, func(naming.Prefix, *state.ModuleResource, *state.ModuleState, *config.Config) (json.RawMessage, error) {
 		return nil, errors.New("builder exploded")
 	})
 
@@ -928,7 +929,7 @@ func TestRebuildResource_SGRebuildError(t *testing.T) {
 		TypeName:   cloud.TypeAWSEC2SecurityGroup,
 		Identifier: "sg-123",
 	}
-	_, err := rebuildResource(context.Background(), dr, st, config.Defaults(), nil)
+	_, err := rebuildResource(context.Background(), dr, st, config.Defaults(), naming.Default, nil)
 	if err == nil {
 		t.Fatal("expected rebuild error, got nil")
 	}
@@ -954,7 +955,7 @@ func TestPlanRemediation_SGRebuildFailureSkips(t *testing.T) {
 		}},
 		Missing: 1,
 	}
-	withSGDispatch(t, func(*state.ModuleResource, *state.ModuleState, *config.Config) (json.RawMessage, error) {
+	withSGDispatch(t, func(naming.Prefix, *state.ModuleResource, *state.ModuleState, *config.Config) (json.RawMessage, error) {
 		return nil, errors.New("builder exploded")
 	})
 
@@ -1013,7 +1014,7 @@ func TestRebuildInstanceDesiredState_Perforce(t *testing.T) {
 	}
 	rec := &mod.Resources[2]
 
-	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	ds, err := rebuildInstanceDesiredState(context.Background(), naming.Default, rec, mod, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -1088,7 +1089,7 @@ func TestRebuildInstanceDesiredState_Perforce_PreAdminPasswordState(t *testing.T
 			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf", "rootDevice": "/dev/sda1"}},
 		},
 	}
-	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, st, config.Defaults(), nil)
+	_, err := rebuildInstanceDesiredState(context.Background(), naming.Default, &mod.Resources[2], mod, st, config.Defaults(), nil)
 	if err == nil || !strings.Contains(err.Error(), "no admin password parameter recorded") || !strings.Contains(err.Error(), "fabrica perforce destroy") {
 		t.Fatalf("expected a pre-#700 skip with a destroy-and-recreate hint, got %v", err)
 	}
@@ -1106,7 +1107,7 @@ func TestRebuildInstanceDesiredState_Perforce_MissingImageID(t *testing.T) {
 			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf"},
 		},
 	}
-	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, st, config.Defaults(), nil)
+	_, err := rebuildInstanceDesiredState(context.Background(), naming.Default, &mod.Resources[2], mod, st, config.Defaults(), nil)
 	if err == nil || !strings.Contains(err.Error(), "Properties.imageId") {
 		t.Fatalf("expected a Properties.imageId error, got %v", err)
 	}
@@ -1125,7 +1126,7 @@ func TestRebuildInstanceDesiredState_Perforce_MissingRootDevice(t *testing.T) {
 			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf"}},
 		},
 	}
-	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, st, config.Defaults(), nil)
+	_, err := rebuildInstanceDesiredState(context.Background(), naming.Default, &mod.Resources[2], mod, st, config.Defaults(), nil)
 	if err == nil || !strings.Contains(err.Error(), "no root device recorded for the perforce instance (Properties.rootDevice); re-run 'fabrica perforce create'") {
 		t.Fatalf("expected a Properties.rootDevice error, got %v", err)
 	}
@@ -1142,7 +1143,7 @@ func TestRebuildInstanceDesiredState_Perforce_MissingProfile(t *testing.T) {
 			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf", "rootDevice": "/dev/sda1"}},
 		},
 	}
-	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[1], mod, st, config.Defaults(), nil)
+	_, err := rebuildInstanceDesiredState(context.Background(), naming.Default, &mod.Resources[1], mod, st, config.Defaults(), nil)
 	if err == nil || !strings.Contains(err.Error(), "IAM instance profile") {
 		t.Fatalf("expected an IAM profile error, got %v", err)
 	}
@@ -1170,7 +1171,7 @@ func TestRebuildInstanceDesiredState_HordeAgentSGIndependence(t *testing.T) {
 	rec := &mod.Resources[3]
 	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
 
-	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	ds, err := rebuildInstanceDesiredState(context.Background(), naming.Default, rec, mod, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -1200,7 +1201,7 @@ func TestRebuildInstanceDesiredState_Lore(t *testing.T) {
 	}
 	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Properties: map[string]string{"rootDevice": "/dev/sda1"}}
 
-	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	ds, err := rebuildInstanceDesiredState(context.Background(), naming.Default, rec, mod, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -1234,7 +1235,7 @@ func TestRebuildInstanceDesiredState_DDC(t *testing.T) {
 	}
 	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Properties: map[string]string{"rootDevice": "/dev/sda1"}}
 
-	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	ds, err := rebuildInstanceDesiredState(context.Background(), naming.Default, rec, mod, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -1267,7 +1268,7 @@ func TestRebuildInstanceDesiredState_Workstation(t *testing.T) {
 	rec := &mod.Resources[2]
 	inspector := fakeImageInspector(t, "/dev/sda1", "ebs")
 
-	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, inspector)
+	ds, err := rebuildInstanceDesiredState(context.Background(), naming.Default, rec, mod, st, cfg, inspector)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -1313,7 +1314,7 @@ func TestRebuildInstanceDesiredState_SecurityGroupLink(t *testing.T) {
 	rec := &mod.Resources[2]
 	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
 
-	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	ds, err := rebuildInstanceDesiredState(context.Background(), naming.Default, rec, mod, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -1354,7 +1355,7 @@ func TestRebuildInstanceDesiredState_PropertiesOverride(t *testing.T) {
 	}
 	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
 
-	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	ds, err := rebuildInstanceDesiredState(context.Background(), naming.Default, rec, mod, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -1390,7 +1391,7 @@ func TestRebuildResource_ModuleNotFound(t *testing.T) {
 		Identifier: "i-123",
 	}
 
-	res, err := rebuildResource(context.Background(), dr, st, cfg, nil)
+	res, err := rebuildResource(context.Background(), dr, st, cfg, naming.Default, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1418,7 +1419,7 @@ func TestRebuildResource_ResourceNotFoundInModule(t *testing.T) {
 		Identifier: "i-missing",
 	}
 
-	res, err := rebuildResource(context.Background(), dr, st, cfg, nil)
+	res, err := rebuildResource(context.Background(), dr, st, cfg, naming.Default, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1447,7 +1448,7 @@ func TestRebuildResource_InstanceWithDesiredState(t *testing.T) {
 		Identifier: "i-123",
 	}
 
-	res, err := rebuildResource(context.Background(), dr, st, cfg, nil)
+	res, err := rebuildResource(context.Background(), dr, st, cfg, naming.Default, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1477,7 +1478,7 @@ func TestRebuildResource_SGWithDesiredState(t *testing.T) {
 		Identifier: "sg-123",
 	}
 
-	res, err := rebuildResource(context.Background(), dr, st, cfg, nil)
+	res, err := rebuildResource(context.Background(), dr, st, cfg, naming.Default, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1813,7 +1814,7 @@ func TestRebuildInstanceDesiredState_Horde_FullContract(t *testing.T) {
 	rec := &mod.Resources[2]
 	withHordePassword(t, func(string) (string, error) { return "mongo-pass", nil })
 
-	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	ds, err := rebuildInstanceDesiredState(context.Background(), naming.Default, rec, mod, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -1864,7 +1865,7 @@ func TestRebuildInstanceDesiredState_Horde_MissingRootDevice(t *testing.T) {
 			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord"},
 		},
 	}
-	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, st, config.Defaults(), nil)
+	_, err := rebuildInstanceDesiredState(context.Background(), naming.Default, &mod.Resources[2], mod, st, config.Defaults(), nil)
 	if err == nil || !strings.Contains(err.Error(), "no root device recorded for the horde instance (Properties.rootDevice); re-run 'fabrica horde create'") {
 		t.Fatalf("expected a Properties.rootDevice error, got %v", err)
 	}
@@ -1888,7 +1889,7 @@ func TestRebuildInstanceDesiredState_Lore_S3Store(t *testing.T) {
 	}
 	rec := &mod.Resources[3]
 
-	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	ds, err := rebuildInstanceDesiredState(context.Background(), naming.Default, rec, mod, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -1988,7 +1989,7 @@ func TestRebuildInstanceDesiredState_WorkstationUnsupportedInputs(t *testing.T) 
 			}
 			rec := &mod.Resources[2]
 
-			_, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, tc.inspector)
+			_, err := rebuildInstanceDesiredState(context.Background(), naming.Default, rec, mod, st, cfg, tc.inspector)
 			if err == nil || !strings.Contains(err.Error(), tc.wantSub) {
 				t.Errorf("expected an error containing %q, got %v", tc.wantSub, err)
 			}
@@ -2007,7 +2008,7 @@ func TestRebuildInstanceDesiredState_WorkstationUnsupportedInputs(t *testing.T) 
 		},
 	}
 	rec := &mod.Resources[1]
-	_, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, fakeImageInspector(t, "/dev/sda1", "ebs"))
+	_, err := rebuildInstanceDesiredState(context.Background(), naming.Default, rec, mod, st, cfg, fakeImageInspector(t, "/dev/sda1", "ebs"))
 	if err == nil || !strings.Contains(err.Error(), "no security group recorded") {
 		t.Errorf("expected a missing-security-group error, got %v", err)
 	}
@@ -2029,7 +2030,7 @@ func TestRebuildInstanceDesiredState_DDCScylla(t *testing.T) {
 	}
 	rec := &mod.Resources[2]
 
-	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	ds, err := rebuildInstanceDesiredState(context.Background(), naming.Default, rec, mod, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -2061,7 +2062,7 @@ func TestRebuildInstanceDesiredState_ScyllaMissingAMISkips(t *testing.T) {
 	}
 	rec := &mod.Resources[2]
 
-	_, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	_, err := rebuildInstanceDesiredState(context.Background(), naming.Default, rec, mod, st, cfg, nil)
 	if err == nil || !strings.Contains(err.Error(), "ddc.scyllaAmiId") {
 		t.Errorf("expected a missing-Scylla-AMI error, got %v", err)
 	}
@@ -2079,7 +2080,7 @@ func TestRebuildInstanceDesiredState_UnsupportedModule(t *testing.T) {
 	}
 	rec := &mod.Resources[0]
 
-	_, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	_, err := rebuildInstanceDesiredState(context.Background(), naming.Default, rec, mod, st, cfg, nil)
 	if err == nil || !strings.Contains(err.Error(), "has no canonical instance contract") {
 		t.Errorf("expected an unsupported-module error, got %v", err)
 	}
@@ -2120,7 +2121,7 @@ func TestRebuildInstanceDesiredState_MissingInputs(t *testing.T) {
 
 	check := func(t *testing.T, mod *state.ModuleState, recIdx int, cfg *config.Config, wantSub string) {
 		t.Helper()
-		_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[recIdx], mod, st, cfg, nil)
+		_, err := rebuildInstanceDesiredState(context.Background(), naming.Default, &mod.Resources[recIdx], mod, st, cfg, nil)
 		if err == nil || !strings.Contains(err.Error(), wantSub) {
 			t.Errorf("expected an error containing %q, got %v", wantSub, err)
 		}
@@ -2183,7 +2184,7 @@ func TestRebuildInstanceDesiredState_Lore_S3BucketFallback(t *testing.T) {
 	}
 	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Properties: map[string]string{"rootDevice": "/dev/sda1"}}
 
-	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	ds, err := rebuildInstanceDesiredState(context.Background(), naming.Default, rec, mod, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -2210,7 +2211,7 @@ func TestRebuildInstanceDesiredState_DDC_RecordedBucketWins(t *testing.T) {
 	}
 	rec := &state.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Properties: map[string]string{"rootDevice": "/dev/sda1"}}
 
-	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
+	ds, err := rebuildInstanceDesiredState(context.Background(), naming.Default, rec, mod, st, cfg, nil)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
