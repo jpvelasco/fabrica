@@ -22,8 +22,7 @@ import (
 )
 
 const (
-	defaultBaseImage = "ami-0c7217cdde317cfec"
-	defaultRegion    = "us-east-1"
+	defaultBaseImage = amirecipe.DefaultBaseImage
 	defaultOutputDir = "workstation-ami"
 	defaultName      = "fabrica-workstation-dcv"
 	// defaultRootDevice is the root device of Canonical's Ubuntu 22.04 server
@@ -33,11 +32,7 @@ const (
 	defaultRootDevice = "/dev/sda1"
 )
 
-var (
-	amiRE    = regexp.MustCompile(`^ami-[0-9a-f]{8,}$`)
-	regionRE = regexp.MustCompile(`^[a-z]{2}-[a-z]+-[0-9]$`)
-	nameRE   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-)
+var nameRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 type BuildConfig struct {
 	Identity   tags.Identity
@@ -93,13 +88,14 @@ No AWS calls. Record the resulting AMI ID in workstation.amiId.`,
 				return err
 			}
 			cfg.Identity = identity
+			cfg.Region = amirecipe.ResolveRegion(cfg.Region, rt.Config.Cloud.AWS.Region)
 			cfg.CloudTags = rt.Config.Cloud.AWS.Tags
 			c := buildCommand{out: out, cfg: cfg, writeFile: os.WriteFile, mkdirAll: os.MkdirAll}
 			return c.run()
 		},
 	}
-	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", defaultBaseImage, "Base AMI ID (Ubuntu 22.04)")
-	cmd.Flags().StringVar(&cfg.Region, "region", defaultRegion, "AWS region")
+	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", defaultBaseImage, "Base AMI ID (Ubuntu 22.04), or the default SSM parameter that resolves the latest Canonical image")
+	cmd.Flags().StringVar(&cfg.Region, "region", "", "AWS region (default: cloud.aws.region, else us-east-1)")
 	cmd.Flags().StringVar(&cfg.Name, "name", defaultName, "Image name")
 	cmd.Flags().StringVar(&cfg.OutputDir, "output-dir", defaultOutputDir, "Output directory")
 	cmd.Flags().StringVar(&cfg.RootDevice, "root-device", defaultRootDevice, "Root device name of --base-image (its RootDeviceName); the recipe encrypts this device")
@@ -188,11 +184,11 @@ func validateRecipeEncryption(recipe []byte, rootDevice string) error {
 }
 
 func (c buildCommand) validate() error {
-	if !amiRE.MatchString(c.cfg.BaseImage) {
-		return fmt.Errorf("--base-image must be a valid AMI ID; got %q", c.cfg.BaseImage)
+	if err := amirecipe.ValidateBaseImage(c.cfg.BaseImage); err != nil {
+		return err
 	}
-	if !regionRE.MatchString(c.cfg.Region) {
-		return fmt.Errorf("--region must be a valid AWS region; got %q", c.cfg.Region)
+	if err := amirecipe.ValidateRegion(c.cfg.Region); err != nil {
+		return err
 	}
 	if c.cfg.Name == "" || !nameRE.MatchString(c.cfg.Name) {
 		return fmt.Errorf("--name can only contain letters, numbers, dots, underscores, and hyphens")

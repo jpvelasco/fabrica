@@ -14,9 +14,9 @@ const (
 	TypeAWSIAMRole            = "AWS::IAM::Role"
 	TypeAWSIAMInstanceProfile = "AWS::IAM::InstanceProfile"
 
-	// TypeAWSSSMParameter is the SSM Parameter Store type. Workstation uses it
-	// only as a terminate target: the SecureString is not recorded in state,
-	// because a drift Get would return the secret.
+	// TypeAWSSSMParameter is the SSM Parameter Store type. Workstation, Horde,
+	// and Perforce use it only as a teardown target: the SecureString is not
+	// recorded in state, because a drift Get would return the secret.
 	TypeAWSSSMParameter = "AWS::SSM::Parameter"
 
 	TypeAWSS3Bucket      = "AWS::S3::Bucket"

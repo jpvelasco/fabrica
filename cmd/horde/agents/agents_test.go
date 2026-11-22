@@ -24,8 +24,8 @@ func TestNew_CommandStructure(t *testing.T) {
 	}
 
 	// Check subcommands are wired.
-	if len(cmd.Commands()) != 5 {
-		t.Errorf("want 5 subcommands, got %d", len(cmd.Commands()))
+	if len(cmd.Commands()) != 6 {
+		t.Errorf("want 6 subcommands, got %d", len(cmd.Commands()))
 	}
 
 	// Verify subcommand names.
@@ -33,7 +33,7 @@ func TestNew_CommandStructure(t *testing.T) {
 	for _, sub := range cmd.Commands() {
 		names[sub.Use] = true
 	}
-	for _, want := range []string{"create", "status", "schedule", "metrics", "destroy"} {
+	for _, want := range []string{"create", "status", "schedule", "metrics", "approve", "destroy"} {
 		if !names[want] {
 			t.Errorf("missing subcommand: %s", want)
 		}

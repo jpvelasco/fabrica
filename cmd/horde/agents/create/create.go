@@ -80,7 +80,8 @@ horde-agent.service. HTTP agents target the coordinator's private IP address.
 TLS agents target the recorded DNS endpoint and the agent-side trust bundle.
 The agent AMI must carry the native-agent contract marker
 (/etc/horde/fabrica-native-agent-contract) and run horde-agent.service as a
-non-root user. Agents need approval in Horde before they receive work.
+non-root user. Agents wait for enrollment approval; approve them with
+'fabrica horde agents approve'.
 
 **AMI requirement:** horde.agents.amiId must be a dedicated agent AMI — not
 the coordinator AMI (horde.amiId). The agent AMI should contain only the
@@ -743,6 +744,7 @@ func (c command) printPostCreate(plan *horde.AgentsCreatePlan, asgID string) {
 		Details:      details,
 		NextSteps: []string{
 			"fabrica horde agents status    Check agent pool status",
+			"fabrica horde agents approve   Approve pending agent enrollments",
 			"fabrica horde status           Check coordinator health",
 		},
 		RawAfter: func(w io.Writer) {
@@ -751,6 +753,7 @@ func (c command) printPostCreate(plan *horde.AgentsCreatePlan, asgID string) {
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, "  If agents don't enroll within 5 minutes, check:")
 			fmt.Fprintln(w, "    /var/log/fabrica-horde-agent-init.log  on each agent instance")
+			fmt.Fprintln(w, "  Agents that reach Horde wait for approval: fabrica horde agents approve")
 			if plan.ScalingEnabled {
 				fmt.Fprintln(w)
 				fmt.Fprintln(w, "  "+horde.ScalingPublisherNote)

@@ -45,6 +45,9 @@ type command struct {
 	inspectImage   func(ctx context.Context, imageID string) (cloud.ImageInfo, error)
 	genPassword    func(int) (string, error)
 	writeCreds     func(string, string) error
+	// putSecureParameter and deleteParameter are the SecureString seams (#700).
+	putSecureParameter func(context.Context, cloud.SecureParameter) error
+	deleteParameter    func(context.Context, string) error
 }
 
 // New returns the "perforce create" subcommand. It accepts RuntimeSource and
@@ -68,8 +71,9 @@ recoverable record. Re-running create on a complete module exits cleanly; on
 a partial one it fails and names the missing resources plus the cleanup
 command to run first.
 
-A random admin password is generated and written to .fabrica/perforce-credentials.yaml.
-Rotate it after first login.
+A random admin password is generated and written to .fabrica/perforce-credentials.yaml
+(the operator record) and stored in SSM as a per-create SecureString. The instance
+reads it at boot; it never appears in EC2 user data. Rotate it after first login.
 
 With --dry-run, shows the provisioning plan and a monthly cost estimate without
 making any AWS calls.`,
@@ -100,6 +104,8 @@ making any AWS calls.`,
 				if insp, ok := rt.Provider.(cloud.ImageInspector); ok {
 					c.inspectImage = insp.DescribeImage
 				}
+				c.putSecureParameter = provision.ParameterPut(rt.Provider)
+				c.deleteParameter = provision.ParameterDelete(rt.Provider)
 			}
 			return c.run(cmd.Context())
 		},
@@ -138,6 +144,13 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("building create plan: %w", err)
 	}
 
+	// Mint the per-create admin-password name before any plan is printed or
+	// applied, so the role (scoped to this name) and cloud-init (which reads it
+	// at boot) agree with the SecureString apply writes (#700).
+	if plan.AdminPasswordParameter, err = perforce.AdminPasswordScope.NewName(); err != nil {
+		return fmt.Errorf("building create plan: %w", err)
+	}
+
 	return provision.RunCreate(ctx, provision.CreateSpec[*perforce.CreatePlan]{
 		ModuleName:        moduleName,
 		Account:           account,
@@ -159,32 +172,72 @@ func (c command) run(ctx context.Context) error {
 	})
 }
 
-// applyCreate executes the provisioning plan: generates credentials, creates the
-// security group, IAM role, instance profile, and EC2 instance. State is persisted
-// after each successful creation so partial failures leave a recoverable record.
+// launch is the instance launch input gathered before the instance step.
+type launch struct {
+	sgID, profileName, imageID, userData string
+}
+
+// applyCreate executes the provisioning plan. The admin password is stored as
+// a SecureString first. Until the instance exists, a failure deletes that
+// password; once it exists, terminate owns the cleanup (#700). State is
+// persisted after each successful creation so partial failures leave a
+// recoverable record.
 func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *perforce.CreatePlan) error {
 	c.writeState = provision.BindStateWriter(ctx, c.runtime, c.writeState)
+	if c.putSecureParameter == nil {
+		return fmt.Errorf("cannot store the Helix Core admin password: the provider has no SSM parameter store, so the instance could not read it at boot; refusing to create anything")
+	}
 	adminPass, err := c.generateAndWriteCredentials()
 	if err != nil {
 		return err
 	}
+	if err := c.storeAdminPassword(ctx, plan, adminPass); err != nil {
+		return err
+	}
 
+	resources, sgID, profileName, err := c.createSecurityGroupAndIAM(ctx, st, plan)
+	if err != nil {
+		return provision.AbandonSecureParameter(ctx, c.deleteParameter, plan.AdminPasswordParameter, err)
+	}
+	imageID, userData, err := c.resolveLaunch(ctx, plan)
+	if err != nil {
+		return provision.AbandonSecureParameter(ctx, c.deleteParameter, plan.AdminPasswordParameter, err)
+	}
+	return c.createInstance(ctx, st, plan, resources, launch{sgID: sgID, profileName: profileName, imageID: imageID, userData: userData})
+}
+
+// storeAdminPassword writes the admin password to its per-create SecureString.
+// The name is never reused, so a write never clobbers another create's secret.
+func (c command) storeAdminPassword(ctx context.Context, plan *perforce.CreatePlan, adminPass string) error {
+	name := plan.AdminPasswordParameter
+	if err := c.putSecureParameter(ctx, cloud.SecureParameter{
+		Name:  name,
+		Value: adminPass,
+		Tags:  c.runtime.Config.Cloud.AWS.Tags,
+	}); err != nil {
+		return fmt.Errorf("storing the Helix Core admin password in SSM parameter %s: %w", name, err)
+	}
+	fmt.Fprintf(c.out, "Stored Helix Core admin password in SSM parameter %s\n", name)
+	return nil
+}
+
+// createSecurityGroupAndIAM creates the security group, IAM role, and instance
+// profile, and returns the resource list with the SG and profile identifiers.
+func (c command) createSecurityGroupAndIAM(ctx context.Context, st *fabricastate.State, plan *perforce.CreatePlan) ([]fabricastate.ModuleResource, string, string, error) {
 	var resources []fabricastate.ModuleResource
 
-	// Security Group
 	fmt.Fprintln(c.out)
 	fmt.Fprintf(c.out, "Creating security group %s...\n", plan.SGName)
-	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+	resources, err := provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:             "Security group",
 		TypeName:          cloud.TypeAWSEC2SecurityGroup,
 		BuildDesiredState: func() ([]byte, error) { return perforce.SGDesiredState(plan) },
 	}, moduleName, plan.HelixVersion, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return fmt.Errorf("creating security group: %w", err)
+		return nil, "", "", fmt.Errorf("creating security group: %w", err)
 	}
 	sgID := resources[len(resources)-1].Identifier
 
-	// IAM Role
 	fmt.Fprintf(c.out, "Creating IAM role %s...\n", plan.RoleName)
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:             "IAM role",
@@ -192,10 +245,9 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		BuildDesiredState: func() ([]byte, error) { return perforce.RoleDesiredState(plan) },
 	}, moduleName, plan.HelixVersion, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return fmt.Errorf("creating IAM role: %w", err)
+		return nil, "", "", fmt.Errorf("creating IAM role: %w", err)
 	}
 
-	// Instance Profile
 	fmt.Fprintf(c.out, "Creating instance profile %s...\n", plan.InstanceProfileName)
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:             "Instance profile",
@@ -210,50 +262,81 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		},
 	}, moduleName, plan.HelixVersion, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return fmt.Errorf("creating instance profile: %w", err)
+		return nil, "", "", fmt.Errorf("creating instance profile: %w", err)
 	}
-	profileName := resources[len(resources)-1].Identifier
+	return resources, sgID, resources[len(resources)-1].Identifier, nil
+}
 
-	// EC2 Instance
-	fmt.Fprintf(c.out, "Creating instance %s...\n", plan.InstanceName)
+// resolveLaunch resolves the AMI, reads its root device, and renders the
+// cloud-init script. The script names the admin-password parameter; it does
+// not carry the password.
+func (c command) resolveLaunch(ctx context.Context, plan *perforce.CreatePlan) (string, string, error) {
 	userData, err := perforce.Generate(perforce.UserDataConfig{
-		Version:   plan.HelixVersion,
-		ServerID:  plan.InstanceName,
-		AdminPass: adminPass,
+		Version:                plan.HelixVersion,
+		ServerID:               plan.InstanceName,
+		Region:                 plan.Region,
+		AdminPasswordParameter: plan.AdminPasswordParameter,
 	})
 	if err != nil {
-		return fmt.Errorf("generating user data: %w", err)
+		return "", "", fmt.Errorf("generating user data: %w", err)
 	}
 
 	imageID, err := c.resolveImageID(ctx, plan.Region)
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	if imageID == "" {
-		return fmt.Errorf("no Ubuntu AMI could be resolved in %s, so the Perforce instance cannot be launched", plan.Region)
+		return "", "", fmt.Errorf("no Ubuntu AMI could be resolved in %s, so the Perforce instance cannot be launched", plan.Region)
 	}
 	rootDevice, err := c.rootDeviceForAMI(ctx, imageID)
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	plan.RootDeviceName = rootDevice
+	return imageID, userData, nil
+}
 
-	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+// createInstance launches the EC2 instance. A failure before the instance
+// exists abandons the stored admin password; a failure after it (volume
+// tagging or the state write) keeps the password for cloud-init and terminate.
+func (c command) createInstance(ctx context.Context, st *fabricastate.State, plan *perforce.CreatePlan, resources []fabricastate.ModuleResource, l launch) error {
+	fmt.Fprintf(c.out, "Creating instance %s...\n", plan.InstanceName)
+
+	// Set only when Create itself returns nil. ExecuteStep also fails when the
+	// following state write fails, and in that case the instance already exists.
+	instanceCreated := false
+	createFn := func(ctx context.Context, r *cloud.Resource) error {
+		if err := c.createResource(ctx, r); err != nil {
+			return err
+		}
+		instanceCreated = true
+		return nil
+	}
+
+	resources, err := provision.ExecuteStep(ctx, provision.CreateStep{
 		Label:    "Instance",
 		TypeName: cloud.TypeAWSEC2Instance,
 		BuildDesiredState: func() ([]byte, error) {
-			return perforce.InstanceDesiredState(plan, sgID, userData, profileName, imageID)
+			return perforce.InstanceDesiredState(plan, l.sgID, l.userData, l.profileName, l.imageID)
 		},
+		// The admin-password name is recorded on the instance (not as a state
+		// resource, which a drift Get would read back as the secret). Terminate
+		// and drift rebuild read it from here.
 		Properties: map[string]string{
-			"instanceType": plan.InstanceType,
-			"volumeSize":   strconv.Itoa(plan.VolumeSize),
-			"imageId":      imageID,
-			"rootDevice":   rootDevice,
+			"instanceType":           plan.InstanceType,
+			"volumeSize":             strconv.Itoa(plan.VolumeSize),
+			"imageId":                l.imageID,
+			"rootDevice":             plan.RootDeviceName,
+			"adminPasswordParameter": plan.AdminPasswordParameter,
 		},
 		PostCreate: provision.TagVolumesPostCreate(c.runtime.Provider, "perforce", plan.InstanceName),
-	}, moduleName, plan.HelixVersion, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	}, moduleName, plan.HelixVersion, "provisioning", resources, st, c.out, createFn, c.writeState)
 	if err != nil {
-		return fmt.Errorf("creating EC2 instance: %w", err)
+		wrapped := fmt.Errorf("creating EC2 instance: %w", err)
+		if instanceCreated {
+			return wrapped
+		}
+		return provision.AbandonSecureParameter(ctx, c.deleteParameter, plan.AdminPasswordParameter, wrapped)
 	}
 
 	c.printPostCreate(plan, resources[len(resources)-1].Identifier)
@@ -279,7 +362,6 @@ func (c command) generateAndWriteCredentials() (string, error) {
 	}
 	fmt.Fprintf(c.out, "\nAdmin credentials written to %s\n", credFile)
 	fmt.Fprintln(c.out, "Warning: Rotate the admin password after first login.")
-	fmt.Fprintln(c.out, "         Restrict ec2:DescribeInstanceAttribute to limit exposure.")
 	return adminPass, nil
 }
 

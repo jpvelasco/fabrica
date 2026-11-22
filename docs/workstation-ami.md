@@ -8,13 +8,16 @@ DCV virtual session and password via cloud-init; it does not install DCV.
 Generate bake artifacts (local, no AWS calls):
 
 ```
-fabrica workstation ami build --region us-west-2 --base-image ami-REPLACE --output-dir workstation-ami
+fabrica workstation ami build --output-dir workstation-ami
 ```
 
-The `--base-image` default is a placeholder ID; always pass a live Ubuntu
-22.04 server AMI from your target region (`aws ec2 describe-images` with a
-`ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-*` filter, `State`
-`available`).
+`--region` defaults to `cloud.aws.region` (else `us-east-1`). `--base-image`
+defaults to the Canonical Ubuntu 22.04 SSM parameter
+(`ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id`),
+which Image Builder resolves at bake time. To pin a specific Ubuntu 22.04
+server AMI from your target region, pass `--base-image ami-…` (find one with
+`aws ec2 describe-images` and a `ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-*`
+filter, `State` `available`).
 
 In guardrailed accounts (IAM writes gated on a path + boundary,
 `ec2:RunInstances` gated on request tags), set `cloud.aws.iam` and

@@ -103,7 +103,17 @@ fabrica lore ami build `
   --include-packer
 ```
 
-Recipes, AMI tags, and snapshot tags carry `cloud.aws.tags`, with `ManagedBy` set to the configured owner.
+`--base-image` pins the AMI; without it the recipe uses the Canonical Ubuntu
+22.04 SSM parameter (`/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id`).
+The Packer template reads that same parameter through an
+`amazon-parameterstore` data source. The Packer build identity needs
+`ssm:GetParameter` on that public parameter. The data source has no region
+argument: it reads the parameter in the Packer session's region, so set
+`AWS_REGION` (or the profile region) to the build region. A mismatch fails the
+build at `source_ami` lookup, with no silent wrong image. `--region` defaults to
+`cloud.aws.region` in `fabrica.yaml`, else `us-east-1`. Recipes and AMI and
+snapshot tags carry `cloud.aws.tags`, with `ManagedBy` set to the configured
+owner.
 
 `--lore-version` defaults to `0.8.6`. Only releases whose tarball SHA-256 is
 pinned in fabrica are accepted, and `latest` is rejected. The component verifies
@@ -245,14 +255,12 @@ packer init packer.pkr.hcl
 packer fmt -check packer.pkr.hcl
 packer validate `
   -var "aws_region=$Region" `
-  -var "source_ami=$BaseAMI" `
   -var "lore_source_dir=$env:LORE_DIST" `
   packer.pkr.hcl
 
 # This creates billable AWS resources. Run only after cost/security approval.
 packer build `
   -var "aws_region=$Region" `
-  -var "source_ami=$BaseAMI" `
   -var "lore_source_dir=$env:LORE_DIST" `
   packer.pkr.hcl
 ```

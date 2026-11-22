@@ -3,11 +3,14 @@ package create
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/cloud"
@@ -36,6 +39,9 @@ func newTestCommand(out *bytes.Buffer, provider cloud.Provider, st *fabricastate
 	c.resolveAMI = func(_ context.Context, _ string) (string, error) { return "ami-fake-ubuntu", nil }
 	if provider != nil {
 		c.createResource = provider.Resources().Create
+		// Same SecureString wiring New() does (#700).
+		c.putSecureParameter = provision.ParameterPut(provider)
+		c.deleteParameter = provision.ParameterDelete(provider)
 		// Same wiring New() does: providers that can inspect AMIs supply the
 		// root device for the encrypted root mapping (#513).
 		if insp, ok := provider.(cloud.ImageInspector); ok {
@@ -751,5 +757,193 @@ func TestCreateInspectsTheResolvedAMI(t *testing.T) {
 	}
 	if len(provider.DescribeImageIDs) != 1 || provider.DescribeImageIDs[0] != "ami-fake-ubuntu" {
 		t.Errorf("DescribeImageIDs = %v, want one call for the resolved AMI", provider.DescribeImageIDs)
+	}
+}
+
+// adminPassFixture returns a command whose generated admin password is known,
+// so tests can assert exactly where the value lands.
+func adminPassFixture(t *testing.T, out *bytes.Buffer, provider cloud.Provider) command {
+	t.Helper()
+	c := newTestCommand(out, provider, testutil.NewTestState())
+	c.assumeYes = true
+	c.genPassword = func(int) (string, error) { return "s3cret-admin", nil }
+	c.writeCreds = func(string, string) error { return nil }
+	return c
+}
+
+// createdDesiredState returns the DesiredState JSON of the first create of typeName.
+func createdDesiredState(t *testing.T, provider *testutil.InspectorProvider, typeName string) string {
+	t.Helper()
+	for _, r := range provider.Created {
+		if r.TypeName == typeName {
+			return string(r.DesiredState)
+		}
+	}
+	t.Fatalf("no %s create recorded", typeName)
+	return ""
+}
+
+// TestCreateStoresAdminPasswordInSSMNotUserData pins #700: the admin password
+// is written as a per-create SecureString, the instance user data carries only
+// the parameter name, and the password appears in no create output.
+func TestCreateStoresAdminPasswordInSSMNotUserData(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{}
+	c := adminPassFixture(t, &out, provider)
+	capture := &testutil.StateWriteCapture{}
+	c.writeState = capture.WriteFunc()
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(provider.PutParameters) != 1 {
+		t.Fatalf("PutParameters = %d, want 1", len(provider.PutParameters))
+	}
+	put := provider.PutParameters[0]
+	if !perforce.AdminPasswordScope.IsName(put.Name) {
+		t.Fatalf("parameter name %q is not a per-create admin-password name", put.Name)
+	}
+	if put.Value != "s3cret-admin" {
+		t.Errorf("stored value = %q, want the generated admin password", put.Value)
+	}
+
+	var inst struct {
+		UserData string `json:"UserData"`
+	}
+	if err := json.Unmarshal([]byte(createdDesiredState(t, provider, cloud.TypeAWSEC2Instance)), &inst); err != nil {
+		t.Fatalf("instance desired state: %v", err)
+	}
+	ud, err := base64.StdEncoding.DecodeString(inst.UserData)
+	if err != nil {
+		t.Fatalf("UserData is not base64: %v", err)
+	}
+	if strings.Contains(string(ud), "s3cret-admin") {
+		t.Fatal("the admin password must not appear in EC2 user data")
+	}
+	if !strings.Contains(string(ud), put.Name) {
+		t.Errorf("user data must name the parameter %q so cloud-init can fetch it", put.Name)
+	}
+	if strings.Contains(out.String(), "s3cret-admin") {
+		t.Error("the admin password must not be printed")
+	}
+
+	role := createdDesiredState(t, provider, cloud.TypeAWSIAMRole)
+	if !strings.Contains(role, perforce.AdminPasswordPolicyName) {
+		t.Error("the instance role must carry the admin-password read policy")
+	}
+
+	inRec, ok := capture.Last().GetModuleResource("perforce", cloud.TypeAWSEC2Instance)
+	if !ok {
+		t.Fatal("instance missing from state")
+	}
+	if got := inRec.Properties["adminPasswordParameter"]; got != put.Name {
+		t.Errorf("Properties.adminPasswordParameter = %q, want %q", got, put.Name)
+	}
+}
+
+// TestCreateStopsBeforeSecurityGroupWhenPasswordNotStored refuses to build any
+// AWS resource when the admin password cannot be stored first.
+func TestCreateStopsBeforeSecurityGroupWhenPasswordNotStored(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{TestProvider: testutil.TestProvider{PutParameterErr: errors.New("kms denied")}}
+	c := adminPassFixture(t, &out, provider)
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "storing the Helix Core admin password") {
+		t.Fatalf("err = %v, want a storing error", err)
+	}
+	if provider.CreateCalls != 0 {
+		t.Fatalf("CreateCalls = %d, want 0 (nothing may be built before the password is stored)", provider.CreateCalls)
+	}
+}
+
+// TestCreateRefusesWithoutParameterStore fails closed when the provider cannot
+// store a SecureString: an instance that cannot read its password is useless.
+func TestCreateRefusesWithoutParameterStore(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{}
+	c := adminPassFixture(t, &out, provider)
+	c.putSecureParameter = nil
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "parameter store") {
+		t.Fatalf("err = %v, want a parameter-store refusal", err)
+	}
+	if provider.CreateCalls != 0 {
+		t.Fatalf("CreateCalls = %d, want 0", provider.CreateCalls)
+	}
+}
+
+// TestCreateAbandonsAdminPasswordWhenSecurityGroupFails deletes the stored
+// password when the create fails before the instance exists.
+func TestCreateAbandonsAdminPasswordWhenSecurityGroupFails(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{TestProvider: testutil.TestProvider{CreateErr: map[string]error{cloud.TypeAWSEC2SecurityGroup: errors.New("sg denied")}}}
+	c := adminPassFixture(t, &out, provider)
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected the security group failure")
+	}
+	if len(provider.PutParameters) != 1 || len(provider.DeletedParameters) != 1 || provider.DeletedParameters[0] != provider.PutParameters[0].Name {
+		t.Fatalf("expected the stored password to be abandoned: puts=%d deletes=%v", len(provider.PutParameters), provider.DeletedParameters)
+	}
+}
+
+// TestCreateAbandonsAdminPasswordWhenInstanceCreateFails covers a failed
+// instance launch: no instance exists, so the password is abandoned.
+func TestCreateAbandonsAdminPasswordWhenInstanceCreateFails(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{TestProvider: testutil.TestProvider{CreateErr: map[string]error{cloud.TypeAWSEC2Instance: errors.New("quota")}}}
+	c := adminPassFixture(t, &out, provider)
+	if err := c.run(context.Background()); err == nil {
+		t.Fatal("expected the instance failure")
+	}
+	if len(provider.DeletedParameters) != 1 {
+		t.Fatalf("DeletedParameters = %v, want the abandoned password", provider.DeletedParameters)
+	}
+}
+
+// TestCreateKeepsAdminPasswordOnceInstanceExists keeps the password when the
+// instance was created but its state write failed: cloud-init still needs it
+// and terminate deletes it later.
+func TestCreateKeepsAdminPasswordOnceInstanceExists(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{}
+	c := adminPassFixture(t, &out, provider)
+	c.writeState = testutil.StateWriteError(4)
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "writing state after Instance") {
+		t.Fatalf("err = %v, want the post-instance state write failure", err)
+	}
+	if len(provider.DeletedParameters) != 0 {
+		t.Fatalf("DeletedParameters = %v, want none once the instance exists", provider.DeletedParameters)
+	}
+}
+
+// TestCreateAbandonReportsDeleteFailure names the surviving parameter when the
+// abandon delete itself fails, so the operator can remove it by hand.
+func TestCreateAbandonReportsDeleteFailure(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{TestProvider: testutil.TestProvider{
+		CreateErr:          map[string]error{cloud.TypeAWSEC2SecurityGroup: errors.New("sg denied")},
+		DeleteParameterErr: errors.New("throttled"),
+	}}
+	c := adminPassFixture(t, &out, provider)
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "also failed to delete SSM parameter") {
+		t.Fatalf("err = %v, want the surviving-parameter report", err)
+	}
+}
+
+// TestCreateAbandonsAdminPasswordWhenNoAMIResolves stops a launch that has no
+// AMI to boot and deletes the password stored for it, since no instance exists.
+func TestCreateAbandonsAdminPasswordWhenNoAMIResolves(t *testing.T) {
+	var out bytes.Buffer
+	provider := &testutil.InspectorProvider{}
+	c := adminPassFixture(t, &out, provider)
+	c.resolveAMI = func(context.Context, string) (string, error) { return "", nil }
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "no Ubuntu AMI could be resolved") {
+		t.Fatalf("err = %v, want the unresolved-AMI refusal", err)
+	}
+	if len(provider.DeletedParameters) != 1 || provider.DeletedParameters[0] != provider.PutParameters[0].Name {
+		t.Fatalf("DeletedParameters = %v, want the stored password abandoned", provider.DeletedParameters)
 	}
 }

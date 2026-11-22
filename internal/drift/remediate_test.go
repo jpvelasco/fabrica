@@ -17,15 +17,6 @@ import (
 
 // --- PlanRemediation tests ---
 
-// withPerforcePassword swaps the perforce credential-file seam for the test
-// duration and restores the real reader on cleanup.
-func withPerforcePassword(t *testing.T, fn func(string) (string, error)) {
-	t.Helper()
-	orig := readPerforcePassword
-	readPerforcePassword = fn
-	t.Cleanup(func() { readPerforcePassword = orig })
-}
-
 // withHordePassword swaps the horde credential-file seam for the test
 // duration and restores the real reader on cleanup.
 func withHordePassword(t *testing.T, fn func(string) (string, error)) {
@@ -997,9 +988,9 @@ func TestStripEmptyVPCID_InvalidJSON(t *testing.T) {
 // TestRebuildInstanceDesiredState_Perforce verifies the real Perforce
 // reconstruction: the AMI comes from the recorded Properties.imageId (the
 // module version is the Helix Core software version and must never be used
-// as an AMI), the admin password comes from the credentials seam, and the
-// full create contract (IAM profile, data volume, IMDSv2, cloud-init with
-// the pinned version) is present.
+// as an AMI), the admin password is read from SSM by the recorded parameter
+// name (never from user data), and the full create contract (IAM profile,
+// data volume, IMDSv2, cloud-init with the pinned version) is present.
 func TestRebuildInstanceDesiredState_Perforce(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Perforce.InstanceType = "m5.xlarge"
@@ -1013,14 +1004,14 @@ func TestRebuildInstanceDesiredState_Perforce(t *testing.T) {
 			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-pf"},
 			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-perforce-profile"},
 			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{
-				"instanceType": "m5.xlarge",
-				"imageId":      "ami-perforce-123",
-				"rootDevice":   "/dev/sda1",
+				"instanceType":           "m5.xlarge",
+				"imageId":                "ami-perforce-123",
+				"rootDevice":             "/dev/sda1",
+				"adminPasswordParameter": testPerforceAdminParam,
 			}},
 		},
 	}
 	rec := &mod.Resources[2]
-	withPerforcePassword(t, func(string) (string, error) { return "p4-admin", nil })
 
 	ds, err := rebuildInstanceDesiredState(context.Background(), rec, mod, st, cfg, nil)
 	if err != nil {
@@ -1078,6 +1069,29 @@ func TestRebuildInstanceDesiredState_Perforce(t *testing.T) {
 	if !strings.Contains(string(ud), "2024.2") {
 		t.Error("cloud-init must pin the recorded Helix version 2024.2")
 	}
+	if !strings.Contains(string(ud), testPerforceAdminParam) {
+		t.Error("cloud-init must read the recorded admin-password parameter")
+	}
+}
+
+// A recorded Perforce instance with no admin-password name predates #700, when
+// the password rode user data. Drift skips it with a rebuild hint rather than
+// guessing a parameter or reading the local credentials file.
+func TestRebuildInstanceDesiredState_Perforce_PreAdminPasswordState(t *testing.T) {
+	st := state.NewState("123456789012", "us-east-1")
+	mod := &state.ModuleState{
+		Name:    "perforce",
+		Version: "2025.2",
+		Resources: []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-pf"},
+			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-perforce-profile"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf", "rootDevice": "/dev/sda1"}},
+		},
+	}
+	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, st, config.Defaults(), nil)
+	if err == nil || !strings.Contains(err.Error(), "no admin password parameter recorded") || !strings.Contains(err.Error(), "fabrica perforce destroy") {
+		t.Fatalf("expected a pre-#700 skip with a destroy-and-recreate hint, got %v", err)
+	}
 }
 
 // Perforce without a recorded AMI is unsupported for automatic remediation.
@@ -1114,26 +1128,6 @@ func TestRebuildInstanceDesiredState_Perforce_MissingRootDevice(t *testing.T) {
 	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, st, config.Defaults(), nil)
 	if err == nil || !strings.Contains(err.Error(), "no root device recorded for the perforce instance (Properties.rootDevice); re-run 'fabrica perforce create'") {
 		t.Fatalf("expected a Properties.rootDevice error, got %v", err)
-	}
-}
-
-// A missing or unreadable credentials file reports the instance
-// unsupported instead of rebuilding it with a guessed password.
-func TestRebuildInstanceDesiredState_Perforce_MissingCredentials(t *testing.T) {
-	st := state.NewState("123456789012", "us-east-1")
-	mod := &state.ModuleState{
-		Name:    "perforce",
-		Version: "2025.2",
-		Resources: []state.ModuleResource{
-			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-pf"},
-			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "fabrica-perforce-profile"},
-			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-pf", Properties: map[string]string{"imageId": "ami-pf", "rootDevice": "/dev/sda1"}},
-		},
-	}
-	withPerforcePassword(t, func(string) (string, error) { return "", errors.New("no such file") })
-	_, err := rebuildInstanceDesiredState(context.Background(), &mod.Resources[2], mod, st, config.Defaults(), nil)
-	if err == nil {
-		t.Fatal("expected an error when the credentials file is unreadable")
 	}
 }
 

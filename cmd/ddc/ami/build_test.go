@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/config"
 )
 
 func TestBuildWritesGuide(t *testing.T) {
@@ -72,7 +75,7 @@ func TestBuildWriteErrors(t *testing.T) {
 }
 
 func TestNewWiresBuild(t *testing.T) {
-	cmd := New(ioDiscard())
+	cmd := New(func() (globals.Runtime, error) { return globals.Runtime{Config: &config.Config{}}, nil }, ioDiscard())
 	if cmd.Use != "ami" || len(cmd.Commands()) != 1 || cmd.Commands()[0].Use != "build" {
 		t.Fatalf("ami tree = %q %v", cmd.Use, cmd.Commands())
 	}

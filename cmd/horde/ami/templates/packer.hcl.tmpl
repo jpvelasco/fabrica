@@ -30,11 +30,12 @@ locals {
   common_tags = merge({{ hclMap .RecipeTags }}, { Name = local.ami_name })
 }
 
+{{ packerData .BaseImage }}
 source "amazon-ebs" "horde" {
   ami_name      = local.ami_name
   instance_type = var.instance_type
   region        = var.aws_region
-  source_ami    = "{{ .BaseImage }}"
+  {{ packerSource .BaseImage }}
   ssh_username  = "ubuntu"
 
   ami_block_device_mappings {
