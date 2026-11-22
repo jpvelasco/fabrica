@@ -98,19 +98,14 @@ printf '1\n' | sudo tee /etc/horde/fabrica-native-agent-contract
 ```
 
 Install its optional CA bundle before launch. Cloud-init verifies the marker,
-unit, and service-user access to the CA file. It writes
+unit, service-user access to the CA file and coordinator HTTPS/HTTP2. It writes
 `/etc/horde/fabrica-agent.env`, installs a systemd `EnvironmentFile` drop-in and
 restarts the service. It uses the stock
 `Horde__Server` and `Horde__ServerProfiles__fabrica__...` settings.
 
-The native contract applies to HTTP coordinators too. HTTP mode uses the same
-marker, unit and environment file with an `http://` URL, and probes only the
-HTTP port. TLS-only checks (HTTPS and HTTP/2) run only in TLS mode.
-
-Cloud-init probes the coordinator listener up to 30 times, 10 seconds apart.
-TLS mode is fail-closed: if the probe never passes it writes no agent
-configuration and exits 1. HTTP mode has already started the service, so it
-keeps reconnecting, and it exits 1 without the sentinel if the probe never passes.
+Cloud-init probes the coordinator listener up to 30 times, 10 seconds apart,
+before it writes agent configuration. If the probe never passes, it writes
+nothing and exits 1.
 
 The service user needs read access to its CA file and traversal access to
 each parent directory. Store agent trust separately from coordinator private

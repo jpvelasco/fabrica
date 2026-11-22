@@ -11,15 +11,18 @@ use the coordinator AMI as the agent AMI in production — it wastes compute, st
 and introduces unnecessary services on every builder node.
 
 Fabrica's cloud-init script only configures the agent to point at the coordinator —
-it does not install any software. The AMI must contain the agent binary pre-baked.
-Fabrica configures every agent, HTTP or TLS, through the stock native environment
-contract (`Horde__Server` and `Horde__ServerProfiles__fabrica__*`).
+it does not install any software. The AMI must contain the agent binary (or container
+image) pre-baked.
 
 See [docs/horde-ami.md](horde-ami.md) for the **coordinator** AMI build guide.
 
-For TLS, also follow the [native agent contract](horde-tls.md#native-agent-ami)
-for trust placement. Configuration success does not prove enrollment: approve the
-agent in Horde before it receives work.
+For TLS, follow the [native agent contract](horde-tls.md#native-agent-ami):
+stock Linux agent, non-root `horde-agent.service`, versioned AMI marker and
+preinstalled trust. Fabrica configures the service with official environment
+keys and verifies coordinator HTTPS/HTTP2 before restart. Configuration success
+does not prove enrollment. HTTP-mode agents now use the same environment-file
+contract; the INI and Docker details below are out of date and will be updated
+with the HTTP guide to follow.
 
 ---
 
@@ -34,54 +37,45 @@ The AMI must meet all of the following:
 | **SSM Agent** | `amazon-ssm-agent` installed and enabled (deb `amazon-ssm-agent.service` or snap `snap.amazon-ssm-agent.amazon-ssm-agent.service`). Bake must **fail closed** if the unit cannot be enabled. Required for Session Manager access on private subnets. |
 | **Architecture** | `x86_64` (matches default `c7i.xlarge` instance type) |
 | **No full server** | The AMI should NOT include MongoDB, Redis, or the Horde coordinator server binary — only the agent |
-| **Native contract marker** | `/etc/horde/fabrica-native-agent-contract` contains `1`. Cloud-init refuses to configure an AMI without it. Write it only after the agent install is verified. |
-| **Non-root service** | `horde-agent.service` is loaded and runs as a non-root `User=`. Cloud-init refuses root or an unset user. |
 
 ### What Fabrica's cloud-init does at boot
 
-The same script runs for HTTP and TLS coordinators. It:
-
-1. Checks the native contract marker, that `horde-agent.service` is loaded, and that its `User` is non-root
-2. Writes `/etc/horde/fabrica-agent.env` (see [The Agent Environment File](#the-agent-environment-file))
-3. Installs the systemd drop-in `/etc/systemd/system/horde-agent.service.d/fabrica.conf`, which loads that file with `EnvironmentFile=`, then enables and restarts `horde-agent.service`
-4. Probes the coordinator's `/api/v1/server/ports` listener, retrying up to 30 times, 10 seconds apart
-5. Writes the sentinel `/etc/horde/agent-configured` only after the probe passes and the service is active
-
-HTTP mode starts the service before the probe, so the agent keeps reconnecting while the coordinator is slow. If the probe still fails after 30 attempts, cloud-init exits 1 and records the failure, and the service keeps running. TLS mode is fail-closed: it probes first, and if the probe fails after 30 attempts it writes nothing and exits 1.
-
-`/etc/horde/agent-configured` means configuration and service start succeeded. It does not mean the agent is enrolled or approved.
+Fabrica's cloud-init writes `/etc/horde/fabrica-agent.env` and a systemd
+`EnvironmentFile` drop-in for `horde-agent.service`, probes the coordinator, and
+writes `/etc/horde/agent-configured` on success. Details for HTTP mode follow in
+the updated guide.
 
 **What the AMI must provide:**
-- A systemd unit `horde-agent.service` for the agent binary, running as a non-root user
+- A systemd unit `horde-agent.service` (native) **or** a Docker image + compose file with an `agent` service (trial mode)
 - The agent software itself — Fabrica does not install it
-- The native contract marker (above)
 - SSM agent running
 
 ---
 
-## The Agent Environment File
+## The Coordinator Configuration File
 
-Fabrica writes `/etc/horde/fabrica-agent.env` in systemd `EnvironmentFile` syntax:
+Fabrica writes `/etc/horde/coordinator.conf` with the following INI format:
 
 ```ini
-Horde__Server=fabrica
-Horde__ServerProfiles__fabrica__Name=fabrica
-Horde__ServerProfiles__fabrica__Url=http://10.0.1.10:5000
+[coordinator]
+host = <private-ip>
+port = <port>
+grpc_port = <grpc-port>
 ```
 
-The HTTP URL uses the coordinator's private IP, resolved at `fabrica horde agents create`
-time via Cloud Control. The port is `horde.port` (default `5000`). In TLS mode the URL is
-`https://<horde.tls.serverName>:<port>`, and a configured CA adds `SSL_CERT_FILE`.
+The private IP is resolved from the coordinator instance at `fabrica horde agents create`
+time via Cloud Control. The port defaults to `5000` (configurable via `horde.port`);
+`grpc_port` defaults to `5002` (configurable via `horde.grpcPort`).
 
-Fabrica no longer writes `/etc/horde/coordinator.conf` or `HORDE_COORDINATOR_*`
-variables. Custom INI or Docker-based agent AMIs must add the native contract
-themselves before they can enroll.
+Your agent software must read this file (or the `HORDE_COORDINATOR_HOST` /
+`HORDE_COORDINATOR_PORT` / `HORDE_COORDINATOR_GRPC_PORT` environment variables)
+to discover the coordinator endpoints.
 
 ---
 
 ## Build Methods
 
-### Native Install
+### Method 1: Native Install (Recommended)
 
 Install the Horde agent binary directly on the AMI. This is the cleanest approach
 for a dedicated agent image — no Docker overhead, no compose stack, just the agent.
@@ -127,9 +121,7 @@ docker rm horde-agent-extract
 
 #### Step 3: Create the systemd unit
 
-Create a non-root service user (for example `horde-agent`) and give it write access to
-the agent's data directories, described below. Then create
-`/etc/systemd/system/horde-agent.service`:
+Create `/etc/systemd/system/horde-agent.service`:
 
 ```ini
 [Unit]
@@ -139,7 +131,6 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=horde-agent
 ExecStart=/opt/horde-agent/horde-agent
 Restart=always
 RestartSec=10
@@ -150,20 +141,22 @@ StandardError=journal
 WantedBy=multi-user.target
 ```
 
-Do not add `EnvironmentFile=` or coordinator flags to the unit. Cloud-init installs
-the `Horde__…` settings in its own drop-in, and the stock agent reads them from the
-environment.
+The agent binary reads `/etc/horde/coordinator.conf` (INI format) and/or
+`HORDE_COORDINATOR_HOST`/`HORDE_COORDINATOR_PORT`/`HORDE_COORDINATOR_GRPC_PORT`
+environment variables at startup. Fabrica's cloud-init writes the config file
+and exports the env vars
+before starting the service. Do **not** use `EnvironmentFile` — systemd's
+`EnvironmentFile` expects `KEY=VALUE` lines, but Fabrica writes INI format
+(`[coordinator]` / `host = ...` / `port = ...`). The agent binary parses the
+INI file directly.
 
-**Writable paths.** The agent writes its server profile list (`servers.json`) and
-other state under two locations. The service user must be able to write both:
-
-- `/opt/horde-agent/Data`
-- `$HOME/.local/share` for the service user
-
-If the agent logs `Access to the path '/servers.json' is denied`, the service user
-cannot write one of these locations. Fix the ownership (for example
-`sudo chown -R horde-agent:horde-agent /opt/horde-agent/Data`) and confirm the
-service user's `HOME` is the directory you expect.
+> **Note:** If your agent binary uses command-line flags instead of reading the
+> config file, use `ExecStartPre` to extract values from the INI:
+> ```ini
+> [Service]
+> ExecStartPre=/bin/bash -c 'HOST=$(grep "^host" /etc/horde/coordinator.conf | cut -d= -f2 | tr -d " "); PORT=$(grep "^port" /etc/horde/coordinator.conf | cut -d= -f2 | tr -d " "); exec /opt/horde-agent/horde-agent --coordinator-host "$HOST" --coordinator-port "$PORT"'
+> ExecStart=/opt/horde-agent/horde-agent
+> ```
 
 #### Step 4: Enable the service
 
@@ -187,11 +180,14 @@ systemctl is-enabled horde-agent
 # Confirm SSM agent is running
 systemctl status amazon-ssm-agent
 
-# Confirm the unit runs as a non-root user
-systemctl show horde-agent --property=User --value
-
-# Write the native contract marker only after the install above is verified
-printf '1\n' | sudo tee /etc/horde/fabrica-native-agent-contract
+# Test the config file format (simulating what Fabrica writes)
+sudo mkdir -p /etc/horde
+sudo bash -c 'cat > /etc/horde/coordinator.conf << EOF
+[coordinator]
+host = 10.0.0.1
+port = 5000
+EOF'
+cat /etc/horde/coordinator.conf
 ```
 
 #### Step 6: Create the AMI
@@ -212,6 +208,98 @@ The `snapshot` tag specification is required: without it the root snapshot is
 created untagged and stays invisible to `ManagedBy`-based sweeps and teardown.
 
 Note the resulting AMI ID.
+
+---
+
+### Method 2: Docker Container (Trial Mode)
+
+Bake a Docker image containing the Horde agent, then create an AMI with Docker CE
+installed. This method is supported as **trial mode** — it works but adds Docker
+overhead to every agent instance. Prefer Method 1 for production.
+
+#### Step 1: Launch a bake instance (same as Method 1)
+
+#### Step 2: Install Docker CE
+
+Install Docker from Docker's signed apt repository. The keyring is exported with
+only the pinned fingerprint `9DC858229FC7DD38854AE2D88D81803C0EBFCD88`, so
+`signed-by` cannot trust any other key in the downloaded file. `test -s` fails
+the step if the download does not contain that key:
+
+```bash
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker-key.asc
+gnupg_home="$(mktemp -d)"
+GNUPGHOME="$gnupg_home" gpg --batch --quiet --import /tmp/docker-key.asc
+GNUPGHOME="$gnupg_home" gpg --batch --quiet --export 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 | sudo tee /etc/apt/keyrings/docker.gpg >/dev/null
+rm -rf "$gnupg_home" /tmp/docker-key.asc
+test -s /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+. /etc/os-release
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+sudo apt-get update -q
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker ubuntu
+sudo systemctl enable docker
+```
+
+#### Step 3: Load the agent Docker image
+
+```bash
+# Pull the agent image
+docker pull ghcr.io/epicgames/unrealengine/horde-agent:5.8.0
+docker tag ghcr.io/epicgames/unrealengine/horde-agent:5.8.0 horde-agent:latest
+```
+
+Or load from a saved image:
+```bash
+docker load < horde-agent-image.tar
+```
+
+#### Step 4: Create a compose file with an agent service
+
+Create `/etc/horde/docker-compose.yml` with **only the agent service** (no MongoDB,
+no Redis, no coordinator server):
+
+```yaml
+services:
+  agent:
+    image: horde-agent:latest
+    container_name: horde-agent
+    environment:
+      - HORDE_COORDINATOR_HOST=${HORDE_COORDINATOR_HOST}
+      - HORDE_COORDINATOR_PORT=${HORDE_COORDINATOR_PORT}
+      - HORDE_COORDINATOR_GRPC_PORT=${HORDE_COORDINATOR_GRPC_PORT}
+    restart: unless-stopped
+```
+
+#### Step 5: Create a systemd unit for the agent
+
+Create `/etc/systemd/system/horde-agent.service`:
+
+```ini
+[Unit]
+Description=Unreal Horde Build Agent (Docker)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/etc/horde
+ExecStart=/usr/bin/docker compose up -d agent
+ExecStop=/usr/bin/docker compose down agent
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable horde-agent
+```
+
+#### Step 6: Create the AMI (same as Method 1)
 
 ---
 
@@ -304,7 +392,7 @@ region-scoped — do not share IDs across accounts.
 | 1 | SSM agent running | `systemctl status amazon-ssm-agent` | `active (running)` |
 | 2 | Agent binary available | `which horde-agent` | Returns a path |
 | 3 | Systemd unit enabled | `systemctl is-enabled horde-agent` | `enabled` |
-| 4 | Native contract marker | `cat /etc/horde/fabrica-native-agent-contract` | `1` |
+| 4 | Config file writable | `sudo bash -c 'echo test > /etc/horde/coordinator.conf && cat /etc/horde/coordinator.conf'` | Write succeeds |
 | 5 | Agent starts | `sudo systemctl start horde-agent && systemctl status horde-agent` | `active (running)` or `exited 0` |
 | 6 | No coordinator services | `systemctl list-units \| grep -E 'mongodb\|redis\|horde-server'` | No matches |
 | 7 | SSM session works | `aws ssm start-session --target <instance-id>` | Connects successfully |
@@ -341,20 +429,17 @@ else
   exit 1
 fi
 
-# 4. Native contract marker
-if [ "$(cat /etc/horde/fabrica-native-agent-contract 2>/dev/null)" = "1" ]; then
-  echo "[PASS] native agent contract marker is 1"
+# 4. Config file
+sudo mkdir -p /etc/horde
+sudo bash -c 'cat > /etc/horde/coordinator.conf << EOF
+[coordinator]
+host = 10.0.0.1
+port = 5000
+EOF'
+if [ -f /etc/horde/coordinator.conf ]; then
+  echo "[PASS] /etc/horde/coordinator.conf is writable"
 else
-  echo "[FAIL] /etc/horde/fabrica-native-agent-contract is missing or not 1"
-  exit 1
-fi
-
-# 4b. Service runs as a non-root user
-agent_user=$(systemctl show horde-agent --property=User --value)
-if [ -n "$agent_user" ] && [ "$agent_user" != "root" ]; then
-  echo "[PASS] horde-agent runs as $agent_user"
-else
-  echo "[FAIL] horde-agent must set a non-root User="
+  echo "[FAIL] Cannot write /etc/horde/coordinator.conf"
   exit 1
 fi
 
@@ -444,8 +529,8 @@ aws ssm start-session --target <instance-id>
 Once connected, verify the agent:
 
 ```bash
-# Check agent environment
-cat /etc/horde/fabrica-agent.env
+# Check agent config
+cat /etc/horde/coordinator.conf
 
 # Check agent process
 ps aux | grep horde-agent
@@ -453,8 +538,8 @@ ps aux | grep horde-agent
 # Check cloud-init log
 cat /var/log/fabrica-horde-agent-init.log
 
-# Check configuration sentinel (service configured; enrollment still needs approval in Horde)
-ls -la /etc/horde/agent-configured
+# Check readiness sentinel
+ls -la /var/lib/cloud/instance/horde-agent-ready
 ```
 
 ---
@@ -463,15 +548,13 @@ ls -la /etc/horde/agent-configured
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| Agent doesn't enroll | Wrong coordinator URL in the environment file | Verify `Horde__ServerProfiles__fabrica__Url` in `/etc/horde/fabrica-agent.env`, then approve the agent in Horde |
-| cloud-init exits 1 with `failed the listener check` | Coordinator unreachable or untrusted | Check the coordinator service, the agent-to-coordinator SG rule, and the agent CA (TLS). HTTP mode keeps the service running and retries; TLS mode wrote no agent configuration |
-| `Access to the path '/servers.json' is denied` | Service user cannot write the agent data directory | Make `/opt/horde-agent/Data` and the service user's `$HOME/.local/share` writable by the `User=` account |
-| cloud-init exits 1 at the contract check | Missing `/etc/horde/fabrica-native-agent-contract` or root service user | Bake the marker and a non-root `User=` into `horde-agent.service` (see Requirements) |
+| Agent doesn't enroll | Wrong coordinator IP in config | Verify `/etc/horde/coordinator.conf` has the correct private IP |
 | SSM connection fails | SSM agent not running in AMI | Install and enable `amazon-ssm-agent` in the AMI |
 | ASG instances fail health check | Agent binary missing or crashing | Check `/var/log/syslog` on the instance via SSM |
 | Agent can't reach coordinator | Security group or routing issue | Verify agent SG allows outbound to coordinator port; confirm VPC routing |
 | Using coordinator AMI as agent AMI | Wrong AMI in `horde.agents.amiId` | Bake a dedicated agent AMI; the coordinator AMI runs unnecessary services (MongoDB, Redis, full server) on every builder |
 | `horde-agent` not found on PATH | Binary not in `/usr/local/bin` or not symlinked | Ensure the binary is accessible via `which horde-agent` |
+| `docker compose up -d agent` fails | No compose file at `/etc/horde/docker-compose.yml` or no `agent` service defined | For Docker method, bake the compose file with an `agent` service; prefer native install for production |
 | `horde.agents.amiId` missing | Config not set and no `--ami-id` flag | Set `horde.agents.amiId` in `fabrica.yaml` or pass `--ami-id` — Fabrica will not fall back to the coordinator AMI |
 | AMI in wrong region | AMI IDs are region-scoped | Re-copy the AMI to each region: `aws ec2 copy-image` |
 | `x86_64` vs `arm64` mismatch | AMI architecture doesn't match instance type | Build the AMI on the same instance family you plan to run (c7i = x86_64) |
