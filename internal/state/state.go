@@ -8,17 +8,22 @@ import (
 
 // State is the canonical representation of provisioning state.
 type State struct {
-	Version   string        `json:"version"`
-	ManagedBy string        `json:"managedBy,omitempty"`
-	Account   string        `json:"account"`
-	Region    string        `json:"region"`
-	Modules   []ModuleState `json:"modules"`
-	History   []Operation   `json:"history"`
-	Updated   time.Time     `json:"updated"`
-	Created   time.Time     `json:"created"`
+	Version   string `json:"version"`
+	ManagedBy string `json:"managedBy,omitempty"`
+	// NamePrefix is the resource-name prefix the deployment was created under.
+	// Empty means the default "fabrica" (omitted from the document).
+	NamePrefix string        `json:"namePrefix,omitempty"`
+	Account    string        `json:"account"`
+	Region     string        `json:"region"`
+	Modules    []ModuleState `json:"modules"`
+	History    []Operation   `json:"history"`
+	Updated    time.Time     `json:"updated"`
+	Created    time.Time     `json:"created"`
 	// loadedOwner records an immutable decoded or prepared binding, including
 	// legacy default ownership. NewState alone remains unbound.
 	loadedOwner string
+	// loadedPrefix is the decoded recorded prefix ("fabrica" for legacy documents).
+	loadedPrefix string
 }
 
 // ModuleState tracks the state of one provisioning module.

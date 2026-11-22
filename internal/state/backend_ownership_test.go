@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
@@ -88,7 +89,7 @@ func TestClassifyBackendOwnershipMatrix(t *testing.T) {
 				} else {
 					evidence.Table = tt.metadata
 				}
-				plan, err := ClassifyBackendOwnership(identity, "", "", evidence)
+				plan, err := ClassifyBackendOwnership(identity, naming.Default, "", "", evidence)
 				if tt.wantErr != "" {
 					if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 						t.Fatalf("expected %q refusal, got %v", tt.wantErr, err)
@@ -144,7 +145,7 @@ func TestClassifyBackendOwnershipCanonicalValidation(t *testing.T) {
 				}
 				st.ManagedBy = tt.changedOwner
 			}
-			plan, err := ClassifyBackendOwnership(tags.Identity{}, tt.account, tt.region, BackendOwnershipEvidence{
+			plan, err := ClassifyBackendOwnership(tags.Identity{}, naming.Default, tt.account, tt.region, BackendOwnershipEvidence{
 				Canonical: st, Bucket: backendMetadataForTest("Other"), Table: backendMetadataForTest("Other"),
 			})
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) || !reflect.DeepEqual(plan, BackendOwnershipPlan{}) {
@@ -164,6 +165,18 @@ func TestClassifyBackendOwnershipCanonicalValidation(t *testing.T) {
 	}
 }
 
+func TestClassifyBackendOwnershipRefusesForeignPrefix(t *testing.T) {
+	st, err := ParseState([]byte(`{"namePrefix":"acme","modules":[],"history":[]}`), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := backendMetadataForTest("fabrica", "1")
+	evidence := BackendOwnershipEvidence{Canonical: st, Bucket: metadata, Table: metadata}
+	if _, err := ClassifyBackendOwnership(tags.Identity{}, naming.Default, "account-one", "us-east-1", evidence); err == nil || !strings.Contains(err.Error(), `"acme"`) {
+		t.Fatalf("foreign canonical prefix accepted: %v", err)
+	}
+}
+
 func TestClassifyBackendOwnershipSnapshots(t *testing.T) {
 	st, err := ParseState([]byte(`{"modules":[{"name":"horde"}],"history":[{"action":"create"}]}`), "", "")
 	if err != nil {
@@ -171,7 +184,7 @@ func TestClassifyBackendOwnershipSnapshots(t *testing.T) {
 	}
 	metadata := backendMetadataForTest("fabrica", "1")
 	evidence := BackendOwnershipEvidence{Canonical: st, Bucket: metadata, Table: metadata}
-	plan, err := ClassifyBackendOwnership(tags.Identity{}, "account-one", "us-east-1", evidence)
+	plan, err := ClassifyBackendOwnership(tags.Identity{}, naming.Default, "account-one", "us-east-1", evidence)
 	if err != nil || plan.Bucket.Action != BackendComponentReconcile || plan.Table.Action != BackendComponentReconcile {
 		t.Fatalf("compatible unknown target was refused: plan=%+v err=%v", plan, err)
 	}
@@ -205,7 +218,7 @@ func TestClassifyBackendOwnershipRejectsPartialRepair(t *testing.T) {
 		if reverse {
 			evidence.Bucket, evidence.Table = evidence.Table, evidence.Bucket
 		}
-		plan, err := ClassifyBackendOwnership(tags.Identity{}, "", "", evidence)
+		plan, err := ClassifyBackendOwnership(tags.Identity{}, naming.Default, "", "", evidence)
 		if err == nil || !reflect.DeepEqual(plan, BackendOwnershipPlan{}) {
 			t.Fatalf("one repairable peer leaked authorization: plan=%+v err=%v", plan, err)
 		}

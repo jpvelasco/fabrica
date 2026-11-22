@@ -13,7 +13,9 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/horde"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/perforce"
+	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	fabricav "github.com/jpvelasco/fabrica/internal/version"
 )
 
@@ -36,7 +38,27 @@ func RunChecks(ctx context.Context, rt globals.Runtime, backend cloud.StateBacke
 		checkTable(ctx, rt, backend),
 		checkPerforceCIDR(rt),
 		checkHordeConnection(rt),
+		checkNamePrefix(rt),
 	}
+}
+
+func checkNamePrefix(rt globals.Runtime) DoctorCheck {
+	prefix, err := rt.Config.ResolveNamePrefix()
+	if err != nil {
+		return DoctorCheck{"Name prefix", "fail", err.Error()}
+	}
+	return namePrefixCheck(prefix, rt.Config)
+}
+
+// namePrefixCheck warns when a non-default prefix relies on unpinned, derived backend names.
+func namePrefixCheck(prefix naming.Prefix, cfg *config.Config) DoctorCheck {
+	if prefix.IsDefault() {
+		return DoctorCheck{"Name prefix", "ok", prefix.String()}
+	}
+	if cfg != nil && cfg.State.Bucket != "" && cfg.State.Table != "" {
+		return DoctorCheck{"Name prefix", "ok", prefix.String() + " (state backend pinned)"}
+	}
+	return DoctorCheck{"Name prefix", "warning", fmt.Sprintf("%s with unpinned state.bucket/state.table; run 'fabrica setup' to pin the state backend in fabrica.yaml, or set both keys", prefix)}
 }
 
 func checkHordeConnection(rt globals.Runtime) DoctorCheck {
@@ -111,14 +133,17 @@ func checkTable(ctx context.Context, rt globals.Runtime, backend cloud.StateBack
 	if rt.Config == nil {
 		return stateBackendWarning("DynamoDB lock table")
 	}
-	bucket := rt.Config.State.Bucket
-	table := rt.Config.State.Table
-	if bucket == "" {
+	if rt.Config.State.Bucket == "" {
 		return stateBackendWarning("DynamoDB lock table")
 	}
 	if backend == nil {
 		return DoctorCheck{"DynamoDB lock table", "warning", "state backend checker unavailable for provider"}
 	}
+	names, err := fabricastate.ConfiguredBackendNames(rt.Config, rt.Config.Cloud.AWS.AccountID)
+	if err != nil {
+		return DoctorCheck{"DynamoDB lock table", "fail", err.Error()}
+	}
+	table := names.Table
 	ok, err := backend.StateLockTableExists(ctx, table)
 	if err != nil {
 		return DoctorCheck{"DynamoDB lock table", "fail", "check failed: " + err.Error()}

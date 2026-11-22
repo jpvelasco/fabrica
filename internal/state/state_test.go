@@ -13,6 +13,7 @@ import (
 
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/oplog"
 )
 
@@ -624,17 +625,17 @@ func TestLockID(t *testing.T) {
 func TestResolveBackendNames(t *testing.T) {
 	cfg := config.Defaults()
 
-	got := ResolveBackendNames(cfg, "123456789012")
+	got := ResolveBackendNames(naming.Default, cfg, "123456789012")
 	if got.Bucket != "fabrica-state-123456789012" {
 		t.Fatalf("Bucket = %q", got.Bucket)
 	}
-	if got.Table != config.DefaultStateTable {
+	if got.Table != naming.Default.StateTable() {
 		t.Fatalf("Table = %q", got.Table)
 	}
 
 	cfg.State.Bucket = "custom-bucket"
 	cfg.State.Table = "custom-table"
-	got = ResolveBackendNames(cfg, "123456789012")
+	got = ResolveBackendNames(naming.Default, cfg, "123456789012")
 	if got.Bucket != "custom-bucket" || got.Table != "custom-table" {
 		t.Fatalf("custom backend = %+v", got)
 	}
@@ -643,7 +644,7 @@ func TestResolveBackendNames(t *testing.T) {
 func TestNewSetupPlanResolvesBackendNames(t *testing.T) {
 	cfg := config.Defaults()
 
-	plan := NewSetupPlan(cfg, "123456789012", "us-east-1")
+	plan := NewSetupPlan(naming.Default, cfg, "123456789012", "us-east-1")
 	if plan.Backend.Bucket != "fabrica-state-123456789012" {
 		t.Fatalf("Bucket = %q", plan.Backend.Bucket)
 	}
@@ -808,32 +809,32 @@ func TestGetModuleResourceNonExistentModule(t *testing.T) {
 	}
 }
 
-// TestDefaultBucketWithAccount verifies default bucket name includes account ID.
-func TestDefaultBucketWithAccount(t *testing.T) {
-	got := DefaultBucket("123456789012")
+// TestStateBucketWithAccount verifies default bucket name includes account ID.
+func TestStateBucketWithAccount(t *testing.T) {
+	got := naming.Default.StateBucket("123456789012")
 	want := "fabrica-state-123456789012"
 	if got != want {
-		t.Errorf("DefaultBucket = %q, want %q", got, want)
+		t.Errorf("StateBucket = %q, want %q", got, want)
 	}
 }
 
-// TestDefaultBucketEmptyAccount verifies default bucket uses placeholder for empty account.
-func TestDefaultBucketEmptyAccount(t *testing.T) {
-	got := DefaultBucket("")
+// TestStateBucketEmptyAccount verifies default bucket uses placeholder for empty account.
+func TestStateBucketEmptyAccount(t *testing.T) {
+	got := ResolveBackendNames(naming.Default, nil, "").Bucket
 	want := "fabrica-state-<account-id>"
 	if got != want {
-		t.Errorf("DefaultBucket(\"\") = %q, want %q", got, want)
+		t.Errorf("empty-account bucket = %q, want %q", got, want)
 	}
 }
 
 // TestResolveBackendNamesNilConfig verifies defaults when config is nil.
 func TestResolveBackendNamesNilConfig(t *testing.T) {
-	got := ResolveBackendNames(nil, "123456789012")
+	got := ResolveBackendNames(naming.Default, nil, "123456789012")
 	if got.Bucket != "fabrica-state-123456789012" {
 		t.Errorf("bucket = %q, want fabrica-state-123456789012", got.Bucket)
 	}
-	if got.Table != config.DefaultStateTable {
-		t.Errorf("table = %q, want %s", got.Table, config.DefaultStateTable)
+	if got.Table != naming.Default.StateTable() {
+		t.Errorf("table = %q, want %s", got.Table, naming.Default.StateTable())
 	}
 }
 
@@ -843,12 +844,12 @@ func TestResolveBackendNamesPartialConfig(t *testing.T) {
 	cfg.State.Bucket = "my-bucket"
 	// Table is empty — should use default
 
-	got := ResolveBackendNames(cfg, "123456789012")
+	got := ResolveBackendNames(naming.Default, cfg, "123456789012")
 	if got.Bucket != "my-bucket" {
 		t.Errorf("bucket = %q, want my-bucket", got.Bucket)
 	}
-	if got.Table != config.DefaultStateTable {
-		t.Errorf("table = %q, want %s", got.Table, config.DefaultStateTable)
+	if got.Table != naming.Default.StateTable() {
+		t.Errorf("table = %q, want %s", got.Table, naming.Default.StateTable())
 	}
 }
 

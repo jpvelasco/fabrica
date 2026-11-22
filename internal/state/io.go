@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/oplog"
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
@@ -106,10 +107,50 @@ func ParseState(data []byte, account, region string) (*State, error) {
 	}
 	st.ManagedBy = identity.ManagedBy()
 	st.loadedOwner = st.ManagedBy
+	prefix, err := naming.Resolve(st.NamePrefix)
+	if err != nil {
+		return nil, fmt.Errorf("parsing state namePrefix: %w; restore the recorded namePrefix or the configuration that created this deployment", err)
+	}
+	st.NamePrefix = stampedPrefix(prefix)
+	st.loadedPrefix = prefix.String()
 	if err := ValidateIdentity(&st, account, region); err != nil {
 		return nil, err
 	}
 	return &st, nil
+}
+
+// stampedPrefix is the document form of a prefix: the default is omitted so
+// default-prefix state stays byte-identical to documents written before #705.
+func stampedPrefix(prefix naming.Prefix) string {
+	if prefix.IsDefault() {
+		return ""
+	}
+	return prefix.String()
+}
+
+// ValidateNamePrefix rejects loaded state recorded under a different name
+// prefix than the configured one, before any caller can mutate or derive names
+// from it. A fresh unbound state is accepted and binds the prefix on write.
+func (s *State) ValidateNamePrefix(prefix naming.Prefix) error {
+	if s == nil {
+		return fmt.Errorf("no state available; read state before persisting it")
+	}
+	configured := prefix.String()
+	if s.loadedPrefix == "" || s.loadedPrefix == configured {
+		return nil
+	}
+	return fmt.Errorf("state name prefix mismatch (recorded %q vs configured %q); restore namePrefix %q in the configuration that created this deployment, or run 'fabrica destroy --all' and recreate it with namePrefix %q", s.loadedPrefix, configured, s.loadedPrefix, configured)
+}
+
+// BindNamePrefix validates the configured prefix and stamps it on the state.
+// Mirrors BindOwnership: a loaded binding is never replaced.
+func (s *State) BindNamePrefix(prefix naming.Prefix) error {
+	if err := s.ValidateNamePrefix(prefix); err != nil {
+		return err
+	}
+	s.NamePrefix = stampedPrefix(prefix)
+	s.loadedPrefix = prefix.String()
+	return nil
 }
 
 // ValidateOwnership rejects a different owner or a changed loaded binding.

@@ -77,8 +77,8 @@ func TestDefaults(t *testing.T) {
 	if cfg.Cloud.AWS.Region != "us-east-1" {
 		t.Fatalf("expected region us-east-1, got %s", cfg.Cloud.AWS.Region)
 	}
-	if cfg.State.Table != "fabrica-state-lock" {
-		t.Fatalf("expected table fabrica-state-lock, got %s", cfg.State.Table)
+	if cfg.State.Table != "" {
+		t.Fatalf("expected table unset so the name prefix derives it, got %s", cfg.State.Table)
 	}
 	if len(cfg.Cloud.AWS.Tags) != 0 {
 		t.Fatal("expected empty tags map")
@@ -223,7 +223,7 @@ func TestLoadPartialFile(t *testing.T) {
 	cfg := loadConfig(t, path)
 	assertStr(t, cfg.Cloud.AWS.Region, "ap-southeast-1", "region")
 	assertStr(t, cfg.Cloud.Provider, "aws", "provider")
-	assertStr(t, cfg.State.Table, "fabrica-state-lock", "table")
+	assertStr(t, cfg.State.Table, "", "table")
 }
 
 func TestSaveWritesSchemaNames(t *testing.T) {
@@ -438,8 +438,8 @@ func TestNormalizeDefaults(t *testing.T) {
 	if cfg.Cloud.AWS.Region != DefaultAWSRegion {
 		t.Errorf("region = %q, want %s", cfg.Cloud.AWS.Region, DefaultAWSRegion)
 	}
-	if cfg.State.Table != DefaultStateTable {
-		t.Errorf("table = %q, want %s", cfg.State.Table, DefaultStateTable)
+	if cfg.State.Table != "" {
+		t.Errorf("table = %q, want unset so the name prefix derives it", cfg.State.Table)
 	}
 	if cfg.Cloud.AWS.Tags == nil {
 		t.Error("expected non-nil tags map after normalize")

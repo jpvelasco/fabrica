@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
@@ -62,7 +63,7 @@ func setupApplyFixture(t *testing.T, owner, document string, bucket, table cloud
 	if document == "" {
 		p.readErr = cloud.ErrStateDocumentMissing
 	}
-	target := NewSetupPlan(nil, "account-one", "us-west-2")
+	target := NewSetupPlan(naming.Default, nil, "account-one", "us-west-2")
 	_, ownership, err := InspectBackendOwnership(context.Background(), p, target, identity)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +78,7 @@ func setupApplyFixture(t *testing.T, owner, document string, bucket, table cloud
 
 func TestBackendSetupProtectedPreviewAndOwnedInputs(t *testing.T) {
 	identity, _ := tags.ResolveIdentity("Studio-Tools")
-	target := NewSetupPlan(nil, "account-one", "us-west-2")
+	target := NewSetupPlan(naming.Default, nil, "account-one", "us-west-2")
 	ownership := BackendOwnershipPlan{
 		Bucket: BackendComponentDecision{Action: BackendComponentCreate},
 		Table:  BackendComponentDecision{Action: BackendComponentReconcile, Observed: backendMetadataForTest("Studio-Tools")},

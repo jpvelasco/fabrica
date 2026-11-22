@@ -110,8 +110,11 @@ func checkBackend(ctx context.Context, rt globals.Runtime) StatusBackend {
 	if rt.Config == nil {
 		return b
 	}
-	b.Bucket = rt.Config.State.Bucket
-	b.Table = rt.Config.State.Table
+	names, err := fabricastate.ConfiguredBackendNames(rt.Config, rt.Config.Cloud.AWS.AccountID)
+	if err != nil {
+		return b
+	}
+	b.Bucket, b.Table = names.Bucket, names.Table
 	backend, _ := rt.Provider.(cloud.StateBackendChecker)
 	if backend == nil {
 		return b

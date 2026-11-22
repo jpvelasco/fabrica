@@ -10,13 +10,14 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
 func TestReadLocalStateValidatesWithoutWriting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "absent", "state.json")
-	st, err := ReadLocalState(path, "account-one", "us-west-2", tags.Identity{})
+	st, err := ReadLocalState(path, "account-one", "us-west-2", tags.Identity{}, naming.Default)
 	if err != nil || st == nil || st.Account != "account-one" || st.Region != "us-west-2" || st.ManagedBy != "" {
 		t.Fatalf("fresh local state was not unbound: %+v %v", st, err)
 	}
@@ -37,7 +38,7 @@ func TestReadLocalStateValidatesWithoutWriting(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.doc), 0600); err != nil {
 				t.Fatal(err)
 			}
-			st, err := ReadLocalState(path, "account-one", "us-west-2", tags.Identity{})
+			st, err := ReadLocalState(path, "account-one", "us-west-2", tags.Identity{}, naming.Default)
 			if tc.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) || st != nil {
 					t.Fatalf("unsafe local state returned: %+v %v", st, err)
@@ -55,7 +56,7 @@ func TestReadLocalStateValidatesWithoutWriting(t *testing.T) {
 		})
 	}
 	directory := t.TempDir()
-	if st, err := ReadLocalState(directory, "", "", tags.Identity{}); err == nil || st != nil {
+	if st, err := ReadLocalState(directory, "", "", tags.Identity{}, naming.Default); err == nil || st != nil {
 		t.Fatalf("directory read failure ignored: %+v %v", st, err)
 	}
 	if entries, err := os.ReadDir(directory); err != nil || len(entries) != 0 {
@@ -338,5 +339,27 @@ func TestConfirmSetup_Cancelled(t *testing.T) {
 	}
 	if got, want := out.String(), "Setup cancelled. No AWS resources were created.\n"; got != want {
 		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestReadLocalStateRefusesPrefixMismatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	st := fabricastate.NewState("account-one", "us-west-2")
+	if err := st.BindOwnership(tags.Identity{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.BindNamePrefix(naming.MustResolve("acme")); err != nil {
+		t.Fatal(err)
+	}
+	if err := fabricastate.WriteStateTo(st, path); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ReadLocalState(path, "account-one", "us-west-2", tags.Identity{}, naming.Default)
+	if err == nil || !strings.Contains(err.Error(), `"acme"`) {
+		t.Fatalf("default config read acme state: %v", err)
+	}
+	if _, err := ReadLocalState(path, "account-one", "us-west-2", tags.Identity{}, naming.MustResolve("acme")); err != nil {
+		t.Fatalf("matching prefix refused: %v", err)
 	}
 }

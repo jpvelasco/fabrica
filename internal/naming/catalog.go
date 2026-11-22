@@ -129,9 +129,9 @@ func (c catalogBuilder) opsHooks() {
 }
 
 func (c catalogBuilder) state() {
-	c.put("state.bucket", c.p.For("state", c.account))
-	c.put("state.table", c.p.For("state", "lock"))
-	c.put("state.lockID", c.p.For("state")+"/"+c.account)
+	c.put("state.bucket", c.p.StateBucket(c.account))
+	c.put("state.table", c.p.StateTable())
+	c.put("state.lockID", c.p.StateLockID(c.account))
 }
 
 func (c catalogBuilder) iam() {

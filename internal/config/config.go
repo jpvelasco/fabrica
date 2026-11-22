@@ -14,10 +14,9 @@ import (
 )
 
 const (
-	DefaultFile       = "fabrica.yaml"
-	DefaultProvider   = "aws"
-	DefaultAWSRegion  = "us-east-1"
-	DefaultStateTable = "fabrica-state-lock"
+	DefaultFile      = "fabrica.yaml"
+	DefaultProvider  = "aws"
+	DefaultAWSRegion = "us-east-1"
 )
 
 // Path returns the config file selected by the explicit path/profile flags.
@@ -440,9 +439,6 @@ func Defaults() *Config {
 				Tags:   make(map[string]string),
 			},
 		},
-		State: State{
-			Table: DefaultStateTable,
-		},
 	}
 }
 
@@ -553,9 +549,6 @@ func (c *Config) normalize() {
 	}
 	if c.Cloud.AWS.Tags == nil {
 		c.Cloud.AWS.Tags = make(map[string]string)
-	}
-	if c.State.Table == "" {
-		c.State.Table = DefaultStateTable
 	}
 }
 

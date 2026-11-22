@@ -84,14 +84,21 @@ func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string)
 		if rt.Config != nil {
 			account := rt.Config.Cloud.AWS.AccountID
 			region := rt.Config.Cloud.AWS.Region
-			table := fabricastate.ResolveBackendNames(rt.Config, account).Table
-			if !lease.matchesTarget(account, region, table) {
+			names, err := fabricastate.ConfiguredBackendNames(rt.Config, account)
+			if err != nil {
+				return ctx, noop, err
+			}
+			if !lease.matchesTarget(account, region, names.Table) {
 				return ctx, noop, fmt.Errorf("state lock belongs to a different account, home region or table; acquire the configured target lock before nesting")
 			}
 		}
 		return ctx, noop, nil
 	}
 	identity, err := rt.Config.ResolveIdentity()
+	if err != nil {
+		return ctx, noop, err
+	}
+	prefix, err := rt.Config.ResolveNamePrefix()
 	if err != nil {
 		return ctx, noop, err
 	}
@@ -110,7 +117,7 @@ func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string)
 	}
 
 	if custom {
-		_, ownership, err := fabricastate.InspectBackendOwnership(ctx, rt.Provider, fabricastate.NewSetupPlan(rt.Config, account, region), identity)
+		_, ownership, err := fabricastate.InspectBackendOwnership(ctx, rt.Provider, fabricastate.NewSetupPlan(prefix, rt.Config, account, region), identity)
 		if err != nil {
 			return ctx, noop, err
 		}
@@ -119,10 +126,10 @@ func AcquireStateLock(ctx context.Context, rt globals.Runtime, operation string)
 		}
 	}
 
-	lockID := "fabrica-state/" + account
+	lockID := prefix.StateLockID(account)
 	host, _ := os.Hostname()
 	holder := fmt.Sprintf("%s pid=%d host=%s", operation, os.Getpid(), shortHostname(host))
-	table := rt.Config.State.Table
+	table := fabricastate.ResolveBackendNames(prefix, rt.Config, account).Table
 
 	var token string
 	store := fabricastate.NewFuncLockStore(table, stateLockTTL,

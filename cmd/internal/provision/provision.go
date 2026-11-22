@@ -12,6 +12,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/oplog"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
@@ -30,11 +31,15 @@ func ReadState(ctx context.Context, rt globals.Runtime) (*fabricastate.State, er
 	if err != nil {
 		return nil, err
 	}
+	prefix, err := rt.Config.ResolveNamePrefix()
+	if err != nil {
+		return nil, err
+	}
 	account, region := identitySides(rt)
 	path := StatePath(rt)
-	store, bucket := stateStore(rt)
+	store, bucket := stateStore(rt, prefix)
 	if store == nil {
-		return ReadLocalState(path, account, region, identity)
+		return ReadLocalState(path, account, region, identity, prefix)
 	}
 
 	doc, err := store.GetStateDocument(ctx, bucket, fabricastate.StateDocumentKey)
@@ -42,7 +47,7 @@ func ReadState(ctx context.Context, rt globals.Runtime) (*fabricastate.State, er
 		if !errors.Is(err, fabricac.ErrStateDocumentMissing) {
 			return nil, fmt.Errorf("reading remote state: %w", err)
 		}
-		st, err := ReadLocalState(path, account, region, identity)
+		st, err := ReadLocalState(path, account, region, identity, prefix)
 		if err != nil {
 			return nil, err
 		}
@@ -61,6 +66,9 @@ func ReadState(ctx context.Context, rt globals.Runtime) (*fabricastate.State, er
 	if err := st.ValidateOwnership(identity); err != nil {
 		return nil, fmt.Errorf("reading remote state: %w", err)
 	}
+	if err := st.ValidateNamePrefix(prefix); err != nil {
+		return nil, fmt.Errorf("reading remote state: %w", err)
+	}
 	if err := fabricastate.WriteStateTo(st, path); err != nil {
 		oplog.Logger().Warn("remote state loaded; local cache refresh failed", "file", path, "error", err)
 	}
@@ -69,12 +77,15 @@ func ReadState(ctx context.Context, rt globals.Runtime) (*fabricastate.State, er
 
 // ReadLocalState validates the local cache without binding or writing it.
 // Missing files return fresh unbound state; local state is not canonical proof.
-func ReadLocalState(path, account, region string, identity tags.Identity) (*fabricastate.State, error) {
+func ReadLocalState(path, account, region string, identity tags.Identity, prefix naming.Prefix) (*fabricastate.State, error) {
 	st, err := fabricastate.ReadStateFile(path, account, region)
 	if err != nil {
 		return nil, err
 	}
 	if err := st.ValidateOwnership(identity); err != nil {
+		return nil, err
+	}
+	if err := st.ValidateNamePrefix(prefix); err != nil {
 		return nil, err
 	}
 	return st, nil
@@ -118,7 +129,7 @@ func identitySides(rt globals.Runtime) (string, string) {
 // (nil, "") when the provider lacks the capability or when the account is not
 // bootstrapped (no account ID and no explicit bucket), where no remote
 // document can exist.
-func stateStore(rt globals.Runtime) (fabricac.StateStore, string) {
+func stateStore(rt globals.Runtime, prefix naming.Prefix) (fabricac.StateStore, string) {
 	if rt.Config == nil {
 		return nil, ""
 	}
@@ -129,7 +140,7 @@ func stateStore(rt globals.Runtime) (fabricac.StateStore, string) {
 	if rt.Config.Cloud.AWS.AccountID == "" && rt.Config.State.Bucket == "" {
 		return nil, ""
 	}
-	return store, fabricastate.ResolveBackendNames(rt.Config, rt.Config.Cloud.AWS.AccountID).Bucket
+	return store, fabricastate.ResolveBackendNames(prefix, rt.Config, rt.Config.Cloud.AWS.AccountID).Bucket
 }
 
 // ConfirmPhrase is the exact phrase a user must type to confirm a create:

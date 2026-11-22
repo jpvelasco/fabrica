@@ -7,6 +7,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/oplog"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/tags"
@@ -36,6 +37,7 @@ type StatePersistence struct {
 	account     string
 	region      string
 	table       string
+	prefix      naming.Prefix
 	identity    tags.Identity
 	identityErr error
 }
@@ -43,13 +45,14 @@ type StatePersistence struct {
 // NewStatePersistence captures the same target and ownership as StateWriter.
 // It performs no storage writes or state binding.
 func NewStatePersistence(ctx context.Context, rt globals.Runtime) *StatePersistence {
-	store, bucket := stateStore(rt)
-	identity, identityErr := rt.Config.ResolveIdentity()
+	identity, idErr := rt.Config.ResolveIdentity()
+	prefix, prefixErr := rt.Config.ResolveNamePrefix()
+	store, bucket := stateStore(rt, prefix)
 	account, region := identitySides(rt)
 	return &StatePersistence{
 		ctx: ctx, path: StatePath(rt), store: store, bucket: bucket,
-		account: account, region: region, table: state.ResolveBackendNames(rt.Config, account).Table,
-		identity: identity, identityErr: identityErr,
+		account: account, region: region, table: state.ResolveBackendNames(prefix, rt.Config, account).Table,
+		prefix: prefix, identity: identity, identityErr: errors.Join(idErr, prefixErr),
 	}
 }
 
@@ -96,6 +99,9 @@ func (p *StatePersistence) Persist(st *state.State, requirement StateWriteRequir
 		return StateWriteOutcome{}, err
 	}
 	if err := st.BindOwnership(p.identity); err != nil {
+		return StateWriteOutcome{}, err
+	}
+	if err := st.BindNamePrefix(p.prefix); err != nil {
 		return StateWriteOutcome{}, err
 	}
 	outcome := StateWriteOutcome{}

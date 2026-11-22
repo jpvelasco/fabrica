@@ -51,7 +51,7 @@ func InspectBackendOwnership(ctx context.Context, provider cloud.Provider, setup
 			return BackendOwnershipEvidence{}, BackendOwnershipPlan{}, fmt.Errorf("reading canonical backend state: %w", err)
 		}
 	}
-	plan, err := ClassifyBackendOwnership(identity, setup.Account, setup.Region, evidence)
+	plan, err := ClassifyBackendOwnership(identity, setup.Prefix, setup.Account, setup.Region, evidence)
 	if err != nil {
 		return BackendOwnershipEvidence{}, BackendOwnershipPlan{}, fmt.Errorf("inspecting backend ownership: %w", err)
 	}

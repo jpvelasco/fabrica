@@ -76,6 +76,12 @@ func TestZeroValueIsDefault(t *testing.T) {
 	}
 }
 
+func TestIsDefault(t *testing.T) {
+	if !Default.IsDefault() || !MustResolve("fabrica").IsDefault() || MustResolve("acme").IsDefault() {
+		t.Fatal("IsDefault misclassified the default or a custom prefix")
+	}
+}
+
 func TestBuilders(t *testing.T) {
 	acme := MustResolve("acme")
 	for _, tc := range []struct {

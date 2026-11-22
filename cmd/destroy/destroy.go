@@ -139,7 +139,10 @@ func runAll(ctx context.Context, rt globals.Runtime, opts globals.Options, out i
 	add("lore", teardownClosure(ctx, withJSON(loredestroy.NewTeardown(rt, out))))
 	add("perforce", teardownClosure(ctx, withJSON(pfdestroy.NewTeardown(rt, out))))
 
-	names := fabricastate.ResolveBackendNames(rt.Config, account)
+	names, err := fabricastate.ConfiguredBackendNames(rt.Config, account)
+	if err != nil {
+		return err
+	}
 	destroyer, _ := rt.Provider.(cloud.StateBackendDestroyer)
 
 	e := destroyall.Engine{

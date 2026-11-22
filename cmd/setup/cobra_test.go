@@ -14,7 +14,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/setup"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
-	"github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/tags"
 	"github.com/spf13/cobra"
 )
@@ -158,7 +158,7 @@ func TestSetupCobraRealLeaseAndOriginalConfig(t *testing.T) {
 			}
 			data, err := os.ReadFile("fabrica.yaml")
 			if err != nil || !strings.Contains(string(data), "# studio") || cfg.Cloud.AWS.AccountID != "account-one" ||
-				cfg.State.Bucket != state.DefaultBucket("account-one") || cfg.State.Table != p.table {
+				cfg.State.Bucket != naming.Default.StateBucket("account-one") || cfg.State.Table != p.table {
 				t.Fatalf("original runtime/config not saved surgically: %s %v", data, err)
 			}
 			if _, err := os.Stat(".fabrica"); !os.IsNotExist(err) {

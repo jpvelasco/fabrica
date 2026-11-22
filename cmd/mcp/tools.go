@@ -14,6 +14,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/drift"
+	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	fabricav "github.com/jpvelasco/fabrica/internal/version"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.yaml.in/yaml/v3"
@@ -244,6 +245,10 @@ func handleDrift(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest,
 			return nil, DriftResult{}, fmt.Errorf("reading state: %w", err)
 		}
 
+		names, err := fabricastate.ConfiguredBackendNames(rt.Config, rt.Config.Cloud.AWS.AccountID)
+		if err != nil {
+			return nil, DriftResult{}, fmt.Errorf("resolving state backend names: %w", err)
+		}
 		engine := &drift.Engine{
 			State:           st,
 			ResourceGet:     rt.Provider.Resources().Get,
@@ -253,8 +258,8 @@ func handleDrift(rt globals.Runtime) func(context.Context, *mcp.CallToolRequest,
 			Config: &drift.DriftConfig{
 				Account: rt.Config.Cloud.AWS.AccountID,
 				Region:  rt.Config.Cloud.AWS.Region,
-				Bucket:  rt.Config.State.Bucket,
-				Table:   rt.Config.State.Table,
+				Bucket:  names.Bucket,
+				Table:   names.Table,
 			},
 		}
 		if bc, ok := rt.Provider.(cloud.StateBackendChecker); ok {

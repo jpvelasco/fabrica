@@ -12,6 +12,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/stateutil"
 )
@@ -111,7 +112,7 @@ func TestPersistReadyMergesCurrentInventory(t *testing.T) {
 			if mode == "custom" {
 				cfg.Cloud.AWS.Identity.ManagedBy = "Studio-Tools"
 				st.ManagedBy = "Studio-Tools"
-				backend := state.ResolveBackendNames(cfg, st.Account)
+				backend := state.ResolveBackendNames(naming.Default, cfg, st.Account)
 				metadata := cloud.StateBackendMetadata{Exists: true, Tags: map[string]string{"ManagedBy": "Studio-Tools", "FabricaOwnershipVersion": "1"}}
 				rt.Provider = &testutil.BackendLockingProvider{BackendProvider: &testutil.BackendProvider{
 					TestProvider: &testutil.TestProvider{AccountID: st.Account, Region: st.Region, StateDocuments: map[string]string{backend.Bucket + "/" + state.StateDocumentKey: string(state.EncodeState(st))}},

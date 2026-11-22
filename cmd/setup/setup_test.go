@@ -14,6 +14,7 @@ import (
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
@@ -48,7 +49,7 @@ func testApplyRuntime() globals.Runtime {
 	// Pre-set the account ID so saveAccountID is a no-op and the test never
 	// touches the filesystem.
 	cfg.Cloud.AWS.AccountID = "123456789012"
-	cfg.State.Bucket = fabricastate.DefaultBucket(cfg.Cloud.AWS.AccountID)
+	cfg.State.Bucket = naming.Default.StateBucket(cfg.Cloud.AWS.AccountID)
 	cfg.Cloud.AWS.Region = "us-east-1"
 	return globals.Runtime{
 		Provider: &testutil.BackendProvider{TestProvider: &testutil.TestProvider{AccountID: cfg.Cloud.AWS.AccountID, Region: cfg.Cloud.AWS.Region}},
@@ -161,7 +162,7 @@ func TestRunApplyConfirmNoCancels(t *testing.T) {
 		applyBackend: recordApply(&bootstrapCalled),
 		confirm:      func(string) bool { return false },
 	}
-	plan := fabricastate.NewSetupPlan(cmd.runtime.Config, cmd.runtime.Config.Cloud.AWS.AccountID, cmd.runtime.Config.Cloud.AWS.Region)
+	plan := fabricastate.NewSetupPlan(naming.Default, cmd.runtime.Config, cmd.runtime.Config.Cloud.AWS.AccountID, cmd.runtime.Config.Cloud.AWS.Region)
 
 	if err := cmd.runApply(context.Background(), cmd.runtime, ownedApplyPlan(t, plan)); err != nil {
 		t.Fatalf("runApply: %v", err)
@@ -184,7 +185,7 @@ func TestRunApplyAssumeYesSkipsConfirm(t *testing.T) {
 		applyBackend: recordApply(nil),
 		confirm:      func(string) bool { confirmCalled = true; return true },
 	}
-	plan := fabricastate.NewSetupPlan(cmd.runtime.Config, cmd.runtime.Config.Cloud.AWS.AccountID, cmd.runtime.Config.Cloud.AWS.Region)
+	plan := fabricastate.NewSetupPlan(naming.Default, cmd.runtime.Config, cmd.runtime.Config.Cloud.AWS.AccountID, cmd.runtime.Config.Cloud.AWS.Region)
 
 	if err := cmd.runApply(context.Background(), cmd.runtime, ownedApplyPlan(t, plan)); err != nil {
 		t.Fatalf("runApply: %v", err)
@@ -205,7 +206,7 @@ func TestRunApplyBootstrapErrorPropagates(t *testing.T) {
 		},
 		confirm: func(string) bool { return true },
 	}
-	plan := fabricastate.NewSetupPlan(cmd.runtime.Config, cmd.runtime.Config.Cloud.AWS.AccountID, cmd.runtime.Config.Cloud.AWS.Region)
+	plan := fabricastate.NewSetupPlan(naming.Default, cmd.runtime.Config, cmd.runtime.Config.Cloud.AWS.AccountID, cmd.runtime.Config.Cloud.AWS.Region)
 
 	if err := cmd.runApply(context.Background(), cmd.runtime, ownedApplyPlan(t, plan)); err == nil {
 		t.Fatal("expected error to propagate")
@@ -258,15 +259,15 @@ func TestSaveBackendConfigPopulatesEmptyFields(t *testing.T) {
 		out: &buf,
 	}
 
-	plan := fabricastate.NewSetupPlan(cfg, "111222333444", "us-west-2")
+	plan := fabricastate.NewSetupPlan(naming.Default, cfg, "123456789012", "us-west-2")
 
 	cmd.saveBackendConfig(plan)
 
-	if cfg.Cloud.AWS.AccountID != "111222333444" {
-		t.Errorf("AccountID = %q, want 111222333444", cfg.Cloud.AWS.AccountID)
+	if cfg.Cloud.AWS.AccountID != "123456789012" {
+		t.Errorf("AccountID = %q, want 123456789012", cfg.Cloud.AWS.AccountID)
 	}
-	if cfg.State.Bucket != "fabrica-state-111222333444" {
-		t.Errorf("Bucket = %q, want fabrica-state-111222333444", cfg.State.Bucket)
+	if cfg.State.Bucket != "fabrica-state-123456789012" {
+		t.Errorf("Bucket = %q, want fabrica-state-123456789012", cfg.State.Bucket)
 	}
 	if cfg.State.Table != "fabrica-state-lock" {
 		t.Errorf("Table = %q, want fabrica-state-lock", cfg.State.Table)
@@ -307,7 +308,7 @@ func TestSaveBackendConfigSkipsWhenAllSet(t *testing.T) {
 		out: &buf,
 	}
 
-	plan := fabricastate.NewSetupPlan(cfg, "different-account", "us-east-1")
+	plan := fabricastate.NewSetupPlan(naming.Default, cfg, "different-account", "us-east-1")
 	cmd.saveBackendConfig(plan)
 
 	// Fields should be unchanged
@@ -337,7 +338,7 @@ func TestSaveBackendConfigPartialFill(t *testing.T) {
 		out: &buf,
 	}
 
-	plan := fabricastate.NewSetupPlan(cfg, "new-account", "eu-west-1")
+	plan := fabricastate.NewSetupPlan(naming.Default, cfg, "new-account", "eu-west-1")
 	cmd.saveBackendConfig(plan)
 
 	// AccountID unchanged, Table unchanged
@@ -385,7 +386,7 @@ func TestSaveBackendConfigRoundTripPreservesFile(t *testing.T) {
 		out: &buf,
 	}
 
-	plan := fabricastate.NewSetupPlan(cfg, "111222333444", "us-west-2")
+	plan := fabricastate.NewSetupPlan(naming.Default, cfg, "123456789012", "us-west-2")
 	cmd.saveBackendConfig(plan)
 
 	if buf.Len() > 0 {
@@ -396,7 +397,7 @@ func TestSaveBackendConfigRoundTripPreservesFile(t *testing.T) {
 		t.Fatalf("reading updated config: %v", err)
 	}
 	got := string(data)
-	for _, want := range []string{"# home region", `accountId: "111222333444"`, "bucket: fabrica-state-111222333444", "table: my-locks"} {
+	for _, want := range []string{"# home region", `accountId: "123456789012"`, "bucket: fabrica-state-123456789012", "table: my-locks"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("config lost %q after save:\n%s", want, got)
 		}

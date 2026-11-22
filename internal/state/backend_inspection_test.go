@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
@@ -97,7 +98,7 @@ func TestInspectBackendOwnershipDirectEvidenceWithoutWrites(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			setup := NewSetupPlan(nil, "account-one", "us-west-2")
+			setup := NewSetupPlan(naming.Default, nil, "account-one", "us-west-2")
 			evidence, plan, err := InspectBackendOwnership(context.Background(), p, setup, identity)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) || !reflect.DeepEqual(evidence, BackendOwnershipEvidence{}) || !reflect.DeepEqual(plan, BackendOwnershipPlan{}) {
@@ -132,7 +133,7 @@ func TestInspectBackendOwnershipDirectEvidenceWithoutWrites(t *testing.T) {
 func TestInspectBackendOwnershipAbsentDoesNotCreateCache(t *testing.T) {
 	t.Chdir(t.TempDir())
 	p := &inspectionProvider{readErr: cloud.ErrStateDocumentMissing}
-	evidence, plan, err := InspectBackendOwnership(context.Background(), p, NewSetupPlan(nil, "account-one", "us-west-2"), tags.Identity{})
+	evidence, plan, err := InspectBackendOwnership(context.Background(), p, NewSetupPlan(naming.Default, nil, "account-one", "us-west-2"), tags.Identity{})
 	if err != nil || evidence.Canonical != nil || plan.Bucket.Action != BackendComponentCreate || plan.Table.Action != BackendComponentCreate || p.writes != 0 {
 		t.Fatalf("absent inspection manufactured canonical state: %+v %+v %v", evidence, plan, err)
 	}
@@ -160,7 +161,7 @@ func TestInspectBackendOwnershipFailsClosedBeforePartialEvidence(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			setup := tt.setup
 			if setup.Backend == (BackendNames{}) {
-				setup = NewSetupPlan(nil, "account-one", "us-west-2")
+				setup = NewSetupPlan(naming.Default, nil, "account-one", "us-west-2")
 			}
 			evidence, plan, err := InspectBackendOwnership(context.Background(), tt.provider, setup, tags.Identity{})
 			if err == nil || !strings.Contains(err.Error(), tt.want) || !reflect.DeepEqual(evidence, BackendOwnershipEvidence{}) || !reflect.DeepEqual(plan, BackendOwnershipPlan{}) {
@@ -174,7 +175,7 @@ func TestInspectBackendOwnershipFailsClosedBeforePartialEvidence(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	p := &inspectionProvider{}
-	_, _, err := InspectBackendOwnership(ctx, p, NewSetupPlan(nil, "account-one", "us-west-2"), tags.Identity{})
+	_, _, err := InspectBackendOwnership(ctx, p, NewSetupPlan(naming.Default, nil, "account-one", "us-west-2"), tags.Identity{})
 	if !errors.Is(err, context.Canceled) || len(p.calls) != 1 || p.writes != 0 {
 		t.Fatalf("inspection lost cancellation or performed later I/O: %v %v", p.calls, err)
 	}

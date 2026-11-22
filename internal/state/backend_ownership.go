@@ -5,6 +5,7 @@ import (
 	"maps"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
@@ -43,13 +44,16 @@ type BackendOwnershipPlan struct {
 // ClassifyBackendOwnership validates canonical state and actual backend tags.
 // It performs no I/O, state binding, or mutation; setup must revalidate evidence
 // before applying this plan. A fresh unbound State cannot provide remote proof.
-func ClassifyBackendOwnership(identity tags.Identity, account, region string, evidence BackendOwnershipEvidence) (BackendOwnershipPlan, error) {
+func ClassifyBackendOwnership(identity tags.Identity, prefix naming.Prefix, account, region string, evidence BackendOwnershipEvidence) (BackendOwnershipPlan, error) {
 	canonicalOwner := ""
 	if st := evidence.Canonical; st != nil {
 		if err := ValidateIdentity(st, account, region); err != nil {
 			return BackendOwnershipPlan{}, fmt.Errorf("canonical state target mismatch (recorded account %q and region %q vs configured account %q and region %q); restore the configuration that created this backend and inspect its state", st.Account, st.Region, account, region)
 		}
 		if err := st.ValidateOwnership(identity); err != nil {
+			return BackendOwnershipPlan{}, fmt.Errorf("canonical backend state: %w", err)
+		}
+		if err := st.ValidateNamePrefix(prefix); err != nil {
 			return BackendOwnershipPlan{}, fmt.Errorf("canonical backend state: %w", err)
 		}
 		if st.ManagedBy == "" {
