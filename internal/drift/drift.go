@@ -933,7 +933,7 @@ func rebuildInstanceDesiredState(ctx context.Context, prefix naming.Prefix, rec 
 	case "perforce":
 		return rebuildPerforceInstance(prefix, rec, mod, st, cfg)
 	case "horde":
-		return rebuildHordeInstance(rec, mod, cfg)
+		return rebuildHordeInstance(prefix, rec, mod, cfg)
 	case "lore":
 		return rebuildLoreInstance(prefix, rec, mod, st, cfg)
 	case "ddc":
@@ -1073,7 +1073,7 @@ func rebuildPerforceInstance(prefix naming.Prefix, rec *state.ModuleResource, mo
 // rebuildHordeInstance rebuilds the Horde coordinator instance. The MongoDB
 // password comes from the create-time credentials file and the AMI is the
 // module version create recorded at launch.
-func rebuildHordeInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+func rebuildHordeInstance(prefix naming.Prefix, rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
 	connection, err := horde.ResolveConnection(cfg.Horde, mod)
 	if err != nil {
 		return nil, err
@@ -1114,7 +1114,7 @@ func rebuildHordeInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg
 		InstanceType:   instanceTypeFor(rec, cfg.Horde.InstanceType, horde.DefaultInstanceType),
 		VolumeSize:     volumeSizeFor(rec, cfg.Horde.VolumeSize, 100),
 		SubnetID:       subnetFor(rec, cfg.Horde.SubnetId),
-		InstanceName:   "fabrica-horde",
+		InstanceName:   prefix.Instance("horde"),
 		RootDeviceName: rootDevice,
 	}
 	ds, err := horde.InstanceDesiredState(plan, sgID, userData, profile)
@@ -1549,7 +1549,7 @@ func dispatchModuleSG(prefix naming.Prefix, rec *state.ModuleResource, mod *stat
 		if rec.Properties["role"] == "agent" {
 			// Agent-pool group: agents dial the coordinator, so no ingress.
 			ds, err = horde.AgentSGDesiredState(&horde.AgentsCreatePlan{
-				SGName: horde.DefaultAgentsSGName,
+				SGName: prefix.For("horde", "agents", "sg"),
 				VPCID:  sgVPCID(rec, agentsVPC(cfg)),
 			})
 			break
@@ -1559,7 +1559,7 @@ func dispatchModuleSG(prefix naming.Prefix, rec *state.ModuleResource, mod *stat
 			return nil, connErr
 		}
 		ds, err = horde.SGDesiredState(&horde.CreatePlan{
-			SGName:      horde.DefaultSGName,
+			SGName:      prefix.SG("horde"),
 			VPCID:       sgVPCID(rec, cfg.Horde.VPCId),
 			Port:        connection.Port,
 			GRPCPort:    connection.GRPCPort,

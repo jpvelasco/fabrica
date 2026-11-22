@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestServiceTokenParameterFor(t *testing.T) {
@@ -12,7 +14,7 @@ func TestServiceTokenParameterFor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServiceTokenNonce: %v", err)
 	}
-	name, err := ServiceTokenParameterFor(nonce)
+	name, err := ServiceTokenParameterFor(naming.Default, nonce)
 	if err != nil {
 		t.Fatalf("ServiceTokenParameterFor: %v", err)
 	}
@@ -26,7 +28,7 @@ func TestServiceTokenParameterFor(t *testing.T) {
 
 func TestServiceTokenParameterForRejectsUnsafeNonce(t *testing.T) {
 	for _, nonce := range []string{"", "abc", "../../etc", strings.Repeat("A", 32), strings.Repeat("a", 31) + "/", "x; rm -rf /"} {
-		if _, err := ServiceTokenParameterFor(nonce); err == nil {
+		if _, err := ServiceTokenParameterFor(naming.Default, nonce); err == nil {
 			t.Errorf("ServiceTokenParameterFor(%q) accepted an unsafe nonce", nonce)
 		}
 	}
@@ -60,7 +62,7 @@ func TestReadServiceTokenNonce(t *testing.T) {
 	if got != strings.Repeat("00", 16) {
 		t.Errorf("nonce = %q, want 32 zeros", got)
 	}
-	name, err := ServiceTokenParameterFor(got)
+	name, err := ServiceTokenParameterFor(naming.Default, got)
 	if err != nil {
 		t.Fatalf("ServiceTokenParameterFor(derived nonce): %v", err)
 	}

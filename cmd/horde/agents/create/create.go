@@ -216,7 +216,12 @@ func (c command) run(ctx context.Context) error {
 			"hint", "set horde.agents.vpcId and horde.agents.subnetId in fabrica.yaml to place the pool explicitly")
 	}
 
-	plan, err := horde.NewAgentsCreatePlan(ctx, agentsCfg, horde.CoordinatorRef{
+	prefix, err := c.runtime.Config.ResolveNamePrefix()
+	if err != nil {
+		return err
+	}
+
+	plan, err := horde.NewAgentsCreatePlan(ctx, prefix, agentsCfg, horde.CoordinatorRef{
 		PrivateIP: coordIP,
 		Port:      coordPort,
 		GRPCPort:  c.runtime.Config.Horde.GRPCPort,

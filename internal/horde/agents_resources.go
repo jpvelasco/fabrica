@@ -65,7 +65,7 @@ func AgentToCoordinatorGRPCIngressDesiredState(plan *AgentsCreatePlan, agentSGID
 func AgentRoleDesiredState(plan *AgentsCreatePlan) (json.RawMessage, error) {
 	return iamrole.RoleDocument(plan.RoleName, iamrole.ServiceEC2, []string{
 		"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-	}, []map[string]any{iamrole.SSMOutputPolicy(plan.Region, plan.Account)}, map[string]string{
+	}, []map[string]any{iamrole.SSMOutputPolicyFor(plan.Prefix, plan.Region, plan.Account)}, map[string]string{
 		"FabricaModule": "horde",
 		"FabricaRole":   "agent",
 	}, iamrole.Options(plan.IAM.Path, plan.IAM.PermissionsBoundary)...)
@@ -125,7 +125,7 @@ func agentResourceTags(plan *AgentsCreatePlan, name string) []map[string]string 
 // is the later layer, so it wins over cloud.aws.tags on a shared key: it is the
 // set the root volume is requested with and therefore the more specific one.
 func agentInstanceTags(plan *AgentsCreatePlan) []map[string]string {
-	return mergeAgentTags(agentTags("fabrica-horde-agent"), plan.OperatorTags, plan.VolumeRequestTags)
+	return mergeAgentTags(agentTags(plan.Prefix.For("horde", "agent")), plan.OperatorTags, plan.VolumeRequestTags)
 }
 
 // agentTags is the identity tag set for the agent pool. The agent security
@@ -181,7 +181,7 @@ func mergeAgentTags(base []map[string]string, layers ...map[string]string) []map
 // because it would add tags without PropagateAtLaunch.
 func ASGDesiredState(plan *AgentsCreatePlan, ltID string) (json.RawMessage, error) {
 	var propagated []map[string]any
-	for _, tag := range agentResourceTags(plan, "fabrica-horde-agent") {
+	for _, tag := range agentResourceTags(plan, plan.Prefix.For("horde", "agent")) {
 		propagated = append(propagated, map[string]any{"Key": tag["Key"], "Value": tag["Value"], "PropagateAtLaunch": true})
 	}
 	doc := map[string]any{

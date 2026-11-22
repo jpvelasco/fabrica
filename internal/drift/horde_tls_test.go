@@ -39,7 +39,7 @@ func TestHordeTLSRecoveryPreservesTransport(t *testing.T) {
 		t.Fatal("plaintext gRPC recreated", ingress)
 	}
 	cfg.Horde.TLS = config.HordeTLSConfig{}
-	if _, err := rebuildHordeInstance(&mod.Resources[2], mod, cfg); err == nil {
+	if _, err := rebuildHordeInstance(naming.Default, &mod.Resources[2], mod, cfg); err == nil {
 		t.Fatal("instance downgrade")
 	}
 	if _, err := rebuildSGDesiredState(naming.Default, &mod.Resources[0], mod, cfg); err == nil {

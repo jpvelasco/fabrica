@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestRuntimeArtifacts(t *testing.T) {
@@ -74,7 +75,7 @@ func syntaxCheck(t *testing.T, script string) {
 
 func TestTLSBootstrapAndAgent(t *testing.T) {
 	c, _ := ConnectionFromConfig(tlsConfig())
-	name, err := ServiceTokenParameterFor("0123456789abcdef0123456789abcdef")
+	name, err := ServiceTokenParameterFor(naming.Default, "0123456789abcdef0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
 	}

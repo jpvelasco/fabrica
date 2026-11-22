@@ -149,7 +149,12 @@ func (c command) run(ctx context.Context) error {
 	}
 	hordeCfg.IAM = resolvedIAM
 
-	plan, err := horde.NewCreatePlan(ctx, hordeCfg, account, region, provision.VPCResolver(c.runtime.Provider), cidrResolver)
+	prefix, err := c.runtime.Config.ResolveNamePrefix()
+	if err != nil {
+		return err
+	}
+
+	plan, err := horde.NewCreatePlan(ctx, prefix, hordeCfg, account, region, provision.VPCResolver(c.runtime.Provider), cidrResolver)
 	if err != nil {
 		return fmt.Errorf("building create plan: %w", err)
 	}
@@ -177,7 +182,7 @@ func (c command) run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("building create plan: %w", err)
 	}
-	if plan.ServiceTokenParameter, err = horde.ServiceTokenParameterFor(nonce); err != nil {
+	if plan.ServiceTokenParameter, err = horde.ServiceTokenParameterFor(prefix, nonce); err != nil {
 		return fmt.Errorf("building create plan: %w", err)
 	}
 

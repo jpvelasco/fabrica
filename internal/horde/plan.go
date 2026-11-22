@@ -7,6 +7,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
 
@@ -24,10 +25,9 @@ const (
 // configured and the VPC CIDR cannot be resolved.
 const DefaultAllowedCIDR = "10.0.0.0/8"
 
-// DefaultSGName is the coordinator security group name.
-const DefaultSGName = "fabrica-horde-sg"
-
 type CreatePlan struct {
+	// Prefix is the resource-name prefix every physical name derives from.
+	Prefix       naming.Prefix
 	Connection   Connection
 	Account      string
 	Region       string
@@ -76,7 +76,7 @@ func (p CreatePlan) RequiredResources() []string {
 	}
 }
 
-func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region string, resolver cloud.VPCResolver, cidrResolver cloud.VPCCIDRResolver) (*CreatePlan, error) {
+func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.HordeConfig, account, region string, resolver cloud.VPCResolver, cidrResolver cloud.VPCCIDRResolver) (*CreatePlan, error) {
 	if cfg.AmiID == "" {
 		return nil, fmt.Errorf("horde.amiId is required. Provide an AMI ID that contains MongoDB, Redis,\nand the Horde server. See: https://github.com/jpvelasco/fabrica/blob/main/docs/horde-ami.md")
 	}
@@ -104,6 +104,7 @@ func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region 
 	allowedCIDR := topology.ResolveAllowedCIDR(ctx, cfg.AllowedCIDR, vpcID, cidrResolver, DefaultAllowedCIDR)
 
 	return &CreatePlan{
+		Prefix:              prefix,
 		Connection:          connection,
 		Account:             account,
 		Region:              region,
@@ -116,10 +117,10 @@ func NewCreatePlan(ctx context.Context, cfg config.HordeConfig, account, region 
 		VPCID:               vpcID,
 		SubnetID:            subnetID,
 		DefaultVPC:          defaultVPC,
-		SGName:              DefaultSGName,
-		InstanceName:        "fabrica-horde",
-		RoleName:            "fabrica-horde-role",
-		InstanceProfileName: "fabrica-horde-profile",
+		SGName:              prefix.SG("horde"),
+		InstanceName:        prefix.Instance("horde"),
+		RoleName:            prefix.Role("horde"),
+		InstanceProfileName: prefix.Profile("horde"),
 		IAM:                 cfg.IAM,
 		CostResources:       CostResources(cfg),
 	}, nil

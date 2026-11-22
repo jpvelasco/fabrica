@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/ec2state"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestSGDesiredStateShape(t *testing.T) {
@@ -267,7 +268,7 @@ func TestRoleDesiredStateScopesServiceTokenWrite(t *testing.T) {
 	}
 	got := string(ds)
 	want := "arn:aws:ssm:us-west-2:123456789012:parameter" + name
-	if !strings.Contains(got, want) || !strings.Contains(got, `"ssm:PutParameter"`) || !strings.Contains(got, ServiceTokenPolicyName) {
+	if !strings.Contains(got, want) || !strings.Contains(got, `"ssm:PutParameter"`) || !strings.Contains(got, ServiceTokenPolicyName(naming.Default)) {
 		t.Errorf("role lacks the scoped ssm:PutParameter policy: %s", got)
 	}
 	if strings.Contains(got, "parameter/fabrica/horde/*") {
@@ -282,7 +283,7 @@ func TestRoleDesiredStateWithoutServiceToken(t *testing.T) {
 	}
 	// SSMOutputPolicy already writes parameter/MDS-* for SSM command output;
 	// without a planned token there must be no service-token grant.
-	if strings.Contains(string(ds), ServiceTokenPolicyName) || strings.Contains(string(ds), "parameter/fabrica/horde/") {
+	if strings.Contains(string(ds), ServiceTokenPolicyName(naming.Default)) || strings.Contains(string(ds), "parameter/fabrica/horde/") {
 		t.Error("no service-token parameter planned, but the role can write one")
 	}
 }

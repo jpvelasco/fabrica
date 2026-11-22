@@ -9,11 +9,12 @@ import (
 	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestNewCreatePlanMissingAmiID(t *testing.T) {
 	cfg := config.HordeConfig{}
-	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, nil)
+	_, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", nil, nil)
 	if err == nil {
 		t.Fatal("expected error when AmiID is empty")
 	}
@@ -23,7 +24,7 @@ func TestNewCreatePlanMissingAmiID(t *testing.T) {
 
 func TestNewCreatePlanDefaults(t *testing.T) {
 	cfg := config.HordeConfig{AmiID: "ami-abc123"}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, nil)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -70,7 +71,7 @@ func TestNewCreatePlanExplicitValues(t *testing.T) {
 		VPCId:        "vpc-explicit",
 		SubnetId:     "subnet-explicit",
 	}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, nil)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,7 +98,7 @@ func TestNewCreatePlanExplicitValues(t *testing.T) {
 func TestNewCreatePlanVPCResolver(t *testing.T) {
 	cfg := config.HordeConfig{AmiID: "ami-abc123"}
 	resolver := &cloud.TestVPCResolver{VPCID: "vpc-fake", SubnetID: "subnet-fake"}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, nil)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", resolver, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,7 +116,7 @@ func TestNewCreatePlanVPCResolver(t *testing.T) {
 func TestNewCreatePlanVPCResolverError(t *testing.T) {
 	cfg := config.HordeConfig{AmiID: "ami-abc123"}
 	resolver := &cloud.TestVPCResolver{Err: errors.New("no default VPC")}
-	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, nil)
+	_, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", resolver, nil)
 	if err == nil {
 		t.Fatal("expected error when resolver fails")
 	}
@@ -129,7 +130,7 @@ func TestNewCreatePlanExplicitVPCSkipsResolver(t *testing.T) {
 		SubnetId: "subnet-explicit",
 	}
 	resolver := &cloud.TestVPCResolver{VPCID: "vpc-should-not-be-used", SubnetID: "subnet-should-not-be-used"}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, nil)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", resolver, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -143,7 +144,7 @@ func TestNewCreatePlanExplicitVPCSkipsResolver(t *testing.T) {
 
 func TestNewCreatePlanCostResources(t *testing.T) {
 	cfg := config.HordeConfig{AmiID: "ami-abc123"}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, nil)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -168,7 +169,7 @@ func TestNewCreatePlanCIDRResolverDefaultsToVPCCIDR(t *testing.T) {
 	cfg := config.HordeConfig{AmiID: "ami-abc123"}
 	resolver := &cloud.TestVPCResolver{VPCID: "vpc-fake", SubnetID: "subnet-fake"}
 	cidrResolver := &cloud.TestVPCCIDRResolver{CIDR: "172.31.0.0/16"}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, cidrResolver)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", resolver, cidrResolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -183,7 +184,7 @@ func TestNewCreatePlanCIDRResolverDefaultsToVPCCIDR(t *testing.T) {
 func TestNewCreatePlanCIDRResolverFallbackWhenNoVPC(t *testing.T) {
 	cfg := config.HordeConfig{AmiID: "ami-abc123"}
 	cidrResolver := &cloud.TestVPCCIDRResolver{CIDR: "172.31.0.0/16"}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, cidrResolver)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", nil, cidrResolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -200,7 +201,7 @@ func TestNewCreatePlanCIDRResolverFallbackOnError(t *testing.T) {
 	cfg := config.HordeConfig{AmiID: "ami-abc123"}
 	resolver := &cloud.TestVPCResolver{VPCID: "vpc-fake", SubnetID: "subnet-fake"}
 	cidrResolver := &cloud.TestVPCCIDRResolver{Err: errors.New("VPC not found")}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, cidrResolver)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", resolver, cidrResolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -214,7 +215,7 @@ func TestNewCreatePlanExplicitCIDROverridesResolver(t *testing.T) {
 	cfg := config.HordeConfig{AmiID: "ami-abc123", AllowedCIDR: "192.168.0.0/16"}
 	resolver := &cloud.TestVPCResolver{VPCID: "vpc-fake", SubnetID: "subnet-fake"}
 	cidrResolver := &cloud.TestVPCCIDRResolver{CIDR: "172.31.0.0/16"}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, cidrResolver)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", resolver, cidrResolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

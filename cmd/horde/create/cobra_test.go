@@ -217,3 +217,18 @@ func TestCreateCobraExplicitCIDROverridesResolver(t *testing.T) {
 		t.Errorf("ResolveVPCCIDR calls = %d, want 0 (explicit CIDR skips resolver)", provider.CIDRCalls)
 	}
 }
+
+// A non-default namePrefix is refused until #705 enables it, before any plan
+// is built, so horde create never names resources from an unsupported prefix.
+func TestCreateCobraRejectsGatedNamePrefix(t *testing.T) {
+	rt, err := newCobraTestRuntime(&testutil.TestProvider{})()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.Config.Cloud.AWS.Identity.NamePrefix = "acme"
+	_, err = runCreate(t, func() (globals.Runtime, error) { return rt, nil }, "--dry-run")
+	if err == nil {
+		t.Fatal("expected a non-default namePrefix to be refused")
+	}
+	testutil.AssertContains(t, err.Error(), "#705")
+}
