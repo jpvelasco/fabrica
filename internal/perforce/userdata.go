@@ -4,18 +4,20 @@ import (
 	"fmt"
 	"text/template"
 
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/userdata"
 )
 
 // UserDataConfig is the input shape for the cloud-init script. The admin
 // password is not a field: cloud-init reads it from SSM at boot (#700).
 type UserDataConfig struct {
-	Version                string // "latest", "2025.2", or "2024.2/2659294"
-	ServerID               string // e.g. "fabrica-perforce"
-	Region                 string // required; region of AdminPasswordParameter
-	AdminPasswordParameter string // required; per-create SSM SecureString name cloud-init reads
-	DataDevice             string // optional explicit device; empty = auto-detect (never the root disk)
-	DataMount              string // "/hxdepots"
+	Version                string        // "latest", "2025.2", or "2024.2/2659294"
+	ServerID               string        // e.g. "fabrica-perforce"
+	Region                 string        // required; region of AdminPasswordParameter
+	AdminPasswordParameter string        // required; per-create SSM SecureString name cloud-init reads
+	NamePrefix             naming.Prefix // scopes AdminPasswordParameter; zero value is the default prefix
+	DataDevice             string        // optional explicit device; empty = auto-detect (never the root disk)
+	DataMount              string        // "/hxdepots"
 }
 
 // The rendered script contains the parameter name and region, never the
@@ -138,8 +140,9 @@ func (cfg *UserDataConfig) validate() error {
 	if cfg.Region == "" {
 		return fmt.Errorf("Region must not be empty: cloud-init reads the Helix Core admin password from SSM in that region")
 	}
-	if !AdminPasswordScope.IsName(cfg.AdminPasswordParameter) {
-		return fmt.Errorf("AdminPasswordParameter %q is not a per-create %s/<nonce>/admin-password name; re-run 'fabrica perforce create' to mint one", cfg.AdminPasswordParameter, AdminPasswordScope.Prefix)
+	scope := AdminPasswordScope(cfg.NamePrefix)
+	if !scope.IsName(cfg.AdminPasswordParameter) {
+		return fmt.Errorf("AdminPasswordParameter %q is not a per-create %s/<nonce>/admin-password name; re-run 'fabrica perforce create' to mint one", cfg.AdminPasswordParameter, scope.Prefix)
 	}
 	return nil
 }

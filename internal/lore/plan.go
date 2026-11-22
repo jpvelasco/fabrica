@@ -9,6 +9,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
 
@@ -32,6 +33,8 @@ const (
 // CreatePlan holds everything needed to provision Lore: resolved names,
 // resource specs, cost inputs. No AWS SDK types — callers execute the plan.
 type CreatePlan struct {
+	// Prefix is the resource-name prefix every physical name derives from.
+	Prefix       naming.Prefix
 	Account      string
 	Region       string
 	AmiID        string
@@ -93,15 +96,12 @@ func (p CreatePlan) RequiredResources() []string {
 // configured and the VPC CIDR cannot be resolved.
 const DefaultAllowedCIDR = "10.0.0.0/8"
 
-// DefaultSGName is the Lore security group name.
-const DefaultSGName = "fabrica-lore-sg"
-
 // NewCreatePlan validates inputs and builds a CreatePlan. VPCResolver is called
 // only when VPCId/SubnetId are absent from cfg; pass nil to skip resolution
 // (dry-run with explicit VPC values, or tests). cidrResolver may be nil: the
 // AllowedCIDR then falls back to DefaultAllowedCIDR when cfg.AllowedCIDR is
 // empty.
-func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region string, resolver cloud.VPCResolver, cidrResolver cloud.VPCCIDRResolver) (*CreatePlan, error) {
+func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.LoreConfig, account, region string, resolver cloud.VPCResolver, cidrResolver cloud.VPCCIDRResolver) (*CreatePlan, error) {
 	if cfg.AmiID == "" {
 		return nil, fmt.Errorf("lore.amiId is required. Provide an AMI ID that contains the loreserver binary.\nSee: docs/lore-ami.md")
 	}
@@ -122,7 +122,7 @@ func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region s
 	}
 
 	storeBackend := normalizeStoreBackend(cfg.StoreBackend)
-	storeBucket := ResolveStoreBucket(cfg.StoreBucket, account, region, storeBackend)
+	storeBucket := ResolveStoreBucket(prefix, cfg.StoreBucket, account, region, storeBackend)
 
 	vpcID, subnetID, defaultVPC, err := topology.ResolveVPC(ctx, cfg.VPCId, cfg.SubnetId, resolver)
 	if err != nil {
@@ -131,6 +131,7 @@ func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region s
 	allowedCIDR := topology.ResolveAllowedCIDR(ctx, cfg.AllowedCIDR, vpcID, cidrResolver, DefaultAllowedCIDR)
 
 	return &CreatePlan{
+		Prefix:              prefix,
 		Account:             account,
 		Region:              region,
 		AmiID:               cfg.AmiID,
@@ -142,16 +143,16 @@ func NewCreatePlan(ctx context.Context, cfg config.LoreConfig, account, region s
 		VPCID:               vpcID,
 		SubnetID:            subnetID,
 		DefaultVPC:          defaultVPC,
-		SGName:              DefaultSGName,
-		InstanceName:        "fabrica-lore",
+		SGName:              prefix.SG("lore"),
+		InstanceName:        prefix.Instance("lore"),
 		StoreBackend:        storeBackend,
 		StoreBucket:         storeBucket,
 		StoreTables:         s3StoreTables(storeBackend, storeBucket),
-		RoleName:            "fabrica-lore-role",
-		InstanceProfileName: "fabrica-lore-profile",
+		RoleName:            prefix.Role("lore"),
+		InstanceProfileName: prefix.Profile("lore"),
 		IAM:                 cfg.IAM,
 		TLSConfig:           cfg.TLSConfig,
-		CostResources:       CostResources(cfg),
+		CostResources:       CostResources(prefix, cfg),
 	}, nil
 }
 
@@ -181,16 +182,16 @@ func normalizeStoreBackend(raw string) string {
 }
 
 // ResolveStoreBucket returns the configured Lore store S3 bucket, or the
-// default fabrica-lore-store-<account>-<region> name when unset. Empty for
+// default <prefix>-lore-store-<account>-<region> name when unset. Empty for
 // any backend that does not use an S3 store.
-func ResolveStoreBucket(bucket, account, region, backend string) string {
+func ResolveStoreBucket(prefix naming.Prefix, bucket, account, region, backend string) string {
 	if backend != StoreBackendS3 {
 		return ""
 	}
 	if bucket != "" {
 		return bucket
 	}
-	return fmt.Sprintf("fabrica-lore-store-%s-%s", account, region)
+	return prefix.Bucket("lore-store", account, region)
 }
 
 // s3StoreTables returns the four store table names for the s3 backend, or nil

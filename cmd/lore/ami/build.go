@@ -18,6 +18,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/amirecipe"
 	"github.com/jpvelasco/fabrica/internal/amissm"
 	"github.com/jpvelasco/fabrica/internal/lore"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/tags"
 	"github.com/spf13/cobra"
 )
@@ -51,6 +52,8 @@ type BuildConfig struct {
 	OutputDir     string
 	IncludePacker bool
 	DryRun        bool
+	// NamePrefix names the default AMI (#705); zero value is the default prefix.
+	NamePrefix naming.Prefix
 }
 
 // RecipeTags is the tag set for the AMI, its recipe, and its snapshots.
@@ -120,6 +123,11 @@ Examples:
 			if err != nil {
 				return err
 			}
+			prefix, err := rt.Config.ResolveNamePrefix()
+			if err != nil {
+				return err
+			}
+			cfg.NamePrefix = prefix
 			cfg.Identity = identity
 			cfg.CloudTags = rt.Config.Cloud.AWS.Tags
 			if f := cmd.InheritedFlags().Lookup("dry-run"); f != nil && f.Value.String() == "true" {
@@ -139,7 +147,7 @@ Examples:
 	cmd.Flags().StringVar(&cfg.Version, "lore-version", defaultLoreVersion, "Lore server version (X.Y.Z); only releases with a pinned tarball SHA-256 are accepted")
 	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", defaultBaseImage, "Base Ubuntu 22.04 LTS AMI ID")
 	cmd.Flags().StringVar(&cfg.Region, "region", defaultRegion, "AWS region for the AMI build (used in component ARNs)")
-	cmd.Flags().StringVar(&cfg.Name, "name", "", `AMI name (default: "fabrica-lore-<version>")`)
+	cmd.Flags().StringVar(&cfg.Name, "name", "", `AMI name (default: "<namePrefix>-lore-<version>", "fabrica-lore-<version>" unless namePrefix is set)`)
 	cmd.Flags().StringVar(&cfg.OutputDir, "output-dir", defaultOutputDir, "Directory to write generated files to")
 	cmd.Flags().BoolVar(&cfg.IncludePacker, "include-packer", false, "Also generate a Packer HCL template")
 
@@ -151,7 +159,7 @@ func (b *buildCommand) run() error {
 		return err
 	}
 	if b.cfg.Name == "" {
-		b.cfg.Name = fmt.Sprintf("fabrica-lore-%s", b.cfg.Version)
+		b.cfg.Name = fmt.Sprintf("%s-%s", b.cfg.NamePrefix.For("lore"), b.cfg.Version)
 	}
 	// Image Builder rejects dots in component/recipe names, so a version like
 	// 5.8.0 must not leak into the name the operator passes to

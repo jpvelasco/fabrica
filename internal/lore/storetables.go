@@ -1,6 +1,10 @@
 package lore
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/jpvelasco/fabrica/internal/naming"
+)
 
 // Store table definitions for the Lore "s3" (AWS) store backend.
 //
@@ -81,7 +85,7 @@ func StoreTableNames(bucket string) []string {
 // create path attaches (see RoleDesiredState) and the export layer re-emits.
 // Region/Account fall back to partition-agnostic placeholders when unset
 // (tests).
-func StoreDynamoDBPolicy(region, account, bucket string, tableNames []string) map[string]any {
+func StoreDynamoDBPolicy(prefix naming.Prefix, region, account, bucket string, tableNames []string) map[string]any {
 	if region == "" {
 		region = "*"
 	}
@@ -95,7 +99,7 @@ func StoreDynamoDBPolicy(region, account, bucket string, tableNames []string) ma
 	// The plugin queries through the locks table's GSIs; grant on its index/*.
 	tableARNs = append(tableARNs, fmt.Sprintf("arn:aws:dynamodb:%s:%s:table/%s-locks/index/*", region, account, bucket))
 	return map[string]any{
-		"PolicyName": "fabrica-lore-store-dynamodb",
+		"PolicyName": prefix.For("lore", "store", "dynamodb"),
 		"PolicyDocument": map[string]any{
 			"Version": "2012-10-17",
 			"Statement": []map[string]any{

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jpvelasco/fabrica/internal/naming"
 	fabricatags "github.com/jpvelasco/fabrica/internal/tags"
 )
 
@@ -165,6 +166,14 @@ func rolePolicyARN(arn string) bool {
 // /fabrica/ssm/* prefix. Attached to every Fabrica-managed instance role that
 // uses SSM (perforce, horde, horde agents, lore, ddc).
 func SSMOutputPolicy(region, account string) map[string]any {
+	return SSMOutputPolicyFor(naming.Default, region, account)
+}
+
+// SSMOutputPolicyFor is SSMOutputPolicy for a module that follows the resource
+// name prefix (#705): the policy name and the CloudWatch Logs group it grants
+// both derive from p.
+func SSMOutputPolicyFor(p naming.Prefix, region, account string) map[string]any {
+	logGroup := p.LogGroup("ssm") + "/*"
 	if region == "" {
 		region = "*"
 	}
@@ -172,7 +181,7 @@ func SSMOutputPolicy(region, account string) map[string]any {
 		account = "*"
 	}
 	return map[string]any{
-		"PolicyName": "fabrica-ssm-output",
+		"PolicyName": p.For("ssm", "output"),
 		"PolicyDocument": map[string]any{
 			"Version": "2012-10-17",
 			"Statement": []map[string]any{
@@ -186,15 +195,15 @@ func SSMOutputPolicy(region, account string) map[string]any {
 					"Sid":      "CloudWatchLogsGroup",
 					"Effect":   "Allow",
 					"Action":   []string{"logs:CreateLogGroup"},
-					"Resource": []string{fmt.Sprintf("arn:aws:logs:%s:%s:log-group:/fabrica/ssm/*", region, account)},
+					"Resource": []string{fmt.Sprintf("arn:aws:logs:%s:%s:log-group:%s", region, account, logGroup)},
 				},
 				{
 					"Sid":    "CloudWatchLogsStream",
 					"Effect": "Allow",
 					"Action": []string{"logs:CreateLogStream", "logs:PutLogEvents"},
 					"Resource": []string{
-						fmt.Sprintf("arn:aws:logs:%s:%s:log-group:/fabrica/ssm/*", region, account),
-						fmt.Sprintf("arn:aws:logs:%s:%s:log-group:/fabrica/ssm/*:*", region, account),
+						fmt.Sprintf("arn:aws:logs:%s:%s:log-group:%s", region, account, logGroup),
+						fmt.Sprintf("arn:aws:logs:%s:%s:log-group:%s:*", region, account, logGroup),
 					},
 				},
 			},

@@ -10,6 +10,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/deploy"
 	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/lore"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/workstation"
 )
@@ -25,7 +26,7 @@ func TestModuleCostResourcesEstimable(t *testing.T) {
 	}{
 		{"perforce", perforce.CostResources(config.PerforceConfig{})},
 		{"horde", horde.CostResources(config.HordeConfig{})},
-		{"lore", lore.CostResources(config.LoreConfig{})},
+		{"lore", lore.CostResources(naming.Default, config.LoreConfig{})},
 		{"ddc", ddc.CostResources(config.DDCConfig{})},
 		{"ddc-scylla", ddc.CostResources(config.DDCConfig{Backend: ddc.BackendScylla})},
 		{"workstation", workstation.CostResources(config.WorkstationConfig{})},

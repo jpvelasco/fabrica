@@ -33,6 +33,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/ddc"
 	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/lore"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/tags"
@@ -697,7 +698,8 @@ type imageInspectorFunc func(ctx context.Context, imageID string) (cloud.ImageIn
 
 // planOptions carries provider capabilities into PlanRemediation.
 type planOptions struct {
-	inspector imageInspectorFunc
+	inspector  imageInspectorFunc
+	namePrefix naming.Prefix
 }
 
 // PlanOption configures PlanRemediation.
@@ -709,6 +711,12 @@ type PlanOption func(*planOptions)
 // reported unsupported for automatic remediation.
 func WithImageInspector(inspector imageInspectorFunc) PlanOption {
 	return func(o *planOptions) { o.inspector = inspector }
+}
+
+// WithNamePrefix sets the resource-name prefix the rebuilt desired state uses
+// (#705). Omitting it rebuilds against the default prefix.
+func WithNamePrefix(p naming.Prefix) PlanOption {
+	return func(o *planOptions) { o.namePrefix = p }
 }
 
 // PlanRemediation takes a DriftReport and the state + config, and returns a
@@ -733,7 +741,7 @@ func PlanRemediation(ctx context.Context, report *DriftReport, st *state.State, 
 			switch r.Status {
 			case Missing:
 				if canRecreate(r.TypeName) {
-					res, err := rebuildResource(ctx, r, st, cfg, po.inspector)
+					res, err := rebuildResource(ctx, r, st, cfg, po.namePrefix, po.inspector)
 					if err != nil {
 						action = RemediationAction{
 							Module:     r.Module,
@@ -852,7 +860,7 @@ func recordedRegion(st *state.State, module, typeName, identifier string) string
 // recorded state is insufficient to rebuild the resource's desired state;
 // the caller then reports the resource as skip-with-reason instead of
 // creating it with a partial state.
-func rebuildResource(ctx context.Context, dr *DriftResult, st *state.State, cfg *config.Config, inspector imageInspectorFunc) (*cloud.Resource, error) {
+func rebuildResource(ctx context.Context, dr *DriftResult, st *state.State, cfg *config.Config, prefix naming.Prefix, inspector imageInspectorFunc) (*cloud.Resource, error) {
 	mod := st.GetModule(dr.Module)
 	if mod == nil {
 		return &cloud.Resource{
@@ -882,13 +890,13 @@ func rebuildResource(ctx context.Context, dr *DriftResult, st *state.State, cfg 
 	// Build desired state from recorded properties and config defaults.
 	switch dr.TypeName {
 	case cloud.TypeAWSEC2Instance:
-		ds, err := rebuildInstanceDesiredState(ctx, rec, mod, st, cfg, inspector)
+		ds, err := rebuildInstanceDesiredState(ctx, prefix, rec, mod, st, cfg, inspector)
 		if err != nil {
 			return nil, fmt.Errorf("rebuild desired state for instance %s in module %s: %w", dr.Identifier, dr.Module, err)
 		}
 		res.DesiredState = ds
 	case cloud.TypeAWSEC2SecurityGroup:
-		ds, err := rebuildSGDesiredState(rec, mod, cfg)
+		ds, err := rebuildSGDesiredState(prefix, rec, mod, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("rebuild desired state for security group %s in module %s: %w", dr.Identifier, dr.Module, err)
 		}
@@ -917,17 +925,17 @@ func rebuildResource(ctx context.Context, dr *DriftResult, st *state.State, cfg 
 // security group, or module credentials — the error propagates and the
 // caller reports the instance as unsupported for automatic remediation
 // instead of launching a broken replacement.
-func rebuildInstanceDesiredState(ctx context.Context, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config, inspector imageInspectorFunc) (json.RawMessage, error) {
+func rebuildInstanceDesiredState(ctx context.Context, prefix naming.Prefix, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config, inspector imageInspectorFunc) (json.RawMessage, error) {
 	if mod.Name == "ddc" && isEdgeResource(rec) {
 		return rebuildEdgeInstanceDesiredState(rec, mod, st, cfg)
 	}
 	switch mod.Name {
 	case "perforce":
-		return rebuildPerforceInstance(rec, mod, st, cfg)
+		return rebuildPerforceInstance(prefix, rec, mod, st, cfg)
 	case "horde":
 		return rebuildHordeInstance(rec, mod, cfg)
 	case "lore":
-		return rebuildLoreInstance(rec, mod, st, cfg)
+		return rebuildLoreInstance(prefix, rec, mod, st, cfg)
 	case "ddc":
 		return rebuildDDCInstance(rec, mod, st, cfg)
 	case "workstation":
@@ -1011,7 +1019,7 @@ var readHordePassword = credentials.ReadHordeMongoPassword
 // instead. The admin password is not read here: cloud-init fetches it from the
 // per-create SSM parameter recorded on the instance (#700), which still exists
 // because only terminate deletes it.
-func rebuildPerforceInstance(rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
+func rebuildPerforceInstance(prefix naming.Prefix, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
 	ami := rec.Properties["imageId"]
 	if ami == "" {
 		return nil, fmt.Errorf("no AMI recorded for the perforce instance (Properties.imageId); re-run 'fabrica perforce create'")
@@ -1043,6 +1051,7 @@ func rebuildPerforceInstance(rec *state.ModuleResource, mod *state.ModuleState, 
 		ServerID:               "fabrica-perforce",
 		Region:                 st.Region,
 		AdminPasswordParameter: adminParam,
+		NamePrefix:             prefix,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("rendering perforce cloud-init: %w", err)
@@ -1051,7 +1060,7 @@ func rebuildPerforceInstance(rec *state.ModuleResource, mod *state.ModuleState, 
 		InstanceType:   instanceTypeFor(rec, cfg.Perforce.InstanceType, perforce.DefaultInstanceType),
 		VolumeSize:     volumeSizeFor(rec, cfg.Perforce.VolumeSize, 500),
 		SubnetID:       subnetFor(rec, cfg.Perforce.SubnetId),
-		InstanceName:   "fabrica-perforce",
+		InstanceName:   prefix.Instance("perforce"),
 		RootDeviceName: rootDevice,
 	}
 	ds, err := perforce.InstanceDesiredState(plan, sgID, userData, profile, ami)
@@ -1119,7 +1128,7 @@ func rebuildHordeInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg
 // its bucket from the bucket resource the lore module recorded in state (the
 // name create actually launched with), falling back to the same resolution
 // create uses; the local backend carries no store inputs.
-func rebuildLoreInstance(rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
+func rebuildLoreInstance(prefix naming.Prefix, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
 	ami := mod.Version
 	if ami == "" {
 		return nil, fmt.Errorf("no AMI recorded for the lore instance (module version); re-run 'fabrica lore create'")
@@ -1144,7 +1153,7 @@ func rebuildLoreInstance(rec *state.ModuleResource, mod *state.ModuleState, st *
 	if backend == lore.StoreBackendS3 {
 		bucket = moduleS3BucketFor(mod)
 		if bucket == "" {
-			bucket = lore.ResolveStoreBucket(cfg.Lore.StoreBucket, st.Account, st.Region, backend)
+			bucket = lore.ResolveStoreBucket(prefix, cfg.Lore.StoreBucket, st.Account, st.Region, backend)
 		}
 	}
 	var storeTables []string
@@ -1171,7 +1180,7 @@ func rebuildLoreInstance(rec *state.ModuleResource, mod *state.ModuleState, st *
 		InstanceType:        instanceTypeFor(rec, cfg.Lore.InstanceType, lore.DefaultInstanceType),
 		VolumeSize:          volumeSizeFor(rec, cfg.Lore.VolumeSize, 500),
 		SubnetID:            subnetFor(rec, cfg.Lore.SubnetId),
-		InstanceName:        "fabrica-lore",
+		InstanceName:        prefix.Instance("lore"),
 		InstanceProfileName: profile,
 		RootDeviceName:      rootDevice,
 	}
@@ -1515,8 +1524,8 @@ func moduleS3BucketFor(mod *state.ModuleState) string {
 // provisioned: configured ports, distinct public/internal CIDRs, and
 // role-specific groups (horde agent pool, DDC edge nodes). Recorded state
 // properties (vpcId, role, region) override config where they exist.
-func rebuildSGDesiredState(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
-	ds, err := moduleSGDispatch(rec, mod, cfg)
+func rebuildSGDesiredState(prefix naming.Prefix, rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+	ds, err := moduleSGDispatch(prefix, rec, mod, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -1531,7 +1540,7 @@ var moduleSGDispatch = dispatchModuleSG
 
 // dispatchModuleSG builds the canonical SG desired state for one module's
 // recorded resource against the resolved configuration.
-func dispatchModuleSG(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+func dispatchModuleSG(prefix naming.Prefix, rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
 	var ds json.RawMessage
 	var err error
 
@@ -1558,13 +1567,13 @@ func dispatchModuleSG(rec *state.ModuleResource, mod *state.ModuleState, cfg *co
 		})
 	case "perforce":
 		ds, err = perforce.SGDesiredState(&perforce.CreatePlan{
-			SGName:      perforce.DefaultSGName,
+			SGName:      prefix.SG("perforce"),
 			VPCID:       sgVPCID(rec, cfg.Perforce.VPCId),
 			AllowedCIDR: defaultCIDR(cfg.Perforce.AllowedCIDR, perforce.DefaultAllowedCIDR),
 		})
 	case "lore":
 		ds, err = lore.SGDesiredState(&lore.CreatePlan{
-			SGName:      lore.DefaultSGName,
+			SGName:      prefix.SG("lore"),
 			VPCID:       sgVPCID(rec, cfg.Lore.VPCId),
 			GRPCPort:    lore.DefaultGRPCPort,
 			HTTPPort:    lore.DefaultHTTPPort,

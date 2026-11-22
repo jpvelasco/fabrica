@@ -111,7 +111,10 @@ func costInputs(cfg *config.Config, m *state.ModuleState) ([]cost.Resource, stri
 		}
 		return res, note
 	case "lore":
-		return applyStopped(ec2CostResources(m, lore.CostResources(cfg.Lore)), m.Status)
+		// Load rejects non-default prefixes until #705 is enabled, so this
+		// error cannot occur on a loaded config.
+		prefix, _ := cfg.ResolveNamePrefix()
+		return applyStopped(ec2CostResources(m, lore.CostResources(prefix, cfg.Lore)), m.Status)
 	case "workstation":
 		return applyStopped(workstationCostResources(m, cfg.Workstation), m.Status)
 	case "ci":

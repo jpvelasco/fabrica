@@ -10,6 +10,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/ddc"
 	"github.com/jpvelasco/fabrica/internal/deploy"
 	"github.com/jpvelasco/fabrica/internal/lore"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/schedule"
 	"github.com/jpvelasco/fabrica/internal/state"
@@ -126,7 +127,7 @@ func TestEC2CostResourcesKeepsNonComputeLines(t *testing.T) {
 			Identifier: "i-1",
 			Properties: map[string]string{"instanceType": "m5.2xlarge", "volumeSize": "800"},
 		}}},
-		lore.CostResources(cfg.Lore),
+		lore.CostResources(naming.Default, cfg.Lore),
 	)
 	if !containsType(got, cloud.TypeAWSS3Bucket) || !containsType(got, cloud.TypeAWSDynamoDBTable) {
 		t.Fatalf("lore storage lines dropped: %+v", got)
