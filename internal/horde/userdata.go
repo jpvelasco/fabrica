@@ -184,7 +184,7 @@ func (cfg *UserDataConfig) validate() error {
 		// Both values are rendered into a root shell script: accept only the
 		// exact per-create name shape and a real Region code.
 		if !IsServiceTokenName(cfg.ServiceTokenParameter) {
-			return fmt.Errorf("ServiceTokenParameter %q is not a per-create %s name", cfg.ServiceTokenParameter, ServiceTokenParameterPrefix)
+			return fmt.Errorf("ServiceTokenParameter %q is not a per-create /<namePrefix>/horde/<nonce>/service-token name", cfg.ServiceTokenParameter)
 		}
 		if !regionPattern.MatchString(cfg.Region) {
 			return fmt.Errorf("Region %q is not a valid AWS Region (required with ServiceTokenParameter)", cfg.Region)

@@ -15,6 +15,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/amirecipe"
 	"github.com/jpvelasco/fabrica/internal/amissm"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/tags"
 	"github.com/spf13/cobra"
 )
@@ -50,6 +51,8 @@ type BuildConfig struct {
 	Role          string
 	AgentArtifact string
 	AgentSHA256   string
+	// NamePrefix names the default AMI (#705); zero value is the default prefix.
+	NamePrefix naming.Prefix
 }
 
 // IsAgent reports whether the build targets the stock Horde agent rather than
@@ -125,6 +128,11 @@ Examples:
 			if err != nil {
 				return err
 			}
+			prefix, err := rt.Config.ResolveNamePrefix()
+			if err != nil {
+				return err
+			}
+			cfg.NamePrefix = prefix
 			cfg.Identity = identity
 			cfg.Region = amirecipe.ResolveRegion(cfg.Region, rt.Config.Cloud.AWS.Region)
 			cfg.CloudTags = rt.Config.Cloud.AWS.Tags
@@ -145,7 +153,7 @@ Examples:
 	cmd.Flags().StringVar(&cfg.Install, "install", "docker", `Install method: "docker" (compose stack) or "native" (.NET + MongoDB + Redis)`)
 	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", defaultBaseImage, "Base Ubuntu 22.04 LTS AMI ID, or the default SSM parameter that resolves the latest Canonical image")
 	cmd.Flags().StringVar(&cfg.Region, "region", "", "AWS region for the AMI build (default: cloud.aws.region, else us-east-1)")
-	cmd.Flags().StringVar(&cfg.Name, "name", "", `AMI name (default: "fabrica-horde-<version>")`)
+	cmd.Flags().StringVar(&cfg.Name, "name", "", `AMI name (default: "<namePrefix>-horde-<version>", "fabrica-horde-<version>" unless namePrefix is set)`)
 	cmd.Flags().StringVar(&cfg.OutputDir, "output-dir", defaultOutputDir, "Directory to write generated files to")
 	cmd.Flags().BoolVar(&cfg.IncludePacker, "include-packer", false, "Also generate a Packer HCL template")
 	cmd.Flags().StringVar(&cfg.Role, "role", roleCoordinator, `AMI role: "coordinator" (Horde server stack) or "agent" (stock Horde Linux agent; requires --install native)`)
@@ -214,9 +222,9 @@ func (b *buildCommand) run() error {
 // collide.
 func (b *buildCommand) defaultName() string {
 	if b.cfg.IsAgent() {
-		return fmt.Sprintf("fabrica-horde-agent-%s", b.cfg.Version)
+		return fmt.Sprintf("%s-%s", b.cfg.NamePrefix.For("horde", "agent"), b.cfg.Version)
 	}
-	return fmt.Sprintf("fabrica-horde-%s", b.cfg.Version)
+	return fmt.Sprintf("%s-%s", b.cfg.NamePrefix.For("horde"), b.cfg.Version)
 }
 
 // componentTemplate selects the Image Builder component document for the role.

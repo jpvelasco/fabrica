@@ -7,6 +7,8 @@ import (
 	"io"
 	"regexp"
 	"strings"
+
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 // The Horde coordinator runs with built-in accounts, so `fabrica horde submit`
@@ -18,22 +20,22 @@ import (
 // parameter. No token is ever generated, stored, or logged on the operator
 // side, and none passes through user data or Cloud Control desired state.
 
-// ServiceTokenParameterPrefix is the hierarchical prefix of the per-create
-// service-token SecureString.
-const ServiceTokenParameterPrefix = "/fabrica/horde"
-
 // serviceTokenNameSuffix is the trailing leaf of the per-create parameter name.
 const serviceTokenNameSuffix = "/service-token"
 
-// serviceTokenName is the exact per-create name shape: the prefix, a 32
-// lowercase-hex nonce (NewServiceTokenNonce), and the leaf. Destroy, submit,
-// and cloud-init validate recorded names against it so a hand-edited state
-// entry can neither widen an IAM scope nor inject into the cloud-init script.
-var serviceTokenName = regexp.MustCompile(`^/fabrica/horde/[0-9a-f]{32}/service-token$`)
+// serviceTokenName is the exact per-create name shape: /<namePrefix>/horde, a
+// 32 lowercase-hex nonce (NewServiceTokenNonce), and the leaf. The prefix is
+// validated by internal/naming when it is minted, so this pattern only needs to
+// accept any valid prefix. Destroy, submit, the ci module, and cloud-init check
+// recorded names against it so a hand-edited state entry can neither widen an
+// IAM scope nor inject into the cloud-init script.
+var serviceTokenName = regexp.MustCompile(`^/[a-z][a-z0-9-]{0,19}/horde/[0-9a-f]{32}/service-token$`)
 
 // ServiceTokenPolicyName is the instance-role inline policy that allows
 // ssm:PutParameter on exactly one service-token parameter ARN.
-const ServiceTokenPolicyName = "fabrica-horde-service-token" // #nosec G101 -- policy name, not a credential
+func ServiceTokenPolicyName(p naming.Prefix) string {
+	return p.For("horde", "service", "token")
+}
 
 // ServiceTokenPlaceholder is the value `horde create` stores before cloud-init
 // publishes the real token. Readers treat it as "not published yet".
@@ -55,10 +57,11 @@ const (
 // ServiceAccountAuthHandler accepts: "ServiceAccount <token>".
 const ServiceTokenAuthScheme = "ServiceAccount"
 
-// ServiceTokenParameterFor returns the per-create SecureString name for nonce.
-func ServiceTokenParameterFor(nonce string) (string, error) {
+// ServiceTokenParameterFor returns the per-create SecureString name for nonce,
+// under the module path of prefix (/<prefix>/horde/<nonce>/service-token).
+func ServiceTokenParameterFor(prefix naming.Prefix, nonce string) (string, error) {
 	nonce = strings.TrimSpace(nonce)
-	name := ServiceTokenParameterPrefix + "/" + nonce + serviceTokenNameSuffix
+	name := prefix.ParamPath("horde") + "/" + nonce + serviceTokenNameSuffix
 	if !serviceTokenName.MatchString(name) {
 		return "", fmt.Errorf("the service-token parameter nonce must be 32 lowercase hex characters (got %q)", nonce)
 	}
@@ -73,7 +76,7 @@ func ServiceTokenParameterARN(region, account, name string) (string, error) {
 		return "", fmt.Errorf("region and account are required to scope %s", name)
 	}
 	if !IsServiceTokenName(name) {
-		return "", fmt.Errorf("service-token parameter name %q is not a per-create %s name", name, ServiceTokenParameterPrefix)
+		return "", fmt.Errorf("service-token parameter name %q is not a per-create /<namePrefix>/horde/<nonce>/service-token name", name)
 	}
 	return fmt.Sprintf("arn:aws:ssm:%s:%s:parameter%s", region, account, name), nil
 }

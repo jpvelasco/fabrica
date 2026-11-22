@@ -541,3 +541,29 @@ func testRuntimeWith(provider cloud.Provider) globals.RuntimeSource {
 	rt := globals.Runtime{Config: cfg, Provider: provider}
 	return func() (globals.Runtime, error) { return rt, nil }
 }
+
+// A non-default namePrefix is refused until #705 enables it, before any agent
+// plan is built.
+func TestAgentsCreateRejectsGatedNamePrefix(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, coordinatorStateJSON())
+	provider := &testutil.TestProvider{
+		GetResources: map[string]cloud.Resource{
+			cloud.TypeAWSEC2Instance: {
+				Identifier:  "i-coordinator",
+				ActualState: mustJSON(map[string]any{"PrivateIpAddress": "10.0.1.50"}),
+			},
+		},
+	}
+	rt, err := newAgentsTestRuntime(&vpcTestProvider{TestProvider: provider, vpcID: "vpc-test", subnetID: "subnet-test"})()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.Config.Cloud.AWS.Identity.NamePrefix = "acme"
+	_, err = runAgentsCreate(t, func() (globals.Runtime, error) { return rt, nil }, "--dry-run", "--ami-id", "ami-agent123")
+	if err == nil {
+		t.Fatal("expected a non-default namePrefix to be refused")
+	}
+	testutil.AssertContains(t, err.Error(), "#705")
+}

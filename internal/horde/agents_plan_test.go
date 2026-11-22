@@ -8,11 +8,12 @@ import (
 	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestNewAgentsCreatePlanMissingAmiID(t *testing.T) {
 	cfg := config.HordeAgentsConfig{}
-	_, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", nil)
+	_, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", nil)
 	if err == nil {
 		t.Fatal("expected error when agent AMI is empty")
 	}
@@ -21,7 +22,7 @@ func TestNewAgentsCreatePlanMissingAmiID(t *testing.T) {
 
 func TestNewAgentsCreatePlanMissingCoordinatorIP(t *testing.T) {
 	cfg := config.HordeAgentsConfig{AmiID: "ami-agent123"}
-	_, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", nil)
+	_, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", nil)
 	if err == nil {
 		t.Fatal("expected error when coordinator IP is empty")
 	}
@@ -31,7 +32,7 @@ func TestNewAgentsCreatePlanMissingCoordinatorIP(t *testing.T) {
 func TestNewAgentsCreatePlanDefaults(t *testing.T) {
 	cfg := config.HordeAgentsConfig{AmiID: "ami-agent123"}
 	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
-	plan, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord123"}, "123456789012", "us-east-1", resolver)
+	plan, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord123"}, "123456789012", "us-east-1", resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -71,7 +72,7 @@ func TestNewAgentsCreatePlanCustomValues(t *testing.T) {
 		MaxSize:         5,
 	}
 	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
-	plan, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.2.20", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
+	plan, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.2.20", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,7 +98,7 @@ func TestNewAgentsCreatePlanMinExceedsDesired(t *testing.T) {
 		DesiredCapacity: 2,
 		MaxSize:         5,
 	}
-	_, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", nil)
+	_, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", nil)
 	if err == nil {
 		t.Fatal("expected error when minSize > desiredCapacity")
 	}
@@ -112,7 +113,7 @@ func TestNewAgentsCreatePlanDesiredExceedsMax(t *testing.T) {
 		DesiredCapacity: 5,
 		MaxSize:         3,
 	}
-	_, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", nil)
+	_, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", nil)
 	if err == nil {
 		t.Fatal("expected error when desiredCapacity > maxSize")
 	}
@@ -127,7 +128,7 @@ func TestNewAgentsCreatePlanMinExceedsMax(t *testing.T) {
 		DesiredCapacity: 4,
 		MaxSize:         2,
 	}
-	_, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", nil)
+	_, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", nil)
 	if err == nil {
 		t.Fatal("expected error when desiredCapacity > maxSize")
 	}
@@ -144,7 +145,7 @@ func TestNewAgentsCreatePlanMinExceedsMaxDirect(t *testing.T) {
 		DesiredCapacity: 3,
 		MaxSize:         2,
 	}
-	_, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", nil)
+	_, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", nil)
 	if err == nil {
 		t.Fatal("expected error when desiredCapacity > maxSize")
 	}
@@ -160,7 +161,7 @@ func TestNewAgentsCreatePlanNegativeMinSize(t *testing.T) {
 		MaxSize:         4,
 	}
 	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
-	plan, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
+	plan, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -173,7 +174,7 @@ func TestNewAgentsCreatePlanNegativeMinSize(t *testing.T) {
 func TestNewAgentsCreatePlanVPCError(t *testing.T) {
 	cfg := config.HordeAgentsConfig{AmiID: "ami-agent123"}
 	resolver := &testutilVPCResolver{err: fmt.Errorf("vpc not found")}
-	_, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
+	_, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
 	if err == nil {
 		t.Fatal("expected error when VPC resolution fails")
 	}
@@ -182,7 +183,7 @@ func TestNewAgentsCreatePlanVPCError(t *testing.T) {
 func TestNewAgentsCreatePlanDefaultPort(t *testing.T) {
 	cfg := config.HordeAgentsConfig{AmiID: "ami-agent123"}
 	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
-	plan, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 0, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
+	plan, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 0, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -194,7 +195,7 @@ func TestNewAgentsCreatePlanDefaultPort(t *testing.T) {
 func TestNewAgentsCreatePlanVPCResolution(t *testing.T) {
 	cfg := config.HordeAgentsConfig{AmiID: "ami-agent123"}
 	resolver := &testutilVPCResolver{vpcID: "vpc-custom", subnetID: "subnet-custom"}
-	plan, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
+	plan, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -219,7 +220,7 @@ func TestNewAgentsCreatePlanFollowsCoordinatorPlacement(t *testing.T) {
 		VPCID:     "vpc-coord",
 		SubnetID:  "subnet-coord",
 	}
-	plan, err := NewAgentsCreatePlan(context.Background(), cfg, coord, "123456789012", "us-east-1", resolver)
+	plan, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, coord, "123456789012", "us-east-1", resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -248,7 +249,7 @@ func TestNewAgentsCreatePlanExplicitPlacementOverridesCoordinator(t *testing.T) 
 		VPCID:     "vpc-coord",
 		SubnetID:  "subnet-coord",
 	}
-	plan, err := NewAgentsCreatePlan(context.Background(), cfg, coord, "123456789012", "us-east-1", resolver)
+	plan, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, coord, "123456789012", "us-east-1", resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -269,7 +270,7 @@ func TestNewAgentsCreatePlanExplicitPlacementOverridesCoordinator(t *testing.T) 
 func TestNewAgentsCreatePlanExplicitPlacementHalfSpecified(t *testing.T) {
 	cfg := config.HordeAgentsConfig{AmiID: "ami-agent123", VPCID: "vpc-explicit"}
 	coord := CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}
-	_, err := NewAgentsCreatePlan(context.Background(), cfg, coord, "123456789012", "us-east-1", nil)
+	_, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, coord, "123456789012", "us-east-1", nil)
 	if err == nil {
 		t.Fatal("expected error when only vpcId is set")
 	}
@@ -280,7 +281,7 @@ func TestNewAgentsCreatePlanGRPCPort(t *testing.T) {
 	cfg := config.HordeAgentsConfig{AmiID: "ami-agent123"}
 
 	// Default gRPC port when the coordinator reference omits it.
-	plan, err := NewAgentsCreatePlan(context.Background(), cfg,
+	plan, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg,
 		CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"},
 		"123456789012", "us-east-1", nil)
 	if err != nil {
@@ -291,7 +292,7 @@ func TestNewAgentsCreatePlanGRPCPort(t *testing.T) {
 	}
 
 	// Explicit gRPC port from the config passthrough.
-	plan, err = NewAgentsCreatePlan(context.Background(), cfg,
+	plan, err = NewAgentsCreatePlan(context.Background(), naming.Default, cfg,
 		CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, GRPCPort: 9000, SGID: "sg-coord"},
 		"123456789012", "us-east-1", nil)
 	if err != nil {
@@ -313,7 +314,7 @@ func TestNewAgentsCreatePlanScalingEnabled(t *testing.T) {
 		},
 	}
 	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
-	plan, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
+	plan, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -352,7 +353,7 @@ func TestNewAgentsCreatePlanScalingEnabled(t *testing.T) {
 func TestNewAgentsCreatePlanScalingDisabledByDefault(t *testing.T) {
 	cfg := config.HordeAgentsConfig{AmiID: "ami-agent123"}
 	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
-	plan, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
+	plan, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -373,7 +374,7 @@ func TestNewAgentsCreatePlanScalingCustomMetric(t *testing.T) {
 		},
 	}
 	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
-	plan, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
+	plan, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -396,7 +397,7 @@ func TestNewAgentsCreatePlanScalingZeroThreshold(t *testing.T) {
 		},
 	}
 	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
-	plan, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
+	plan, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -419,7 +420,7 @@ func TestNewAgentsCreatePlanScalingNegativeThreshold(t *testing.T) {
 		},
 	}
 	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
-	plan, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
+	plan, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -442,7 +443,7 @@ func TestNewAgentsCreatePlanScalingEnabledNoThresholds(t *testing.T) {
 		},
 	}
 	resolver := &testutilVPCResolver{vpcID: "vpc-test", subnetID: "subnet-test"}
-	plan, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
+	plan, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", resolver)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -476,7 +477,7 @@ func TestNewAgentsCreatePlanScalingCooldownTooLow(t *testing.T) {
 			ScaleInCooldown:   30,
 		},
 	}
-	_, err := NewAgentsCreatePlan(context.Background(), cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", nil)
+	_, err := NewAgentsCreatePlan(context.Background(), naming.Default, cfg, CoordinatorRef{PrivateIP: "10.0.1.10", Port: 5000, SGID: "sg-coord"}, "123456789012", "us-east-1", nil)
 	if err == nil {
 		t.Fatal("expected error when cooldown < 60")
 	}

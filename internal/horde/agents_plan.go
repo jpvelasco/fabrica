@@ -9,6 +9,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
 
@@ -16,10 +17,6 @@ import (
 // Alarms and policies are provisioned against an external CloudWatch metric;
 // Fabrica does not scrape Horde. Printed by agents create, status, and metrics.
 const ScalingPublisherNote = "Alarms are ready only after agents (or operator tooling) publish the configured metric. Fabrica does not scrape Horde."
-
-// DefaultAgentsSGName is the agent-pool security group name. Agents dial the
-// coordinator, so the group has no inbound rules.
-const DefaultAgentsSGName = "fabrica-horde-agents-sg"
 
 // CoordinatorRef describes the live Horde coordinator the agent pool must
 // reach: the private IP agents enroll against, the coordinator's ports
@@ -50,6 +47,8 @@ type CoordinatorPlacement struct {
 // Auto Scaling Group. It is built from config + the existing coordinator state
 // (coordinator private IP for agent enrollment).
 type AgentsCreatePlan struct {
+	// Prefix is the resource-name prefix every physical name derives from.
+	Prefix          naming.Prefix
 	Connection      Connection
 	CAPath          string
 	Account         string
@@ -108,7 +107,7 @@ type AgentsCreatePlan struct {
 
 // NewAgentsCreatePlan builds an AgentsCreatePlan from config and the live
 // coordinator reference. The coordinator must already be provisioned.
-func NewAgentsCreatePlan(ctx context.Context, cfg config.HordeAgentsConfig, coord CoordinatorRef, account, region string, resolver cloud.VPCResolver) (*AgentsCreatePlan, error) {
+func NewAgentsCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.HordeAgentsConfig, coord CoordinatorRef, account, region string, resolver cloud.VPCResolver) (*AgentsCreatePlan, error) {
 	if cfg.AmiID == "" {
 		return nil, fmt.Errorf("horde.agents.amiId is required. Provide an AMI ID that contains the Horde agent software.\nSee: https://github.com/jpvelasco/fabrica/blob/main/docs/horde-agent-ami.md")
 	}
@@ -197,15 +196,16 @@ func NewAgentsCreatePlan(ctx context.Context, cfg config.HordeAgentsConfig, coor
 		VPCID:                vpcID,
 		SubnetID:             subnetID,
 		DefaultVPC:           defaultVPC,
+		Prefix:               prefix,
 		CoordinatorPrivateIP: coord.PrivateIP,
 		CoordinatorPort:      port,
 		CoordinatorGRPCPort:  grpcPort,
 		CoordinatorSGID:      coord.SGID,
-		SGName:               DefaultAgentsSGName,
-		RoleName:             "fabrica-horde-agents-role",
-		InstanceProfileName:  "fabrica-horde-agents-profile",
-		LaunchTemplateName:   "fabrica-horde-agents-lt",
-		ASGName:              "fabrica-horde-agents-asg",
+		SGName:               prefix.For("horde", "agents", "sg"),
+		RoleName:             prefix.For("horde", "agents", "role"),
+		InstanceProfileName:  prefix.For("horde", "agents", "profile"),
+		LaunchTemplateName:   prefix.For("horde", "agents", "lt"),
+		ASGName:              prefix.For("horde", "agents", "asg"),
 		// Scaling
 		ScalingEnabled:     scaling.Enabled,
 		ScaleOutThreshold:  scaling.ScaleOutThreshold,
@@ -213,10 +213,10 @@ func NewAgentsCreatePlan(ctx context.Context, cfg config.HordeAgentsConfig, coor
 		ScaleInCooldown:    scaling.ScaleInCooldown,
 		MetricName:         scaling.MetricName,
 		MetricNamespace:    scaling.MetricNamespace,
-		ScaleOutAlarmName:  "fabrica-horde-agents-scale-out",
-		ScaleInAlarmName:   "fabrica-horde-agents-scale-in",
-		ScaleOutPolicyName: "fabrica-horde-agents-scale-out-policy",
-		ScaleInPolicyName:  "fabrica-horde-agents-scale-in-policy",
+		ScaleOutAlarmName:  prefix.For("horde", "agents", "scale", "out"),
+		ScaleInAlarmName:   prefix.For("horde", "agents", "scale", "in"),
+		ScaleOutPolicyName: prefix.For("horde", "agents", "scale", "out", "policy"),
+		ScaleInPolicyName:  prefix.For("horde", "agents", "scale", "in", "policy"),
 		CostResources:      AgentsCostResources(cfg),
 	}, nil
 }

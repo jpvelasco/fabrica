@@ -154,3 +154,31 @@ func TestRebuildWorkstationFollowsPrefix(t *testing.T) {
 		t.Errorf("rebuilt security group is not acme-workstation-sg: %s", sg)
 	}
 }
+
+func TestRebuildHordeFollowsPrefix(t *testing.T) {
+	withHordePassword(t, func(string) (string, error) { return "not-rendered", nil })
+	cfg := config.Defaults()
+	mod := hordeModuleFixture()
+	ds, err := rebuildInstanceDesiredState(context.Background(), acmePrefix, &mod.Resources[2], mod, state.NewState("", ""), cfg, nil)
+	if err != nil {
+		t.Fatalf("rebuild horde instance: %v", err)
+	}
+	if !strings.Contains(string(ds), `"Value":"acme-horde"`) {
+		t.Errorf("rebuilt horde instance Name tag is not acme-horde: %s", ds)
+	}
+	sg, err := rebuildSGDesiredState(acmePrefix, &mod.Resources[0], mod, cfg)
+	if err != nil {
+		t.Fatalf("rebuild horde security group: %v", err)
+	}
+	if !strings.Contains(string(sg), `"GroupName":"acme-horde-sg"`) {
+		t.Errorf("rebuilt horde security group is not acme-horde-sg: %s", sg)
+	}
+	agentSG := &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup, Properties: map[string]string{"role": "agent"}}
+	ag, err := rebuildSGDesiredState(acmePrefix, agentSG, &state.ModuleState{Name: "horde"}, cfg)
+	if err != nil {
+		t.Fatalf("rebuild agent security group: %v", err)
+	}
+	if !strings.Contains(string(ag), `"GroupName":"acme-horde-agents-sg"`) {
+		t.Errorf("rebuilt agent security group is not acme-horde-agents-sg: %s", ag)
+	}
+}

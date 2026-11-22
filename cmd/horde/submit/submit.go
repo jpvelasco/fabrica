@@ -197,7 +197,7 @@ func (c command) serviceToken(ctx context.Context, name string) (string, error) 
 		return "", nil
 	}
 	if !horde.IsServiceTokenName(name) {
-		return "", fmt.Errorf("the recorded service-token parameter %q is not a per-create %s name; re-run 'fabrica horde create'", name, horde.ServiceTokenParameterPrefix)
+		return "", fmt.Errorf("the recorded service-token parameter %q is not a per-create /<namePrefix>/horde/<nonce>/service-token name; re-run 'fabrica horde create'", name)
 	}
 	if c.getSecureParameter == nil {
 		return "", fmt.Errorf("reading the Horde service token from SSM parameter %s requires a provider with SSM parameter support", name)
