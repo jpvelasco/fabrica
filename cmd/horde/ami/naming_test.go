@@ -19,7 +19,7 @@ func TestBuildDefaultNameFollowsPrefix(t *testing.T) {
 			Version:    defaultHordeVersion,
 			Install:    "docker",
 			BaseImage:  defaultBaseImage,
-			Region:     defaultRegion,
+			Region:     "us-west-2",
 			OutputDir:  t.TempDir(),
 			NamePrefix: naming.MustResolve("acme"),
 		},
@@ -45,5 +45,12 @@ func TestBuildRejectsGatedNamePrefix(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "#705") {
 		t.Fatalf("Execute = %v, want the #705 gate error", err)
+	}
+}
+
+func TestAgentDefaultNameFollowsPrefix(t *testing.T) {
+	b := &buildCommand{cfg: BuildConfig{Version: "5.8.4", Role: roleAgent, NamePrefix: naming.MustResolve("acme")}}
+	if got := b.defaultName(); got != "acme-horde-agent-5.8.4" {
+		t.Fatalf("defaultName() = %q, want acme-horde-agent-5.8.4", got)
 	}
 }
