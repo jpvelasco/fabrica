@@ -1019,9 +1019,9 @@ func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, regio
 	case "ddc":
 		// BucketOrDefault always falls back to fabrica-ddc-<account>-<region>,
 		// so the bucket is never empty here.
-		bucket := ddc.BucketOrDefault(cfg.DDC.Bucket, account, region)
+		bucket := ddc.BucketOrDefault(naming.Default, cfg.DDC.Bucket, account, region)
 		return []map[string]any{
-			iamrole.S3BucketPolicy("fabrica-ddc-s3", bucket,
+			iamrole.S3BucketPolicy(naming.Default.For("ddc", "s3"), bucket,
 				[]string{"s3:ListBucket", "s3:GetBucketLocation"},
 				[]string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject"},
 				"*",

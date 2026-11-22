@@ -21,6 +21,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/deploy"
 	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/lore"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/ops"
 	"github.com/jpvelasco/fabrica/internal/perforce"
 	"github.com/jpvelasco/fabrica/internal/state"
@@ -111,10 +112,7 @@ func costInputs(cfg *config.Config, m *state.ModuleState) ([]cost.Resource, stri
 		}
 		return res, note
 	case "lore":
-		// Load rejects non-default prefixes until #705 is enabled, so this
-		// error cannot occur on a loaded config.
-		prefix, _ := cfg.ResolveNamePrefix()
-		return applyStopped(ec2CostResources(m, lore.CostResources(prefix, cfg.Lore)), m.Status)
+		return applyStopped(ec2CostResources(m, lore.CostResources(namePrefix(cfg), cfg.Lore)), m.Status)
 	case "workstation":
 		return applyStopped(workstationCostResources(m, cfg.Workstation), m.Status)
 	case "ci":
@@ -130,7 +128,7 @@ func costInputs(cfg *config.Config, m *state.ModuleState) ([]cost.Resource, stri
 		// Prefer full CostResources (S3 + EC2 + EBS [+ Scylla]); do not collapse
 		// via ec2CostResources which would drop the blob bucket line. Edges
 		// reuse the home blob bucket, so each adds compute + volume lines only.
-		res := ddc.CostResources(cfg.DDC)
+		res := ddc.CostResources(namePrefix(cfg), cfg.DDC)
 		res = append(res, ddcEdgeCostResources(m)...)
 		return applyStopped(res, m.Status)
 	default:
@@ -215,6 +213,14 @@ func fleetCostResource(props map[string]string) (cost.Resource, bool) {
 		TypeName: deploy.TypeGameLiftFleet,
 		Name:     deploy.FleetCostName(props["instanceType"], desired),
 	}, true
+}
+
+// namePrefix returns the configured resource-name prefix. Load rejects
+// non-default prefixes until #705 is enabled, so the error cannot occur on a
+// loaded config.
+func namePrefix(cfg *config.Config) naming.Prefix {
+	prefix, _ := cfg.ResolveNamePrefix()
+	return prefix
 }
 
 // ddcEdgeCostResources adds compute + volume lines for every recorded DDC edge

@@ -927,7 +927,7 @@ func rebuildResource(ctx context.Context, dr *DriftResult, st *state.State, cfg 
 // instead of launching a broken replacement.
 func rebuildInstanceDesiredState(ctx context.Context, prefix naming.Prefix, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config, inspector imageInspectorFunc) (json.RawMessage, error) {
 	if mod.Name == "ddc" && isEdgeResource(rec) {
-		return rebuildEdgeInstanceDesiredState(rec, mod, st, cfg)
+		return rebuildEdgeInstanceDesiredState(prefix, rec, mod, st, cfg)
 	}
 	switch mod.Name {
 	case "perforce":
@@ -937,7 +937,7 @@ func rebuildInstanceDesiredState(ctx context.Context, prefix naming.Prefix, rec 
 	case "lore":
 		return rebuildLoreInstance(prefix, rec, mod, st, cfg)
 	case "ddc":
-		return rebuildDDCInstance(rec, mod, st, cfg)
+		return rebuildDDCInstance(prefix, rec, mod, st, cfg)
 	case "workstation":
 		return rebuildWorkstationInstance(ctx, prefix, rec, mod, st, cfg, inspector)
 	}
@@ -1208,20 +1208,20 @@ func ddcPorts(cfg *config.Config) (int, int) {
 // ddcBucket resolves the DDC blob bucket: the bucket resource the ddc module
 // recorded in state wins, then the same resolution create uses (config value
 // or the deterministic per-account default).
-func ddcBucket(mod *state.ModuleState, st *state.State, cfg *config.Config) string {
+func ddcBucket(prefix naming.Prefix, mod *state.ModuleState, st *state.State, cfg *config.Config) string {
 	if bucket := moduleS3BucketFor(mod); bucket != "" {
 		return bucket
 	}
-	return ddc.BucketOrDefault(cfg.DDC.Bucket, st.Account, st.Region)
+	return ddc.BucketOrDefault(prefix, cfg.DDC.Bucket, st.Account, st.Region)
 }
 
 // rebuildDDCInstance rebuilds a Missing DDC home-region instance: the
 // coordinator (default) or the 1-node Scylla host (Properties.role =
 // ddc.RoleScylla). The coordinator AMI is the module version create recorded;
 // the Scylla AMI lives only in config (ddc.scyllaAmiId).
-func rebuildDDCInstance(rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
+func rebuildDDCInstance(prefix naming.Prefix, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
 	if rec.Properties["role"] == ddc.RoleScylla {
-		return rebuildScyllaInstance(rec, mod, st, cfg)
+		return rebuildScyllaInstance(prefix, rec, mod, st, cfg)
 	}
 	ami := mod.Version
 	if ami == "" {
@@ -1239,7 +1239,7 @@ func rebuildDDCInstance(rec *state.ModuleResource, mod *state.ModuleState, st *s
 	nodes := ddc.ResolveScyllaNodes(cfg.DDC.Scylla)
 	userData, err := ddc.Generate(ddc.UserDataConfig{
 		StorePath:        ddc.DefaultStorePath,
-		Bucket:           ddcBucket(mod, st, cfg),
+		Bucket:           ddcBucket(prefix, mod, st, cfg),
 		Region:           st.Region,
 		Namespace:        ddc.NamespaceOrDefault(cfg.DDC.Namespace),
 		PublicPort:       publicPort,
@@ -1264,7 +1264,7 @@ func rebuildDDCInstance(rec *state.ModuleResource, mod *state.ModuleState, st *s
 		InstanceType:   instanceTypeFor(rec, cfg.DDC.InstanceType, ddc.DefaultInstanceType),
 		VolumeSize:     volumeSizeFor(rec, cfg.DDC.VolumeSize, ddc.DefaultVolumeSize),
 		SubnetID:       subnetFor(rec, cfg.DDC.SubnetId),
-		InstanceName:   "fabrica-ddc",
+		InstanceName:   prefix.Instance("ddc"),
 		RootDeviceName: rootDevice,
 	}
 	ds, err := ddc.InstanceDesiredState(plan, sgID, userData, profile)
@@ -1277,7 +1277,7 @@ func rebuildDDCInstance(rec *state.ModuleResource, mod *state.ModuleState, st *s
 // rebuildScyllaInstance rebuilds the DDC Scylla host. Its AMI is not recorded
 // in state — create read ddc.scyllaAmiId — so an empty config value reports
 // the instance unrebuildable.
-func rebuildScyllaInstance(rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
+func rebuildScyllaInstance(prefix naming.Prefix, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
 	ami := cfg.DDC.ScyllaAmiID
 	if ami == "" {
 		return nil, fmt.Errorf("no Scylla AMI configured in ddc.scyllaAmiId; set it in fabrica.yaml to remediate the ddc scylla instance")
@@ -1303,7 +1303,7 @@ func rebuildScyllaInstance(rec *state.ModuleResource, mod *state.ModuleState, st
 		ScyllaInstanceType:   instanceTypeFor(rec, cfg.DDC.ScyllaInstanceType, ddc.DefaultScyllaInstanceType),
 		ScyllaVolumeSize:     volumeSizeFor(rec, cfg.DDC.ScyllaVolumeSize, ddc.DefaultScyllaVolumeSize),
 		SubnetID:             subnetFor(rec, cfg.DDC.SubnetId),
-		ScyllaInstanceName:   "fabrica-ddc-scylla",
+		ScyllaInstanceName:   prefix.For("ddc", "scylla"),
 		ScyllaRootDeviceName: rootDevice,
 	}
 	ds, err := ddc.ScyllaInstanceDesiredState(plan, sgID, userData, profile)
@@ -1397,7 +1397,7 @@ func isEdgeResource(rec *state.ModuleResource) bool {
 // unrebuildable with a hint to re-run the edge provisioning command. The
 // canonical edge builder supplies the full create contract: IAM profile,
 // cloud-init with the home bucket, and the edge region's network wiring.
-func rebuildEdgeInstanceDesiredState(rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
+func rebuildEdgeInstanceDesiredState(prefix naming.Prefix, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
 	region := rec.Properties["region"]
 	ami := rec.Properties["imageId"]
 	if ami == "" {
@@ -1422,7 +1422,7 @@ func rebuildEdgeInstanceDesiredState(rec *state.ModuleResource, mod *state.Modul
 	publicPort, internalPort := ddcPorts(cfg)
 	userData, err := ddc.Generate(ddc.UserDataConfig{
 		StorePath:    ddc.DefaultStorePath,
-		Bucket:       ddcBucket(mod, st, cfg),
+		Bucket:       ddcBucket(prefix, mod, st, cfg),
 		Region:       region,
 		Namespace:    ddc.NamespaceOrDefault(cfg.DDC.Namespace),
 		PublicPort:   publicPort,
@@ -1444,7 +1444,7 @@ func rebuildEdgeInstanceDesiredState(rec *state.ModuleResource, mod *state.Modul
 		VolumeSize:          volumeSizeFor(rec, cfg.DDC.VolumeSize, ddc.DefaultVolumeSize),
 		SubnetID:            subnetID,
 		VPCID:               rec.Properties["vpcId"],
-		InstanceName:        fmt.Sprintf("fabrica-ddc-edge-%s", region),
+		InstanceName:        ddc.EdgeInstanceName(prefix, region),
 		InstanceProfileName: profile,
 		RootDeviceName:      rootDevice,
 	}
@@ -1580,7 +1580,7 @@ func dispatchModuleSG(prefix naming.Prefix, rec *state.ModuleResource, mod *stat
 			AllowedCIDR: defaultCIDR(cfg.Lore.AllowedCIDR, lore.DefaultAllowedCIDR),
 		})
 	case "ddc":
-		ds, err = rebuildDDCSG(rec, cfg)
+		ds, err = rebuildDDCSG(prefix, rec, cfg)
 	case "workstation":
 		ds, err = workstation.SGDesiredState(&workstation.CreatePlan{
 			SGName:      prefix.SG("workstation"),
@@ -1603,7 +1603,7 @@ func dispatchModuleSG(prefix naming.Prefix, rec *state.ModuleResource, mod *stat
 // Properties.role = ddc.RoleEdge with a region) get the edge shape named per
 // region; everything else gets the home shape, including the Scylla CQL rule
 // when the configured backend is scylla.
-func rebuildDDCSG(rec *state.ModuleResource, cfg *config.Config) (json.RawMessage, error) {
+func rebuildDDCSG(prefix naming.Prefix, rec *state.ModuleResource, cfg *config.Config) (json.RawMessage, error) {
 	publicPort := cfg.DDC.PublicPort
 	if publicPort <= 0 {
 		publicPort = ddc.DefaultPublicPort
@@ -1613,7 +1613,7 @@ func rebuildDDCSG(rec *state.ModuleResource, cfg *config.Config) (json.RawMessag
 		internalPort = ddc.DefaultInternalPort
 	}
 	plan := ddc.SetupPlan{
-		SGName:       ddc.DefaultSGName,
+		SGName:       prefix.SG("ddc"),
 		VPCID:        sgVPCID(rec, cfg.DDC.VPCId),
 		PublicPort:   publicPort,
 		InternalPort: internalPort,
@@ -1630,7 +1630,7 @@ func rebuildDDCSG(rec *state.ModuleResource, cfg *config.Config) (json.RawMessag
 			return nil, fmt.Errorf("no VPC recorded for DDC edge %s; re-run 'fabrica ddc region add %s'", region, region)
 		}
 		return ddc.EdgeSGDesiredState(&ddc.EdgePlan{
-			SGName:       ddc.EdgeSGName(region),
+			SGName:       ddc.EdgeSGName(prefix, region),
 			VPCID:        vpcID,
 			PublicPort:   publicPort,
 			InternalPort: internalPort,

@@ -8,6 +8,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
 
@@ -35,9 +36,6 @@ const (
 	DefaultInternalPort       = 8080
 	DefaultNamespace          = "deriveddatacache"
 	DefaultStorePath          = "/opt/unreal-cloud-ddc/store"
-
-	// DefaultSGName is the home-region security group name.
-	DefaultSGName = "fabrica-ddc-sg"
 )
 
 // Resource role property values (state Properties.role).
@@ -50,6 +48,8 @@ const (
 
 // SetupPlan is everything needed to provision single-region DDC. No AWS SDK types.
 type SetupPlan struct {
+	// Prefix is the resource-name prefix every physical name derives from.
+	Prefix             naming.Prefix
 	Account            string
 	Region             string
 	Backend            string
@@ -91,7 +91,7 @@ type SetupPlan struct {
 }
 
 // NewSetupPlan validates config and builds a single home-region SetupPlan.
-func NewSetupPlan(ctx context.Context, cfg config.DDCConfig, account, region string, resolver cloud.VPCResolver) (*SetupPlan, error) {
+func NewSetupPlan(ctx context.Context, prefix naming.Prefix, cfg config.DDCConfig, account, region string, resolver cloud.VPCResolver) (*SetupPlan, error) {
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
 	}
@@ -100,7 +100,7 @@ func NewSetupPlan(ctx context.Context, cfg config.DDCConfig, account, region str
 	}
 
 	backend := NormalizeBackend(cfg.Backend)
-	def := resolveDefaults(cfg, account, region)
+	def := resolveDefaults(prefix, cfg, account, region)
 	vpcID, subnetID, defaultVPC, err := topology.ResolveVPC(ctx, cfg.VPCId, cfg.SubnetId, resolver)
 	if err != nil {
 		return nil, err
@@ -116,6 +116,7 @@ func NewSetupPlan(ctx context.Context, cfg config.DDCConfig, account, region str
 	}
 
 	return &SetupPlan{
+		Prefix:              prefix,
 		Account:             account,
 		Region:              region,
 		Backend:             backend,
@@ -134,14 +135,14 @@ func NewSetupPlan(ctx context.Context, cfg config.DDCConfig, account, region str
 		DefaultVPC:          defaultVPC,
 		Bucket:              def.bucket,
 		Namespace:           def.namespace,
-		SGName:              DefaultSGName,
-		InstanceName:        "fabrica-ddc",
-		ScyllaInstanceName:  "fabrica-ddc-scylla",
-		RoleName:            "fabrica-ddc-role",
-		InstanceProfileName: "fabrica-ddc-profile",
+		SGName:              prefix.SG("ddc"),
+		InstanceName:        prefix.Instance("ddc"),
+		ScyllaInstanceName:  prefix.For("ddc", "scylla"),
+		RoleName:            prefix.Role("ddc"),
+		InstanceProfileName: prefix.Profile("ddc"),
 		IAM:                 cfg.IAM,
 		Topology:            top,
-		CostResources:       CostResources(cfg),
+		CostResources:       CostResources(prefix, cfg),
 	}, nil
 }
 
@@ -199,7 +200,7 @@ func NormalizeBackend(raw string) string {
 	return b
 }
 
-func resolveDefaults(cfg config.DDCConfig, account, region string) ddcDefaults {
+func resolveDefaults(prefix naming.Prefix, cfg config.DDCConfig, account, region string) ddcDefaults {
 	return ddcDefaults{
 		instanceType: instanceTypeOrDefault(cfg.InstanceType),
 		volumeSize:   volumeSizeOrDefault(cfg.VolumeSize),
@@ -207,7 +208,7 @@ func resolveDefaults(cfg config.DDCConfig, account, region string) ddcDefaults {
 		internalPort: internalPortOrDefault(cfg.InternalPort),
 		allowedCIDR:  cidrOrDefault(cfg.AllowedCIDR),
 		internalCIDR: internalCIDROrDefault(cfg.InternalCIDR),
-		bucket:       BucketOrDefault(cfg.Bucket, account, region),
+		bucket:       BucketOrDefault(prefix, cfg.Bucket, account, region),
 		namespace:    NamespaceOrDefault(cfg.Namespace),
 	}
 }
@@ -278,10 +279,10 @@ func NamespaceOrDefault(v string) string {
 }
 
 // BucketOrDefault returns the configured DDC S3 bucket, or the default
-// fabrica-ddc-<account>-<region> name when unset.
-func BucketOrDefault(v, account, region string) string {
+// <prefix>-ddc-<account>-<region> name when unset.
+func BucketOrDefault(prefix naming.Prefix, v, account, region string) string {
 	if v == "" {
-		return fmt.Sprintf("fabrica-ddc-%s-%s", account, region)
+		return prefix.Bucket("ddc", account, region)
 	}
 	return v
 }

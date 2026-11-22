@@ -109,7 +109,11 @@ func (c command) run(ctx context.Context) error {
 	}
 	cfg.IAM = resolvedIAM
 
-	plan, err := ddc.NewSetupPlan(ctx, cfg, account, region, provision.VPCResolver(c.runtime.Provider))
+	prefix, err := c.runtime.Config.ResolveNamePrefix()
+	if err != nil {
+		return err
+	}
+	plan, err := ddc.NewSetupPlan(ctx, prefix, cfg, account, region, provision.VPCResolver(c.runtime.Provider))
 	if err != nil {
 		return fmt.Errorf("building setup plan: %w", err)
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
@@ -62,13 +63,19 @@ type EdgePlan struct {
 var regionPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 // EdgeSGName is the security group name for one edge region's DDC host.
-func EdgeSGName(region string) string {
-	return fmt.Sprintf("%s-%s", DefaultSGName, region)
+func EdgeSGName(prefix naming.Prefix, region string) string {
+	return fmt.Sprintf("%s-%s", prefix.SG("ddc"), region)
+}
+
+// EdgeInstanceName is the Name tag and default instance name for one edge
+// region's DDC host.
+func EdgeInstanceName(prefix naming.Prefix, region string) string {
+	return prefix.For("ddc", "edge", region)
 }
 
 // NewEdgePlan validates config and builds the plan for one additional DDC
 // region. The resolver must be bound to the target region (see cloud.RegionProvider).
-func NewEdgePlan(ctx context.Context, cfg config.DDCConfig, account, homeRegion, region string, opts EdgeOptions, resolver cloud.VPCResolver) (*EdgePlan, error) {
+func NewEdgePlan(ctx context.Context, prefix naming.Prefix, cfg config.DDCConfig, account, homeRegion, region string, opts EdgeOptions, resolver cloud.VPCResolver) (*EdgePlan, error) {
 	if region == "" {
 		return nil, fmt.Errorf("ddc edge: region is required. Usage: fabrica ddc region add REGION")
 	}
@@ -89,7 +96,7 @@ func NewEdgePlan(ctx context.Context, cfg config.DDCConfig, account, homeRegion,
 			"(aws ec2 copy-image --source-region <home> --region <target> --name ...).\nSee: docs/ddc-ami.md")
 	}
 
-	def := resolveDefaults(cfg, account, homeRegion)
+	def := resolveDefaults(prefix, cfg, account, homeRegion)
 	vpcID, subnetID, defaultVPC, err := topology.ResolveVPC(ctx, opts.VPCID, opts.SubnetID, resolver)
 	if err != nil {
 		return nil, err
@@ -119,9 +126,9 @@ func NewEdgePlan(ctx context.Context, cfg config.DDCConfig, account, homeRegion,
 		DefaultVPC:          defaultVPC,
 		Bucket:              def.bucket,
 		Namespace:           def.namespace,
-		SGName:              EdgeSGName(region),
-		InstanceName:        fmt.Sprintf("fabrica-ddc-edge-%s", region),
-		InstanceProfileName: "fabrica-ddc-profile",
+		SGName:              EdgeSGName(prefix, region),
+		InstanceName:        EdgeInstanceName(prefix, region),
+		InstanceProfileName: prefix.Profile("ddc"),
 		CostResources:       EdgeCostResources(cfg, opts),
 	}, nil
 }
