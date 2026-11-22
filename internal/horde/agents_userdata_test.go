@@ -337,6 +337,16 @@ func TestAgentUserDataTLSProbeRetryIsBounded(t *testing.T) {
 	requireAll(t, renderTLSAgent(t), "probe_coordinator() {", "for attempt in $(seq 1 30); do", "sleep 10")
 }
 
+// The TLS probe fails before any agent configuration is written, so the hint
+// must point at rerunning cloud-init, not at restarting the unconfigured agent.
+func TestAgentUserDataTLSProbeFailureHint(t *testing.T) {
+	s := renderTLSAgent(t)
+	requireAll(t, s, "then rerun cloud-init (agent configuration was not written).")
+	if strings.Contains(s, "or restart horde-agent") {
+		t.Error("the TLS probe failure hint must not suggest restarting the unconfigured agent")
+	}
+}
+
 func TestAgentUserDataTLSSentinelFollowsProbe(t *testing.T) {
 	// TLS stays fail-closed: nothing is written or started until the probe passes.
 	requireOrder(t, renderTLSAgent(t),

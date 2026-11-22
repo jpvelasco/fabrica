@@ -158,7 +158,7 @@ probe_coordinator() {
     echo "Horde coordinator $HORDE_URL is not ready (attempt $attempt of %[2]d); retrying in %[3]ds" >&2
     sleep %[3]d
   done
-  echo "Horde coordinator $HORDE_URL failed the listener check after %[2]d attempts. Confirm the coordinator is running, the agent security group can reach it, and the agent CA (if set) trusts its certificate; then rerun cloud-init or restart horde-agent." >&2
+  echo "Horde coordinator $HORDE_URL failed the listener check after %[2]d attempts. Confirm the coordinator is running, the agent security group can reach it, and the agent CA (if set) trusts its certificate; then rerun cloud-init (agent configuration was not written)." >&2
   return 1
 }
 `, probeChain(c), agentProbeAttempts, agentProbeIntervalSeconds)
