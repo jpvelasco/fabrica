@@ -1,11 +1,13 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"os"
 	"strings"
 
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/tags"
 	"github.com/spf13/viper"
 	"go.yaml.in/yaml/v3"
@@ -354,9 +356,29 @@ type AWS struct {
 	VolumeRequestTags map[string]string `mapstructure:"volumeRequestTags" yaml:"volumeRequestTags,omitempty"`
 }
 
-// AWSIdentity selects deployment ownership; it has no per-module override.
+// AWSIdentity selects deployment ownership and the resource-name prefix; it has
+// no per-module override.
 type AWSIdentity struct {
 	ManagedBy string `mapstructure:"managedBy" yaml:"managedBy,omitempty"`
+	// NamePrefix is gated until #705's later PRs consume it: only empty or
+	// "fabrica" resolves today.
+	NamePrefix string `mapstructure:"namePrefix" yaml:"namePrefix,omitempty"`
+}
+
+// errNamePrefixGated rejects custom prefixes until naming is enabled (#705).
+var errNamePrefixGated = errors.New("cloud.aws.identity.namePrefix is not supported yet (#705); remove it or set it to fabrica")
+
+// ResolveNamePrefix returns the resource-name prefix. Only the default resolves
+// until the #705 rollout enables custom prefixes.
+func (c *Config) ResolveNamePrefix() (naming.Prefix, error) {
+	value := ""
+	if c != nil {
+		value = c.Cloud.AWS.Identity.NamePrefix
+	}
+	if value == "" || value == naming.DefaultName {
+		return naming.Default, nil
+	}
+	return naming.Default, errNamePrefixGated
 }
 
 // ResolveIdentity validates ownership for loaded and programmatic config.
@@ -472,6 +494,9 @@ func Load(path string) (*Config, error) {
 	}
 	cfg.normalize()
 	if _, err := cfg.ResolveIdentity(); err != nil {
+		return nil, err
+	}
+	if _, err := cfg.ResolveNamePrefix(); err != nil {
 		return nil, err
 	}
 
