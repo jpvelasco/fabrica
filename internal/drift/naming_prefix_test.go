@@ -11,7 +11,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/state"
 )
 
-// acmePrefix bypasses the config gate (#705) to exercise a non-default prefix.
+// acmePrefix is a non-default prefix.
 var acmePrefix = naming.MustResolve("acme")
 
 // acmeAdminParam is an SSM parameter name, not a credential. #nosec G101

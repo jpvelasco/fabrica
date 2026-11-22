@@ -130,7 +130,7 @@ A boundary policy that blocks any of the actions below breaks the affected flow 
   "Sid": "FabricaWorkstationSessionPassword",
   "Effect": "Allow",
   "Action": "ssm:GetParameter",
-  "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/fabrica/workstation/*/dcv-password"
+  "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/${prefix}/workstation/*/dcv-password"
 }
 ```
 
@@ -141,7 +141,7 @@ A boundary policy that blocks any of the actions below breaks the affected flow 
   "Sid": "FabricaHordeServiceToken",
   "Effect": "Allow",
   "Action": "ssm:PutParameter",
-  "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/fabrica/horde/*/service-token"
+  "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/${prefix}/horde/*/service-token"
 }
 ```
 
@@ -152,7 +152,7 @@ A boundary policy that blocks any of the actions below breaks the affected flow 
   "Sid": "FabricaCIHordeToken",
   "Effect": "Allow",
   "Action": "ssm:GetParameters",
-  "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/fabrica/horde/*/service-token"
+  "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/${prefix}/horde/*/service-token"
 }
 ```
 
@@ -167,11 +167,11 @@ A boundary policy that blocks any of the actions below breaks the affected flow 
 }
 ```
 
-**Instance-side (`iamrole.SSMOutputPolicy`)** — every Fabrica instance role that uses SSM (perforce, horde, horde agents, lore, ddc) writes SSM output to a `parameter/MDS-*` parameter and a `/fabrica/ssm/*` CloudWatch Logs group:
+**Instance-side (`iamrole.SSMOutputPolicy`)** — every Fabrica instance role that uses SSM (perforce, horde, horde agents, lore, ddc) writes SSM output to a `parameter/MDS-*` parameter and a `/${prefix}/ssm/*` CloudWatch Logs group:
 
 - `ssm:PutParameter`, `ssm:GetParameter`, `ssm:DescribeParameters` on `arn:aws:ssm:REGION:ACCOUNT:parameter/MDS-*`
-- `logs:CreateLogGroup` on `arn:aws:logs:REGION:ACCOUNT:log-group:/fabrica/ssm/*`
-- `logs:CreateLogStream`, `logs:PutLogEvents` on `arn:aws:logs:REGION:ACCOUNT:log-group:/fabrica/ssm/*` and `arn:aws:logs:REGION:ACCOUNT:log-group:/fabrica/ssm/*:*`
+- `logs:CreateLogGroup` on `arn:aws:logs:REGION:ACCOUNT:log-group:/${prefix}/ssm/*`
+- `logs:CreateLogStream`, `logs:PutLogEvents` on `arn:aws:logs:REGION:ACCOUNT:log-group:/${prefix}/ssm/*` and `arn:aws:logs:REGION:ACCOUNT:log-group:/${prefix}/ssm/*:*`
 
 **Operator-side (`fabrica` CLI identity)** — `workstation create` stores and tags the per-create session-password SecureString; `workstation terminate` deletes the recorded name:
 
@@ -179,7 +179,7 @@ A boundary policy that blocks any of the actions below breaks the affected flow 
 - `ssm:DeleteParameter` (terminate deletes the recorded name)
 - `ssm:AddTagsToResource` (the parameter is tagged `ManagedBy=fabrica`)
 
-`horde create` and `horde destroy` need the same three actions on `parameter/fabrica/horde/*/service-token` (create stores a placeholder that cloud-init overwrites; destroy deletes the recorded name). `horde submit` needs `ssm:GetParameter` on it to read the token.
+`horde create` and `horde destroy` need the same three actions on `parameter/${prefix}/horde/*/service-token` (create stores a placeholder that cloud-init overwrites; destroy deletes the recorded name). `horde submit` needs `ssm:GetParameter` on it to read the token.
 
 **Operator-side (SDK launch path, `volumeRequestTags`)** — when `volumeRequestTags` is non-empty, create calls `RunInstances` directly and consults `DescribeInstances` to adopt an instance a previous attempt already launched:
 
@@ -188,12 +188,12 @@ A boundary policy that blocks any of the actions below breaks the affected flow 
 
 ## Operator policy (minimal example)
 
-Everything above is the boundary side. This section is the operator side: the identity that runs `fabrica`. Guardrailed accounts typically scope that identity tightly, and each module's first create then discovers missing actions one AccessDenied at a time, with each failure leaving partial state (#546). Start from this policy and tighten it to your account's conventions. Replace `ACCOUNT` with the account ID, `REGION` with the target region, and `/fabrica/` with the configured `cloud.aws.iam.path` value.
+Everything above is the boundary side. This section is the operator side: the identity that runs `fabrica`. Guardrailed accounts typically scope that identity tightly, and each module's first create then discovers missing actions one AccessDenied at a time, with each failure leaving partial state (#546). Start from this policy and tighten it to your account's conventions. Replace `ACCOUNT` with the account ID, `REGION` with the target region, `/fabrica/` with the configured `cloud.aws.iam.path` value, and `${prefix}` with the configured `cloud.aws.identity.namePrefix`. The prefix defaults to `fabrica`, so the examples are literal for a default install; a custom prefix also needs `state.bucket` and `state.table` pinned (see the README).
 
 Two statements look odd until you know why:
 
-- **The IAM read grant is unpathed.** Cloud Control's `AWS::IAM::Role` handler looks the role up by name before creating it, and IAM evaluates that lookup against the unpathed ARN (`role/fabrica-perforce-role`). A write grant scoped to `role/fabrica/*` does not cover the lookup. Grant the five read actions on `role/fabrica-*` and `instance-profile/fabrica-*` with no path — the lookup ARN omits the path, so the grant works with any configured `iam.path` — and keep every write on the path.
-- **The Image Builder grant is type-scoped, not name-scoped.** `imagebuilder:Create*` authorizes against `arn:aws:imagebuilder:REGION:ACCOUNT:<type>/*`, not the named resource; a grant on `component/fabrica-workstation-component` never matches a create. The create grant below is gated on `aws:RequestTag/ManagedBy`, so pass the tag on each create call (`--tags` / `--resource-tags`, as the AMI bake sections show).
+- **The IAM read grant is unpathed.** Cloud Control's `AWS::IAM::Role` handler looks the role up by name before creating it, and IAM evaluates that lookup against the unpathed ARN (`role/${prefix}-perforce-role`). A write grant scoped to `role/fabrica/*` does not cover the lookup. Grant the five read actions on `role/${prefix}-*` and `instance-profile/${prefix}-*` with no path — the lookup ARN omits the path, so the grant works with any configured `iam.path` — and keep every write on the path.
+- **The Image Builder grant is type-scoped, not name-scoped.** `imagebuilder:Create*` authorizes against `arn:aws:imagebuilder:REGION:ACCOUNT:<type>/*`, not the named resource; a grant on `component/${prefix}-workstation-component` never matches a create. The create grant below is gated on `aws:RequestTag/ManagedBy`, so pass the tag on each create call (`--tags` / `--resource-tags`, as the AMI bake sections show).
 
 ```json
 {
@@ -229,8 +229,8 @@ Two statements look odd until you know why:
         "iam:GetInstanceProfile"
       ],
       "Resource": [
-        "arn:aws:iam::ACCOUNT:role/fabrica-*",
-        "arn:aws:iam::ACCOUNT:instance-profile/fabrica-*"
+        "arn:aws:iam::ACCOUNT:role/${prefix}-*",
+        "arn:aws:iam::ACCOUNT:instance-profile/${prefix}-*"
       ]
     },
     {
@@ -291,7 +291,7 @@ Two statements look odd until you know why:
         "s3:PutBucketTagging",
         "s3:DeleteBucket"
       ],
-      "Resource": "arn:aws:s3:::fabrica-*"
+      "Resource": "arn:aws:s3:::${prefix}-*"
     },
     {
       "Sid": "FabricaStateObjects",
@@ -305,8 +305,8 @@ Two statements look odd until you know why:
         "s3:ListObjectVersions"
       ],
       "Resource": [
-        "arn:aws:s3:::fabrica-*",
-        "arn:aws:s3:::fabrica-*/*"
+        "arn:aws:s3:::${prefix}-*",
+        "arn:aws:s3:::${prefix}-*/*"
       ]
     },
     {
@@ -321,7 +321,7 @@ Two statements look odd until you know why:
         "dynamodb:PutItem",
         "dynamodb:DeleteItem"
       ],
-      "Resource": "arn:aws:dynamodb:REGION:ACCOUNT:table/fabrica-*"
+      "Resource": "arn:aws:dynamodb:REGION:ACCOUNT:table/${prefix}-*"
     },
     {
       "Sid": "FabricaWorkstationParameter",
@@ -331,7 +331,7 @@ Two statements look odd until you know why:
         "ssm:DeleteParameter",
         "ssm:AddTagsToResource"
       ],
-      "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/fabrica/workstation/*/dcv-password"
+      "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/${prefix}/workstation/*/dcv-password"
     },
     {
       "Sid": "FabricaHordeServiceToken",
@@ -342,7 +342,7 @@ Two statements look odd until you know why:
         "ssm:DeleteParameter",
         "ssm:AddTagsToResource"
       ],
-      "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/fabrica/horde/*/service-token"
+      "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/${prefix}/horde/*/service-token"
     },
     {
       "Sid": "FabricaSSMRunner",
@@ -360,7 +360,7 @@ Two statements look odd until you know why:
         "codebuild:StartBuild",
         "codebuild:LogsGetLogEvents"
       ],
-      "Resource": "arn:aws:codebuild:REGION:ACCOUNT:project/fabrica-*"
+      "Resource": "arn:aws:codebuild:REGION:ACCOUNT:project/${prefix}-*"
     },
     {
       "Sid": "FabricaGameLift",
@@ -413,9 +413,9 @@ What each statement covers:
 - **Cloud Control** — every module resource flows through the Cloud Control API; the API itself authorizes on `*` and the downstream service calls run with this identity's credentials, which is why the service-level statements below exist.
 - **IAM name lookups + path writes** — the read grant covers the handler's by-name lookups (create, re-run detection, drift); the write grant covers role/profile lifecycle including the `iam:TagInstanceProfile` hook that tags the instance profile after create. `iam:PassRole` covers EC2 launches that attach the instance profile (Cloud Control instance create and the `volumeRequestTags` direct-launch path).
 - **EC2** — launches (Cloud Control instance handler and the `volumeRequestTags` direct-launch path), stop/start, terminate on destroy, tag writes, and the AMI/VPC resolution calls.
-- **S3 + DynamoDB** — `fabrica setup` bootstraps the state bucket (`fabrica-state-ACCOUNT`) and lock table (`fabrica-state-lock`) through the S3/DynamoDB SDK; Lore S3-store and DDC blob buckets and their DynamoDB tables go through Cloud Control. The purge path needs `s3:ListObjectVersions` plus `s3:DeleteObject`/`s3:DeleteObjectVersion`. Custom `lore.storeBucket` or `ddc.bucket` names outside the `fabrica-*` pattern need their own resource entries.
+- **S3 + DynamoDB** — `fabrica setup` bootstraps the state bucket (`${prefix}-state-ACCOUNT`) and lock table (`${prefix}-state-lock`) through the S3/DynamoDB SDK; Lore S3-store and DDC blob buckets and their DynamoDB tables go through Cloud Control. The purge path needs `s3:ListObjectVersions` plus `s3:DeleteObject`/`s3:DeleteObjectVersion`. Custom `lore.storeBucket` or `ddc.bucket` names outside the `${prefix}-*` pattern need their own resource entries.
 - **Setup ownership inspection** — Setup reads S3 bucket tags with `s3:GetBucketTagging`, DynamoDB metadata with `dynamodb:DescribeTable` and `dynamodb:ListTagsOfResource`, and canonical state with `s3:GetObject`. Compatible reconciliation uses the existing S3 settings/`s3:PutBucketTagging` permissions and `dynamodb:TagResource`. Setup preserves state documents and local caches; ambiguous existing resources require inspection before retrying.
-- **Canonical state permissions** — Since v0.6.0, `<state.bucket>/state.json` is the canonical state document: commands that read provisioning state need `s3:GetObject`, and commands that mutate it need `s3:PutObject` on that key (or the bucket's `/*` object ARN). These are baseline operator permissions, including after setup. Custom `state.bucket` or `state.table` names outside `fabrica-*` need matching resource entries in `FabricaStateBucket`, `FabricaStateObjects`, and `FabricaTables`: include both the bucket ARN and object ARN for the custom bucket, and the table ARN for the custom lock table.
-- **SSM** — the workstation session-password SecureString (per-create `parameter/fabrica/workstation/*/dcv-password`) and the SSM command runner used to verify private instances (`SendCommand` on the `AWS-RunShellScript` document; if your account denies `GetCommandInvocation` on the document ARN, add the command ARN `command/*` to that statement's resources).
+- **Canonical state permissions** — Since v0.6.0, `<state.bucket>/state.json` is the canonical state document: commands that read provisioning state need `s3:GetObject`, and commands that mutate it need `s3:PutObject` on that key (or the bucket's `/*` object ARN). These are baseline operator permissions, including after setup. Custom `state.bucket` or `state.table` names outside `${prefix}-*` need matching resource entries in `FabricaStateBucket`, `FabricaStateObjects`, and `FabricaTables`: include both the bucket ARN and object ARN for the custom bucket, and the table ARN for the custom lock table.
+- **SSM** — the workstation session-password SecureString (per-create `parameter/${prefix}/workstation/*/dcv-password`) and the SSM command runner used to verify private instances (`SendCommand` on the `AWS-RunShellScript` document; if your account denies `GetCommandInvocation` on the document ARN, add the command ARN `command/*` to that statement's resources).
 - **CodeBuild + GameLift** — the `ci` and `deploy` modules; drop both statements if you do not run either.
 - **Image Builder** — the `ami build` bake flows (workstation, lore, horde, ddc). Fabrica generates the artifacts locally; the bake runs as the operator's identity, which is why the creates are request-tag-gated.
