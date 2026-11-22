@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/jpvelasco/fabrica/internal/userdata"
 )
 
 const (
@@ -259,7 +261,7 @@ func GenerateBackupScript(cfg BackupScriptConfig) (string, error) {
 	if s3URI != "" {
 		// SSM sessions run a minimal environment that often lacks the AWS
 		// CLI; self-provision it (instance profile supplies credentials).
-		b.WriteString("command -v aws >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y awscli; }\n")
+		b.WriteString(userdata.AWSCLIInstallShell())
 		b.WriteString("aws s3 sync \"$DEST\" \"$S3_URI/\" --only-show-errors\n")
 	}
 	b.WriteString("echo \"BACKUP_OK $BACKUP_ID\"\n")
@@ -362,7 +364,7 @@ func GenerateDeleteScript(backupRoot, backupID, s3URI string) (string, error) {
 	fmt.Fprintf(&b, "DEST=%s\n", shellSingleQuote(dest))
 	b.WriteString("rm -rf \"$DEST\"\n")
 	if s3URI != "" {
-		b.WriteString("command -v aws >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y awscli; }\n")
+		b.WriteString(userdata.AWSCLIInstallShell())
 		fmt.Fprintf(&b, "aws s3 rm %s --recursive --only-show-errors\n", shellSingleQuote(strings.TrimRight(s3URI, "/")+"/"))
 	}
 	b.WriteString("echo DELETE_OK\n")

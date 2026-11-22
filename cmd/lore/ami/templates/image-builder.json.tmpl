@@ -33,9 +33,6 @@
       "uninstallAfterBuild": false
     }
   },
-  "tags": {
-    "ManagedBy": "{{ .Identity.ManagedBy }}",
-    "LoreVersion": "{{ .Version }}",
-    "Name": "{{ .Name }}"
-  }
+  "amiTags": {{ jsonMap .RecipeTags }},
+  "tags": {{ jsonMap .RecipeTags }}
 }

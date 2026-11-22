@@ -15,6 +15,7 @@ import (
 	"text/template"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/amirecipe"
 	"github.com/jpvelasco/fabrica/internal/amissm"
 	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/jpvelasco/fabrica/internal/tags"
@@ -42,6 +43,7 @@ var (
 // BuildConfig holds the parameters for AMI file generation.
 type BuildConfig struct {
 	Identity      tags.Identity
+	CloudTags     map[string]string
 	Version       string
 	BaseImage     string
 	Region        string
@@ -49,6 +51,15 @@ type BuildConfig struct {
 	OutputDir     string
 	IncludePacker bool
 	DryRun        bool
+}
+
+// RecipeTags is the tag set for the AMI, its recipe, and its snapshots.
+func (c BuildConfig) RecipeTags() map[string]string {
+	return amirecipe.Tags(c.Identity, c.CloudTags, map[string]string{
+		"Name":          c.Name,
+		"FabricaModule": "lore",
+		"LoreVersion":   c.Version,
+	})
 }
 
 type buildCommand struct {
@@ -110,6 +121,7 @@ Examples:
 				return err
 			}
 			cfg.Identity = identity
+			cfg.CloudTags = rt.Config.Cloud.AWS.Tags
 			if f := cmd.InheritedFlags().Lookup("dry-run"); f != nil && f.Value.String() == "true" {
 				cfg.DryRun = true
 			}
@@ -326,7 +338,7 @@ func (b *buildCommand) renderTemplate(name string, data any) ([]byte, error) {
 		return nil, fmt.Errorf("reading template %s: %w", name, err)
 	}
 	raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
-	tmpl, err := template.New(name).Funcs(template.FuncMap{"indent": indent}).Option("missingkey=error").Parse(string(raw))
+	tmpl, err := template.New(name).Funcs(amirecipe.TemplateFuncs()).Funcs(template.FuncMap{"indent": indent}).Option("missingkey=error").Parse(string(raw))
 	if err != nil {
 		return nil, fmt.Errorf("parsing template %s: %w", name, err)
 	}

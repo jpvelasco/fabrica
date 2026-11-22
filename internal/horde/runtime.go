@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"strconv"
 	"strings"
 )
 
@@ -134,6 +135,19 @@ func ListenerCheckScript(c Connection) string {
 	return fmt.Sprintf(`curl "${CURL_OPTS[@]}" -w '\n%%{http_code}' "$HORDE_URL/api/v1/server/ports" | python3 -c 'import json,sys; body,code=sys.stdin.read().rsplit("\n",1); p=json.loads(body); sys.exit(0 if code=="200" and all(type(p.get(k)) is int for k in ("http","https","unencryptedHttp2")) and p.get("http")==0 and p.get("https")==%d and p.get("unencryptedHttp2")==0 else "Horde TLS listener mismatch")'
 test "$(curl "${CURL_OPTS[@]}" --http2 -o /dev/null -w '%%{http_code} %%{http_version}' "$HORDE_URL/api/v1/server/ports")" = '200 2'
 `, c.Port)
+}
+
+// LoopbackTarget returns the shell variables every on-coordinator HTTP call
+// uses: HORDE_URL and CURL_OPTS. TLS dials the configured server name pinned to
+// 127.0.0.1 and verifies it against the CA; HTTP is loopback-only and needs no
+// trust material.
+func LoopbackTarget(c Connection) string {
+	const common = "--silent --show-error --connect-timeout 5 --max-time 30"
+	if !c.TLS {
+		return "HORDE_URL=" + ShellQuote("http://127.0.0.1:"+strconv.Itoa(c.Port)) + "\nCURL_OPTS=(" + common + " --proto '=http')\n"
+	}
+	resolve := fmt.Sprintf("%s:%d:127.0.0.1", c.ServerName, c.Port)
+	return "HORDE_URL=" + ShellQuote(c.URL("")) + "\nCURL_OPTS=(" + common + " --proto '=https' --cacert " + ShellQuote(c.CAPath) + " --resolve " + ShellQuote(resolve) + ")\n"
 }
 
 // AdoptionVerifier inspects the running container privately and emits only

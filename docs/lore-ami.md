@@ -103,6 +103,8 @@ fabrica lore ami build `
   --include-packer
 ```
 
+Recipes, AMI tags, and snapshot tags carry `cloud.aws.tags`, with `ManagedBy` set to the configured owner.
+
 `--lore-version` defaults to `0.8.6`. Only releases whose tarball SHA-256 is
 pinned in fabrica are accepted, and `latest` is rejected. The component verifies
 the downloaded `loreserver` tarball against that digest before it extracts
