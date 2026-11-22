@@ -20,9 +20,8 @@ For TLS, follow the [native agent contract](horde-tls.md#native-agent-ami):
 stock Linux agent, non-root `horde-agent.service`, versioned AMI marker and
 preinstalled trust. Fabrica configures the service with official environment
 keys and verifies coordinator HTTPS/HTTP2 before restart. Configuration success
-does not prove enrollment. Agents then wait in Horde for approval: run
-`fabrica horde agents approve` to list and approve them. The custom INI/Docker
-steps below describe legacy HTTP compatibility mode.
+does not prove enrollment. The custom INI/Docker steps below describe legacy
+HTTP compatibility mode.
 
 ---
 
@@ -552,7 +551,6 @@ ls -la /var/lib/cloud/instance/horde-agent-ready
 | Problem | Cause | Fix |
 |---------|-------|-----|
 | Agent doesn't enroll | Wrong coordinator IP in config | Verify `/etc/horde/coordinator.conf` has the correct private IP |
-| Agent connected but not listed as working | Enrollment is pending approval | Run `fabrica horde agents approve` to list pending agents, then `--host <name>` or `--all` |
 | SSM connection fails | SSM agent not running in AMI | Install and enable `amazon-ssm-agent` in the AMI |
 | ASG instances fail health check | Agent binary missing or crashing | Check `/var/log/syslog` on the instance via SSM |
 | Agent can't reach coordinator | Security group or routing issue | Verify agent SG allows outbound to coordinator port; confirm VPC routing |

@@ -27,6 +27,8 @@ type fakeEnrollment struct {
 	calls    []string
 	failWith *cloud.RemoteResult
 	err      error
+	// failApprove fails only the approval call, after a successful list.
+	failApprove bool
 }
 
 func (f *fakeEnrollment) run(ctx context.Context, _ string, commands []string) (cloud.RemoteResult, error) {
@@ -43,6 +45,9 @@ func (f *fakeEnrollment) run(ctx context.Context, _ string, commands []string) (
 	}
 	if !strings.Contains(script, approveMarker) {
 		return cloud.RemoteResult{Stdout: summaryJSON(f.pending, nil, f.unnamed)}, nil
+	}
+	if f.failApprove {
+		return cloud.RemoteResult{ExitCode: 1}, nil
 	}
 	return cloud.RemoteResult{Stdout: summaryJSON(f.pending, requestedHosts(script), f.unnamed)}, nil
 }
@@ -115,25 +120,16 @@ func mustRun(t *testing.T, c command) {
 }
 
 func TestListPrintsPendingWithoutApproving(t *testing.T) {
-	fake := &fakeEnrollment{pending: []string{"agent-1", "agent-2"}}
+	fake := &fakeEnrollment{pending: []string{"agent-1", "agent-2"}, unnamed: 2}
 	c, out := newTestCommand(t, fake)
 	mustRun(t, c)
 	if fake.approveCalls() != 0 || len(fake.calls) != 1 {
 		t.Fatalf("list must make exactly one call and no approval: %d calls", len(fake.calls))
 	}
-	for _, want := range []string{"Pending agent enrollments:", "  agent-1", "  agent-2"} {
+	for _, want := range []string{"Pending agent enrollments:", "  agent-1", "  agent-2", "2 pending enrollment(s) have no valid hostName"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output missing %q:\n%s", want, out)
 		}
-	}
-}
-
-func TestListWithNoPendingIsSuccess(t *testing.T) {
-	fake := &fakeEnrollment{}
-	c, out := newTestCommand(t, fake)
-	mustRun(t, c)
-	if !strings.Contains(out.String(), "No pending agent enrollments.") {
-		t.Fatalf("output = %q", out)
 	}
 }
 
@@ -247,16 +243,6 @@ func TestAllApprovesEveryNamedPending(t *testing.T) {
 	}
 }
 
-func TestAllWithNothingPendingIsNoop(t *testing.T) {
-	fake := &fakeEnrollment{}
-	c, out := newTestCommand(t, fake)
-	c.all = true
-	mustRun(t, c)
-	if fake.approveCalls() != 0 || !strings.Contains(out.String(), "No pending agent enrollments.") {
-		t.Fatalf("expected no-op; out=%q", out)
-	}
-}
-
 func TestJSONOutputIsAllowlisted(t *testing.T) {
 	fake := &fakeEnrollment{pending: []string{"agent-1"}, unnamed: 2}
 	c, out := newTestCommand(t, fake)
@@ -273,6 +259,40 @@ func TestJSONOutputIsAllowlisted(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "Note:") {
 		t.Fatal("text notes must not corrupt JSON output")
+	}
+}
+
+// With nothing pending, listing, --all, and --dry-run --all all succeed
+// without an approval call.
+func TestNothingPendingIsNoop(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		all, dryRun bool
+		want        string
+	}{
+		{"list", false, false, "No pending agent enrollments."},
+		{"all", true, false, "No pending agent enrollments."},
+		{"dry-run all", true, true, "Dry run: nothing to approve."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeEnrollment{}
+			c, out := newTestCommand(t, fake)
+			c.all, c.dryRun = tc.all, tc.dryRun
+			mustRun(t, c)
+			if fake.approveCalls() != 0 || !strings.Contains(out.String(), tc.want) {
+				t.Fatalf("calls=%d out=%q", fake.approveCalls(), out)
+			}
+		})
+	}
+}
+
+func TestApprovalStepFailureIsActionable(t *testing.T) {
+	fake := &fakeEnrollment{pending: []string{"agent-1"}, failApprove: true}
+	c, _ := newTestCommand(t, fake)
+	c.hosts = []string{"agent-1"}
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "enrollment approval failed on the coordinator") {
+		t.Fatalf("err = %v, want the approval-step failure", err)
 	}
 }
 
