@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The Perforce apt key is pinned by fingerprint and scoped to its own keyring.** Perforce and workstation cloud-init no longer trust the package key globally through `apt-key`. The script refuses to continue unless the key matches the pinned Perforce fingerprint, and the repository is signed-by that keyring over HTTPS. The workstation script also no longer adds the `focal` repository on a jammy base; the codename comes from `/etc/os-release` (#703)
 
+- **The Helix Core admin password is no longer in EC2 user data.** `perforce create` stores it in a per-create SSM SecureString (`/fabrica/perforce/<create-nonce>/admin-password`) and cloud-init fetches it at boot. The instance role may read only that parameter, and `perforce destroy` deletes it before the instance. Before this change the password was readable through `ec2:DescribeInstanceAttribute` for the life of the instance. Instances created earlier skip the rebuild path in `drift --fix` with a destroy-and-recreate hint. (#700)
+
 ## [0.7.2] - 2026-11-16
 
 **Patch release.** Updates the AWS SDK group. The provider identity tests now read CodeBuild Smithy RPC v2 requests.
