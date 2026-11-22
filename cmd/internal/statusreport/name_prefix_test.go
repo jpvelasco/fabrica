@@ -8,10 +8,10 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
-func TestCheckBackendRefusesGatedNamePrefix(t *testing.T) {
+func TestCheckBackendRefusesInvalidNamePrefix(t *testing.T) {
 	cfg := config.Defaults()
-	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
+	cfg.Cloud.AWS.Identity.NamePrefix = "Bad_Prefix"
 	if b := checkBackend(context.Background(), globals.Runtime{Config: cfg}); b.Bucket != "" || b.Table != "" || b.BucketExists != "unknown" {
-		t.Fatalf("gated prefix reported backend names: %+v", b)
+		t.Fatalf("invalid prefix reported backend names: %+v", b)
 	}
 }

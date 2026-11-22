@@ -245,10 +245,10 @@ func TestSetupPreservesFleetAndBuildRecords(t *testing.T) {
 	}
 }
 
-func TestSetupRejectsGatedNamePrefix(t *testing.T) {
+func TestSetupRejectsInvalidNamePrefix(t *testing.T) {
 	var out bytes.Buffer
 	rt := baseRuntime()
-	rt.Config.Cloud.AWS.Identity.NamePrefix = "acme"
+	rt.Config.Cloud.AWS.Identity.NamePrefix = "Bad_Prefix"
 	c := newTestCmd(rt, &out)
 	c.assumeYes = true
 	c.runtime.Provider = &testutil.TestProvider{}
@@ -257,7 +257,7 @@ func TestSetupRejectsGatedNamePrefix(t *testing.T) {
 		return nil
 	}
 	err := c.run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "#705") {
-		t.Fatalf("err = %v, want the #705 gate error", err)
+	if err == nil || !strings.Contains(err.Error(), "namePrefix") {
+		t.Fatalf("err = %v, want the invalid-prefix error", err)
 	}
 }

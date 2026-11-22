@@ -569,12 +569,12 @@ func stateTestTable(cfg *config.Config) string {
 	return state.ResolveBackendNames(naming.Default, cfg, stateTestAccount).Table
 }
 
-func TestAcquireStateLockRefusesGatedPrefix(t *testing.T) {
+func TestAcquireStateLockRefusesInvalidPrefix(t *testing.T) {
 	locker := &fakeLockManager{}
 	rt := testRuntimeWithLocker(locker)
-	rt.Config.Cloud.AWS.Identity.NamePrefix = "acme"
+	rt.Config.Cloud.AWS.Identity.NamePrefix = "Bad_Prefix"
 	if _, _, err := AcquireStateLock(context.Background(), rt, "op"); err == nil || locker.acquires.Load() != 0 {
-		t.Fatalf("gated prefix acquired a lock: %v", err)
+		t.Fatalf("invalid prefix acquired a lock: %v", err)
 	}
 
 	rt = testRuntimeWithLocker(&fakeLockManager{})
@@ -583,9 +583,9 @@ func TestAcquireStateLockRefusesGatedPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	rt.Config.Cloud.AWS.Identity.NamePrefix = "acme"
+	rt.Config.Cloud.AWS.Identity.NamePrefix = "Bad_Prefix"
 	if _, _, err := AcquireStateLock(ctx, rt, "inner"); err == nil {
-		t.Fatal("nested acquire resolved a gated prefix")
+		t.Fatal("nested acquire resolved a invalid prefix")
 	}
 }
 

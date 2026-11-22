@@ -653,13 +653,13 @@ func TestSetupRejectsMalformedServiceTokenParameter(t *testing.T) {
 	}
 }
 
-func TestSetupRejectsGatedNamePrefix(t *testing.T) {
+func TestSetupRejectsInvalidNamePrefix(t *testing.T) {
 	var out bytes.Buffer
 	c, created := newCmd(&out, nil, true)
-	c.runtime.Config.Cloud.AWS.Identity.NamePrefix = "acme"
+	c.runtime.Config.Cloud.AWS.Identity.NamePrefix = "Bad_Prefix"
 	err := c.run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "#705") {
-		t.Fatalf("err = %v, want the #705 gate error", err)
+	if err == nil || !strings.Contains(err.Error(), "namePrefix") {
+		t.Fatalf("err = %v, want the invalid-prefix error", err)
 	}
 	if len(*created) != 0 {
 		t.Errorf("nothing should be created when the prefix is gated, got %v", *created)

@@ -130,11 +130,11 @@ func TestPrepareSetupRuntimeRejectsUnsafeTarget(t *testing.T) {
 	}
 }
 
-func TestPrepareSetupRuntimeRefusesGatedPrefix(t *testing.T) {
+func TestPrepareSetupRuntimeRefusesInvalidPrefix(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
+	cfg.Cloud.AWS.Identity.NamePrefix = "Bad_Prefix"
 	p := &setupIdentityProvider{account: "account-one", region: "us-west-2"}
 	if _, _, err := PrepareSetupRuntime(context.Background(), globals.Runtime{Config: cfg, Provider: p}); err == nil {
-		t.Fatal("gated prefix prepared setup runtime")
+		t.Fatal("invalid prefix prepared setup runtime")
 	}
 }

@@ -48,9 +48,9 @@ func TestPipelineCobraRuntimeError(t *testing.T) {
 	}
 }
 
-func TestPipelineRejectsGatedNamePrefix(t *testing.T) {
+func TestPipelineRejectsInvalidNamePrefix(t *testing.T) {
 	cfg := config.Defaults()
-	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
+	cfg.Cloud.AWS.Identity.NamePrefix = "Bad_Prefix"
 	src := func() (globals.Runtime, error) { return globals.Runtime{Config: cfg}, nil }
 	var out bytes.Buffer
 	root, optionsSource := testutil.BuildTestSubcommand(&out)
@@ -59,5 +59,5 @@ func TestPipelineRejectsGatedNamePrefix(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a non-default namePrefix to be refused")
 	}
-	testutil.AssertContains(t, err.Error(), "#705")
+	testutil.AssertContains(t, err.Error(), "namePrefix")
 }
