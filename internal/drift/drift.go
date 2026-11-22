@@ -923,7 +923,7 @@ func rebuildInstanceDesiredState(ctx context.Context, rec *state.ModuleResource,
 	}
 	switch mod.Name {
 	case "perforce":
-		return rebuildPerforceInstance(rec, mod, cfg)
+		return rebuildPerforceInstance(rec, mod, st, cfg)
 	case "horde":
 		return rebuildHordeInstance(rec, mod, cfg)
 	case "lore":
@@ -997,24 +997,21 @@ func recordedSGAndProfile(rec *state.ModuleResource, mod *state.ModuleState, mod
 // Credential file paths the create commands write, relative to the working
 // directory (the .fabrica/ directory that holds the state cache).
 const (
-	perforceCredFile = ".fabrica/perforce-credentials.yaml"
 	// #nosec G101 -- the value is a file path to a credentials file, not a credential.
 	hordeCredFile = ".fabrica/horde-credentials.yaml"
 )
 
-// readPerforcePassword and readHordePassword are seams over the create-time
-// credential files. Tests swap them with fakes; the real readers come from
-// internal/credentials.
-var (
-	readPerforcePassword = credentials.ReadPerforceAdminPassword
-	readHordePassword    = credentials.ReadHordeMongoPassword
-)
+// readHordePassword is a seam over the create-time Horde credential file. Tests
+// swap it with a fake; the real reader comes from internal/credentials.
+var readHordePassword = credentials.ReadHordeMongoPassword
 
 // rebuildPerforceInstance rebuilds the Perforce instance. The AMI is the
 // recorded Properties.imageId: Perforce's module version is the Helix Core
 // software version, so it is used as the pinned version in cloud-init
-// instead. The admin password comes from the create-time credentials file.
-func rebuildPerforceInstance(rec *state.ModuleResource, mod *state.ModuleState, cfg *config.Config) (json.RawMessage, error) {
+// instead. The admin password is not read here: cloud-init fetches it from the
+// per-create SSM parameter recorded on the instance (#700), which still exists
+// because only terminate deletes it.
+func rebuildPerforceInstance(rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config) (json.RawMessage, error) {
 	ami := rec.Properties["imageId"]
 	if ami == "" {
 		return nil, fmt.Errorf("no AMI recorded for the perforce instance (Properties.imageId); re-run 'fabrica perforce create'")
@@ -1037,14 +1034,15 @@ func rebuildPerforceInstance(rec *state.ModuleResource, mod *state.ModuleState, 
 	if rootDevice == "" {
 		return nil, fmt.Errorf("no root device recorded for the perforce instance (Properties.rootDevice); re-run 'fabrica perforce create'")
 	}
-	adminPass, err := readPerforcePassword(perforceCredFile)
-	if err != nil {
-		return nil, err
+	adminParam := rec.Properties["adminPasswordParameter"]
+	if adminParam == "" {
+		return nil, fmt.Errorf("no admin password parameter recorded for the perforce instance (pre-#700 state, when the password rode user data); run 'fabrica perforce destroy' and then 'fabrica perforce create' to rebuild it")
 	}
 	userData, err := perforce.Generate(perforce.UserDataConfig{
-		Version:   helixVersion,
-		ServerID:  "fabrica-perforce",
-		AdminPass: adminPass,
+		Version:                helixVersion,
+		ServerID:               "fabrica-perforce",
+		Region:                 st.Region,
+		AdminPasswordParameter: adminParam,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("rendering perforce cloud-init: %w", err)

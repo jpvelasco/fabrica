@@ -9,7 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`fabrica horde agents approve` lists and approves pending agent enrollments.** Stock Horde agents wait for approval on the coordinator. The command runs one SSM script there: it reads the Admin password on the coordinator, lists `GET /api/v1/enrollment`, and POSTs only the keys of the hosts you name with `--host` or `--all`. Approval is all-or-nothing; `--dry-run`, `--yes`, and `--json` are supported. Enrollment keys and the password never leave the coordinator. The enrollment field names target Horde 5.8.4 and are pending confirmation against a live coordinator. (#701)
+
 - **`horde ami build --role agent` generates the Horde agent AMI.** The agent role bakes the stock Horde Linux agent from an S3 tarball pinned by `--agent-sha256` (verified with `sha256sum -c` before unpacking). The AMI runs `horde-agent.service` as a nologin `horde-agent` user under `ProtectSystem=strict`, writable only at `/opt/horde-agent/Data` and `~/.local/share`, writes the native contract marker, and enables the unit without starting it. The coordinator output is unchanged. (#701)
+
+### Changed
+
+- **TLS Horde agents retry the coordinator probe before configuring.** Cloud-init probes the HTTPS listener up to 30 times, 10 seconds apart, before it writes agent configuration. It still fails closed: if the probe never passes, the agent writes nothing and exits 1.
 
 ### Fixed
 
@@ -28,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Horde AMI bakes no longer pipe scripts from the internet or trust unverified downloads** — the docker bake installs Docker from Docker's apt repository instead of `get.docker.com | sh`, and the native bake takes the .NET (Microsoft) and MongoDB 7.0 apt keys from fingerprint-pinned keyrings instead of an unchecked `.deb` and an unchecked key. Each key is exported only by its pinned fingerprint, so `signed-by` cannot trust a second key in the download. The Packer path verifies the AWS CLI zip against AWS's detached signature with a pinned key before it runs the installer. The Image Builder path checks that the managed `aws-cli-version-2-linux` component installed the CLI instead of downloading a second copy. AMIs baked before this change keep the old installs; re-run `fabrica horde ami build`. (#697)
 
 - **The Perforce apt key is pinned by fingerprint and scoped to its own keyring.** Perforce and workstation cloud-init no longer trust the package key globally through `apt-key`. The script refuses to continue unless the key matches the pinned Perforce fingerprint, and the repository is signed-by that keyring over HTTPS. The workstation script also no longer adds the `focal` repository on a jammy base; the codename comes from `/etc/os-release` (#703)
+
+- **The Helix Core admin password is no longer in EC2 user data.** `perforce create` stores it in a per-create SSM SecureString (`/fabrica/perforce/<create-nonce>/admin-password`) and cloud-init fetches it at boot. The instance role may read only that parameter, and `perforce destroy` deletes it before the instance. Before this change the password was readable through `ec2:DescribeInstanceAttribute` for the life of the instance. Instances created earlier skip the rebuild path in `drift --fix` with a destroy-and-recreate hint. (#700)
 
 ## [0.7.2] - 2026-11-16
 

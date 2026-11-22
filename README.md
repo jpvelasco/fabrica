@@ -252,7 +252,7 @@ Runs the Fabrica MCP (Model Context Protocol) server over stdio transport. Expos
 
 #### `fabrica perforce create`
 
-Provisions a Perforce Helix Core server: creates an EC2 security group (port 1666) and launches an EC2 instance (IMDSv2 required, hop limit 1). Generates credentials to `.fabrica/perforce-credentials.yaml` (mode 0600). The admin password is passed to Helix configure in UserData. After configure and the service start succeed, cloud-init truncates the local cloud-init copies and wipes the rendered script file (`scripts/part-001`) as the last step. The EC2 user-data attribute itself is unchanged (AWS replaces it only on a stopped instance). Writes state incrementally so partial failures are recoverable.
+Provisions a Perforce Helix Core server: creates an EC2 security group (port 1666) and launches an EC2 instance (IMDSv2 required, hop limit 1). Generates credentials to `.fabrica/perforce-credentials.yaml` (mode 0600). Stores the admin password in a per-create SSM SecureString (`/fabrica/perforce/<create-nonce>/admin-password`, never EC2 UserData). Cloud-init fetches it at boot and passes it to Helix configure. The instance role may `ssm:GetParameter` on that one parameter ARN only, and `perforce destroy` deletes the parameter before the instance. Writes state incrementally so partial failures are recoverable.
 
 #### `fabrica perforce status`
 
@@ -364,6 +364,10 @@ Prints `horde.agents.spot` and the weekly on/off window (`horde.agents.schedule`
 #### `fabrica horde agents metrics`
 
 Prints the CloudWatch metric name/namespace agents must publish for queue-based autoscaling (default `ASGQueueDepth` in `Fabrica/HordeAgents`). Fabrica does not scrape Horde.
+
+#### `fabrica horde agents approve`
+
+Lists the agents waiting for enrollment on the recorded coordinator and approves them. With no selector it only lists. Approve exact hostNames with `--host` (repeatable) or every pending agent with `--all`; `--host` and `--all` are mutually exclusive. Approval is all-or-nothing: if any requested host is not pending, or is pending more than once, nothing is approved. `--dry-run` lists and previews the selection without approving; `--yes` skips the prompt; `--json` prints the report. The command runs over SSM and prints only hostnames and counts, so enrollment keys and the Admin password never leave the coordinator. It does not take the Fabrica state lock because it changes Horde state, not Fabrica state.
 
 #### `fabrica horde agents destroy`
 

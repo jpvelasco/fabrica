@@ -4,13 +4,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/cmd/perforce/destroy"
+	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	fabricastate "github.com/jpvelasco/fabrica/internal/state"
+	"github.com/jpvelasco/fabrica/internal/stateutil"
 	"github.com/spf13/cobra"
 )
 
@@ -220,4 +226,119 @@ func TestNewTeardownNilProvider(t *testing.T) {
 	if tc.DeleteResource != nil || tc.GetResource != nil {
 		t.Fatal("DeleteResource/GetResource must be nil when provider is nil")
 	}
+}
+
+// testAdminParam is a well-formed per-create admin-password name (#700).
+const testAdminParam = "/fabrica/perforce/0123456789abcdef0123456789abcdef/admin-password"
+
+func adminPassStateJSON(param string) string {
+	props := map[string]any{}
+	if param != "" {
+		props["adminPasswordParameter"] = param
+	}
+	return testutil.NewProvisionedStateJSON(testutil.StateModule{
+		Name: "perforce", Version: "2025.2", Status: "ready",
+		Resources: []testutil.StateResource{
+			{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-cobra123"},
+			{TypeName: "AWS::EC2::Instance", Identifier: "i-cobra123", Properties: props},
+		},
+	})
+}
+
+// TestDestroyCobraDeletesAdminPasswordBeforeInstance pins #700's teardown:
+// the SecureString is deleted, and only then the instance, so a failed or
+// interrupted destroy cannot orphan it. A failed instance delete leaves the
+// parameter already gone and the instance record (with its name) in state.
+func TestDestroyCobraDeletesAdminPasswordBeforeInstance(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, adminPassStateJSON(testAdminParam))
+
+	failing := &testutil.TestProvider{DeleteErr: map[string]error{cloud.TypeAWSEC2Instance: errors.New("instance busy")}}
+	if _, err := runDestroy(t, testutil.NewTestRuntime(failing), "--yes"); err == nil {
+		t.Fatal("expected destroy to fail on the instance delete")
+	}
+	if len(failing.DeletedParameters) != 1 || failing.DeletedParameters[0] != testAdminParam {
+		t.Fatalf("DeletedParameters = %v, want the admin password deleted before the instance", failing.DeletedParameters)
+	}
+	m := readPerforceModule(t, dir)
+	inst, ok := stateutil.ResourceByType(m, cloud.TypeAWSEC2Instance)
+	if !ok || inst.Properties["adminPasswordParameter"] != testAdminParam {
+		t.Fatal("instance record with its adminPasswordParameter must survive a failed destroy so a retry can find the name")
+	}
+}
+
+func TestDestroyCobraAdminPasswordDeleteFailureKeepsState(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, adminPassStateJSON(testAdminParam))
+
+	failing := &testutil.TestProvider{DeleteParameterErr: errors.New("ssm unavailable")}
+	_, err := runDestroy(t, testutil.NewTestRuntime(failing), "--yes")
+	if err == nil || !strings.Contains(err.Error(), testAdminParam) {
+		t.Fatalf("err = %v, want it to name the failing parameter", err)
+	}
+	if failing.DeleteCalls != 0 {
+		t.Errorf("resource deletes = %d, want 0 (the failed parameter delete must abort first)", failing.DeleteCalls)
+	}
+}
+
+// TestDestroyCobraSkipsAdminPasswordWhenNotRecorded covers a pre-#700 instance:
+// no name is recorded, so there is nothing to delete and destroy still succeeds.
+func TestDestroyCobraSkipsAdminPasswordWhenNotRecorded(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, adminPassStateJSON(""))
+
+	provider := &testutil.TestProvider{}
+	if _, err := runDestroy(t, testutil.NewTestRuntime(provider), "--yes"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(provider.DeletedParameters) != 0 {
+		t.Errorf("DeletedParameters = %v, want none for a pre-#700 instance", provider.DeletedParameters)
+	}
+}
+
+// TestDestroyCobraSkipsMalformedAdminPasswordName keeps a hand-edited state
+// entry from widening the delete target to an arbitrary SSM parameter.
+func TestDestroyCobraSkipsMalformedAdminPasswordName(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, adminPassStateJSON("/fabrica/workstation/0123456789abcdef0123456789abcdef/dcv-password"))
+
+	provider := &testutil.TestProvider{}
+	if _, err := runDestroy(t, testutil.NewTestRuntime(provider), "--yes"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(provider.DeletedParameters) != 0 {
+		t.Errorf("DeletedParameters = %v, want none for a malformed recorded name", provider.DeletedParameters)
+	}
+}
+
+func TestDestroyCobraDryRunDoesNotDeleteAdminPassword(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, adminPassStateJSON(testAdminParam))
+
+	provider := &testutil.TestProvider{}
+	if _, err := runDestroy(t, testutil.NewTestRuntime(provider), "--dry-run"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(provider.DeletedParameters) != 0 {
+		t.Errorf("dry run deleted %v, want none", provider.DeletedParameters)
+	}
+}
+
+// readPerforceModule reads the local state under dir and returns the perforce module.
+func readPerforceModule(t *testing.T, dir string) *fabricastate.ModuleState {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, ".fabrica", "state.json"))
+	if err != nil {
+		t.Fatalf("reading state file: %v", err)
+	}
+	var st fabricastate.State
+	if err := json.Unmarshal(raw, &st); err != nil {
+		t.Fatalf("parsing state file: %v", err)
+	}
+	return st.GetModule("perforce")
 }
