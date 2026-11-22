@@ -48,15 +48,18 @@ func (c showCommand) run() error {
 		fmt.Fprintln(c.out)
 	}
 
-	c.printResolvedNames()
-	return nil
+	return c.printResolvedNames()
 }
 
-func (c showCommand) printResolvedNames() {
-	backend := fabricastate.ResolveBackendNames(c.runtime.Config, c.runtime.Config.Cloud.AWS.AccountID)
+func (c showCommand) printResolvedNames() error {
+	backend, err := fabricastate.ConfiguredBackendNames(c.runtime.Config, c.runtime.Config.Cloud.AWS.AccountID)
+	if err != nil {
+		return err
+	}
 	fmt.Fprintln(c.out, "Resolved resource names:")
 	fmt.Fprintln(c.out, strings.Repeat("-", 50))
 	fmt.Fprintf(c.out, "  S3 bucket:      %s\n", backend.Bucket)
 	fmt.Fprintf(c.out, "  DynamoDB table: %s\n", backend.Table)
 	fmt.Fprintln(c.out, strings.Repeat("-", 50))
+	return nil
 }

@@ -101,6 +101,9 @@ func GenerateOutput(prefix naming.Prefix, format Format, st *state.State, cfg *c
 	if err := st.ValidateOwnership(identity); err != nil {
 		return nil, err
 	}
+	if err := st.ValidateNamePrefix(prefix); err != nil {
+		return nil, err
+	}
 
 	modules, err := buildModules(prefix, st, cfg)
 	if err != nil {
@@ -136,7 +139,7 @@ func buildModules(prefix naming.Prefix, st *state.State, cfg *config.Config) ([]
 
 	// State backend resources (always exported if account/region known).
 	if st.Account != "" || st.Region != "" {
-		sb, err := buildStateBackendModule(st, cfg)
+		sb, err := buildStateBackendModule(prefix, st, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("building state backend export: %w", err)
 		}
@@ -320,8 +323,8 @@ func typeNameShort(typeName string) string {
 }
 
 // buildStateBackendModule generates export resources for the state backend.
-func buildStateBackendModule(st *state.State, cfg *config.Config) (*ExportModule, error) {
-	names := state.ResolveBackendNames(cfg, st.Account)
+func buildStateBackendModule(prefix naming.Prefix, st *state.State, cfg *config.Config) (*ExportModule, error) {
+	names := state.ResolveBackendNames(prefix, cfg, st.Account)
 
 	mod := &ExportModule{
 		Name:   "state-backend",

@@ -12,6 +12,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -59,7 +60,7 @@ func TestPrepareSetupRuntimeResolvesCopyWithoutWrites(t *testing.T) {
 			if prepared.Provider != p || prepared.ConfigPath != path {
 				t.Fatal("preparation changed provider/profile cache selection")
 			}
-			names := state.ResolveBackendNames(cfg, "account-one")
+			names := state.ResolveBackendNames(naming.Default, cfg, "account-one")
 			if plan.Account != "account-one" || plan.Region != "us-west-2" || plan.Backend != names ||
 				prepared.Config.Cloud.AWS.AccountID != plan.Account || prepared.Config.Cloud.AWS.Region != plan.Region ||
 				prepared.Config.State.Bucket != names.Bucket || prepared.Config.State.Table != names.Table {
@@ -126,5 +127,14 @@ func TestPrepareSetupRuntimeRejectsUnsafeTarget(t *testing.T) {
 	_, _, err := PrepareSetupRuntime(ctx, globals.Runtime{Config: &config.Config{}, Provider: &setupIdentityProvider{}})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("identity resolution lost cancellation: %v", err)
+	}
+}
+
+func TestPrepareSetupRuntimeRefusesGatedPrefix(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
+	p := &setupIdentityProvider{account: "account-one", region: "us-west-2"}
+	if _, _, err := PrepareSetupRuntime(context.Background(), globals.Runtime{Config: cfg, Provider: p}); err == nil {
+		t.Fatal("gated prefix prepared setup runtime")
 	}
 }

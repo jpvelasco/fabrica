@@ -1,9 +1,8 @@
 package state
 
 import (
-	"fmt"
-
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 const unresolvedAccountID = "<account-id>"
@@ -28,25 +27,32 @@ type ResourcePlan struct {
 
 // SetupPlan is the resolved Phase 0 state-backend plan for one account/region.
 type SetupPlan struct {
+	Prefix    naming.Prefix
 	Account   string
 	Region    string
 	Backend   BackendNames
 	Resources []ResourcePlan
 }
 
-// DefaultBucket returns the default state bucket name for an AWS account.
-func DefaultBucket(account string) string {
+// ConfiguredBackendNames resolves the state names for the config's name
+// prefix. It fails when the configured prefix is not yet supported.
+func ConfiguredBackendNames(cfg *config.Config, account string) (BackendNames, error) {
+	prefix, err := cfg.ResolveNamePrefix()
+	if err != nil {
+		return BackendNames{}, err
+	}
+	return ResolveBackendNames(prefix, cfg, account), nil
+}
+
+// ResolveBackendNames returns configured state names with defaults derived from
+// the name prefix. Explicit state.bucket/state.table always win.
+func ResolveBackendNames(prefix naming.Prefix, cfg *config.Config, account string) BackendNames {
 	if account == "" {
 		account = unresolvedAccountID
 	}
-	return fmt.Sprintf("fabrica-state-%s", account)
-}
-
-// ResolveBackendNames returns configured state names with defaults applied.
-func ResolveBackendNames(cfg *config.Config, account string) BackendNames {
 	names := BackendNames{
-		Bucket: DefaultBucket(account),
-		Table:  config.DefaultStateTable,
+		Bucket: prefix.StateBucket(account),
+		Table:  prefix.StateTable(),
 	}
 	if cfg == nil {
 		return names
@@ -61,9 +67,10 @@ func ResolveBackendNames(cfg *config.Config, account string) BackendNames {
 }
 
 // NewSetupPlan builds the Phase 0 state-backend resource plan.
-func NewSetupPlan(cfg *config.Config, account, region string) SetupPlan {
-	backend := ResolveBackendNames(cfg, account)
+func NewSetupPlan(prefix naming.Prefix, cfg *config.Config, account, region string) SetupPlan {
+	backend := ResolveBackendNames(prefix, cfg, account)
 	return SetupPlan{
+		Prefix:  prefix,
 		Account: account,
 		Region:  region,
 		Backend: backend,

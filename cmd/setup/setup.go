@@ -107,7 +107,7 @@ func inspectSetup(ctx context.Context, rt globals.Runtime, target fabricastate.S
 		return fabricastate.BackendOwnershipPlan{}, err
 	}
 	if evidence.Canonical == nil {
-		if _, err := provision.ReadLocalState(provision.StatePath(rt), target.Account, target.Region, identity); err != nil {
+		if _, err := provision.ReadLocalState(provision.StatePath(rt), target.Account, target.Region, identity, target.Prefix); err != nil {
 			return fabricastate.BackendOwnershipPlan{}, fmt.Errorf("validating local setup cache: %w", err)
 		}
 	}

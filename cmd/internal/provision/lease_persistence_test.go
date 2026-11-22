@@ -11,6 +11,8 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
@@ -91,7 +93,7 @@ func TestStateLockHeldTracksActualLeaseThroughWithoutCancel(t *testing.T) {
 				t.Fatalf("live nested lease lost: %v", err)
 			}
 			nestedRelease()
-			row := p.LockRow(rt.Config.State.Table, "fabrica-state/"+stateTestAccount)
+			row := p.LockRow(stateTestTable(rt.Config), "fabrica-state/"+stateTestAccount)
 			if row["Token"] == "" {
 				t.Fatal("no actual conditional row")
 			}
@@ -103,7 +105,7 @@ func TestStateLockHeldTracksActualLeaseThroughWithoutCancel(t *testing.T) {
 				cancel()
 			case "takeover":
 				takeover := map[string]string{"LockID": "fabrica-state/" + stateTestAccount, "Token": "other-token", "AcquiredAt": "0"}
-				err = p.BackendLockingProvider.AcquireStateLockRow(context.Background(), rt.Config.State.Table, takeover, "attribute_not_exists(LockID) OR AcquiredAt <= :stale", map[string]string{":stale": "9999999999"})
+				err = p.BackendLockingProvider.AcquireStateLockRow(context.Background(), stateTestTable(rt.Config), takeover, "attribute_not_exists(LockID) OR AcquiredAt <= :stale", map[string]string{":stale": "9999999999"})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -127,10 +129,10 @@ func TestStateLockHeldTracksActualLeaseThroughWithoutCancel(t *testing.T) {
 				released = true
 			}
 			if loss == "takeover" {
-				if p.LockRow(rt.Config.State.Table, "fabrica-state/"+stateTestAccount)["Token"] != "other-token" {
+				if p.LockRow(stateTestTable(rt.Config), "fabrica-state/"+stateTestAccount)["Token"] != "other-token" {
 					t.Fatal("release removed takeover row")
 				}
-			} else if len(p.LockRow(rt.Config.State.Table, "fabrica-state/"+stateTestAccount)) != 0 {
+			} else if len(p.LockRow(stateTestTable(rt.Config), "fabrica-state/"+stateTestAccount)) != 0 {
 				t.Fatal("cleanup failed to release real row")
 			}
 		})
@@ -206,7 +208,7 @@ func TestCustomPersistenceRequiresLiveLeaseAndRemoteStorage(t *testing.T) {
 					writer.ctx = cancelled
 				case "takeover":
 					takeover := map[string]string{"LockID": "fabrica-state/" + stateTestAccount, "Token": "other-token", "AcquiredAt": "0"}
-					if err := p.BackendLockingProvider.AcquireStateLockRow(context.Background(), rt.Config.State.Table, takeover, "attribute_not_exists(LockID) OR AcquiredAt <= :stale", map[string]string{":stale": "9999999999"}); err != nil {
+					if err := p.BackendLockingProvider.AcquireStateLockRow(context.Background(), stateTestTable(rt.Config), takeover, "attribute_not_exists(LockID) OR AcquiredAt <= :stale", map[string]string{":stale": "9999999999"}); err != nil {
 						t.Fatal(err)
 					}
 					waitLeaseLoss(t, ctx)
@@ -420,7 +422,7 @@ func TestAcquiredLeaseRejectsOtherPersistenceTarget(t *testing.T) {
 			if _, err := os.Stat(StatePath(other)); !os.IsNotExist(err) {
 				t.Fatalf("wrong target refreshed cache: %v", err)
 			}
-			if !StateLockHeld(ctx) || p.LockRow(rt.Config.State.Table, "fabrica-state/"+stateTestAccount)["Token"] == "" {
+			if !StateLockHeld(ctx) || p.LockRow(stateTestTable(rt.Config), "fabrica-state/"+stateTestAccount)["Token"] == "" {
 				t.Fatal("target refusal changed the original live lease")
 			}
 		})
@@ -477,7 +479,7 @@ func TestAcquireStateLockCancelledCallerDoesNotCreateRow(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || acquired != ctx || StateLockHeld(acquired) {
 		t.Fatalf("cancelled caller acquired a lease: %v", err)
 	}
-	if len(p.BackendCalls) != 0 || len(p.LockRow(rt.Config.State.Table, "fabrica-state/"+stateTestAccount)) != 0 {
+	if len(p.BackendCalls) != 0 || len(p.LockRow(stateTestTable(rt.Config), "fabrica-state/"+stateTestAccount)) != 0 {
 		t.Fatal("cancelled caller reached conditional lock storage")
 	}
 }
@@ -519,7 +521,7 @@ func TestCustomPersistenceRejectsForeignStateTarget(t *testing.T) {
 					if _, err := os.Stat(StatePath(rt)); !os.IsNotExist(err) {
 						t.Fatalf("foreign payload refreshed cache: %v", err)
 					}
-					if !StateLockHeld(ctx) || p.LockRow(rt.Config.State.Table, "fabrica-state/"+stateTestAccount)["Token"] == "" {
+					if !StateLockHeld(ctx) || p.LockRow(stateTestTable(rt.Config), "fabrica-state/"+stateTestAccount)["Token"] == "" {
 						t.Fatal("payload refusal changed the correct live lease")
 					}
 				})
@@ -559,5 +561,41 @@ func TestCustomPersistenceAcceptsUnknownRecordedTargetSides(t *testing.T) {
 				t.Fatalf("compatible unknown side was overwritten: %v", err)
 			}
 		})
+	}
+}
+
+// stateTestTable resolves the lock table the same way the lock path does.
+func stateTestTable(cfg *config.Config) string {
+	return state.ResolveBackendNames(naming.Default, cfg, stateTestAccount).Table
+}
+
+func TestAcquireStateLockRefusesGatedPrefix(t *testing.T) {
+	locker := &fakeLockManager{}
+	rt := testRuntimeWithLocker(locker)
+	rt.Config.Cloud.AWS.Identity.NamePrefix = "acme"
+	if _, _, err := AcquireStateLock(context.Background(), rt, "op"); err == nil || locker.acquires.Load() != 0 {
+		t.Fatalf("gated prefix acquired a lock: %v", err)
+	}
+
+	rt = testRuntimeWithLocker(&fakeLockManager{})
+	ctx, release, err := AcquireStateLock(context.Background(), rt, "outer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	rt.Config.Cloud.AWS.Identity.NamePrefix = "acme"
+	if _, _, err := AcquireStateLock(ctx, rt, "inner"); err == nil {
+		t.Fatal("nested acquire resolved a gated prefix")
+	}
+}
+
+func TestStatePersistenceRefusesForeignRecordedPrefix(t *testing.T) {
+	st := state.NewState(stateTestAccount, "us-east-1")
+	if err := st.BindNamePrefix(naming.MustResolve("acme")); err != nil {
+		t.Fatal(err)
+	}
+	rt := globals.Runtime{Config: config.Defaults()}
+	if _, err := NewStatePersistence(context.Background(), rt).Persist(st, StateWriteAllowLocal); err == nil || !strings.Contains(err.Error(), `"acme"`) {
+		t.Fatalf("default persistence rebound acme state: %v", err)
 	}
 }

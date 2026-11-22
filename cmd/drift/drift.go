@@ -130,6 +130,10 @@ func (c *command) run(ctx context.Context, dryRun bool) error {
 		return fmt.Errorf("reading state: %w", err)
 	}
 
+	names, err := fabricastate.ConfiguredBackendNames(c.runtime.Config, c.runtime.Config.Cloud.AWS.AccountID)
+	if err != nil {
+		return err
+	}
 	engine := &drift.Engine{
 		State:           st,
 		ResourceGet:     c.getResource,
@@ -139,8 +143,8 @@ func (c *command) run(ctx context.Context, dryRun bool) error {
 		Config: &drift.DriftConfig{
 			Account: c.runtime.Config.Cloud.AWS.AccountID,
 			Region:  c.runtime.Config.Cloud.AWS.Region,
-			Bucket:  c.runtime.Config.State.Bucket,
-			Table:   c.runtime.Config.State.Table,
+			Bucket:  names.Bucket,
+			Table:   names.Table,
 		},
 	}
 

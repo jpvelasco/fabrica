@@ -33,7 +33,11 @@ func PrepareSetupRuntime(ctx context.Context, rt globals.Runtime) (globals.Runti
 	}
 	rt.Config = rt.Config.Clone()
 	rt.Config.Cloud.AWS.AccountID, rt.Config.Cloud.AWS.Region = account, region
-	plan := state.NewSetupPlan(rt.Config, account, region)
+	prefix, err := rt.Config.ResolveNamePrefix()
+	if err != nil {
+		return globals.Runtime{}, state.SetupPlan{}, err
+	}
+	plan := state.NewSetupPlan(prefix, rt.Config, account, region)
 	rt.Config.State.Bucket, rt.Config.State.Table = plan.Backend.Bucket, plan.Backend.Table
 	return rt, plan, nil
 }

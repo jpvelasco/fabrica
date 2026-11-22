@@ -50,6 +50,9 @@ func MustResolve(s string) Prefix {
 	return p
 }
 
+// IsDefault reports whether the prefix is the default "fabrica".
+func (p Prefix) IsDefault() bool { return p.value == "" }
+
 // String returns the prefix text, "fabrica" for the default.
 func (p Prefix) String() string {
 	if p.value == "" {
@@ -109,6 +112,15 @@ func (p Prefix) Bucket(base, account, region string) string {
 
 // ParamPath returns the SSM parameter path root for a module.
 func (p Prefix) ParamPath(module string) string { return p.slashPath(module) }
+
+// StateBucket returns the default state bucket name "<prefix>-state-<account>".
+func (p Prefix) StateBucket(account string) string { return p.For("state", account) }
+
+// StateTable returns the default state lock table name "<prefix>-state-lock".
+func (p Prefix) StateTable() string { return p.For("state", "lock") }
+
+// StateLockID returns the account-level state lock row key "<prefix>-state/<account>".
+func (p Prefix) StateLockID(account string) string { return p.For("state") + "/" + account }
 
 // LogGroup returns the CloudWatch Logs group name for a module.
 func (p Prefix) LogGroup(module string) string { return p.slashPath(module) }
