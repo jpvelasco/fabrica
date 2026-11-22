@@ -542,12 +542,12 @@ func testRuntimeWith(provider cloud.Provider) globals.RuntimeSource {
 	return func() (globals.Runtime, error) { return rt, nil }
 }
 
-// A non-default namePrefix is refused until #705 enables it, before any agent
-// plan is built.
-func TestAgentsCreateRejectsGatedNamePrefix(t *testing.T) {
+// A custom namePrefix names the agent dry-run plan from the prefix.
+func TestAgentsCreateDryRunUsesNamePrefix(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	testutil.WriteStateFile(t, dir, coordinatorStateJSON())
+	// The coordinator state is bound to acme, so the agent pool's prefix matches it.
+	testutil.WriteStateFile(t, dir, strings.Replace(coordinatorStateJSON(), "{", `{"namePrefix":"acme",`, 1))
 	provider := &testutil.TestProvider{
 		GetResources: map[string]cloud.Resource{
 			cloud.TypeAWSEC2Instance: {
@@ -561,9 +561,9 @@ func TestAgentsCreateRejectsGatedNamePrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt.Config.Cloud.AWS.Identity.NamePrefix = "acme"
-	_, err = runAgentsCreate(t, func() (globals.Runtime, error) { return rt, nil }, "--dry-run", "--ami-id", "ami-agent123")
-	if err == nil {
-		t.Fatal("expected a non-default namePrefix to be refused")
+	got, err := runAgentsCreate(t, func() (globals.Runtime, error) { return rt, nil }, "--dry-run", "--ami-id", "ami-agent123")
+	if err != nil {
+		t.Fatalf("dry-run: %v", err)
 	}
-	testutil.AssertContains(t, err.Error(), "#705")
+	testutil.AssertContains(t, got, "acme-horde-agents-asg")
 }

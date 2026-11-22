@@ -239,9 +239,8 @@ func TestCreateCobraExplicitVPCCfgSkipsResolver(t *testing.T) {
 	}
 }
 
-// A non-default namePrefix is refused until #705 enables it, before any plan
-// or write, so create never names resources from an unsupported prefix.
-func TestCreateRejectsGatedNamePrefix(t *testing.T) {
+// A custom namePrefix names the dry-run plan's resources from the prefix.
+func TestCreateDryRunUsesNamePrefix(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.State.Bucket = "fabrica-state-test"
 	cfg.Workstation.AmiID = "ami-test12345"
@@ -249,9 +248,10 @@ func TestCreateRejectsGatedNamePrefix(t *testing.T) {
 	cfg.Workstation.SubnetId = "subnet-test"
 	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
 	rt := globals.Runtime{Config: cfg, Provider: &testutil.TestProvider{}}
-	_, err := runCreate(t, func() (globals.Runtime, error) { return rt, nil }, "--dry-run")
-	if err == nil {
-		t.Fatal("expected a non-default namePrefix to be refused")
+	got, err := runCreate(t, func() (globals.Runtime, error) { return rt, nil }, "--dry-run")
+	if err != nil {
+		t.Fatalf("dry-run: %v", err)
 	}
-	testutil.AssertContains(t, err.Error(), "#705")
+	testutil.AssertContains(t, got, "Name prefix:      acme")
+	testutil.AssertContains(t, got, "acme-workstation")
 }

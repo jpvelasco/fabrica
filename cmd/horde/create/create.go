@@ -394,6 +394,7 @@ func (c command) printDryRun(plan *horde.CreatePlan) {
 		Info: provision.PlanInfo{
 			Account:      plan.Account,
 			Region:       plan.Region,
+			NamePrefix:   plan.Prefix.String(),
 			InstanceType: plan.InstanceType,
 			VolumeSize:   plan.VolumeSize,
 			AllowedCIDR:  plan.AllowedCIDR,

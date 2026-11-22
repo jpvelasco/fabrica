@@ -40,34 +40,41 @@ func TestLoadOwnershipValidation(t *testing.T) {
 	}
 }
 
-func TestLoadNamePrefixGate(t *testing.T) {
-	for _, value := range []string{"", "fabrica"} {
+func TestLoadNamePrefix(t *testing.T) {
+	for _, value := range []string{"", "fabrica", "acme", "acme-lab", "studio2"} {
 		path := writeConfig(t, fmt.Sprintf("cloud:\n  aws:\n    identity:\n      namePrefix: %q\n", value))
 		cfg, err := Load(path)
 		if err != nil {
 			t.Fatalf("namePrefix %q: Load error = %v", value, err)
 		}
 		prefix, err := cfg.ResolveNamePrefix()
-		if err != nil || prefix.String() != naming.DefaultName {
-			t.Fatalf("namePrefix %q: prefix = %q, error = %v", value, prefix, err)
+		if err != nil {
+			t.Fatalf("namePrefix %q: ResolveNamePrefix error = %v", value, err)
 		}
-	}
-	for _, value := range []string{"acme", "Fabrica", "sg"} {
-		path := writeConfig(t, fmt.Sprintf("cloud:\n  aws:\n    identity:\n      namePrefix: %q\n", value))
-		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "not supported yet (#705)") {
-			t.Fatalf("namePrefix %q: Load error = %v, want the #705 gate", value, err)
+		if want := naming.MustResolve(value); prefix != want {
+			t.Fatalf("namePrefix %q: prefix = %q, want %q", value, prefix, want)
 		}
 	}
 }
 
-func TestResolveNamePrefixGateMessage(t *testing.T) {
-	cfg := Defaults()
-	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
-	_, err := cfg.ResolveNamePrefix()
-	const want = "cloud.aws.identity.namePrefix is not supported yet (#705); remove it or set it to fabrica"
-	if err == nil || err.Error() != want {
-		t.Fatalf("ResolveNamePrefix error = %v, want %q", err, want)
+func TestLoadNamePrefixRejectsInvalid(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  string
+	}{
+		{value: "Fabrica", want: "is not valid"},
+		{value: "sg", want: "reserved"},
+		{value: "acme--lab", want: `contains "--"`},
+		{value: strings.Repeat("a", naming.MaxLen+1), want: "is not valid"},
+	} {
+		path := writeConfig(t, fmt.Sprintf("cloud:\n  aws:\n    identity:\n      namePrefix: %q\n", tc.value))
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("namePrefix %q: Load error = %v, want %q", tc.value, err, tc.want)
+		}
 	}
+}
+
+func TestResolveNamePrefixNilConfig(t *testing.T) {
 	var nilCfg *Config
 	if prefix, err := nilCfg.ResolveNamePrefix(); err != nil || prefix != naming.Default {
 		t.Fatalf("nil config prefix = %v, error = %v", prefix, err)

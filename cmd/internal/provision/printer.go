@@ -15,6 +15,7 @@ const lineWidth = 58
 type PlanInfo struct {
 	Account      string
 	Region       string
+	NamePrefix   string
 	InstanceType string
 	VolumeSize   int
 	AllowedCIDR  string
@@ -72,6 +73,7 @@ func DryRun(out io.Writer, spec DryRunSpec) {
 	fmt.Fprintln(out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(out, "  AWS account:      %s\n", spec.Info.Account)
 	fmt.Fprintf(out, "  AWS region:       %s\n", spec.Info.Region)
+	fmt.Fprintf(out, "  Name prefix:      %s\n", spec.Info.NamePrefix)
 	fmt.Fprintf(out, "  Instance type:    %s\n", spec.Info.InstanceType)
 	if !spec.OmitVolume {
 		fmt.Fprintf(out, "  Data volume:      %d GiB gp3\n", spec.Info.VolumeSize)

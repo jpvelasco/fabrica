@@ -179,6 +179,7 @@ func (c command) apply(ctx context.Context, plan *deploy.SetupPlan) error {
 func (c command) printDryRun(plan *deploy.SetupPlan) {
 	fmt.Fprintln(c.out, "Deploy setup (dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
+	fmt.Fprintf(c.out, "  Name prefix:   %s\n", plan.Prefix)
 	c.printPlanDetails(plan)
 	c.costs.EstimateAll(plan.CostResources).Render(c.out, lineWidth)
 	fmt.Fprintln(c.out, "Run without --dry-run to create these resources.")

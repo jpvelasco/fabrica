@@ -5,7 +5,23 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
+
+func TestNewNamesFollowPrefix(t *testing.T) {
+	base, err := New(context.Background(), Params{
+		Prefix:     naming.MustResolve("acme"),
+		ModuleName: "horde",
+		VPCId:      "vpc-123",
+		SubnetId:   "subnet-456",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if base.SGName != "acme-horde-sg" || base.InstanceName != "acme-horde" {
+		t.Fatalf("names = %q, %q; want acme-horde-sg, acme-horde", base.SGName, base.InstanceName)
+	}
+}
 
 func TestNewHappyPath(t *testing.T) {
 	resolver := &cloud.TestVPCResolver{VPCID: "vpc-123", SubnetID: "subnet-456"}

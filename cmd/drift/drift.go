@@ -465,11 +465,15 @@ func (c *command) printFixResult(result *drift.RemediationResult, plan *drift.Re
 
 func (c *command) printFixJSON(result *drift.RemediationResult, plan *drift.RemediationPlan, _ error) error {
 	type fixOutput struct {
-		Plan   *drift.RemediationPlan   `json:"plan"`
-		Result *drift.RemediationResult `json:"result,omitempty"`
+		NamePrefix string                   `json:"namePrefix"`
+		Plan       *drift.RemediationPlan   `json:"plan"`
+		Result     *drift.RemediationResult `json:"result,omitempty"`
 	}
 
-	out := fixOutput{Plan: plan}
+	// runFix resolved the prefix before any plan was built, so an error here is
+	// unreachable; the zero value would print the default prefix.
+	prefix, _ := c.runtime.Config.ResolveNamePrefix()
+	out := fixOutput{NamePrefix: prefix.String(), Plan: plan}
 	if result != nil {
 		out.Result = result
 	}

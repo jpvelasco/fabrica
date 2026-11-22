@@ -320,6 +320,7 @@ func (c command) writeEndpointsFile(plan *ddc.SetupPlan) error {
 func (c command) printDryRun(plan *ddc.SetupPlan) {
 	fmt.Fprintln(c.out, "Distributed DDC (dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
+	fmt.Fprintf(c.out, "  Name prefix:      %s\n", plan.Prefix)
 	c.printPlanBody(plan)
 	fmt.Fprintln(c.out)
 	c.costs.EstimateAll(plan.CostResources).Render(c.out, lineWidth)

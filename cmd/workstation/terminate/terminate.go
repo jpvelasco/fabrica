@@ -40,8 +40,7 @@ var spec = teardown.Spec{
 func wireWorkstation(tc *teardown.Command, rt globals.Runtime) {
 	teardown.WireParameterDelete(tc, rt)
 	tc.Spec.ResourceOrder = func(m *fabricastate.ModuleState) []cloud.Resource {
-		// Load rejects non-default prefixes until #705 is enabled, so this
-		// error cannot occur on a loaded config.
+		// Load validates the prefix, so this error cannot occur on a loaded config.
 		prefix, _ := rt.Config.ResolveNamePrefix()
 		return workstationResourceOrder(m, prefix)
 	}

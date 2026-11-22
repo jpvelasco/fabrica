@@ -295,6 +295,7 @@ func edgeSG(resources []fabricastate.ModuleResource, region string) (fabricastat
 func (c command) printDryRun(plan *ddc.EdgePlan) {
 	fmt.Fprintln(c.out, "Additional DDC region (dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
+	fmt.Fprintf(c.out, "  Name prefix:      %s\n", plan.Prefix)
 	c.printPlanBody(plan)
 	fmt.Fprintln(c.out)
 	c.costs.EstimateAll(plan.CostResources).Render(c.out, lineWidth)

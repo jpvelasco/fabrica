@@ -36,11 +36,11 @@ func TestNamePrefixCheckDefaultIsOK(t *testing.T) {
 	}
 }
 
-func TestCheckNamePrefixReportsGatedPrefixAsFailure(t *testing.T) {
+func TestCheckNamePrefixReportsInvalidPrefixAsFailure(t *testing.T) {
 	cfg := config.Defaults()
-	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
+	cfg.Cloud.AWS.Identity.NamePrefix = "Bad_Name"
 	if got := checkNamePrefix(globals.Runtime{Config: cfg}); got.Status != "fail" {
-		t.Fatalf("gated prefix check = %+v", got)
+		t.Fatalf("invalid prefix check = %+v", got)
 	}
 }
 

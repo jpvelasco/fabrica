@@ -93,3 +93,17 @@ func TestConfigParentHelp(t *testing.T) {
 		t.Errorf("parent help should list show subcommand:\n%s", got)
 	}
 }
+
+// TestConfigShowResolvesNamePrefix verifies show prints the prefix the
+// resource names derive from.
+func TestConfigShowResolvesNamePrefix(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
+	out, err := runConfig(t, func() (globals.Runtime, error) {
+		return globals.Runtime{Config: cfg}, nil
+	}, "show")
+	if err != nil {
+		t.Fatalf("config show: %v", err)
+	}
+	testutil.AssertContains(t, out, "Name prefix:      acme")
+}

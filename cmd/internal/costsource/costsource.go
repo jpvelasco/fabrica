@@ -215,9 +215,8 @@ func fleetCostResource(props map[string]string) (cost.Resource, bool) {
 	}, true
 }
 
-// namePrefix returns the configured resource-name prefix. Load rejects
-// non-default prefixes until #705 is enabled, so the error cannot occur on a
-// loaded config.
+// namePrefix returns the configured resource-name prefix. Load validates the
+// prefix, so the error cannot occur on a loaded config.
 func namePrefix(cfg *config.Config) naming.Prefix {
 	prefix, _ := cfg.ResolveNamePrefix()
 	return prefix

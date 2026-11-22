@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -359,25 +358,19 @@ type AWS struct {
 // no per-module override.
 type AWSIdentity struct {
 	ManagedBy string `mapstructure:"managedBy" yaml:"managedBy,omitempty"`
-	// NamePrefix is gated until #705's later PRs consume it: only empty or
-	// "fabrica" resolves today.
+	// NamePrefix prefixes every physical resource name. Empty or "fabrica"
+	// selects the default; other values must pass naming.Resolve.
 	NamePrefix string `mapstructure:"namePrefix" yaml:"namePrefix,omitempty"`
 }
 
-// errNamePrefixGated rejects custom prefixes until naming is enabled (#705).
-var errNamePrefixGated = errors.New("cloud.aws.identity.namePrefix is not supported yet (#705); remove it or set it to fabrica")
-
-// ResolveNamePrefix returns the resource-name prefix. Only the default resolves
-// until the #705 rollout enables custom prefixes.
+// ResolveNamePrefix returns the resource-name prefix. Invalid values fail with
+// the naming validator's message, which names the rule that was broken.
 func (c *Config) ResolveNamePrefix() (naming.Prefix, error) {
 	value := ""
 	if c != nil {
 		value = c.Cloud.AWS.Identity.NamePrefix
 	}
-	if value == "" || value == naming.DefaultName {
-		return naming.Default, nil
-	}
-	return naming.Default, errNamePrefixGated
+	return naming.Resolve(value)
 }
 
 // ResolveIdentity validates ownership for loaded and programmatic config.

@@ -33,6 +33,7 @@ type EdgeOptions struct {
 // No AWS SDK types. The edge shares the home region's blob bucket and IAM
 // instance profile; only the SG and EC2 instance are region-scoped.
 type EdgePlan struct {
+	Prefix  naming.Prefix
 	Account string
 	Region  string
 	AmiID   string
@@ -112,6 +113,7 @@ func NewEdgePlan(ctx context.Context, prefix naming.Prefix, cfg config.DDCConfig
 	}
 
 	return &EdgePlan{
+		Prefix:              prefix,
 		Account:             account,
 		Region:              region,
 		AmiID:               amiID,

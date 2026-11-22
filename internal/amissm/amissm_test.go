@@ -26,7 +26,7 @@ func TestSanitizeImageBuilderName(t *testing.T) {
 		{in: "a1", want: "a1"},
 		// Single characters are illegal (needs 2+); extend with a letter.
 		{in: "a", want: "af"},
-		{in: "-", want: "fabrica-ami"},
+		{in: "-", want: "ami"},
 		// Dots become dashes; other illegal characters are dropped.
 		{in: "a.b.c", want: "a-b-c"},
 		{in: "bad name!", want: "badname"},
@@ -34,9 +34,9 @@ func TestSanitizeImageBuilderName(t *testing.T) {
 		// Edge dashes/underscores are trimmed; empty results fall back.
 		{in: "-leading", want: "leading"},
 		{in: "trailing-", want: "trailing"},
-		{in: "___", want: "fabrica-ami"},
-		{in: "", want: "fabrica-ami"},
-		{in: "!!!", want: "fabrica-ami"},
+		{in: "___", want: "ami"},
+		{in: "", want: "ami"},
+		{in: "!!!", want: "ami"},
 		// Long names are capped at 128 without breaking the pattern.
 		{in: strings.Repeat("a", 200), want: strings.Repeat("a", 128)},
 		{in: strings.Repeat("a", 127) + "-", want: strings.Repeat("a", 127)},
