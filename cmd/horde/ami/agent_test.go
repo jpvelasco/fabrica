@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/assert"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -154,23 +155,11 @@ func TestAgentComponentRendering(t *testing.T) {
 		"! systemctl is-active --quiet horde-agent.service",
 	}
 	for _, want := range mustContain {
-		if !strings.Contains(s, want) {
-			t.Errorf("agent component missing %q", want)
-		}
+		assert.Contains(t, s, want)
 	}
-	mustNotContain := []string{
-		"systemctl start horde-agent",
-		"systemctl restart horde-agent",
-		"docker", "mongod", "redis", "dotnet",
-		"| sh", "| bash", "curl ", "awscli-exe-linux",
-		"REPLACE_WITH",
-		testAgentSHA,
-	}
-	for _, bad := range mustNotContain {
-		if strings.Contains(s, bad) {
-			t.Errorf("agent component must not contain %q", bad)
-		}
-	}
+	assert.NoneOf(t, s, "systemctl start horde-agent", "systemctl restart horde-agent",
+		"docker", "mongod", "redis", "dotnet", "| sh", "| bash", "curl ", "awscli-exe-linux",
+		"REPLACE_WITH", testAgentSHA)
 }
 
 func TestAgentPackerRendering(t *testing.T) {
@@ -182,15 +171,9 @@ func TestAgentPackerRendering(t *testing.T) {
 		"runuser -u horde-agent -- test -w /opt/horde-agent/Data",
 		"ReadWritePaths=/opt/horde-agent/Data /var/lib/horde-agent/.local/share",
 	} {
-		if !strings.Contains(s, want) {
-			t.Errorf("agent Packer template missing %q", want)
-		}
+		assert.Contains(t, s, want)
 	}
-	for _, bad := range []string{`provisioner "file"`, "horde_source_dir", "systemctl is-enabled horde\"", "docker", "| sh", "| bash"} {
-		if strings.Contains(s, bad) {
-			t.Errorf("agent Packer template must not contain %q", bad)
-		}
-	}
+	assert.NoneOf(t, s, `provisioner "file"`, "horde_source_dir", "systemctl is-enabled horde\"", "docker", "| sh", "| bash")
 	if got := strings.Count(s, "sha256sum -c"); got != 1 {
 		t.Errorf("agent Packer template verifies the artifact %d times, want once", got)
 	}
@@ -205,15 +188,9 @@ func TestAgentBuildGuideRendering(t *testing.T) {
 		"s3:GetObject",
 		"horde:\n  agents:\n    amiId: ami-<id>",
 	} {
-		if !strings.Contains(s, want) {
-			t.Errorf("agent build guide missing %q", want)
-		}
+		assert.Contains(t, s, want)
 	}
-	for _, bad := range []string{"### Prerequisites (native install only)", "docker compose", "REPLACE_WITH_ECR_REPOSITORY", "horde:\n  amiId"} {
-		if strings.Contains(s, bad) {
-			t.Errorf("agent build guide must not contain %q", bad)
-		}
-	}
+	assert.NoneOf(t, s, "### Prerequisites (native install only)", "docker compose", "REPLACE_WITH_ECR_REPOSITORY", "horde:\n  amiId")
 }
 
 func TestAgentRecipeDescription(t *testing.T) {
