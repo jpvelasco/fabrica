@@ -107,12 +107,17 @@ func newTestCommand(t *testing.T, fake *fakeEnrollment) (command, *bytes.Buffer)
 	}, &out
 }
 
-func TestListPrintsPendingWithoutApproving(t *testing.T) {
-	fake := &fakeEnrollment{pending: []string{"agent-1", "agent-2"}}
-	c, out := newTestCommand(t, fake)
+func mustRun(t *testing.T, c command) {
+	t.Helper()
 	if err := c.run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestListPrintsPendingWithoutApproving(t *testing.T) {
+	fake := &fakeEnrollment{pending: []string{"agent-1", "agent-2"}}
+	c, out := newTestCommand(t, fake)
+	mustRun(t, c)
 	if fake.approveCalls() != 0 || len(fake.calls) != 1 {
 		t.Fatalf("list must make exactly one call and no approval: %d calls", len(fake.calls))
 	}
@@ -126,9 +131,7 @@ func TestListPrintsPendingWithoutApproving(t *testing.T) {
 func TestListWithNoPendingIsSuccess(t *testing.T) {
 	fake := &fakeEnrollment{}
 	c, out := newTestCommand(t, fake)
-	if err := c.run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	mustRun(t, c)
 	if !strings.Contains(out.String(), "No pending agent enrollments.") {
 		t.Fatalf("output = %q", out)
 	}
@@ -139,9 +142,7 @@ func TestDryRunListsAndNeverApproves(t *testing.T) {
 	c, out := newTestCommand(t, fake)
 	c.dryRun = true
 	c.hosts = []string{"agent-1"}
-	if err := c.run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	mustRun(t, c)
 	if len(fake.calls) != 1 || fake.approveCalls() != 0 {
 		t.Fatalf("dry run must make only the list call; calls=%d", len(fake.calls))
 	}
@@ -157,9 +158,7 @@ func TestApproveHostsAfterConfirmation(t *testing.T) {
 	var asked string
 	c.confirm = func(msg string) bool { asked = msg; return true }
 	c.hosts = []string{"agent-2"}
-	if err := c.run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	mustRun(t, c)
 	if fake.approveCalls() != 1 || len(fake.calls) != 2 {
 		t.Fatalf("expected list + one approval, got %d calls", len(fake.calls))
 	}
@@ -177,9 +176,7 @@ func TestDeclinedConfirmationApprovesNothing(t *testing.T) {
 	c.assumeYes = false
 	c.confirm = func(string) bool { return false }
 	c.hosts = []string{"agent-1"}
-	if err := c.run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	mustRun(t, c)
 	if fake.approveCalls() != 0 {
 		t.Fatal("declined confirmation must not approve")
 	}
@@ -244,9 +241,7 @@ func TestAllApprovesEveryNamedPending(t *testing.T) {
 	fake := &fakeEnrollment{pending: []string{"agent-1", "agent-2"}}
 	c, out := newTestCommand(t, fake)
 	c.all = true
-	if err := c.run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	mustRun(t, c)
 	if fake.approveCalls() != 1 || !strings.Contains(out.String(), "agent-1, agent-2") {
 		t.Fatalf("--all did not approve both: calls=%d out=%q", fake.approveCalls(), out)
 	}
@@ -256,9 +251,7 @@ func TestAllWithNothingPendingIsNoop(t *testing.T) {
 	fake := &fakeEnrollment{}
 	c, out := newTestCommand(t, fake)
 	c.all = true
-	if err := c.run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	mustRun(t, c)
 	if fake.approveCalls() != 0 || !strings.Contains(out.String(), "No pending agent enrollments.") {
 		t.Fatalf("expected no-op; out=%q", out)
 	}
@@ -270,9 +263,7 @@ func TestJSONOutputIsAllowlisted(t *testing.T) {
 	c.jsonOut = true
 	c.hosts = []string{"agent-1"}
 	c.dryRun = true
-	if err := c.run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	mustRun(t, c)
 	var got result
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("--json output is not JSON: %v\n%s", err, out)
@@ -293,9 +284,7 @@ func TestWarnsWhenNoAgentPoolRecorded(t *testing.T) {
 		st.UpsertModule("horde", "ami", "ready", []state.ModuleResource{{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coordinator"}})
 		return st, nil
 	}
-	if err := c.run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	mustRun(t, c)
 	if !strings.Contains(out.String(), "no agent pool is recorded") {
 		t.Fatalf("expected warning, got %q", out)
 	}
