@@ -89,7 +89,7 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 	return iamrole.RoleDocument(plan.RoleName, iamrole.ServiceEC2, []string{
 		"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
 	}, []map[string]any{
-		iamrole.SSMOutputPolicyFor(plan.Prefix, plan.Region, plan.Account),
+		iamrole.SSMOutputPolicy(plan.Prefix, plan.Region, plan.Account),
 		iamrole.SSMParameterReadPolicy(SessionPasswordPolicyName(plan.Prefix), parameterARN),
 		iamrole.S3ObjectReadPolicy(DCVLicensePolicyName(plan.Prefix), DCVLicenseBucket(plan.Region)),
 	}, map[string]string{"FabricaModule": "workstation"},

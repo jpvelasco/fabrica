@@ -61,7 +61,7 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName,
 // ssm:GetParameter on the per-create admin-password parameter when the plan
 // names one (#700) + optional S3 backup export).
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
-	policies := []map[string]any{iamrole.SSMOutputPolicyFor(plan.Prefix, plan.Region, plan.Account)}
+	policies := []map[string]any{iamrole.SSMOutputPolicy(plan.Prefix, plan.Region, plan.Account)}
 	if plan.AdminPasswordParameter != "" {
 		adminARN, err := AdminPasswordScope(plan.Prefix).ARN(plan.Region, plan.Account, plan.AdminPasswordParameter)
 		if err != nil {

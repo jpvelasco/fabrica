@@ -42,7 +42,7 @@ func TestReproHordeExportBothRoles(t *testing.T) {
 	})
 	cfg := testConfigWithHorde()
 	// CFN
-	cfData, err := GenerateOutput(CloudFormation, st, cfg)
+	cfData, err := GenerateOutput(naming.Default, CloudFormation, st, cfg)
 	if err != nil {
 		t.Fatalf("CFN Generate: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestReproHordeExportBothRoles(t *testing.T) {
 		t.Fatalf("logical IDs not distinct: %v", roleLogicalIDs)
 	}
 	// TF
-	tfData, err := GenerateOutput(Terraform, st, cfg)
+	tfData, err := GenerateOutput(naming.Default, Terraform, st, cfg)
 	if err != nil {
 		t.Fatalf("TF Generate: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestReproCIInlinePolicyExport(t *testing.T) {
 	cfg := testConfigWithCI()
 	// Build export module and check Policies
 	ms := state.ModuleState{Name: "ci", Status: "ready", Resources: st.Modules[0].Resources}
-	mod := buildModule(ms, cfg, exportAccount, exportRegion)
+	mod := buildModule(naming.Default, ms, cfg, exportAccount, exportRegion)
 	var got []map[string]any
 	for _, r := range mod.Resources {
 		if r.TypeName == "AWS::IAM::Role" {
@@ -152,7 +152,7 @@ func TestReproDeployInlinePolicyExport(t *testing.T) {
 	cfg := testConfigWithDeploy()
 	cfg.Deploy.BuildBucket = "my-build-bucket"
 	ms := state.ModuleState{Name: "deploy", Status: "ready", Resources: st.Modules[0].Resources}
-	mod := buildModule(ms, cfg, exportAccount, exportRegion)
+	mod := buildModule(naming.Default, ms, cfg, exportAccount, exportRegion)
 	var got []map[string]any
 	for _, r := range mod.Resources {
 		if r.TypeName == "AWS::IAM::Role" {
@@ -224,7 +224,7 @@ func TestReproCIHelperEquality(t *testing.T) {
 	createPD, _ := json.Marshal(createPol["PolicyDocument"])
 
 	// Build export's expected via inlinePoliciesForRole (which should use same helper)
-	policies := inlinePoliciesForRole("ci", cfg, exportAccount, exportRegion, "")
+	policies := inlinePoliciesForRole(naming.Default, "ci", cfg, exportAccount, exportRegion, "")
 	if len(policies) == 0 {
 		t.Fatal("export inlinePoliciesForRole returned nil for ci")
 	}
@@ -248,7 +248,7 @@ func TestReproDeployHelperEquality(t *testing.T) {
 	createPol, _ := createPols[0].(map[string]any)
 	createPD, _ := json.Marshal(createPol["PolicyDocument"])
 
-	policies := inlinePoliciesForRole("deploy", cfg, exportAccount, exportRegion, "")
+	policies := inlinePoliciesForRole(naming.Default, "deploy", cfg, exportAccount, exportRegion, "")
 	if len(policies) == 0 {
 		t.Fatal("export inlinePoliciesForRole returned nil for deploy")
 	}

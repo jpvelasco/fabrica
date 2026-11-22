@@ -66,7 +66,7 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName 
 // token parameter, the role may also overwrite exactly that SecureString so
 // cloud-init can publish the Horde service-account token.
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
-	policies := []map[string]any{iamrole.SSMOutputPolicyFor(plan.Prefix, plan.Region, plan.Account)}
+	policies := []map[string]any{iamrole.SSMOutputPolicy(plan.Prefix, plan.Region, plan.Account)}
 	if plan.ServiceTokenParameter != "" {
 		arn, err := ServiceTokenParameterARN(plan.Region, plan.Account, plan.ServiceTokenParameter)
 		if err != nil {

@@ -193,7 +193,7 @@ func TestRoleTags_WithExtra(t *testing.T) {
 // account's AmazonSSMManagedInstanceCore is a narrowed variant without
 // ssm:PutParameter or logs:*. Every SSM-using module role must attach this.
 func TestSSMOutputPolicy_Shared(t *testing.T) {
-	p := SSMOutputPolicy("us-west-2", "123456789012")
+	p := SSMOutputPolicy(naming.Default, "us-west-2", "123456789012")
 	if p["PolicyName"] != "fabrica-ssm-output" {
 		t.Fatalf("PolicyName = %v, want fabrica-ssm-output", p["PolicyName"])
 	}
@@ -240,7 +240,7 @@ func TestSSMOutputPolicy_Shared(t *testing.T) {
 // fallback: callers that don't have region/account (tests, dry-runs) get
 // "*" placeholders rather than malformed ARNs.
 func TestSSMOutputPolicy_EmptyRegionAccount(t *testing.T) {
-	p := SSMOutputPolicy("", "")
+	p := SSMOutputPolicy(naming.Default, "", "")
 	stmts := p["PolicyDocument"].(map[string]any)["Statement"].([]map[string]any)
 	if len(stmts) != 3 {
 		t.Fatalf("Statement len = %d, want 3", len(stmts))
@@ -374,7 +374,7 @@ func TestDeployS3ReadPolicy_Shared(t *testing.T) {
 }
 
 func TestRoleDocument_Basic(t *testing.T) {
-	raw, err := RoleDocument("my-role", ServiceEC2, []string{"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"}, []map[string]any{SSMOutputPolicy("us-east-1", "123")}, nil)
+	raw, err := RoleDocument("my-role", ServiceEC2, []string{"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"}, []map[string]any{SSMOutputPolicy(naming.Default, "us-east-1", "123")}, nil)
 	if err != nil {
 		t.Fatalf("RoleDocument: %v", err)
 	}

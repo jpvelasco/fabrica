@@ -107,8 +107,13 @@ func (c *command) run() error {
 		return fmt.Errorf("reading state: %w", err)
 	}
 
+	prefix, err := c.cfg.ResolveNamePrefix()
+	if err != nil {
+		return err
+	}
+
 	// Generate output.
-	data, err := fabricaexport.GenerateOutput(fabricaexport.Format(c.format), st, c.cfg)
+	data, err := fabricaexport.GenerateOutput(prefix, fabricaexport.Format(c.format), st, c.cfg)
 	if err != nil {
 		if strings.Contains(err.Error(), "no modules to export") {
 			fmt.Fprintln(c.out, "Warning: no modules to export — no provisioned modules found in state.")

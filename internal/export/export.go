@@ -16,6 +16,7 @@ import (
 	"hash/fnv"
 	"strings"
 
+	"github.com/jpvelasco/fabrica/internal/ci"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/ddc"
 	"github.com/jpvelasco/fabrica/internal/horde"
@@ -87,8 +88,9 @@ func NewGenerator(format Format) (Generator, error) {
 }
 
 // GenerateOutput reads state and config, builds export modules, and generates
-// IaC output in the requested format.
-func GenerateOutput(format Format, st *state.State, cfg *config.Config) ([]byte, error) {
+// IaC output in the requested format. prefix is the resource-name prefix the
+// recorded resources were created under (#705); fallback names follow it.
+func GenerateOutput(prefix naming.Prefix, format Format, st *state.State, cfg *config.Config) ([]byte, error) {
 	if st == nil {
 		return nil, fmt.Errorf("no state available")
 	}
@@ -100,7 +102,7 @@ func GenerateOutput(format Format, st *state.State, cfg *config.Config) ([]byte,
 		return nil, err
 	}
 
-	modules, err := buildModules(st, cfg)
+	modules, err := buildModules(prefix, st, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +126,7 @@ func GenerateOutput(format Format, st *state.State, cfg *config.Config) ([]byte,
 // and region come from the recorded state: inline IAM policies are
 // re-derived from the same shared helpers create uses, scoped to this
 // account/region.
-func buildModules(st *state.State, cfg *config.Config) ([]ExportModule, error) {
+func buildModules(prefix naming.Prefix, st *state.State, cfg *config.Config) ([]ExportModule, error) {
 	if cfg != nil {
 		if err := cfg.ValidateIAM(); err != nil {
 			return nil, err
@@ -147,7 +149,7 @@ func buildModules(st *state.State, cfg *config.Config) ([]ExportModule, error) {
 	for _, ms := range st.Modules {
 		switch ms.Name {
 		case "horde", "perforce", "lore", "ddc", "workstation", "ci", "deploy":
-			mod := buildModule(ms, cfg, st.Account, st.Region)
+			mod := buildModule(prefix, ms, cfg, st.Account, st.Region)
 			if ms.Name == "horde" {
 				if err := preserveHordeListeners(&mod, &ms, cfg); err != nil {
 					return nil, err
@@ -388,7 +390,7 @@ func buildStateBackendModule(st *state.State, cfg *config.Config) (*ExportModule
 // buildModule generates export resources for any module. All modules share
 // the same transformation: iterate resources, assign logical IDs, sanitize
 // properties, and enrich with config-derived defaults via extractProperties.
-func buildModule(ms state.ModuleState, cfg *config.Config, account, region string) ExportModule {
+func buildModule(prefix naming.Prefix, ms state.ModuleState, cfg *config.Config, account, region string) ExportModule {
 	mod := ExportModule{
 		Name:   ms.Name,
 		Status: ms.Status,
@@ -409,7 +411,7 @@ func buildModule(ms state.ModuleState, cfg *config.Config, account, region strin
 			TypeName:   r.TypeName,
 			LogicalID:  logicalID,
 			Identifier: r.Identifier,
-			Properties: sanitize(extractProperties(ms.Name, *r, cfg, account, region, sessionPasswordParamName(ms))),
+			Properties: sanitize(extractProperties(prefix, ms.Name, *r, cfg, account, region, sessionPasswordParamName(ms))),
 			Module:     ms.Name,
 		})
 	}
@@ -478,7 +480,7 @@ var internalStateKeys = map[string]struct{}{
 	"sessionPasswordParameter": {},
 }
 
-func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Config, account, region, sessionPasswordParameter string) map[string]any {
+func extractProperties(prefix naming.Prefix, moduleName string, r state.ModuleResource, cfg *config.Config, account, region, sessionPasswordParameter string) map[string]any {
 	props := make(map[string]any)
 
 	// Copy state properties, normalizing camelCase keys to their IaC forms
@@ -535,7 +537,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		// Drop the internal key so it never leaks into output.
 		delete(props, "__volumeSize")
 		if _, ok := props["Tags"]; !ok {
-			props["Tags"] = defaultTags(moduleName)
+			props["Tags"] = defaultTags(prefix, moduleName)
 		}
 		if _, ok := props["MetadataOptions"]; !ok {
 			props["MetadataOptions"] = map[string]any{
@@ -545,7 +547,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		}
 	case "AWS::EC2::SecurityGroup":
 		if _, ok := props["GroupName"]; !ok {
-			props["GroupName"] = sgNameForModule(moduleName)
+			props["GroupName"] = prefix.SG(moduleName)
 		}
 		if _, ok := props["GroupDescription"]; !ok {
 			props["GroupDescription"] = sgDescForModule(moduleName)
@@ -554,11 +556,11 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			props["SecurityGroupIngress"] = sgRulesForModule(moduleName, cfg)
 		}
 		if _, ok := props["Tags"]; !ok {
-			props["Tags"] = defaultTags(moduleName)
+			props["Tags"] = defaultTags(prefix, moduleName)
 		}
 	case "AWS::IAM::Role":
 		if _, ok := props["RoleName"]; !ok {
-			props["RoleName"] = roleNameForModule(moduleName)
+			props["RoleName"] = prefix.Role(moduleName)
 		}
 		if _, ok := props["AssumeRolePolicyDocument"]; !ok {
 			props["AssumeRolePolicyDocument"] = assumeRolePolicyForModule(moduleName)
@@ -576,20 +578,20 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		// inline_policy). State-driven inputs (store bucket, backup S3) come
 		// from config/the module's recorded resources.
 		if _, ok := props["Policies"]; !ok {
-			if policies := inlinePoliciesForRole(moduleName, cfg, account, region, sessionPasswordParameter); policies != nil {
+			if policies := inlinePoliciesForRole(prefix, moduleName, cfg, account, region, sessionPasswordParameter); policies != nil {
 				props["Policies"] = policies
 			}
 		}
 		if _, ok := props["Tags"]; !ok {
-			props["Tags"] = defaultTags(moduleName)
+			props["Tags"] = defaultTags(prefix, moduleName)
 		}
 		applyRoleIAM(props, moduleName, cfg)
 	case "AWS::IAM::InstanceProfile":
 		if _, ok := props["InstanceProfileName"]; !ok {
-			props["InstanceProfileName"] = profileNameForModule(moduleName)
+			props["InstanceProfileName"] = prefix.Profile(moduleName)
 		}
 		if _, ok := props["Roles"]; !ok {
-			props["Roles"] = []string{roleNameForModule(moduleName)}
+			props["Roles"] = []string{prefix.Role(moduleName)}
 		}
 		applyProfileIAM(props, moduleName, cfg)
 	case "AWS::S3::Bucket":
@@ -600,7 +602,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			props["BucketName"] = r.Identifier
 		}
 		if _, ok := props["Tags"]; !ok {
-			props["Tags"] = defaultTags(moduleName)
+			props["Tags"] = defaultTags(prefix, moduleName)
 		}
 	case "AWS::DynamoDB::Table":
 		// Module-managed DynamoDB tables (Lore S3 store tables; the state
@@ -619,16 +621,16 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			props["BillingMode"] = "PAY_PER_REQUEST"
 		}
 		if _, ok := props["Tags"]; !ok {
-			props["Tags"] = defaultTags(moduleName)
+			props["Tags"] = defaultTags(prefix, moduleName)
 		}
 	case "AWS::CodeBuild::Project":
 		// CI CodeBuild project — SDK-backed, so state may have limited properties.
 		if _, ok := props["Name"]; !ok {
-			props["Name"] = ciProjectNameForModule(moduleName, cfg)
+			props["Name"] = ciProjectName(prefix, cfg)
 		}
 		// NOTE: ServiceRole omitted — the ARN is account-specific and not
 		// reconstructible from local state. Add the ServiceRole ARN manually
-		// before applying (e.g. arn:aws:iam::<account>:role/fabrica-ci-codebuild).
+		// before applying (e.g. arn:aws:iam::<account>:role/<prefix>-ci-codebuild).
 		if _, ok := props["Artifacts"]; !ok {
 			props["Artifacts"] = map[string]any{
 				"Type": "NO_ARTIFACTS",
@@ -643,33 +645,33 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 		}
 	case "AWS::GameLift::Alias":
 		if _, ok := props["Name"]; !ok {
-			props["Name"] = deployAliasNameForModule(moduleName, cfg)
+			props["Name"] = deployAliasName(prefix, moduleName, cfg)
 		}
 	case "AWS::GameLift::Fleet":
 		if _, ok := props["Name"]; !ok {
-			props["Name"] = "fabrica-" + moduleName + "-fleet"
+			props["Name"] = prefix.For(moduleName, "fleet")
 		}
 		if _, ok := props["Tags"]; !ok {
-			props["Tags"] = defaultTags(moduleName)
+			props["Tags"] = defaultTags(prefix, moduleName)
 		}
 	case "AWS::GameLift::Build":
 		if _, ok := props["Name"]; !ok {
-			props["Name"] = "fabrica-" + moduleName + "-build"
+			props["Name"] = prefix.For(moduleName, "build")
 		}
 	case "AWS::AutoScaling::AutoScalingGroup":
 		// Horde agent ASG — properties come from state (minSize, desiredCapacity,
 		// maxSize, instanceType, imageId). Enrich with defaults if missing.
 		if _, ok := props["AutoScalingGroupName"]; !ok {
-			props["AutoScalingGroupName"] = "fabrica-" + moduleName + "-agents-asg"
+			props["AutoScalingGroupName"] = prefix.For(moduleName, "agents", "asg")
 		}
 		if _, ok := props["Tags"]; !ok {
-			props["Tags"] = defaultTags(moduleName)
+			props["Tags"] = defaultTags(prefix, moduleName)
 		}
 	case "AWS::EC2::LaunchTemplate":
 		// Horde agent launch template — state stores the image/instance shape
 		// flat, but the Cloud Control schema nests them under LaunchTemplateData.
 		if _, ok := props["LaunchTemplateName"]; !ok {
-			props["LaunchTemplateName"] = "fabrica-" + moduleName + "-agents-lt"
+			props["LaunchTemplateName"] = prefix.For(moduleName, "agents", "lt")
 		}
 		data := map[string]any{}
 		for _, k := range []string{"InstanceType", "ImageId"} {
@@ -684,10 +686,10 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 	case "AWS::AutoScaling::ScalingPolicy":
 		// Horde agent scaling policy — properties come from state.
 		if _, ok := props["PolicyName"]; !ok {
-			props["PolicyName"] = "fabrica-" + moduleName + "-agents-scaling-policy"
+			props["PolicyName"] = prefix.For(moduleName, "agents", "scaling", "policy")
 		}
 		if _, ok := props["AutoScalingGroupName"]; !ok {
-			props["AutoScalingGroupName"] = "fabrica-" + moduleName + "-agents-asg"
+			props["AutoScalingGroupName"] = prefix.For(moduleName, "agents", "asg")
 		}
 	case "AWS::CloudWatch::Alarm":
 		// Horde agent scaling alarm — properties come from state.
@@ -697,7 +699,7 @@ func extractProperties(moduleName string, r state.ModuleResource, cfg *config.Co
 			props["AlarmName"] = r.Identifier
 		}
 		if _, ok := props["AutoScalingGroupName"]; !ok {
-			props["AutoScalingGroupName"] = "fabrica-" + moduleName + "-agents-asg"
+			props["AutoScalingGroupName"] = prefix.For(moduleName, "agents", "asg")
 		}
 	}
 
@@ -766,11 +768,6 @@ func amiIDForModule(module string, cfg *config.Config) string {
 	return ""
 }
 
-// sgNameForModule returns the default security group name for a module.
-func sgNameForModule(module string) string {
-	return "fabrica-" + module + "-sg"
-}
-
 // sgDescForModule returns the default security group description for a module.
 func sgDescForModule(module string) string {
 	return "Fabrica-managed security group for " + module
@@ -831,24 +828,6 @@ func sgRulesForModule(module string, cfg *config.Config) []map[string]any {
 // defaultModuleCIDR is the default AllowedCIDR that all module create commands
 // use when the config field is empty.
 const defaultModuleCIDR = "10.0.0.0/8"
-
-// roleNameForModule returns the default IAM role name for a module.
-// CI uses fabrica-ci-codebuild and Deploy uses fabrica-deploy-gamelift
-// to match the production identifiers; all other modules use fabrica-<mod>-role.
-func roleNameForModule(module string) string {
-	switch module {
-	case "ci":
-		return "fabrica-ci-codebuild"
-	case "deploy":
-		return "fabrica-deploy-gamelift"
-	}
-	return "fabrica-" + module + "-role"
-}
-
-// profileNameForModule returns the default instance profile name for a module.
-func profileNameForModule(module string) string {
-	return "fabrica-" + module + "-profile"
-}
 
 // ec2ModuleIAM resolves cloud.aws.iam against the module override. CI and
 // Deploy return false so a global path does not land on those roles.
@@ -967,11 +946,10 @@ func managedPolicyARNsForModule(module string) []map[string]any {
 // empty name (older/partial state) omits the parameter policy. The
 // workstation case also always carries the regional DCV license-bucket
 // s3:GetObject grant the create path attaches.
-func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, region, sessionPasswordParameter string) []map[string]any {
+func inlinePoliciesForRole(prefix naming.Prefix, moduleName string, cfg *config.Config, account, region, sessionPasswordParameter string) []map[string]any {
 	switch moduleName {
 	case "ci":
-		projectName := ciProjectNameForModule(moduleName, cfg)
-		return []map[string]any{iamrole.CICodeBuildInlinePolicy(naming.Default, region, account, projectName)}
+		return []map[string]any{iamrole.CICodeBuildInlinePolicy(prefix, region, account, ciProjectName(prefix, cfg))}
 	case "deploy":
 		bucket := ""
 		if cfg != nil {
@@ -980,53 +958,53 @@ func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, regio
 		if bucket == "" {
 			return nil
 		}
-		return []map[string]any{iamrole.DeployS3ReadPolicy(naming.Default, bucket)}
+		return []map[string]any{iamrole.DeployS3ReadPolicy(prefix, bucket)}
 	case "perforce":
-		policies := []map[string]any{iamrole.SSMOutputPolicy(region, account)}
+		policies := []map[string]any{iamrole.SSMOutputPolicy(prefix, region, account)}
 		// Same gating as the plan layer: only when backup S3 export is on and a
 		// bucket is configured.
 		if cfg.Perforce.Backup.S3Export && cfg.Perforce.Backup.S3Bucket != "" {
-			prefix := cfg.Perforce.Backup.S3Prefix
-			if prefix == "" {
-				prefix = perforce.DefaultS3Prefix
+			keyPrefix := cfg.Perforce.Backup.S3Prefix
+			if keyPrefix == "" {
+				keyPrefix = perforce.DefaultS3Prefix
 			}
 			policies = append(policies, iamrole.S3BucketPolicy(
-				"fabrica-perforce-backup-s3",
+				prefix.For("perforce", "backup", "s3"),
 				cfg.Perforce.Backup.S3Bucket,
 				[]string{"s3:ListBucket"},
 				[]string{"s3:PutObject", "s3:GetObject", "s3:DeleteObject"},
-				prefix+"*",
+				keyPrefix+"*",
 			))
 		}
 		return policies
 	case "horde":
-		return []map[string]any{iamrole.SSMOutputPolicy(region, account)}
+		return []map[string]any{iamrole.SSMOutputPolicy(prefix, region, account)}
 	case "lore":
-		bucket := lore.ResolveStoreBucket(naming.Default, cfg.Lore.StoreBucket, account, region, cfg.Lore.StoreBackend)
+		bucket := lore.ResolveStoreBucket(prefix, cfg.Lore.StoreBucket, account, region, cfg.Lore.StoreBackend)
 		if bucket == "" {
 			return nil
 		}
 		policies := []map[string]any{
-			iamrole.S3BucketPolicy("fabrica-lore-store-s3", bucket,
+			iamrole.S3BucketPolicy(prefix.For("lore", "store", "s3"), bucket,
 				[]string{"s3:ListBucket", "s3:GetBucketLocation", "s3:ListBucketVersions"},
 				[]string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"},
 				"*",
 			),
-			iamrole.SSMOutputPolicy(region, account),
-			lore.StoreDynamoDBPolicy(naming.Default, region, account, bucket, lore.StoreTableNames(bucket)),
+			iamrole.SSMOutputPolicy(prefix, region, account),
+			lore.StoreDynamoDBPolicy(prefix, region, account, bucket, lore.StoreTableNames(bucket)),
 		}
 		return policies
 	case "ddc":
-		// BucketOrDefault always falls back to fabrica-ddc-<account>-<region>,
+		// BucketOrDefault always falls back to <prefix>-ddc-<account>-<region>,
 		// so the bucket is never empty here.
-		bucket := ddc.BucketOrDefault(naming.Default, cfg.DDC.Bucket, account, region)
+		bucket := ddc.BucketOrDefault(prefix, cfg.DDC.Bucket, account, region)
 		return []map[string]any{
-			iamrole.S3BucketPolicy(naming.Default.For("ddc", "s3"), bucket,
+			iamrole.S3BucketPolicy(prefix.For("ddc", "s3"), bucket,
 				[]string{"s3:ListBucket", "s3:GetBucketLocation"},
 				[]string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject"},
 				"*",
 			),
-			iamrole.SSMOutputPolicy(region, account),
+			iamrole.SSMOutputPolicy(prefix, region, account),
 		}
 	case "workstation":
 		// Order matches the create path: the parameter policy is appended
@@ -1034,23 +1012,23 @@ func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, regio
 		// omits it rather than a wildcard), and the DCV license grant is
 		// unconditional — the server reads its no-cost EC2 license object
 		// from the regional dcv-license.<region> bucket.
-		policies := []map[string]any{iamrole.SSMOutputPolicy(region, account)}
+		policies := []map[string]any{iamrole.SSMOutputPolicy(prefix, region, account)}
 		if sessionPasswordParameter != "" {
-			if parameterARN, err := workstation.SessionPasswordScope(naming.Default).ARN(region, account, sessionPasswordParameter); err == nil {
-				policies = append(policies, iamrole.SSMParameterReadPolicy(workstation.SessionPasswordPolicyName(naming.Default), parameterARN))
+			if parameterARN, err := workstation.SessionPasswordScope(prefix).ARN(region, account, sessionPasswordParameter); err == nil {
+				policies = append(policies, iamrole.SSMParameterReadPolicy(workstation.SessionPasswordPolicyName(prefix), parameterARN))
 			}
 		}
-		policies = append(policies, iamrole.S3ObjectReadPolicy(workstation.DCVLicensePolicyName(naming.Default), workstation.DCVLicenseBucket(region)))
+		policies = append(policies, iamrole.S3ObjectReadPolicy(workstation.DCVLicensePolicyName(prefix), workstation.DCVLicenseBucket(region)))
 		return policies
 	}
 	return nil
 }
 
 // defaultTags returns the default tag list for a module resource.
-func defaultTags(module string) []map[string]string {
+func defaultTags(prefix naming.Prefix, module string) []map[string]string {
 	return []map[string]string{
 		{"Key": "ManagedBy", "Value": "fabrica"},
-		{"Key": "Name", "Value": "fabrica-" + module},
+		{"Key": "Name", "Value": prefix.Instance(module)},
 		{"Key": "FabricaModule", "Value": module},
 	}
 }
@@ -1116,12 +1094,13 @@ func loreStoreTableGSIs(spec lore.StoreTableSpec) []map[string]any {
 	return gsis
 }
 
-// ciProjectNameForModule returns the CodeBuild project name for the CI module.
-func ciProjectNameForModule(module string, cfg *config.Config) string {
-	if cfg != nil && cfg.CI.ProjectName != "" {
-		return cfg.CI.ProjectName
+// ciProjectName returns the CodeBuild project name for the CI module, the same
+// name the plan layer creates.
+func ciProjectName(prefix naming.Prefix, cfg *config.Config) string {
+	if cfg == nil {
+		return prefix.Instance("ci")
 	}
-	return "fabrica-" + module
+	return ci.ProjectName(prefix, cfg.CI)
 }
 
 // ciComputeTypeForModule returns the CI compute type from config.
@@ -1140,10 +1119,12 @@ func ciImageForModule(cfg *config.Config) string {
 	return "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
 }
 
-// deployAliasNameForModule returns the GameLift alias name for the deploy module.
-func deployAliasNameForModule(module string, cfg *config.Config) string {
+// deployAliasName returns the GameLift alias name for the deploy module. The
+// fallback is "<prefix>-<module>-alias"; the runtime alias is "<prefix>-deploy"
+// (see internal/deploy), a known mismatch kept so default output is unchanged.
+func deployAliasName(prefix naming.Prefix, module string, cfg *config.Config) string {
 	if cfg != nil && cfg.Deploy.AliasName != "" {
 		return cfg.Deploy.AliasName
 	}
-	return "fabrica-" + module + "-alias"
+	return prefix.For(module, "alias")
 }
