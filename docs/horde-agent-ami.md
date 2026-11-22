@@ -20,8 +20,9 @@ For TLS, follow the [native agent contract](horde-tls.md#native-agent-ami):
 stock Linux agent, non-root `horde-agent.service`, versioned AMI marker and
 preinstalled trust. Fabrica configures the service with official environment
 keys and verifies coordinator HTTPS/HTTP2 before restart. Configuration success
-does not prove enrollment. The custom INI/Docker steps below describe legacy
-HTTP compatibility mode.
+does not prove enrollment. HTTP-mode agents now use the same environment-file
+contract; the INI and Docker details below are out of date and will be updated
+with the HTTP guide to follow.
 
 ---
 
@@ -39,13 +40,10 @@ The AMI must meet all of the following:
 
 ### What Fabrica's cloud-init does at boot
 
-Fabrica writes a cloud-init script that:
-
-1. Writes the coordinator configuration to `/etc/horde/coordinator.conf` (INI format)
-2. Sets `HORDE_COORDINATOR_HOST`, `HORDE_COORDINATOR_PORT`, and `HORDE_COORDINATOR_GRPC_PORT` environment variables
-3. Attempts to start `horde-agent` via `systemctl start horde-agent` (native install)
-4. Falls back to `docker compose up -d agent` if Docker is available (trial mode only — see below)
-5. Touches the readiness sentinel `/var/lib/cloud/instance/horde-agent-ready`
+Fabrica's cloud-init writes `/etc/horde/fabrica-agent.env` and a systemd
+`EnvironmentFile` drop-in for `horde-agent.service`, probes the coordinator, and
+writes `/etc/horde/agent-configured` on success. Details for HTTP mode follow in
+the updated guide.
 
 **What the AMI must provide:**
 - A systemd unit `horde-agent.service` (native) **or** a Docker image + compose file with an `agent` service (trial mode)

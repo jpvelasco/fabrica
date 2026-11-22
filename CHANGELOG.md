@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Horde agents are configured through the native environment contract, HTTP included (breaking for custom agent AMIs).** `horde agents create` no longer writes `/etc/horde/coordinator.conf`, exports `HORDE_COORDINATOR_*` variables, or falls back to Docker. Every agent, HTTP or TLS, gets `/etc/horde/fabrica-agent.env` (`Horde__ServerProfiles__fabrica__Url`) and a systemd `EnvironmentFile` drop-in. Cloud-init probes the coordinator up to 30 times, 10 seconds apart: TLS fails closed, while HTTP keeps the service running and exits 1 without the sentinel. The readiness sentinel is now `/etc/horde/agent-configured`, replacing `/var/lib/cloud/instance/horde-agent-ready`. **Custom agent AMIs built for the INI contract must add** `/etc/horde/fabrica-native-agent-contract` containing `1`, run `horde-agent.service` as a non-root `User=`, and make `/opt/horde-agent/Data` and the service user's `$HOME/.local/share` writable. See [docs/horde-agent-ami.md](docs/horde-agent-ami.md). (#701)
+
 - **TLS Horde agents retry the coordinator probe before configuring.** Cloud-init probes the HTTPS listener up to 30 times, 10 seconds apart, before it writes agent configuration. It still fails closed: if the probe never passes, the agent writes nothing and exits 1.
 
 ### Fixed
