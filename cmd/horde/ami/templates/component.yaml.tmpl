@@ -5,26 +5,26 @@ description: Installs Horde {{ .Version }} ({{ .Install }} install) for use with
 phases:
   - name: build
     steps:
-      # The stock jammy base has no AWS CLI: the docker bake pulls the
-      # server image from ECR and the native path syncs binaries from S3.
-      # It lands at /usr/local/bin/aws, which is not on the SSM session
-      # PATH — invoke it by full path in SSM payloads (docs/horde-ami.md).
-      - name: InstallAwsCliV2
+      # The recipe lists the AWS-managed aws-cli-version-2-linux component
+      # ahead of this one, so the CLI is verified present, not downloaded.
+      # The docker bake pulls from ECR and the native path syncs from S3, both
+      # via /usr/local/bin/aws; SSM payloads must use that full path too
+      # (docs/horde-ami.md).
+      - name: VerifyAwsCliV2
         action: ExecuteBash
         inputs:
           commands:
             - |
               set -euo pipefail
-{{ indent 14 (awsCliInstall) }}
+{{ indent 14 (awsCliPresenceCheck) }}
 {{- if eq .Install "docker" }}
       - name: InstallDocker
         action: ExecuteBash
         inputs:
           commands:
-            - set -euo pipefail
-            - curl -fsSL https://get.docker.com | sh
-            - systemctl enable docker
-            - usermod -aG docker ubuntu
+            - |
+              set -euo pipefail
+{{ indent 14 (dockerInstall) }}
       # Writes /etc/horde/docker-compose.yml + globals.json + server.json
       # (the paths the horde unit and cloud-init use), then pulls and tags
       # the server image from the account ECR repository using the instance
@@ -54,21 +54,16 @@ phases:
         action: ExecuteBash
         inputs:
           commands:
-            - set -euo pipefail
-            - wget -q https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -O /tmp/ms.deb
-            - dpkg -i /tmp/ms.deb
-            - apt-get update -q
-            - apt-get install -y dotnet-sdk-8.0
+            - |
+              set -euo pipefail
+{{ indent 14 (dotnetInstall) }}
       - name: InstallMongoDB
         action: ExecuteBash
         inputs:
           commands:
-            - set -euo pipefail
-            - curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | gpg -o /usr/share/keyrings/mongodb-7.0.gpg --dearmor
-            - echo 'deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-7.0.gpg] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse' >/etc/apt/sources.list.d/mongodb-org-7.0.list
-            - apt-get update -q
-            - apt-get install -y mongodb-org
-            - systemctl enable mongod
+            - |
+              set -euo pipefail
+{{ indent 14 (mongoDBInstall) }}
       - name: InstallRedis
         action: ExecuteBash
         inputs:

@@ -25,6 +25,8 @@ type UserDataConfig struct {
 var userDataRenderer = userdata.New(template.Must(template.New("userdata").Option("missingkey=error").Parse(
 	workstationUserDataBefore +
 		workstationUserDataAfter +
+		userdata.PerforceAptRepoShell() +
+		workstationUserDataPerforceCLI +
 		userdata.ScrubShell("chpasswd", "session password", ".fabrica/workstation-credentials.yaml"),
 )))
 
@@ -156,9 +158,10 @@ while [ "$dcv_attempt" -le "$dcv_max_attempts" ]; do
 done
 {{ if .MountPerforce }}
 # Install Perforce CLI
-wget -qO - https://package.perforce.com/perforce.pubkey | apt-key add -
-echo "deb http://package.perforce.com/apt/ubuntu focal release" > /etc/apt/sources.list.d/perforce.list
-apt-get update -y && apt-get install -y helix-cli
+`
+
+// workstationUserDataPerforceCLI follows the Perforce apt repo fragment.
+const workstationUserDataPerforceCLI = `apt-get install -y helix-cli
 
 # Write Perforce client configuration
 cat > /home/ubuntu/.p4config <<'P4EOF'

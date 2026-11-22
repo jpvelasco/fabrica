@@ -89,7 +89,7 @@ func AgentInstanceProfileDesiredState(plan *AgentsCreatePlan) (json.RawMessage, 
 func LaunchTemplateDesiredState(plan *AgentsCreatePlan, sgID, userData string) (json.RawMessage, error) {
 	doc := map[string]any{
 		"LaunchTemplateName": plan.LaunchTemplateName,
-		"TagSpecifications":  []map[string]any{{"ResourceType": "launch-template", "Tags": agentTags(plan.LaunchTemplateName)}},
+		"TagSpecifications":  []map[string]any{{"ResourceType": "launch-template", "Tags": agentResourceTags(plan, plan.LaunchTemplateName)}},
 		"LaunchTemplateData": map[string]any{
 			"ImageId":            plan.AmiID,
 			"InstanceType":       plan.InstanceType,
@@ -104,27 +104,33 @@ func LaunchTemplateDesiredState(plan *AgentsCreatePlan, sgID, userData string) (
 	return json.Marshal(doc)
 }
 
-// agentTagSpecifications tags the instance and, when volume request tags are
-// set, the volume created from the launch template. Both specifications carry
-// the same tags: identity tags plus volumeRequestTags. A key already on the
-// instance is not overwritten. Auto Scaling launches do not retry through
-// RunInstances.
+// agentTagSpecifications tags the instance and the volume launched from the
+// launch template with the same set: identity tags, then cloud.aws.tags, then
+// volumeRequestTags. Auto Scaling launches do not retry through RunInstances.
 func agentTagSpecifications(plan *AgentsCreatePlan) []map[string]any {
-	tags := agentTags("fabrica-horde-agent")
-	if plan == nil || len(plan.VolumeRequestTags) == 0 {
-		return []map[string]any{
-			{"ResourceType": "instance", "Tags": tags},
-		}
-	}
-	// Identity tags win when volumeRequestTags repeats a key such as ManagedBy.
-	merged := appendTagPairs(tags, plan.VolumeRequestTags)
+	tags := agentInstanceTags(plan)
 	return []map[string]any{
-		{"ResourceType": "instance", "Tags": merged},
-		{"ResourceType": "volume", "Tags": merged},
+		{"ResourceType": "instance", "Tags": tags},
+		{"ResourceType": "volume", "Tags": tags},
 	}
 }
 
-// agentTags is shared by the agent group, launch template, and instances.
+// agentResourceTags is the tag set for the launch template and the Auto
+// Scaling group: identity tags for name, then cloud.aws.tags.
+func agentResourceTags(plan *AgentsCreatePlan, name string) []map[string]string {
+	return mergeAgentTags(agentTags(name), plan.OperatorTags)
+}
+
+// agentInstanceTags is the tag set for instances and volumes. volumeRequestTags
+// is the later layer, so it wins over cloud.aws.tags on a shared key: it is the
+// set the root volume is requested with and therefore the more specific one.
+func agentInstanceTags(plan *AgentsCreatePlan) []map[string]string {
+	return mergeAgentTags(agentTags("fabrica-horde-agent"), plan.OperatorTags, plan.VolumeRequestTags)
+}
+
+// agentTags is the identity tag set for the agent pool. The agent security
+// group uses it directly; the launch template, Auto Scaling group, and
+// instances add operator layers through mergeAgentTags.
 func agentTags(name string) []map[string]string {
 	return []map[string]string{
 		{"Key": fabricatags.ManagedByKey, "Value": fabricatags.ManagedByValue},
@@ -134,23 +140,32 @@ func agentTags(name string) []map[string]string {
 	}
 }
 
-// appendTagPairs adds extra tags in key order. A key already on base is kept
-// so identity tags (ManagedBy, Name, FabricaModule, FabricaRole) win.
-func appendTagPairs(base []map[string]string, extra map[string]string) []map[string]string {
-	seen := make(map[string]struct{}, len(base)+len(extra))
-	out := make([]map[string]string, 0, len(base)+len(extra))
+// mergeAgentTags appends operator layers in order to the identity base. Base
+// keys always win, including Name and FabricaRole, which are not on the shared
+// identity list. Later layers win over earlier ones on the same key. Empty keys
+// are dropped because tag APIs reject them.
+func mergeAgentTags(base []map[string]string, layers ...map[string]string) []map[string]string {
+	seen := make(map[string]struct{}, len(base))
+	out := make([]map[string]string, 0, len(base))
 	for _, t := range base {
 		seen[t["Key"]] = struct{}{}
 		out = append(out, t)
 	}
-	for _, k := range slices.Sorted(maps.Keys(extra)) {
-		if k == "" || fabricatags.IdentityKey(k) {
-			continue
+
+	values := make(map[string]string)
+	for _, layer := range layers {
+		for k, v := range layer {
+			if k == "" || fabricatags.IdentityKey(k) {
+				continue
+			}
+			values[k] = v
 		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(values)) {
 		if _, ok := seen[k]; ok {
 			continue
 		}
-		out = append(out, map[string]string{"Key": k, "Value": extra[k]})
+		out = append(out, map[string]string{"Key": k, "Value": values[k]})
 	}
 	return out
 }
@@ -166,7 +181,7 @@ func appendTagPairs(base []map[string]string, extra map[string]string) []map[str
 // because it would add tags without PropagateAtLaunch.
 func ASGDesiredState(plan *AgentsCreatePlan, ltID string) (json.RawMessage, error) {
 	var propagated []map[string]any
-	for _, tag := range agentTags("fabrica-horde-agent") {
+	for _, tag := range agentResourceTags(plan, "fabrica-horde-agent") {
 		propagated = append(propagated, map[string]any{"Key": tag["Key"], "Value": tag["Value"], "PropagateAtLaunch": true})
 	}
 	doc := map[string]any{

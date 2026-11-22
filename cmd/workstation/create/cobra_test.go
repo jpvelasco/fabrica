@@ -3,6 +3,7 @@ package create_test
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -86,6 +87,18 @@ func TestCreateCobraDryRunOutputFields(t *testing.T) {
 	}
 	for _, want := range []string{"123456789012", "us-east-1", "fabrica-workstation-sg", "Cost estimate:"} {
 		testutil.AssertContains(t, got, want)
+	}
+}
+
+func TestCreateCobraDryRunPrintsDefaultAllowedCIDR(t *testing.T) {
+	provider := &testutil.TestProvider{}
+	got, err := runCreate(t, newCobraRuntime(provider), "--dry-run")
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	testutil.AssertContains(t, got, "Allowed CIDR:     10.0.0.0/8")
+	if n := strings.Count(got, "Allowed CIDR:"); n != 1 {
+		t.Fatalf("Allowed CIDR printed %d times, want 1:\n%s", n, got)
 	}
 }
 

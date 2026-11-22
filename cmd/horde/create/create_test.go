@@ -317,6 +317,22 @@ func TestCreateDryRunDefaultVPCNote(t *testing.T) {
 	assert.Contains(t, out.String(), "fabrica-horde-sg")
 }
 
+// TestCreateDryRunPrintsAllowedCIDROnce verifies the coordinator plan prints the CIDR exactly once.
+func TestCreateDryRunPrintsAllowedCIDROnce(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCommand(&out, &testutil.TestProvider{}, testutil.NewTestState())
+	c.printDryRun(&horde.CreatePlan{
+		Account: "1", Region: "us-east-1", InstanceType: "m7i.2xlarge", VolumeSize: 500,
+		AllowedCIDR: "10.0.0.0/8", VPCID: "vpc-x", AmiID: "ami-x",
+		SGName: "sg", RoleName: "role", InstanceProfileName: "prof", InstanceName: "inst",
+	})
+	got := out.String()
+	assert.Contains(t, got, "Allowed CIDR:     10.0.0.0/8")
+	if n := strings.Count(got, "Allowed CIDR:"); n != 1 {
+		t.Fatalf("Allowed CIDR printed %d times, want 1:\n%s", n, got)
+	}
+}
+
 // TestCreateDryRunM7i2xlargeRecommendation verifies m7i.2xlarge tip in dry-run when default type.
 func TestCreateDryRunM7i2xlargeRecommendation(t *testing.T) {
 	var out bytes.Buffer
