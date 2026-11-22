@@ -25,6 +25,44 @@ HTTP compatibility mode.
 
 ---
 
+## Generate the agent AMI (recommended)
+
+`fabrica horde ami build --role agent` generates the Image Builder component,
+recipe, and build guide that bake the stock Horde Linux agent under the
+[native agent contract](horde-tls.md#native-agent-ami). Use it instead of the
+manual steps below, which remain as reference.
+
+```bash
+# 1. Fetch the agent tarball once from the coordinator's Tools page, hash it, stage it in S3
+sha256sum horde-agent-linux-x64.tar.gz
+aws s3 cp horde-agent-linux-x64.tar.gz s3://my-bucket/horde/horde-agent-linux-x64.tar.gz
+
+# 2. Generate the agent build files
+fabrica horde ami build --role agent --install native --horde-version 5.8.4 \
+  --agent-artifact s3://my-bucket/horde/horde-agent-linux-x64.tar.gz \
+  --agent-sha256 <64-hex-from-step-1> \
+  --output-dir horde-agent-ami --include-packer
+```
+
+Then follow `horde-agent-ami/build-guide.md`. The generator enforces:
+
+- `--install native`, an `s3://…tar.gz` URI, and a 64-hex `--agent-sha256`. There is no default hash.
+- The tarball is checked with `sha256sum -c` before anything is unpacked, and extracted root-owned under `/opt/horde-agent`.
+- A nologin `horde-agent` service user, with `/opt/horde-agent/Data` and `/var/lib/horde-agent/.local/share` as the only writable paths.
+- `horde-agent.service` runs as `User=horde-agent` with `NoNewPrivileges=true`, `ProtectSystem=strict`, and `ReadWritePaths=` those two paths. It is enabled but not started at bake time.
+- The contract marker `/etc/horde/fabrica-native-agent-contract` (contents `1`).
+- A validate phase that runs as the service user (`runuser -u horde-agent -- test -w …`), plus `systemctl is-enabled` and `! systemctl is-active`.
+
+The unit's `ExecStart` is `/opt/horde-agent/horde-agent`, taken from the manual
+bake below. Confirm that path against the 5.8.4 tarball layout before the first
+bake; the validate phase fails if it is not an executable.
+
+Set the resulting AMI as `horde.agents.amiId` in `fabrica.yaml`.
+
+---
+
+## Manual bake (reference)
+
 ## Requirements
 
 The AMI must meet all of the following:

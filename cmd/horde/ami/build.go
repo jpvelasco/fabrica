@@ -46,16 +46,30 @@ type BuildConfig struct {
 	OutputDir     string
 	IncludePacker bool
 	DryRun        bool
+	// Role is roleCoordinator (default; "" is treated the same) or roleAgent.
+	Role          string
+	AgentArtifact string
+	AgentSHA256   string
+}
+
+// IsAgent reports whether the build targets the stock Horde agent rather than
+// the coordinator stack.
+func (c BuildConfig) IsAgent() bool {
+	return c.Role == roleAgent
 }
 
 // RecipeTags is the tag set for the AMI, its recipe, and its snapshots.
 func (c BuildConfig) RecipeTags() map[string]string {
-	return amirecipe.Tags(c.Identity, c.CloudTags, map[string]string{
+	generated := map[string]string{
 		"Name":          c.Name,
 		"FabricaModule": "horde",
 		"HordeVersion":  c.Version,
 		"InstallMethod": c.Install,
-	})
+	}
+	if c.IsAgent() {
+		generated["HordeRole"] = roleAgent
+	}
+	return amirecipe.Tags(c.Identity, c.CloudTags, generated)
 }
 
 type buildCommand struct {
@@ -96,6 +110,10 @@ Examples:
   # Native install with Packer template for air-gapped studios
   fabrica horde ami build --install native --include-packer --output-dir build/horde
 
+  # Agent AMI: stage the agent tarball in S3 first (see the generated build guide)
+  fabrica horde ami build --role agent --install native \
+    --agent-artifact s3://my-bucket/horde/horde-agent-linux-x64.tar.gz --agent-sha256 <64-hex>
+
   # Preview what would be generated without writing any files
   fabrica horde ami build --dry-run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -130,6 +148,9 @@ Examples:
 	cmd.Flags().StringVar(&cfg.Name, "name", "", `AMI name (default: "fabrica-horde-<version>")`)
 	cmd.Flags().StringVar(&cfg.OutputDir, "output-dir", defaultOutputDir, "Directory to write generated files to")
 	cmd.Flags().BoolVar(&cfg.IncludePacker, "include-packer", false, "Also generate a Packer HCL template")
+	cmd.Flags().StringVar(&cfg.Role, "role", roleCoordinator, `AMI role: "coordinator" (Horde server stack) or "agent" (stock Horde Linux agent; requires --install native)`)
+	cmd.Flags().StringVar(&cfg.AgentArtifact, "agent-artifact", "", "s3:// URI of the Horde agent Linux tarball (.tar.gz); required with --role agent")
+	cmd.Flags().StringVar(&cfg.AgentSHA256, "agent-sha256", "", "SHA-256 of the agent tarball (64 hex characters); required with --role agent, no default")
 
 	return cmd
 }
@@ -139,7 +160,7 @@ func (b *buildCommand) run() error {
 		return err
 	}
 	if b.cfg.Name == "" {
-		b.cfg.Name = fmt.Sprintf("fabrica-horde-%s", b.cfg.Version)
+		b.cfg.Name = b.defaultName()
 	}
 	// Image Builder rejects dots in component/recipe names, so a version like
 	// 5.8.0 must not leak into the name the operator passes to
@@ -168,7 +189,7 @@ func (b *buildCommand) run() error {
 	if err := b.writeRendered("image-builder.json.tmpl", "image-builder-recipe.json", validateImageBuilderJSON); err != nil {
 		return err
 	}
-	if err := b.writeRendered("component.yaml.tmpl", "component.yaml", func(data []byte) error {
+	if err := b.writeRendered(b.componentTemplate(), "component.yaml", func(data []byte) error {
 		return validateComponentYAML(data, b.cfg.Install)
 	}); err != nil {
 		return err
@@ -188,7 +209,47 @@ func (b *buildCommand) run() error {
 	return nil
 }
 
+// defaultName is the AMI name when --name is not set. The role is part of
+// the name so a coordinator and an agent built from the same version never
+// collide.
+func (b *buildCommand) defaultName() string {
+	if b.cfg.IsAgent() {
+		return fmt.Sprintf("fabrica-horde-agent-%s", b.cfg.Version)
+	}
+	return fmt.Sprintf("fabrica-horde-%s", b.cfg.Version)
+}
+
+// componentTemplate selects the Image Builder component document for the role.
+func (b *buildCommand) componentTemplate() string {
+	if b.cfg.IsAgent() {
+		return "agent-component.yaml.tmpl"
+	}
+	return "component.yaml.tmpl"
+}
+
+// validateRole checks the role and its agent-only flags. An empty role is
+// the coordinator, so programmatic callers that predate --role keep working.
+func (b *buildCommand) validateRole() error {
+	switch b.cfg.Role {
+	case roleCoordinator, "":
+		if b.cfg.AgentArtifact != "" || b.cfg.AgentSHA256 != "" {
+			return errors.New("--agent-artifact and --agent-sha256 are only valid with --role agent")
+		}
+		return nil
+	case roleAgent:
+		if b.cfg.Install != "native" {
+			return fmt.Errorf("--role agent requires --install native (the agent is the stock Linux agent, not the Docker stack); got --install %q", b.cfg.Install)
+		}
+		return validateAgentArtifact(b.cfg.AgentArtifact, b.cfg.AgentSHA256)
+	default:
+		return fmt.Errorf("--role must be %q or %q; got %q", roleCoordinator, roleAgent, b.cfg.Role)
+	}
+}
+
 func (b *buildCommand) validate() error {
+	if err := b.validateRole(); err != nil {
+		return err
+	}
 	if b.cfg.Version == "" {
 		return errors.New("--horde-version is required")
 	}
@@ -223,7 +284,7 @@ func (b *buildCommand) printHeader(planned []string) {
 	if b.cfg.DryRun {
 		verb = "Would generate"
 	}
-	fmt.Fprintf(b.out, "%s Horde AMI build files\n", verb)
+	fmt.Fprintf(b.out, "%s %s build files\n", verb, b.amiKind())
 	fmt.Fprintf(b.out, "  Horde version:  %s\n", b.cfg.Version)
 	fmt.Fprintf(b.out, "  Install method: %s\n", b.cfg.Install)
 	fmt.Fprintf(b.out, "  Base image:     %s\n", b.cfg.BaseImage)
@@ -236,6 +297,14 @@ func (b *buildCommand) printHeader(planned []string) {
 		fmt.Fprintf(b.out, "  %s\n", f)
 	}
 	fmt.Fprintln(b.out)
+}
+
+// amiKind names the AMI in user-facing output.
+func (b *buildCommand) amiKind() string {
+	if b.cfg.IsAgent() {
+		return "Horde agent AMI"
+	}
+	return "Horde AMI"
 }
 
 func planVerb(dryRun bool) string {
@@ -282,6 +351,8 @@ func (b *buildCommand) renderTemplate(name string, data any) ([]byte, error) {
 		"hordeDockerUnit":        func() string { return hordeDockerUnitText },
 		"hclInline":              hclInline,
 		"hordeDockerUnitCommand": hordeDockerUnitCommand,
+		"agentBake":              agentBakeScript,
+		"agentValidate":          agentValidateScript,
 	}).Option("missingkey=error").Parse(string(raw))
 	if err != nil {
 		return nil, fmt.Errorf("parsing template %s: %w", name, err)
@@ -296,6 +367,14 @@ func (b *buildCommand) renderTemplate(name string, data any) ([]byte, error) {
 func indent(spaces int, value string) string {
 	prefix := strings.Repeat(" ", spaces)
 	return prefix + strings.ReplaceAll(strings.TrimSuffix(value, "\n"), "\n", "\n"+prefix)
+}
+
+// pipelineTargetHint says which fabrica.yaml key takes the baked AMI ID.
+func (b *buildCommand) pipelineTargetHint() string {
+	if b.cfg.IsAgent() {
+		return "     When the pipeline finishes, set horde.agents.amiId in fabrica.yaml."
+	}
+	return "     When the pipeline finishes, set horde.amiId in fabrica.yaml."
 }
 
 func (b *buildCommand) printSuccess(files []string) {
@@ -327,7 +406,7 @@ func (b *buildCommand) printNextSteps() {
 	fmt.Fprintf(b.out, "         --cli-input-json file://%s\n", filepath.Join(b.cfg.OutputDir, "image-builder-recipe.json"))
 	fmt.Fprintln(b.out)
 	fmt.Fprintln(b.out, "  4. Wire up an Image Builder pipeline (one-time per account) and run it.")
-	fmt.Fprintln(b.out, "     When the pipeline finishes, set horde.amiId in fabrica.yaml.")
+	fmt.Fprintln(b.out, b.pipelineTargetHint())
 	if b.cfg.IncludePacker {
 		fmt.Fprintln(b.out)
 		fmt.Fprintln(b.out, "  Alternative: build with Packer instead of Image Builder:")

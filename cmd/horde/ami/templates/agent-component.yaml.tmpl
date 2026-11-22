@@ -1,0 +1,46 @@
+schemaVersion: 1.0
+name: {{ .Name }}-{{ .Install }}
+description: Installs the stock Horde {{ .Version }} Linux agent from a SHA-256-verified S3 artifact and enables horde-agent.service without starting it, for fabrica horde agents create.
+
+phases:
+  - name: build
+    steps:
+      # The recipe lists the AWS-managed aws-cli-version-2-linux component
+      # ahead of this one, so the CLI is verified present, not downloaded. The
+      # download calls /usr/local/bin/aws by full path because /usr/local/bin is
+      # not on the SSM session PATH (docs/horde-agent-ami.md).
+      - name: VerifyAwsCliV2
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              set -euo pipefail
+{{ indent 14 (awsCliPresenceCheck) }}
+      # Fetches the agent tarball, checks it against the pinned SHA-256 with
+      # sha256sum -c before unpacking, creates the horde-agent service user and
+      # its two writable paths, writes the systemd unit and the native contract
+      # marker, and enables the unit. The unit is not started at bake time.
+      - name: InstallHordeAgent
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+{{ indent 14 (agentBake .AgentArtifact .AgentSHA256) }}
+      - name: EnsureSSMAgent
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              set -euo pipefail
+{{ indent 14 (ensureSSM) }}
+
+  - name: validate
+    steps:
+      - name: VerifyAgentService
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+{{ indent 14 (agentValidate) }}
+            - |
+{{ indent 14 (requireSSM) }}

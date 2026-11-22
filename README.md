@@ -338,7 +338,9 @@ Two install methods are supported:
 --install native   .NET 8 + MongoDB 7 + Redis installed directly from apt
 ```
 
-Key flags: `--horde-version`, `--base-image`, `--region`, `--output-dir`, `--include-packer`, `--dry-run`. `--region` defaults to `cloud.aws.region` (else `us-east-1`); `--base-image` defaults to the Canonical Ubuntu 22.04 SSM parameter (`ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id`). Pass an `ami-…` ID to pin.
+`--role agent` builds the dedicated agent AMI instead: the stock Horde Linux agent under the native agent contract, with a non-root `horde-agent.service`. It requires `--install native`, an S3 artifact (`--agent-artifact s3://…/horde-agent-linux-x64.tar.gz`), and its SHA-256 (`--agent-sha256 <64 hex>`, no default). Default AMI name: `fabrica-horde-agent-<version>`. See [docs/horde-agent-ami.md](docs/horde-agent-ami.md).
+
+Key flags: `--horde-version`, `--base-image`, `--region`, `--output-dir`, `--include-packer`, `--role coordinator|agent`, `--agent-artifact`, `--agent-sha256`, `--dry-run`. `--region` defaults to `cloud.aws.region` (else `us-east-1`); `--base-image` defaults to the Canonical Ubuntu 22.04 SSM parameter (`ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id`). Pass an `ami-…` ID to pin.
 
 #### `fabrica horde agents create`
 

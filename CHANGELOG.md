@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`horde ami build --role agent` generates the Horde agent AMI.** The agent role bakes the stock Horde Linux agent from an S3 tarball pinned by `--agent-sha256` (verified with `sha256sum -c` before unpacking). The AMI runs `horde-agent.service` as a nologin `horde-agent` user under `ProtectSystem=strict`, writable only at `/opt/horde-agent/Data` and `~/.local/share`, writes the native contract marker, and enables the unit without starting it. The coordinator output is unchanged. (#701)
+
 ### Fixed
 
 - **A pinned Helix Core version installs that version or fails.** apt compares `helix-p4d=<pin>` against the full Debian version (`2025.2-3148719~jammy`), so a bare release never matched and every pinned create silently installed the latest server. Cloud-init now resolves the pin against the Perforce repo, installs that exact build, and stops with the list of available versions when the repo lacks it. `perforce status` labels the version `(configured)` instead of printing it next to the probe result, and the `--version` help default now matches `DefaultHelixVersion` (2025.2). (#699)
