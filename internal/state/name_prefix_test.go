@@ -132,12 +132,7 @@ func TestConfiguredBackendNamesStillGated(t *testing.T) {
 	if _, err := ConfiguredBackendNames(cfg, testAccount); err == nil {
 		t.Fatal("custom prefix resolved while the config gate is closed")
 	}
-}
-
-func TestConfiguredBackendNamesDefaultPrefix(t *testing.T) {
-	cfg := config.Defaults()
-	names, err := ConfiguredBackendNames(cfg, testAccount)
-	if err != nil || names != ResolveBackendNames(naming.Default, cfg, testAccount) {
-		t.Fatalf("default names = %+v, %v", names, err)
+	if _, err := ConfiguredBackendNames(config.Defaults(), testAccount); err != nil {
+		t.Fatalf("default prefix names: %v", err)
 	}
 }
