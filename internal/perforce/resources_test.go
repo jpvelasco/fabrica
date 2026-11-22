@@ -311,3 +311,98 @@ func TestDesiredStatesStampFabricaModule(t *testing.T) {
 		t.Errorf("role FabricaModule = %q, want perforce", got)
 	}
 }
+
+const testAdminPasswordParam = "/fabrica/perforce/0123456789abcdef0123456789abcdef/admin-password"
+
+// adminPasswordPlan is a role plan with the per-create admin-password
+// parameter the create command mints before building the role.
+func adminPasswordPlan(extra CreatePlan) *CreatePlan {
+	extra.RoleName = "fabrica-perforce-role"
+	extra.Region = "us-west-2"
+	extra.Account = "123456789012"
+	extra.AdminPasswordParameter = testAdminPasswordParam
+	return &extra
+}
+
+// rolePolicies returns the inline policies RoleDesiredState emits for plan.
+func rolePolicies(t *testing.T, plan *CreatePlan) []map[string]any {
+	t.Helper()
+	raw, err := RoleDesiredState(plan)
+	if err != nil {
+		t.Fatalf("RoleDesiredState: %v", err)
+	}
+	var doc struct {
+		Policies []map[string]any `json:"Policies"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	return doc.Policies
+}
+
+// TestRoleDesiredState_AdminPasswordReadPolicy pins #700: when the plan names
+// the admin-password parameter, the role may read exactly that parameter.
+func TestRoleDesiredState_AdminPasswordReadPolicy(t *testing.T) {
+	policies := rolePolicies(t, adminPasswordPlan(CreatePlan{}))
+	if len(policies) != 2 {
+		t.Fatalf("Policies len = %d, want 2 (SSM output + admin password)", len(policies))
+	}
+	var found bool
+	for _, p := range policies {
+		if p["PolicyName"] != AdminPasswordPolicyName {
+			continue
+		}
+		found = true
+		stmts := p["PolicyDocument"].(map[string]any)["Statement"].([]any)
+		if len(stmts) != 1 {
+			t.Fatalf("admin-password policy has %d statements, want 1", len(stmts))
+		}
+		st := stmts[0].(map[string]any)
+		if got := st["Action"].([]any); len(got) != 1 || got[0] != "ssm:GetParameter" {
+			t.Errorf("Action = %v, want only ssm:GetParameter", got)
+		}
+		want := "arn:aws:ssm:us-west-2:123456789012:parameter" + testAdminPasswordParam
+		if got := st["Resource"].([]any); len(got) != 1 || got[0] != want {
+			t.Errorf("Resource = %v, want exactly %q", got, want)
+		}
+	}
+	if !found {
+		t.Fatalf("role has no %s policy", AdminPasswordPolicyName)
+	}
+}
+
+// TestRoleDesiredState_NoAdminPasswordPolicyWhenUnset keeps create output
+// unchanged until a plan names an admin-password parameter.
+func TestRoleDesiredState_NoAdminPasswordPolicyWhenUnset(t *testing.T) {
+	policies := rolePolicies(t, &CreatePlan{RoleName: "fabrica-perforce-role", Region: "us-west-2", Account: "123456789012"})
+	if len(policies) != 1 {
+		t.Fatalf("Policies len = %d, want 1 (SSM output only)", len(policies))
+	}
+	for _, p := range policies {
+		if p["PolicyName"] == AdminPasswordPolicyName {
+			t.Fatalf("unset plan granted %s", AdminPasswordPolicyName)
+		}
+	}
+}
+
+// TestRoleDesiredState_AdminPasswordRequiresScopedName refuses to build a role
+// whose read grant would point outside the perforce admin-password scope.
+func TestRoleDesiredState_AdminPasswordRequiresScopedName(t *testing.T) {
+	for _, name := range []string{"/fabrica/perforce/admin-password", "/fabrica/workstation/0123456789abcdef0123456789abcdef/dcv-password", "*"} {
+		plan := adminPasswordPlan(CreatePlan{})
+		plan.AdminPasswordParameter = name
+		if _, err := RoleDesiredState(plan); err == nil {
+			t.Errorf("RoleDesiredState with parameter %q: expected an error", name)
+		}
+	}
+}
+
+// TestRoleDesiredState_AdminPasswordRequiresAccount refuses a wildcard account
+// in the ARN.
+func TestRoleDesiredState_AdminPasswordRequiresAccount(t *testing.T) {
+	plan := adminPasswordPlan(CreatePlan{})
+	plan.Account = ""
+	if _, err := RoleDesiredState(plan); err == nil {
+		t.Error("RoleDesiredState without account: expected an error")
+	}
+}

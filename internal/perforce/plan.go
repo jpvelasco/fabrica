@@ -49,6 +49,11 @@ type CreatePlan struct {
 	// built on it; empty refuses launch (fail-closed, #513).
 	RootDeviceName string
 
+	// AdminPasswordParameter is the per-create SSM SecureString that holds the
+	// Helix Core admin password (#700). The create command mints the name
+	// before the role and instance are built, and the role may read only it.
+	AdminPasswordParameter string
+
 	// Backup settings copied from config for IAM S3 policy (optional).
 	BackupS3Export bool
 	BackupS3Bucket string
