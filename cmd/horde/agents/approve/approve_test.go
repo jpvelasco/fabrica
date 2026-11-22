@@ -262,8 +262,6 @@ func TestJSONOutputIsAllowlisted(t *testing.T) {
 	}
 }
 
-// With nothing pending, listing, --all, and --dry-run --all all succeed
-// without an approval call.
 func TestNothingPendingIsNoop(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
