@@ -98,23 +98,28 @@ printf '1\n' | sudo tee /etc/horde/fabrica-native-agent-contract
 ```
 
 Install its optional CA bundle before launch. Cloud-init verifies the marker,
-unit, service-user access to the CA file and coordinator HTTPS/HTTP2. It writes
+unit, and service-user access to the CA file. It writes
 `/etc/horde/fabrica-agent.env`, installs a systemd `EnvironmentFile` drop-in and
 restarts the service. It uses the stock
 `Horde__Server` and `Horde__ServerProfiles__fabrica__...` settings.
 
-Cloud-init probes the coordinator listener up to 30 times, 10 seconds apart,
-before it writes agent configuration. If the probe never passes, it writes
-nothing and exits 1.
+The native contract applies to HTTP coordinators too. HTTP mode uses the same
+marker, unit and environment file with an `http://` URL, and probes only the
+HTTP port. TLS-only checks (HTTPS and HTTP/2) run only in TLS mode.
+
+Cloud-init probes the coordinator listener up to 30 times, 10 seconds apart.
+TLS mode is fail-closed: if the probe never passes it writes no agent
+configuration and exits 1. HTTP mode has already started the service, so it
+keeps reconnecting, and it exits 1 without the sentinel if the probe never passes.
 
 The service user needs read access to its CA file and traversal access to
 each parent directory. Store agent trust separately from coordinator private
 keys when both services share a test host.
 
 `/etc/horde/agent-configured` means configuration and service start succeeded;
-verify actual enrollment and an active Horde session separately. Approval or
-your existing registration credential is still required. The CI service token
-is never used for agent enrollment.
+verify actual enrollment and an active Horde session separately. Approve the
+pending enrollment with `fabrica horde agents approve`. The CI service token is
+never used for agent enrollment.
 
 ## Migrate an existing coordinator
 
