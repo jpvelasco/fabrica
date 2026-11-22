@@ -159,20 +159,14 @@ func rolePolicyARN(arn string) bool {
 }
 
 // SSMOutputPolicy builds the inline policy that lets an EC2 instance publish
-// SSM command output to the MDS parameter and the /fabrica/ssm/* CloudWatch
+// SSM command output to the MDS parameter and the <prefix>/ssm/* CloudWatch
 // Logs log group — the reliable output-retrieval sink, because the account's
 // AmazonSSMManagedInstanceCore is a narrowed variant without ssm:PutParameter
 // or logs:*. Scoped to those resources only; no wildcard beyond the
-// /fabrica/ssm/* prefix. Attached to every Fabrica-managed instance role that
-// uses SSM (perforce, horde, horde agents, lore, ddc).
-func SSMOutputPolicy(region, account string) map[string]any {
-	return SSMOutputPolicyFor(naming.Default, region, account)
-}
-
-// SSMOutputPolicyFor is SSMOutputPolicy for a module that follows the resource
-// name prefix (#705): the policy name and the CloudWatch Logs group it grants
-// both derive from p.
-func SSMOutputPolicyFor(p naming.Prefix, region, account string) map[string]any {
+// <prefix>/ssm/* path. Attached to every Fabrica-managed instance role that
+// uses SSM (perforce, horde, horde agents, lore, ddc). The policy name and the
+// log group both derive from p (#705).
+func SSMOutputPolicy(p naming.Prefix, region, account string) map[string]any {
 	logGroup := p.LogGroup("ssm") + "/*"
 	if region == "" {
 		region = "*"

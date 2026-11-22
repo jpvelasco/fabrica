@@ -6,6 +6,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/horde"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -20,7 +21,7 @@ func TestExportPreservesTLSListenerAndOmitsInternalContract(t *testing.T) {
 	// An absent/changed local config must never cause a recorded TLS SG to
 	// export the old plaintext ports.
 	for _, format := range []Format{CloudFormation, Terraform} {
-		data, err := GenerateOutput(format, st, config.Defaults())
+		data, err := GenerateOutput(naming.Default, format, st, config.Defaults())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -29,12 +30,12 @@ func TestExportPreservesTLSListenerAndOmitsInternalContract(t *testing.T) {
 			t.Fatal(text)
 		}
 	}
-	data, err := GenerateOutput(CloudFormation, st, cfg)
+	data, err := GenerateOutput(naming.Default, CloudFormation, st, cfg)
 	if err != nil || !strings.Contains(string(data), "10.20.0.0/16") {
 		t.Fatalf("configured ingress lost: %s %v", data, err)
 	}
 	st.Modules[0].Resources[0].Properties[horde.ConnectionProperty] = "bad"
-	if _, err := GenerateOutput(CloudFormation, st, cfg); err == nil {
+	if _, err := GenerateOutput(naming.Default, CloudFormation, st, cfg); err == nil {
 		t.Fatal("corrupt transport exported")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -15,7 +16,7 @@ func TestExtractPropertiesAppliesIAMPlacement(t *testing.T) {
 	}
 	cfg.Workstation.IAM.Path = "/workstation/"
 
-	ws := buildModule(state.ModuleState{
+	ws := buildModule(naming.Default, state.ModuleState{
 		Name: "workstation",
 		Resources: []state.ModuleResource{
 			{TypeName: "AWS::IAM::Role", Identifier: "fabrica-workstation-role"},
@@ -45,7 +46,7 @@ func TestExtractPropertiesAppliesIAMPlacement(t *testing.T) {
 		t.Fatal("instance profile must not carry a permissions boundary")
 	}
 
-	ci := buildModule(state.ModuleState{
+	ci := buildModule(naming.Default, state.ModuleState{
 		Name: "ci",
 		Resources: []state.ModuleResource{
 			{TypeName: "AWS::IAM::Role", Identifier: "fabrica-ci-codebuild"},

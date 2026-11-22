@@ -148,7 +148,7 @@ func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
 		// without ssm:PutParameter or logs:*, so the instance role needs an
 		// explicit least-privilege policy to publish SSM command output to
 		// the MDS parameter and the /fabrica/ssm/* CloudWatch Logs sink.
-		iamrole.SSMOutputPolicyFor(plan.Prefix, region, account),
+		iamrole.SSMOutputPolicy(plan.Prefix, region, account),
 	}
 	if plan.StoreBackend == StoreBackendS3 {
 		policies = append([]map[string]any{
