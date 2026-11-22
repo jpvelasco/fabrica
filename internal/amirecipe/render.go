@@ -5,15 +5,14 @@ import (
 	"maps"
 	"slices"
 	"strings"
-	// nosemgrep: go.lang.security.audit.xss.import-text-template.import-text-template — renders
-	// local JSON/HCL/shell build artifacts, not HTML; no server or browser consumes this output.
-	"text/template"
 )
 
 // TemplateFuncs returns the helpers the AMI build templates share. Each
-// renderer registers them alongside its own functions.
-func TemplateFuncs() template.FuncMap {
-	return template.FuncMap{
+// renderer registers them with text/template's Funcs alongside its own; the
+// map[string]any type is template.FuncMap's underlying type, so it is
+// assignable without importing text/template here.
+func TemplateFuncs() map[string]any {
+	return map[string]any{
 		"jsonMap": JSONMap,
 		"hclMap":  HCLMap,
 		"cliTags": CLITags,
