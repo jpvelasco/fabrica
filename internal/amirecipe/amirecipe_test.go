@@ -36,6 +36,56 @@ func TestTagsNilOperatorStillCarriesOwner(t *testing.T) {
 	}
 }
 
+func TestJSONMapIsValidSortedJSON(t *testing.T) {
+	if got := JSONMap(nil); got != "{}" {
+		t.Fatalf("JSONMap(nil) = %q, want {}", got)
+	}
+	raw := JSONMap(map[string]string{"Zed": `a"b`, "Alpha": "<x>"})
+	var back map[string]string
+	if err := json.Unmarshal([]byte(raw), &back); err != nil {
+		t.Fatalf("JSONMap output is not JSON: %v\n%s", err, raw)
+	}
+	if back["Zed"] != `a"b` || back["Alpha"] != "<x>" {
+		t.Fatalf("round trip = %v", back)
+	}
+	if strings.Index(raw, "Alpha") > strings.Index(raw, "Zed") {
+		t.Fatalf("keys not sorted: %s", raw)
+	}
+}
+
+func TestHCLMapEscapesInterpolation(t *testing.T) {
+	got := HCLMap(map[string]string{"B": "x", "A": `say "${hi}" %{if}`})
+	want := `{ "A" = "say \"$${hi}\" %%{if}", "B" = "x" }`
+	if got != want {
+		t.Fatalf("HCLMap() = %s\nwant %s", got, want)
+	}
+	if HCLMap(nil) != "{}" {
+		t.Fatalf("HCLMap(nil) = %q", HCLMap(nil))
+	}
+}
+
+func TestCLITagsIsShellQuotedJSON(t *testing.T) {
+	got := CLITags(map[string]string{"ManagedBy": "fabrica", "Name": "it's"})
+	want := `'[{"Key":"ManagedBy","Value":"fabrica"},{"Key":"Name","Value":"it'\''s"}]'`
+	if got != want {
+		t.Fatalf("CLITags() = %s\nwant %s", got, want)
+	}
+}
+
+func TestTemplateFuncsExposeTagHelpers(t *testing.T) {
+	funcs := TemplateFuncs()
+	m := map[string]string{"Name": "x"}
+	if got := funcs["jsonMap"].(func(map[string]string) string)(m); got != JSONMap(m) {
+		t.Fatalf("jsonMap = %s", got)
+	}
+	if got := funcs["hclMap"].(func(map[string]string) string)(m); got != HCLMap(m) {
+		t.Fatalf("hclMap = %s", got)
+	}
+	if got := funcs["cliTags"].(func(map[string]string) string)(m); got != CLITags(m) {
+		t.Fatalf("cliTags = %s", got)
+	}
+}
+
 func TestResolveRegion(t *testing.T) {
 	cases := []struct {
 		name, flag, configured, want string
@@ -73,42 +123,6 @@ func TestValidateRegion(t *testing.T) {
 	}
 	if err := ValidateRegion("bogus"); err == nil || !strings.HasPrefix(err.Error(), "--region must be a valid AWS region") {
 		t.Fatalf("ValidateRegion(bogus) = %v", err)
-	}
-}
-
-func TestJSONMapIsValidSortedJSON(t *testing.T) {
-	if got := JSONMap(nil); got != "{}" {
-		t.Fatalf("JSONMap(nil) = %q, want {}", got)
-	}
-	raw := JSONMap(map[string]string{"Zed": `a"b`, "Alpha": "<x>"})
-	var back map[string]string
-	if err := json.Unmarshal([]byte(raw), &back); err != nil {
-		t.Fatalf("JSONMap output is not JSON: %v\n%s", err, raw)
-	}
-	if back["Zed"] != `a"b` || back["Alpha"] != "<x>" {
-		t.Fatalf("round trip = %v", back)
-	}
-	if strings.Index(raw, "Alpha") > strings.Index(raw, "Zed") {
-		t.Fatalf("keys not sorted: %s", raw)
-	}
-}
-
-func TestHCLMapEscapesInterpolation(t *testing.T) {
-	got := HCLMap(map[string]string{"B": "x", "A": `say "${hi}" %{if}`})
-	want := `{ "A" = "say \"$${hi}\" %%{if}", "B" = "x" }`
-	if got != want {
-		t.Fatalf("HCLMap() = %s\nwant %s", got, want)
-	}
-	if HCLMap(nil) != "{}" {
-		t.Fatalf("HCLMap(nil) = %q", HCLMap(nil))
-	}
-}
-
-func TestCLITagsIsShellQuotedJSON(t *testing.T) {
-	got := CLITags(map[string]string{"ManagedBy": "fabrica", "Name": "it's"})
-	want := `'[{"Key":"ManagedBy","Value":"fabrica"},{"Key":"Name","Value":"it'\''s"}]'`
-	if got != want {
-		t.Fatalf("CLITags() = %s\nwant %s", got, want)
 	}
 }
 

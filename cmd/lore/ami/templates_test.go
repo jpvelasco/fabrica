@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/amirecipe"
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
@@ -371,5 +372,33 @@ func TestValidateComponentYAML(t *testing.T) {
 				t.Errorf("validateComponentYAML() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestExplicitBaseImagePinsPackerSource checks --base-image ami-… still renders
+// the literal AMI in both the recipe and the Packer source.
+func TestExplicitBaseImagePinsPackerSource(t *testing.T) {
+	b := newRenderTestCommand(true)
+	b.cfg.BaseImage = "ami-0123456789abcdef0"
+	data, err := b.templateData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipe, err := b.renderTemplate("image-builder.json.tmpl", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(recipe), `"parentImage": "ami-0123456789abcdef0"`) {
+		t.Errorf("recipe parentImage should be the explicit AMI:\n%s", recipe)
+	}
+	packer, err := b.renderTemplate("packer.hcl.tmpl", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(packer), `source_ami    = "ami-0123456789abcdef0"`) || strings.Contains(string(packer), "amazon-parameterstore") {
+		t.Errorf("explicit AMI should pin the Packer source with no data source:\n%s", packer)
+	}
+	if amirecipe.PackerSource(b.cfg.BaseImage) != `source_ami    = "ami-0123456789abcdef0"` {
+		t.Fatal("PackerSource disagrees with the template")
 	}
 }

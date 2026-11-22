@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
@@ -109,6 +110,70 @@ func TestSubmitCobraDryRunNoSubmit(t *testing.T) {
 	testutil.AssertContains(t, got, "dry run")
 	testutil.AssertContains(t, got, "Compile")
 	testutil.AssertContains(t, got, "http://10.0.1.42:5000")
+}
+
+func writeAggregateBuildGraph(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "BuildGraph.xml")
+	xml := `<?xml version="1.0"?><BuildGraph xmlns="http://www.epicgames.com/BuildGraph">
+		<Agent Name="BuildAgent" Type="Win64"><Node Name="Compile"/><Node Name="Cook"/></Agent>
+		<Aggregate Name="SmokeTest" Requires="Compile;Cook"/>
+	</BuildGraph>`
+	if err := os.WriteFile(path, []byte(xml), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func submitDryRunProvider() *testutil.TestProvider {
+	return &testutil.TestProvider{
+		GetResources: map[string]cloud.Resource{
+			cloud.TypeAWSEC2Instance: {ActualState: []byte(`{"PrivateIpAddress":"10.0.1.42"}`)},
+		},
+	}
+}
+
+// TestSubmitCobraDryRunTargetDefaults verifies dry run reports the aggregate as the default target and why.
+func TestSubmitCobraDryRunTargetDefaults(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, submitProvisionedStateJSON())
+
+	got, err := runSubmit(t, newCobraRuntime(submitDryRunProvider()), "--dry-run", writeAggregateBuildGraph(t))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	testutil.AssertContains(t, got, "target: SmokeTest (first <Aggregate>)")
+}
+
+// TestSubmitCobraDryRunTargetFlag verifies --target overrides the default and dry run says so.
+func TestSubmitCobraDryRunTargetFlag(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, submitProvisionedStateJSON())
+
+	got, err := runSubmit(t, newCobraRuntime(submitDryRunProvider()), "--dry-run", "--target", "Cook", writeAggregateBuildGraph(t))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	testutil.AssertContains(t, got, "target: Cook (--target)")
+	if strings.Contains(got, "Warning:") {
+		t.Errorf("known --target should not warn; output:\n%s", got)
+	}
+}
+
+// TestSubmitCobraDryRunTargetNotFoundWarns verifies an unknown --target warns but still previews.
+func TestSubmitCobraDryRunTargetNotFoundWarns(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, submitProvisionedStateJSON())
+
+	got, err := runSubmit(t, newCobraRuntime(submitDryRunProvider()), "--dry-run", "--target", "FromInclude", writeAggregateBuildGraph(t))
+	if err != nil {
+		t.Fatalf("unknown --target should warn, not fail: %v", err)
+	}
+	testutil.AssertContains(t, got, "Warning:")
+	testutil.AssertContains(t, got, "target: FromInclude (--target)")
 }
 
 // TestSubmitCobraNotProvisioned verifies error message when no state exists.
