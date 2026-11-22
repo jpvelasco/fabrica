@@ -1,6 +1,7 @@
 package workstation
 
 import (
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"regexp"
 	"strings"
 	"testing"
@@ -9,7 +10,7 @@ import (
 func TestSessionPasswordParameterARN(t *testing.T) {
 	const nonce = "0123456789abcdef0123456789abcdef"
 	const name = "/fabrica/workstation/" + nonce + "/dcv-password"
-	got, err := SessionPasswordParameterARN("us-west-2", "123456789012", name)
+	got, err := SessionPasswordScope(naming.Default).ARN("us-west-2", "123456789012", name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,10 +23,10 @@ func TestSessionPasswordParameterARN(t *testing.T) {
 	if strings.Contains(got, "*") {
 		t.Fatalf("ARN = %q, want a fully scoped ARN", got)
 	}
-	if _, err := SessionPasswordParameterARN("", "123", name); err == nil {
+	if _, err := SessionPasswordScope(naming.Default).ARN("", "123", name); err == nil {
 		t.Fatal("expected error for empty region")
 	}
-	if _, err := SessionPasswordParameterARN("us-west-2", "", name); err == nil {
+	if _, err := SessionPasswordScope(naming.Default).ARN("us-west-2", "", name); err == nil {
 		t.Fatal("expected error for empty account")
 	}
 }
@@ -41,14 +42,14 @@ func TestSessionPasswordParameterARNRejectsBadNames(t *testing.T) {
 		"/fabrica/workstation/abc/dcv-password/extra", // trailing junk
 		"/fabrica/workstation/abc\\cd/dcv-password",   // backslash in nonce
 	} {
-		if _, err := SessionPasswordParameterARN("us-west-2", "123", name); err == nil {
+		if _, err := SessionPasswordScope(naming.Default).ARN("us-west-2", "123", name); err == nil {
 			t.Errorf("ARN(%q): expected an error", name)
 		}
 	}
 }
 
 func TestSessionPasswordParameterFor(t *testing.T) {
-	got, err := SessionPasswordParameterFor("0123456789abcdef0123456789abcdef")
+	got, err := SessionPasswordScope(naming.Default).NameFor("0123456789abcdef0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +57,7 @@ func TestSessionPasswordParameterFor(t *testing.T) {
 		t.Fatalf("name = %q, want %q", got, want)
 	}
 	// Distinct nonces yield distinct names (concurrent creates never collide).
-	other, err := SessionPasswordParameterFor("fedcba0987654321fedcba0987654321")
+	other, err := SessionPasswordScope(naming.Default).NameFor("fedcba0987654321fedcba0987654321")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +75,7 @@ func TestSessionPasswordParameterForRejectsMalformedNonces(t *testing.T) {
 		"/a",
 		"a/",
 	} {
-		if _, err := SessionPasswordParameterFor(nonce); err == nil {
+		if _, err := SessionPasswordScope(naming.Default).NameFor(nonce); err == nil {
 			t.Errorf("nonce %q: expected an error", nonce)
 		}
 	}
@@ -82,7 +83,7 @@ func TestSessionPasswordParameterForRejectsMalformedNonces(t *testing.T) {
 
 func TestIsSessionPasswordName(t *testing.T) {
 	valid := "/fabrica/workstation/0123456789abcdef0123456789abcdef/dcv-password"
-	if !IsSessionPasswordName(valid) {
+	if !SessionPasswordScope(naming.Default).IsName(valid) {
 		t.Fatalf("IsSessionPasswordName(%q) = false, want true", valid)
 	}
 	for _, bad := range []string{
@@ -99,7 +100,7 @@ func TestIsSessionPasswordName(t *testing.T) {
 		"/fabrica/workstation/0123456789abcdef0123456789abcdef/dcv-secret",    // wrong leaf
 		"/fabrica/workstation/0123456789abcdef0123456789abcdef/dcv-password/", // trailing slash
 	} {
-		if IsSessionPasswordName(bad) {
+		if SessionPasswordScope(naming.Default).IsName(bad) {
 			t.Errorf("IsSessionPasswordName(%q) = true, want false", bad)
 		}
 	}

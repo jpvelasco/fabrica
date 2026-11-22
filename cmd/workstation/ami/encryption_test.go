@@ -68,7 +68,7 @@ func TestOwnershipArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tagSet := range []map[string]string{recipe.Tags, recipe.AMITags} {
-		if tagSet["ManagedBy"] != identity.ManagedBy() || tagSet["Name"] != defaultName {
+		if tagSet["ManagedBy"] != identity.ManagedBy() || tagSet["Name"] != "fabrica-workstation-dcv" {
 			t.Fatalf("wrong selected ownership or name: %v", tagSet)
 		}
 	}

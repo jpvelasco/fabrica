@@ -939,7 +939,7 @@ func rebuildInstanceDesiredState(ctx context.Context, prefix naming.Prefix, rec 
 	case "ddc":
 		return rebuildDDCInstance(rec, mod, st, cfg)
 	case "workstation":
-		return rebuildWorkstationInstance(ctx, rec, mod, st, cfg, inspector)
+		return rebuildWorkstationInstance(ctx, prefix, rec, mod, st, cfg, inspector)
 	}
 	return nil, fmt.Errorf("module %s has no canonical instance contract to rebuild from", mod.Name)
 }
@@ -1319,7 +1319,7 @@ func rebuildScyllaInstance(rec *state.ModuleResource, mod *state.ModuleState, st
 // in SSM and the credentials file), the mount-perforce flag (a true value
 // needs the Perforce server address, which state does not record), and the
 // AMI's root device (only an AMI inspector can supply it).
-func rebuildWorkstationInstance(ctx context.Context, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config, inspector imageInspectorFunc) (json.RawMessage, error) {
+func rebuildWorkstationInstance(ctx context.Context, prefix naming.Prefix, rec *state.ModuleResource, mod *state.ModuleState, st *state.State, cfg *config.Config, inspector imageInspectorFunc) (json.RawMessage, error) {
 	ami := mod.Version
 	if ami == "" {
 		return nil, fmt.Errorf("no AMI recorded for the workstation instance (module version); re-run 'fabrica workstation create'")
@@ -1370,7 +1370,7 @@ func rebuildWorkstationInstance(ctx context.Context, rec *state.ModuleResource, 
 		IdleTimeoutMinutes:  idle,
 		SubnetID:            subnetFor(rec, cfg.Workstation.SubnetId),
 		RootDeviceName:      rootDevice,
-		InstanceName:        "fabrica-workstation",
+		InstanceName:        prefix.Instance("workstation"),
 		InstanceProfileName: profile,
 	}
 	ds, err := workstation.InstanceDesiredState(plan, sgID, userData)
@@ -1583,7 +1583,7 @@ func dispatchModuleSG(prefix naming.Prefix, rec *state.ModuleResource, mod *stat
 		ds, err = rebuildDDCSG(rec, cfg)
 	case "workstation":
 		ds, err = workstation.SGDesiredState(&workstation.CreatePlan{
-			SGName:      workstation.DefaultSGName,
+			SGName:      prefix.SG("workstation"),
 			VPCID:       sgVPCID(rec, cfg.Workstation.VPCId),
 			DCVPort:     workstation.DefaultDCVPort,
 			AllowedCIDR: defaultCIDR(cfg.Workstation.AllowedCIDR, workstation.DefaultAllowedCIDR),

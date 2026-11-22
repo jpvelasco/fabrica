@@ -115,3 +115,42 @@ func TestRebuildLoreFollowsPrefix(t *testing.T) {
 		t.Errorf("rebuilt security group is not acme-lore-sg: %s", sg)
 	}
 }
+
+// acmeWSParam is an SSM parameter name, not a credential. #nosec G101
+const acmeWSParam = "/acme/workstation/0123456789abcdef0123456789abcdef/dcv-password"
+
+func TestRebuildWorkstationFollowsPrefix(t *testing.T) {
+	cfg := config.Defaults()
+	st := state.NewState("123456789012", "us-east-1")
+	mod := &state.ModuleState{
+		Name:    "workstation",
+		Version: "ami-ws",
+		Resources: []state.ModuleResource{
+			{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-ws"},
+			{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "acme-workstation-profile"},
+			{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-ws", Properties: map[string]string{
+				"sessionPasswordParameter": acmeWSParam,
+				"mountPerforce":            "false",
+			}},
+		},
+	}
+
+	ds, err := rebuildInstanceDesiredState(context.Background(), acmePrefix, &mod.Resources[2], mod, st, cfg, fakeImageInspector(t, "/dev/sda1", "ebs"))
+	if err != nil {
+		t.Fatalf("rebuild instance: %v", err)
+	}
+	if !strings.Contains(string(ds), `"Value":"acme-workstation"`) {
+		t.Errorf("rebuilt instance Name tag is not acme-workstation: %s", ds)
+	}
+	if ud := decodedUserData(t, ds); !strings.Contains(ud, acmeWSParam) {
+		t.Errorf("rebuilt user data does not read the prefixed session parameter:\n%s", ud)
+	}
+
+	sg, err := rebuildSGDesiredState(acmePrefix, &state.ModuleResource{TypeName: cloud.TypeAWSEC2SecurityGroup}, &state.ModuleState{Name: "workstation"}, cfg)
+	if err != nil {
+		t.Fatalf("rebuild security group: %v", err)
+	}
+	if !strings.Contains(string(sg), `"GroupName":"acme-workstation-sg"`) {
+		t.Errorf("rebuilt security group is not acme-workstation-sg: %s", sg)
+	}
+}

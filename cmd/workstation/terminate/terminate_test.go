@@ -3,6 +3,7 @@ package terminate
 import (
 	"context"
 	"errors"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"io"
 	"testing"
 
@@ -80,9 +81,9 @@ func TestNewTeardownWithProvider(t *testing.T) {
 	if len(provider.DeletedParameters) != 0 {
 		t.Fatalf("non-parameter delete removed %v", provider.DeletedParameters)
 	}
-	// The recorded name is a per-create name (instance ID as nonce); the
-	// SDK delete removes exactly that name.
-	recorded, err := workstation.SessionPasswordParameterFor("i-0123456789abcdef0")
+	// The recorded name is a per-create name; the SDK delete removes exactly
+	// that name.
+	recorded, err := workstation.SessionPasswordScope(naming.Default).NameFor("0123456789abcdef0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +107,7 @@ func TestResourceOrderSkipsParameterWhenNotRecorded(t *testing.T) {
 			{TypeName: "AWS::EC2::SecurityGroup", Identifier: "sg-old"},
 		},
 	}
-	order := workstationResourceOrder(m)
+	order := workstationResourceOrder(m, naming.Default)
 	for _, r := range order {
 		if r.TypeName == cloud.TypeAWSSSMParameter {
 			t.Fatalf("order includes an SSM parameter the instance never recorded: %+v", order)
@@ -127,7 +128,7 @@ func TestResourceOrderUsesRecordedParameterName(t *testing.T) {
 			{TypeName: "AWS::EC2::Instance", Identifier: "i-1", Properties: map[string]string{"sessionPasswordParameter": testWSParamName}},
 		},
 	}
-	order := workstationResourceOrder(m)
+	order := workstationResourceOrder(m, naming.Default)
 	found := ""
 	for _, r := range order {
 		if r.TypeName == cloud.TypeAWSSSMParameter {
@@ -159,7 +160,7 @@ func TestResourceOrderSkipsMalformedParameterName(t *testing.T) {
 					{TypeName: "AWS::EC2::Instance", Identifier: "i-1", Properties: map[string]string{"sessionPasswordParameter": bad}},
 				},
 			}
-			order := workstationResourceOrder(m)
+			order := workstationResourceOrder(m, naming.Default)
 			for _, r := range order {
 				if r.TypeName == cloud.TypeAWSSSMParameter {
 					t.Fatalf("order includes the malformed SSM parameter name %q: %+v", bad, order)

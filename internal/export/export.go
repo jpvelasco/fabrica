@@ -1036,11 +1036,11 @@ func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, regio
 		// from the regional dcv-license.<region> bucket.
 		policies := []map[string]any{iamrole.SSMOutputPolicy(region, account)}
 		if sessionPasswordParameter != "" {
-			if parameterARN, err := workstation.SessionPasswordParameterARN(region, account, sessionPasswordParameter); err == nil {
-				policies = append(policies, iamrole.SSMParameterReadPolicy(workstation.SessionPasswordPolicyName, parameterARN))
+			if parameterARN, err := workstation.SessionPasswordScope(naming.Default).ARN(region, account, sessionPasswordParameter); err == nil {
+				policies = append(policies, iamrole.SSMParameterReadPolicy(workstation.SessionPasswordPolicyName(naming.Default), parameterARN))
 			}
 		}
-		policies = append(policies, iamrole.S3ObjectReadPolicy(workstation.DCVLicensePolicyName, workstation.DCVLicenseBucket(region)))
+		policies = append(policies, iamrole.S3ObjectReadPolicy(workstation.DCVLicensePolicyName(naming.Default), workstation.DCVLicenseBucket(region)))
 		return policies
 	}
 	return nil

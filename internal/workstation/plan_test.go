@@ -3,6 +3,7 @@ package workstation
 import (
 	"context"
 	"errors"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"reflect"
 	"strconv"
 	"testing"
@@ -14,7 +15,7 @@ import (
 
 func TestNewCreatePlanRejectsBadIAM(t *testing.T) {
 	cfg := config.WorkstationConfig{AmiID: "ami-abc123", IAM: config.IAM{Path: "fabrica"}}
-	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, "", "")
+	_, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", nil, "", "")
 	if err == nil {
 		t.Fatal("expected a bad iam.path to fail")
 	}
@@ -23,7 +24,7 @@ func TestNewCreatePlanRejectsBadIAM(t *testing.T) {
 
 func TestNewCreatePlanRequiresAmiID(t *testing.T) {
 	cfg := config.WorkstationConfig{}
-	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, "", "")
+	_, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", nil, "", "")
 	if err == nil {
 		t.Fatal("expected error when AmiID is empty")
 	}
@@ -34,7 +35,7 @@ func TestNewCreatePlanDefaults(t *testing.T) {
 	cfg := config.WorkstationConfig{AmiID: "ami-abc123"}
 	resolver := &cloud.TestVPCResolver{VPCID: "vpc-default", SubnetID: "subnet-default"}
 
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, "", "")
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", resolver, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -73,7 +74,7 @@ func TestNewCreatePlanExplicitVPC(t *testing.T) {
 		VPCId:    "vpc-explicit",
 		SubnetId: "subnet-explicit",
 	}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, "", "")
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", nil, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,7 +89,7 @@ func TestNewCreatePlanExplicitVPC(t *testing.T) {
 func TestNewCreatePlanVPCResolverError(t *testing.T) {
 	cfg := config.WorkstationConfig{AmiID: "ami-abc123"}
 	resolver := &cloud.TestVPCResolver{Err: errors.New("no default VPC")}
-	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", resolver, "", "")
+	_, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", resolver, "", "")
 	if err == nil {
 		t.Fatal("expected error when resolver fails")
 	}
@@ -105,7 +106,7 @@ func TestNewCreatePlanConfigOverrides(t *testing.T) {
 		VPCId:              "vpc-x",
 		SubnetId:           "subnet-x",
 	}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, "", "")
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", nil, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -129,7 +130,7 @@ func TestNewCreatePlanTemplateArtist(t *testing.T) {
 		VPCId:    "vpc-x",
 		SubnetId: "subnet-x",
 	}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, TemplateArtist, "")
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", nil, TemplateArtist, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -175,7 +176,7 @@ func TestNewCreatePlanTemplateCostMatchesSizing(t *testing.T) {
 		VPCId:    "vpc-x",
 		SubnetId: "subnet-x",
 	}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, TemplateArtist, "")
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", nil, TemplateArtist, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -200,7 +201,7 @@ func TestNewCreatePlanTemplateProgrammer(t *testing.T) {
 		VPCId:    "vpc-x",
 		SubnetId: "subnet-x",
 	}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, TemplateProgrammer, "")
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", nil, TemplateProgrammer, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -214,7 +215,7 @@ func TestNewCreatePlanTemplateProgrammer(t *testing.T) {
 
 func TestNewCreatePlanTemplateUnknownErrors(t *testing.T) {
 	cfg := config.WorkstationConfig{AmiID: "ami-abc123"}
-	_, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, "designer", "")
+	_, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", nil, "designer", "")
 	if err == nil {
 		t.Fatal("expected error for unknown template")
 	}
@@ -227,7 +228,7 @@ func TestNewCreatePlanMountPerforce(t *testing.T) {
 		VPCId:    "vpc-x",
 		SubnetId: "subnet-x",
 	}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, "", "10.0.1.5:1666")
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", nil, "", "10.0.1.5:1666")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -245,7 +246,7 @@ func TestNewCreatePlanSSMRoleAndProfile(t *testing.T) {
 		VPCId:    "vpc-x",
 		SubnetId: "subnet-x",
 	}
-	plan, err := NewCreatePlan(context.Background(), cfg, "123456789012", "us-east-1", nil, "", "")
+	plan, err := NewCreatePlan(context.Background(), naming.Default, cfg, "123456789012", "us-east-1", nil, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

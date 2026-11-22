@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"strings"
 	"testing"
 
@@ -16,8 +17,10 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
-	"github.com/jpvelasco/fabrica/internal/workstation"
 )
+
+// wsParamPrefix is the default-prefix session-password parameter root.
+var wsParamPrefix = naming.Default.ParamPath("workstation")
 
 func newTestCommand(out *bytes.Buffer, provider cloud.Provider, st *fabricastate.State) command {
 	cfg := config.Defaults()
@@ -86,7 +89,7 @@ func TestCreateDryRunOutputFields(t *testing.T) {
 		"fabrica-workstation-sg",
 		"fabrica-workstation",
 		"Cost estimate:",
-		workstation.SessionPasswordParameterPrefix + "/",
+		wsParamPrefix + "/",
 	} {
 		assert.Contains(t, got, want)
 	}
@@ -102,11 +105,11 @@ func TestCreateDryRunOutputFields(t *testing.T) {
 func assertDryRunNonce(t *testing.T, out string) string {
 	t.Helper()
 	const marker = "SSM Parameter:    "
-	idx := strings.Index(out, marker+workstation.SessionPasswordParameterPrefix+"/")
+	idx := strings.Index(out, marker+wsParamPrefix+"/")
 	if idx < 0 {
 		t.Fatal("dry-run output does not name the per-create SSM parameter")
 	}
-	rest := out[idx+len(marker)+len(workstation.SessionPasswordParameterPrefix)+1:]
+	rest := out[idx+len(marker)+len(wsParamPrefix)+1:]
 	end := strings.Index(rest, "/dcv-password")
 	if end < 0 {
 		t.Fatal("dry-run SSM parameter name is malformed: " + rest)
@@ -281,7 +284,7 @@ func TestCreateHappyPathOrderAndState(t *testing.T) {
 	if !ok {
 		t.Fatal("instance missing from final state")
 	}
-	if param := inst.Properties["sessionPasswordParameter"]; !strings.HasPrefix(param, workstation.SessionPasswordParameterPrefix+"/") || !strings.HasSuffix(param, "/dcv-password") {
+	if param := inst.Properties["sessionPasswordParameter"]; !strings.HasPrefix(param, wsParamPrefix+"/") || !strings.HasSuffix(param, "/dcv-password") {
 		t.Errorf("sessionPasswordParameter = %q, want the per-create name shape", param)
 	}
 	// The per-create identity nonce is recorded in state for traceability.
@@ -418,7 +421,7 @@ func assertDeletedPerCreateParameter(t *testing.T, provider *testutil.TestProvid
 		return
 	}
 	name := provider.DeletedParameters[0]
-	if !strings.HasPrefix(name, workstation.SessionPasswordParameterPrefix+"/") || !strings.HasSuffix(name, "/dcv-password") {
+	if !strings.HasPrefix(name, wsParamPrefix+"/") || !strings.HasSuffix(name, "/dcv-password") {
 		t.Errorf("%s, deleted %q (want the per-create name shape)", msg, name)
 	}
 }
@@ -848,7 +851,7 @@ func TestCreateDeleteErrorOnSGFailureReportsBoth(t *testing.T) {
 	}
 	assert.Contains(t, err.Error(), "creating security group")
 	assert.Contains(t, err.Error(), "also failed to delete SSM parameter")
-	assert.Contains(t, err.Error(), workstation.SessionPasswordParameterPrefix)
+	assert.Contains(t, err.Error(), wsParamPrefix)
 }
 
 func TestCreateRequiresParameterStore(t *testing.T) {
@@ -878,13 +881,13 @@ func assertSessionPasswordNotInDesiredState(t *testing.T, provider *testutil.Tes
 	got := provider.PutParameters[0]
 	// The name must be the per-create shape: prefix, a single nonce segment,
 	// and the dcv-password leaf. It must not be a shared name.
-	if !strings.HasPrefix(got.Name, workstation.SessionPasswordParameterPrefix+"/") {
-		t.Errorf("parameter name = %q, want the %s prefix", got.Name, workstation.SessionPasswordParameterPrefix)
+	if !strings.HasPrefix(got.Name, wsParamPrefix+"/") {
+		t.Errorf("parameter name = %q, want the %s prefix", got.Name, wsParamPrefix)
 	}
 	if !strings.HasSuffix(got.Name, "/dcv-password") {
 		t.Errorf("parameter name = %q, want the /dcv-password leaf", got.Name)
 	}
-	nonce := got.Name[len(workstation.SessionPasswordParameterPrefix)+1 : len(got.Name)-len("/dcv-password")]
+	nonce := got.Name[len(wsParamPrefix)+1 : len(got.Name)-len("/dcv-password")]
 	if nonce == "" || strings.ContainsAny(nonce, "/\\") {
 		t.Errorf("parameter name = %q, nonce must be a single segment", got.Name)
 	}
