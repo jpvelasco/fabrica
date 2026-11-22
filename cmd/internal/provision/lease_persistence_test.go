@@ -568,3 +568,34 @@ func TestCustomPersistenceAcceptsUnknownRecordedTargetSides(t *testing.T) {
 func stateTestTable(cfg *config.Config) string {
 	return state.ResolveBackendNames(naming.Default, cfg, stateTestAccount).Table
 }
+
+func TestAcquireStateLockRefusesGatedPrefix(t *testing.T) {
+	locker := &fakeLockManager{}
+	rt := testRuntimeWithLocker(locker)
+	rt.Config.Cloud.AWS.Identity.NamePrefix = "acme"
+	if _, _, err := AcquireStateLock(context.Background(), rt, "op"); err == nil || locker.acquires.Load() != 0 {
+		t.Fatalf("gated prefix acquired a lock: %v", err)
+	}
+
+	rt = testRuntimeWithLocker(&fakeLockManager{})
+	ctx, release, err := AcquireStateLock(context.Background(), rt, "outer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	rt.Config.Cloud.AWS.Identity.NamePrefix = "acme"
+	if _, _, err := AcquireStateLock(ctx, rt, "inner"); err == nil {
+		t.Fatal("nested acquire resolved a gated prefix")
+	}
+}
+
+func TestStatePersistenceRefusesForeignRecordedPrefix(t *testing.T) {
+	st := state.NewState(stateTestAccount, "us-east-1")
+	if err := st.BindNamePrefix(naming.MustResolve("acme")); err != nil {
+		t.Fatal(err)
+	}
+	rt := globals.Runtime{Config: config.Defaults()}
+	if _, err := NewStatePersistence(context.Background(), rt).Persist(st, StateWriteAllowLocal); err == nil || !strings.Contains(err.Error(), `"acme"`) {
+		t.Fatalf("default persistence rebound acme state: %v", err)
+	}
+}

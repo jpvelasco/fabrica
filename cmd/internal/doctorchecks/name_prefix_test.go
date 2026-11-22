@@ -1,6 +1,7 @@
 package doctorchecks
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -40,5 +41,14 @@ func TestCheckNamePrefixReportsGatedPrefixAsFailure(t *testing.T) {
 	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
 	if got := checkNamePrefix(globals.Runtime{Config: cfg}); got.Status != "fail" {
 		t.Fatalf("gated prefix check = %+v", got)
+	}
+}
+
+func TestCheckTableRefusesGatedPrefix(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.State.Bucket = "acme-state"
+	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
+	if got := checkTable(context.Background(), globals.Runtime{Config: cfg}, &fakeBackendChecker{}); got.Status != "fail" {
+		t.Fatalf("gated prefix table check = %+v", got)
 	}
 }

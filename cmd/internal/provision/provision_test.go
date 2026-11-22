@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/naming"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -361,5 +362,22 @@ func TestReadLocalStateRefusesPrefixMismatch(t *testing.T) {
 	}
 	if _, err := ReadLocalState(path, "account-one", "us-west-2", tags.Identity{}, naming.MustResolve("acme")); err != nil {
 		t.Fatalf("matching prefix refused: %v", err)
+	}
+}
+
+func TestReadStateRefusesGatedAndRemoteForeignPrefix(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
+	if _, err := ReadState(context.Background(), globals.Runtime{Config: cfg}); err == nil {
+		t.Fatal("gated prefix read state")
+	}
+
+	st := fabricastate.NewState(stateTestAccount, "us-east-1")
+	if err := st.BindNamePrefix(naming.MustResolve("acme")); err != nil {
+		t.Fatal(err)
+	}
+	provider := &testutil.TestProvider{StateDocuments: map[string]string{stateTestKey(): string(fabricastate.EncodeState(st))}}
+	if _, err := ReadState(context.Background(), stateTestRuntime(t, provider)); err == nil || !strings.Contains(err.Error(), "reading remote state") {
+		t.Fatalf("remote foreign prefix accepted: %v", err)
 	}
 }

@@ -129,3 +129,12 @@ func TestPrepareSetupRuntimeRejectsUnsafeTarget(t *testing.T) {
 		t.Fatalf("identity resolution lost cancellation: %v", err)
 	}
 }
+
+func TestPrepareSetupRuntimeRefusesGatedPrefix(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
+	p := &setupIdentityProvider{account: "account-one", region: "us-west-2"}
+	if _, _, err := PrepareSetupRuntime(context.Background(), globals.Runtime{Config: cfg, Provider: p}); err == nil {
+		t.Fatal("gated prefix prepared setup runtime")
+	}
+}

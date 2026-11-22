@@ -112,6 +112,10 @@ and CodeBuild projects.`,
 }
 
 func (c *command) run(ctx context.Context, dryRun bool) error {
+	names, err := fabricastate.ConfiguredBackendNames(c.runtime.Config, c.runtime.Config.Cloud.AWS.AccountID)
+	if err != nil {
+		return err
+	}
 	// --fix rewrites state, so it takes the shared account lock before the
 	// state read; read-only and dry-run scans never contend.
 	release := func() {}
@@ -130,10 +134,6 @@ func (c *command) run(ctx context.Context, dryRun bool) error {
 		return fmt.Errorf("reading state: %w", err)
 	}
 
-	names, err := fabricastate.ConfiguredBackendNames(c.runtime.Config, c.runtime.Config.Cloud.AWS.AccountID)
-	if err != nil {
-		return err
-	}
 	engine := &drift.Engine{
 		State:           st,
 		ResourceGet:     c.getResource,
