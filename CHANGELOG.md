@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **TLS Horde agents retry the coordinator probe before configuring.** Cloud-init probes the HTTPS listener up to 30 times, 10 seconds apart, before it writes agent configuration. It still fails closed: if the probe never passes, the agent writes nothing and exits 1.
+
 ### Fixed
 
 - **AMI recipes, AMIs, and snapshots carry `cloud.aws.tags`.** `horde`, `lore`, and `workstation ami build` tagged the recipe, the AMI, and its snapshots with only the generator's own tags, so `cloud.aws.tags` never reached them. The recipe `tags` and `amiTags`, the Packer `tags`, `snapshot_tags`, and `run_tags`, and the build-guide snapshot step now share one set that includes `cloud.aws.tags`. `ManagedBy` stays the resolved owner and an operator tag cannot override it. (#702)
