@@ -57,17 +57,17 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData, instanceProfileName,
 }
 
 // RoleDesiredState returns Cloud Control desired-state for the Perforce EC2
-// instance role: SSM managed instance core, the shared SSM output policy,
-// ssm:GetParameter on the per-create admin-password parameter only (#700), and
-// the optional S3 backup export.
+// instance role (SSM managed instance core + shared SSM output policy +
+// ssm:GetParameter on the per-create admin-password parameter when the plan
+// names one (#700) + optional S3 backup export).
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
-	adminARN, err := AdminPasswordScope.ARN(plan.Region, plan.Account, plan.AdminPasswordParameter)
-	if err != nil {
-		return nil, err
-	}
-	policies := []map[string]any{
-		iamrole.SSMOutputPolicy(plan.Region, plan.Account),
-		iamrole.SSMParameterReadPolicy(AdminPasswordPolicyName, adminARN),
+	policies := []map[string]any{iamrole.SSMOutputPolicy(plan.Region, plan.Account)}
+	if plan.AdminPasswordParameter != "" {
+		adminARN, err := AdminPasswordScope.ARN(plan.Region, plan.Account, plan.AdminPasswordParameter)
+		if err != nil {
+			return nil, err
+		}
+		policies = append(policies, iamrole.SSMParameterReadPolicy(AdminPasswordPolicyName, adminARN))
 	}
 	if plan.BackupS3Export && plan.BackupS3Bucket != "" {
 		prefix := plan.BackupS3Prefix

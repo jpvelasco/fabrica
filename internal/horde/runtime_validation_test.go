@@ -235,3 +235,34 @@ HORDE_URL=https://horde.example.internal:5000
 		})
 	}
 }
+
+func TestHTTPListenerPreflightChecksOnlyTheHTTPPort(t *testing.T) {
+	bash := requireTool(t, "bash")
+	requireTool(t, "python3")
+	script := ListenerCheckScript(Connection{Version: 1, Port: 5000})
+	forbidAll(t, script, "--http2", "unencryptedHttp2", "https")
+	for _, tc := range []struct {
+		name, report, code string
+		ok                 bool
+	}{
+		{"valid", `{"http":5000}`, "200", true},
+		{"extra keys ignored", `{"http":5000,"https":0}`, "200", true},
+		{"wrong port", `{"http":5001}`, "200", false},
+		{"listener disabled", `{"http":0}`, "200", false},
+		{"string port", `{"http":"5000"}`, "200", false},
+		{"redirect", `{"http":5000}`, "302", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			harness := `set -euo pipefail
+curl() { printf '%s\n%s' "$TEST_PORTS" "$TEST_CODE"; }
+CURL_OPTS=(--silent)
+HORDE_URL=http://10.0.1.10:5000
+` + script
+			cmd := exec.Command(bash, "-c", harness)
+			cmd.Env = append(os.Environ(), "TEST_PORTS="+tc.report, "TEST_CODE="+tc.code)
+			if out, err := cmd.CombinedOutput(); (err == nil) != tc.ok {
+				t.Fatalf("HTTP preflight result: %v %s", err, out)
+			}
+		})
+	}
+}
