@@ -138,10 +138,20 @@ probe_coordinator() {
     echo "Horde coordinator $HORDE_URL is not ready (attempt $attempt of %[2]d); retrying in %[3]ds" >&2
     sleep %[3]d
   done
-  echo "Horde coordinator $HORDE_URL failed the listener check after %[2]d attempts. Confirm the coordinator is running, the agent security group can reach it, and the agent CA (if set) trusts its certificate; then rerun cloud-init or restart horde-agent." >&2
+  echo "Horde coordinator $HORDE_URL failed the listener check after %[2]d attempts. %[4]s" >&2
   return 1
 }
-`, probeChain(c), agentProbeAttempts, agentProbeIntervalSeconds)
+`, probeChain(c), agentProbeAttempts, agentProbeIntervalSeconds, probeFailureHint(c))
+}
+
+// probeFailureHint says what the operator should do after the probe gives up.
+// TLS fails before any configuration is written; HTTP has already configured
+// and started the service, so the hint must not suggest it is unconfigured.
+func probeFailureHint(c Connection) string {
+	if c.TLS {
+		return "Confirm the coordinator is running, the agent security group can reach it, and the agent CA (if set) trusts its certificate; then rerun cloud-init (agent configuration was not written)."
+	}
+	return "Confirm the coordinator is running and the agent security group can reach it. The agent service is already configured and started and keeps reconnecting, but /etc/horde/agent-configured was not written; rerun cloud-init once the coordinator is reachable."
 }
 
 // probeChain joins ListenerCheckScript's commands with && so a failure in any

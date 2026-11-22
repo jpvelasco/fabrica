@@ -9,8 +9,7 @@ import (
 
 // UserDataConfig is the input shape for the DCV cloud-init script.
 // The session password is not a field: cloud-init reads it from SSM at boot
-// so the value never lands in UserData. Perforce ADMIN_PASS can adopt the
-// same Parameter Store seam later.
+// so the value never lands in UserData.
 type UserDataConfig struct {
 	SessionPasswordParameter string // required; SSM name cloud-init reads
 	Region                   string // required; region of that parameter
@@ -24,6 +23,8 @@ type UserDataConfig struct {
 // which is only safe once nothing follows it in the script.
 var userDataRenderer = userdata.New(template.Must(template.New("userdata").Option("missingkey=error").Parse(
 	workstationUserDataBefore +
+		workstationSessionPasswordFetch +
+		workstationUserDataLoginSet +
 		workstationUserDataAfter +
 		userdata.PerforceAptRepoShell() +
 		workstationUserDataPerforceCLI +
@@ -53,22 +54,20 @@ chown "$DCV_USER":"$DCV_USER" /home/"$DCV_USER"/dcv
 # Idle timeout via the current CLI surface (DCV 2023+ set-config).
 dcv set-config --section connectivity --key idle-timeout "{{ .IdleTimeoutMinutes }}"
 
-# The session password is a SecureString, not a UserData field. Fetch it
+`
+
+// workstationSessionPasswordFetch installs the AWS CLI if needed and reads the
+// DCV session password from SSM into DCV_PASS. The shared fragments never echo
+// the value; chpasswd consumes it next.
+var workstationSessionPasswordFetch = `# The session password is a SecureString, not a UserData field. Fetch it
 # and pass it to chpasswd without writing it to the script or the log.
 # .fabrica/workstation-credentials.yaml remains the operator record.
-if ! command -v aws >/dev/null 2>&1; then
-  apt-get update -qq
-  DEBIAN_FRONTEND=noninteractive apt-get install -y awscli
-fi
-if ! DCV_PASS=$(aws ssm get-parameter --name "{{ .SessionPasswordParameter }}" --with-decryption --query Parameter.Value --output text --region "{{ .Region }}"); then
-  echo "ERROR: failed to read the DCV session password from SSM parameter {{ .SessionPasswordParameter }}. Confirm the instance profile can ssm:GetParameter on that parameter."
-  exit 1
-fi
-if [ -z "$DCV_PASS" ] || [ "$DCV_PASS" = "None" ]; then
-  echo "ERROR: SSM parameter {{ .SessionPasswordParameter }} returned an empty DCV session password."
-  exit 1
-fi
-# Feed chpasswd over stdin (a heredoc), never as a command argument, so the
+` + userdata.AWSCLIInstallShell() +
+	userdata.SecureParameterFetchShell("DCV_PASS", "{{ .SessionPasswordParameter }}", "{{ .Region }}", "DCV session password")
+
+// workstationUserDataLoginSet feeds the fetched password to chpasswd and
+// unsets it. It follows the session-password fetch fragment.
+const workstationUserDataLoginSet = `# Feed chpasswd over stdin (a heredoc), never as a command argument, so the
 # password never appears in argv (ps) or on a command line. The unquoted
 # heredoc delimiter expands $DCV_USER / $DCV_PASS at boot; the value is
 # alphanumeric (see GeneratePassword) so no further quoting is needed.

@@ -328,3 +328,16 @@ func TestAgentUserDataProbeBehavior(t *testing.T) {
 		}
 	})
 }
+
+// The TLS probe failure hint must point at rerunning cloud-init, not at
+// restarting an unconfigured agent. HTTP has already started the service, so
+// its hint must not claim the agent was left unconfigured.
+func TestAgentUserDataTLSProbeFailureHint(t *testing.T) {
+	tlsRaw := renderAgent(t, tlsAgentConfig(t))
+	requireAll(t, tlsRaw, "then rerun cloud-init (agent configuration was not written).")
+	forbidAll(t, tlsRaw, "or restart horde-agent")
+
+	httpRaw := renderAgent(t, httpAgentConfig())
+	requireAll(t, httpRaw, "/etc/horde/agent-configured was not written")
+	forbidAll(t, httpRaw, "agent configuration was not written")
+}
