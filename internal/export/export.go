@@ -971,7 +971,7 @@ func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, regio
 	switch moduleName {
 	case "ci":
 		projectName := ciProjectNameForModule(moduleName, cfg)
-		return []map[string]any{iamrole.CICodeBuildInlinePolicy(region, account, projectName)}
+		return []map[string]any{iamrole.CICodeBuildInlinePolicy(naming.Default, region, account, projectName)}
 	case "deploy":
 		bucket := ""
 		if cfg != nil {
@@ -980,7 +980,7 @@ func inlinePoliciesForRole(moduleName string, cfg *config.Config, account, regio
 		if bucket == "" {
 			return nil
 		}
-		return []map[string]any{iamrole.DeployS3ReadPolicy(bucket)}
+		return []map[string]any{iamrole.DeployS3ReadPolicy(naming.Default, bucket)}
 	case "perforce":
 		policies := []map[string]any{iamrole.SSMOutputPolicy(region, account)}
 		// Same gating as the plan layer: only when backup S3 export is on and a

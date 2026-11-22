@@ -5,6 +5,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 const TypeAWSCodePipeline = "AWS::CodePipeline::Pipeline"
@@ -19,25 +20,21 @@ type PipelinePlan struct {
 }
 
 // BuildPipelinePlan documents the optional pipeline-backed CI path.
-func BuildPipelinePlan(cfg config.CIConfig) PipelinePlan {
-	name := cfg.ProjectName
-	if name == "" {
-		name = "fabrica-ci"
-	}
+func BuildPipelinePlan(prefix naming.Prefix, cfg config.CIConfig) PipelinePlan {
 	return PipelinePlan{
 		Enabled: cfg.Pipeline,
-		Name:    name + "-pipeline",
+		Name:    ProjectName(prefix, cfg) + "-pipeline",
 		Stages:  []string{"Source", "Build (CodeBuild → Horde)", "Promote (optional)"},
 		Note:    "V1 does not create CodePipeline. fabrica ci trigger still starts the CodeBuild project. Enable ci.pipeline to include the standing pipeline cost line and print this plan.",
 	}
 }
 
 // PipelineCostResources prices a standing CodePipeline when enabled.
-func PipelineCostResources(cfg config.CIConfig) []cost.Resource {
+func PipelineCostResources(prefix naming.Prefix, cfg config.CIConfig) []cost.Resource {
 	if !cfg.Pipeline {
 		return nil
 	}
-	plan := BuildPipelinePlan(cfg)
+	plan := BuildPipelinePlan(prefix, cfg)
 	return []cost.Resource{{TypeName: TypeAWSCodePipeline, Name: plan.Name}}
 }
 

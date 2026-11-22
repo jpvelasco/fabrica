@@ -99,7 +99,11 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 
-	plan := deploy.NewSetupPlan(c.runtime.Config.Deploy, account, region)
+	prefix, err := c.runtime.Config.ResolveNamePrefix()
+	if err != nil {
+		return err
+	}
+	plan := deploy.NewSetupPlan(prefix, c.runtime.Config.Deploy, account, region)
 	plan.BuildBucket = c.runtime.Config.Deploy.BuildBucket
 
 	if c.dryRun {

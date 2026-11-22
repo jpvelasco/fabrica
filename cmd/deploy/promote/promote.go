@@ -160,8 +160,12 @@ func (c command) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	prefix, err := c.runtime.Config.ResolveNamePrefix()
+	if err != nil {
+		return err
+	}
 	roleARN := fmt.Sprintf("arn:aws:iam::%s:role/%s", account, role.Identifier)
-	plan, err := deploy.NewPromotePlan(c.runtime.Config.Deploy, account, region, c.buildVersion, roleARN, alias.Identifier, c.s3Bucket, c.s3Key)
+	plan, err := deploy.NewPromotePlan(prefix, c.runtime.Config.Deploy, account, region, c.buildVersion, roleARN, alias.Identifier, c.s3Bucket, c.s3Key)
 	if err != nil {
 		return fmt.Errorf("building promote plan: %w", err)
 	}

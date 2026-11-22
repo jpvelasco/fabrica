@@ -4168,7 +4168,7 @@ func TestIAMRoleInlinePoliciesPerModule(t *testing.T) {
 				},
 			},
 			cfg:  testConfigWithCI(),
-			want: []map[string]any{iamrole.CICodeBuildInlinePolicy(exportRegion, exportAccount, "fabrica-ci")},
+			want: []map[string]any{iamrole.CICodeBuildInlinePolicy(naming.Default, exportRegion, exportAccount, "fabrica-ci")},
 		},
 		{
 			name:   "deploy: S3 read on build bucket",
@@ -4185,7 +4185,7 @@ func TestIAMRoleInlinePoliciesPerModule(t *testing.T) {
 				cfg.Deploy.BuildBucket = "fabrica-deploy-bucket"
 				return cfg
 			}(),
-			want: []map[string]any{iamrole.DeployS3ReadPolicy("fabrica-deploy-bucket")},
+			want: []map[string]any{iamrole.DeployS3ReadPolicy(naming.Default, "fabrica-deploy-bucket")},
 		},
 		{
 			name:   "workstation: SSM output + DCV password parameter + DCV license (per-create name from state)",

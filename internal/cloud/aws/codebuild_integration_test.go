@@ -23,6 +23,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/ci"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestIntegrationCI(t *testing.T) {
@@ -56,7 +57,7 @@ func TestIntegrationCI(t *testing.T) {
 
 	suffix := time.Now().UTC().Format("20060102150405")
 	cicfg := config.CIConfig{ProjectName: "fabrica-ci-it-" + suffix}
-	plan, err := ci.NewCreatePlan(ctx, cicfg, account, region, "http://10.0.0.1:5000", nil)
+	plan, err := ci.NewCreatePlan(ctx, naming.Default, cicfg, account, region, "http://10.0.0.1:5000", nil)
 	if err != nil {
 		t.Fatalf("NewCreatePlan: %v", err)
 	}

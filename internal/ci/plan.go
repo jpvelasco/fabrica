@@ -12,6 +12,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/horde"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
 
@@ -22,19 +23,24 @@ const (
 	TypeAWSIAMRole          = "AWS::IAM::Role"
 
 	// Defaults applied when the corresponding CIConfig field is empty.
-	defaultProjectName  = "fabrica-ci"
-	defaultRoleName     = "fabrica-ci-codebuild"
 	defaultComputeType  = "BUILD_GENERAL1_SMALL"
 	defaultImage        = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
 	defaultBuildTimeout = 60
 )
 
-// DefaultSGName is the CI project security group name (no inbound rules;
-// CodeBuild egresses to the coordinator only).
-const DefaultSGName = "fabrica-ci-sg"
+// ProjectName returns the CodeBuild project name: ci.projectName when set,
+// otherwise "<namePrefix>-ci".
+func ProjectName(p naming.Prefix, cfg config.CIConfig) string {
+	if cfg.ProjectName != "" {
+		return cfg.ProjectName
+	}
+	return p.Instance("ci")
+}
 
 // CreatePlan is the resolved CI provisioning plan for one account/region.
 type CreatePlan struct {
+	// Prefix names the role, inline policies, and security group (#705).
+	Prefix          naming.Prefix
 	HordeConnection horde.Connection
 	HordeCAPath     string
 	Account         string
@@ -71,20 +77,16 @@ type CreatePlan struct {
 }
 
 // NewCreatePlan builds the CI plan, applying defaults for any unset CIConfig
-// field. hordeURL may be empty at setup time; it becomes the project's default
-// HORDE_URL environment variable. VPCResolver is called only when VPCId or
+// field; prefix names those defaults (#705). hordeURL may be empty at setup
+// time; it becomes the project's default HORDE_URL environment variable. VPCResolver is called only when VPCId or
 // SubnetId are absent from cfg, so the project can be placed inside a VPC;
 // pass nil to skip resolution (explicit VPC values, or tests).
-func NewCreatePlan(ctx context.Context, cfg config.CIConfig, account, region, hordeURL string, resolver cloud.VPCResolver) (*CreatePlan, error) {
+func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.CIConfig, account, region, hordeURL string, resolver cloud.VPCResolver) (*CreatePlan, error) {
 	if err := cfg.IAM.Validate(); err != nil {
 		return nil, err
 	}
 	if err := horde.ValidateTrustPath("ci.hordeCAPath", cfg.HordeCAPath); err != nil {
 		return nil, err
-	}
-	projectName := cfg.ProjectName
-	if projectName == "" {
-		projectName = defaultProjectName
 	}
 	computeType := cfg.ComputeType
 	if computeType == "" {
@@ -105,10 +107,11 @@ func NewCreatePlan(ctx context.Context, cfg config.CIConfig, account, region, ho
 	}
 
 	return &CreatePlan{
+		Prefix:        prefix,
 		Account:       account,
 		Region:        region,
-		ProjectName:   projectName,
-		RoleName:      defaultRoleName,
+		ProjectName:   ProjectName(prefix, cfg),
+		RoleName:      prefix.Role("ci"),
 		ComputeType:   computeType,
 		Image:         image,
 		BuildTimeout:  buildTimeout,
@@ -116,8 +119,8 @@ func NewCreatePlan(ctx context.Context, cfg config.CIConfig, account, region, ho
 		HordeCAPath:   cfg.HordeCAPath,
 		VPCID:         vpcID,
 		SubnetID:      subnetID,
-		SGName:        DefaultSGName,
+		SGName:        prefix.SG("ci"),
 		IAM:           cfg.IAM,
-		CostResources: CostResources(cfg),
+		CostResources: CostResources(prefix, cfg),
 	}, nil
 }

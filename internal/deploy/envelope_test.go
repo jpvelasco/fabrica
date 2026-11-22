@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/iamrole"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestRoleDesiredState_MatchesRoleDocument(t *testing.T) {
@@ -18,7 +19,7 @@ func TestRoleDesiredState_MatchesRoleDocument(t *testing.T) {
 	if err := json.Unmarshal(gotRaw, &got); err != nil {
 		t.Fatalf("unmarshal got: %v", err)
 	}
-	wantRaw, err := iamrole.RoleDocument(plan.RoleName, iamrole.ServiceGameLift, nil, []map[string]any{iamrole.DeployS3ReadPolicy(plan.BuildBucket)}, map[string]string{"FabricaModule": "deploy"})
+	wantRaw, err := iamrole.RoleDocument(plan.RoleName, iamrole.ServiceGameLift, nil, []map[string]any{iamrole.DeployS3ReadPolicy(naming.Default, plan.BuildBucket)}, map[string]string{"FabricaModule": "deploy"})
 	if err != nil {
 		t.Fatalf("RoleDocument: %v", err)
 	}

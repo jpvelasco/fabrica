@@ -89,6 +89,8 @@ func TestBuilders(t *testing.T) {
 		{"Role", acme.Role("lore"), "acme-lore-role"},
 		{"Profile", acme.Profile("ddc"), "acme-ddc-profile"},
 		{"Instance", acme.Instance("workstation"), "acme-workstation"},
+		{"Role ci", acme.Role("ci"), "acme-ci-codebuild"},
+		{"Role deploy", acme.Role("deploy"), "acme-deploy-gamelift"},
 		{"Bucket", acme.Bucket("lore-store", "123456789012", "us-west-2"), "acme-lore-store-123456789012-us-west-2"},
 		{"ParamPath", acme.ParamPath("horde"), "/acme/horde"},
 		{"ParamPath default", Default.ParamPath("workstation"), "/fabrica/workstation"},

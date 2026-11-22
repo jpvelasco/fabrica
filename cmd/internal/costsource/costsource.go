@@ -67,7 +67,7 @@ func Aggregate(cfg *config.Config, st *state.State, reg *cost.Registry) Breakdow
 		addModule(&b, m.Name, m.Status, note, reg.EstimateAll(resources))
 	}
 	if cfg.Ops.Enabled {
-		if res := ops.CostResources(cfg.Ops); len(res) > 0 {
+		if res := ops.CostResources(namePrefix(cfg), cfg.Ops); len(res) > 0 {
 			addModule(&b, "ops", "enabled", "local observability hooks — CloudWatch not provisioned by Fabrica", reg.EstimateAll(res))
 		}
 	}
@@ -116,8 +116,8 @@ func costInputs(cfg *config.Config, m *state.ModuleState) ([]cost.Resource, stri
 	case "workstation":
 		return applyStopped(workstationCostResources(m, cfg.Workstation), m.Status)
 	case "ci":
-		res := ci.CostResources(cfg.CI)
-		res = append(res, ci.PipelineCostResources(cfg.CI)...)
+		res := ci.CostResources(namePrefix(cfg), cfg.CI)
+		res = append(res, ci.PipelineCostResources(namePrefix(cfg), cfg.CI)...)
 		return res, ""
 	case "deploy":
 		if !hasResource(m, deploy.TypeGameLiftFleet) {

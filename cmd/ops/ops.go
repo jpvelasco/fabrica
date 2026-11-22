@@ -83,7 +83,11 @@ func (c exportCommand) run() error {
 	if !c.rt.Config.Ops.Enabled {
 		return fmt.Errorf("ops is disabled — set ops.enabled: true in fabrica.yaml to export hooks")
 	}
-	doc, err := fabricaops.BuildExport(c.rt.Config.Ops)
+	prefix, err := c.rt.Config.ResolveNamePrefix()
+	if err != nil {
+		return err
+	}
+	doc, err := fabricaops.BuildExport(prefix, c.rt.Config.Ops)
 	if err != nil {
 		return err
 	}

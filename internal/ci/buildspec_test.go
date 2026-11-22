@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/iamrole"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestBuildspecRawSubmitsToHorde(t *testing.T) {
@@ -37,17 +38,17 @@ func TestBuildspecIsBase64OfRaw(t *testing.T) {
 
 func TestInlinePolicyScopedToProjectLogGroup(t *testing.T) {
 	plan := testPlan()
-	pol := iamrole.CICodeBuildInlinePolicy(plan.Region, plan.Account, plan.ProjectName)
+	pol := iamrole.CICodeBuildInlinePolicy(naming.Default, plan.Region, plan.Account, plan.ProjectName)
 	b, _ := json.Marshal(pol["PolicyDocument"])
 	doc := string(b)
-	if !strings.Contains(doc, "/aws/codebuild/"+defaultProjectName) {
+	if !strings.Contains(doc, "/aws/codebuild/"+"fabrica-ci") {
 		t.Errorf("inline policy not scoped to project log group:\n%s", doc)
 	}
 }
 
 func TestInlinePolicyIncludesVPCDescribePermissions(t *testing.T) {
 	plan := testPlan()
-	pol := iamrole.CICodeBuildInlinePolicy(plan.Region, plan.Account, plan.ProjectName)
+	pol := iamrole.CICodeBuildInlinePolicy(naming.Default, plan.Region, plan.Account, plan.ProjectName)
 	b, _ := json.Marshal(pol["PolicyDocument"])
 	doc := string(b)
 	for _, want := range []string{

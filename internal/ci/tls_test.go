@@ -10,6 +10,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/horde"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -18,7 +19,7 @@ func TestTLSBuildspec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := NewCreatePlan(context.Background(), config.CIConfig{HordeCAPath: "/etc/horde/tls/ca.pem"}, "", "", c.URL(""), nil)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, config.CIConfig{HordeCAPath: "/etc/horde/tls/ca.pem"}, "", "", c.URL(""), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +46,7 @@ func TestTLSBuildspec(t *testing.T) {
 	if ProjectSpec(plan, "", "").EnvDefaults["HORDE_CA_FILE"] != "/etc/horde/tls/ca.pem" {
 		t.Fatal("lost CI CA path")
 	}
-	if _, err := NewCreatePlan(context.Background(), config.CIConfig{HordeCAPath: "relative"}, "", "", "", nil); err == nil {
+	if _, err := NewCreatePlan(context.Background(), naming.Default, config.CIConfig{HordeCAPath: "relative"}, "", "", "", nil); err == nil {
 		t.Fatal("relative CI trust accepted")
 	}
 }

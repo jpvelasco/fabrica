@@ -4,6 +4,8 @@ package iamrole
 import (
 	"strings"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestRoleDocumentPathAndBoundary(t *testing.T) {
@@ -278,7 +280,7 @@ func TestRoleTags_TagShape(t *testing.T) {
 }
 
 func TestCICodeBuildInlinePolicy_Shared(t *testing.T) {
-	p := CICodeBuildInlinePolicy("us-west-2", "123456789012", "fabrica-ci")
+	p := CICodeBuildInlinePolicy(naming.Default, "us-west-2", "123456789012", "fabrica-ci")
 	if p["PolicyName"] != "fabrica-ci-inline" {
 		t.Fatalf("PolicyName = %v, want fabrica-ci-inline", p["PolicyName"])
 	}
@@ -340,7 +342,7 @@ func TestCICodeBuildInlinePolicy_Shared(t *testing.T) {
 }
 
 func TestCICodeBuildInlinePolicy_EmptyRegionAccount(t *testing.T) {
-	p := CICodeBuildInlinePolicy("", "", "fabrica-ci")
+	p := CICodeBuildInlinePolicy(naming.Default, "", "", "fabrica-ci")
 	stmts := p["PolicyDocument"].(map[string]any)["Statement"].([]map[string]any)
 	logsRes := stmts[0]["Resource"].([]string)[0]
 	if !strings.Contains(logsRes, "arn:aws:logs:*:*:log-group:/aws/codebuild/fabrica-ci*") {
@@ -349,7 +351,7 @@ func TestCICodeBuildInlinePolicy_EmptyRegionAccount(t *testing.T) {
 }
 
 func TestDeployS3ReadPolicy_Shared(t *testing.T) {
-	p := DeployS3ReadPolicy("my-bucket")
+	p := DeployS3ReadPolicy(naming.Default, "my-bucket")
 	if p["PolicyName"] != "fabrica-deploy-s3-read" {
 		t.Fatalf("PolicyName = %v, want fabrica-deploy-s3-read", p["PolicyName"])
 	}

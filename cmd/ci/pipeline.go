@@ -22,7 +22,11 @@ Enable ci.pipeline to include the standing cost line.`,
 			if err != nil {
 				return err
 			}
-			plan := ci.BuildPipelinePlan(rt.Config.CI)
+			prefix, err := rt.Config.ResolveNamePrefix()
+			if err != nil {
+				return err
+			}
+			plan := ci.BuildPipelinePlan(prefix, rt.Config.CI)
 			if optionsSource().JSONOutput {
 				b, err := json.MarshalIndent(plan, "", "  ")
 				if err != nil {

@@ -9,6 +9,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/ci"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/deploy"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"go.yaml.in/yaml/v3"
 )
@@ -177,7 +178,7 @@ func TestReproDeployInlinePolicyExport(t *testing.T) {
 				t.Errorf("deploy inline missing bucket ARN, got %s", s)
 			}
 			// Check helper equality with plan layer
-			plan := deploy.NewSetupPlan(cfg.Deploy, exportAccount, exportRegion)
+			plan := deploy.NewSetupPlan(naming.Default, cfg.Deploy, exportAccount, exportRegion)
 			raw, _ := deploy.RoleDesiredState(plan)
 			var doc2 map[string]any
 			_ = json.Unmarshal(raw, &doc2)
@@ -203,7 +204,7 @@ func TestReproCIHelperEquality(t *testing.T) {
 	// If helper not yet implemented, this will fail to compile or will report mismatch.
 	cfg := config.Defaults()
 	cfg.CI.ProjectName = "fabrica-ci"
-	plan, err := ci.NewCreatePlan(context.TODO(), cfg.CI, exportAccount, exportRegion, "", nil)
+	plan, err := ci.NewCreatePlan(context.TODO(), naming.Default, cfg.CI, exportAccount, exportRegion, "", nil)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -236,7 +237,7 @@ func TestReproCIHelperEquality(t *testing.T) {
 func TestReproDeployHelperEquality(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Deploy.BuildBucket = "my-build-bucket"
-	plan := deploy.NewSetupPlan(cfg.Deploy, exportAccount, exportRegion)
+	plan := deploy.NewSetupPlan(naming.Default, cfg.Deploy, exportAccount, exportRegion)
 	raw, err := deploy.RoleDesiredState(plan)
 	if err != nil {
 		t.Fatalf("RoleDesiredState: %v", err)

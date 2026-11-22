@@ -7,10 +7,11 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func testPlan() *CreatePlan {
-	plan, err := NewCreatePlan(context.Background(), config.CIConfig{}, "123456789012", "us-west-2", "http://10.0.1.5:5000", nil)
+	plan, err := NewCreatePlan(context.Background(), naming.Default, config.CIConfig{}, "123456789012", "us-west-2", "http://10.0.1.5:5000", nil)
 	if err != nil {
 		panic(err)
 	}
@@ -26,7 +27,7 @@ func TestRoleDesiredState(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if doc["RoleName"] != defaultRoleName {
+	if doc["RoleName"] != "fabrica-ci-codebuild" {
 		t.Errorf("RoleName = %v", doc["RoleName"])
 	}
 	// Trust policy must allow codebuild.amazonaws.com.
@@ -75,7 +76,7 @@ func TestRoleDesiredStateWithIAMGuardrails(t *testing.T) {
 func TestProjectSpec(t *testing.T) {
 	spec := ProjectSpec(testPlan(), "arn:aws:iam::123456789012:role/fabrica-ci-codebuild", "")
 
-	if spec.Name != defaultProjectName {
+	if spec.Name != "fabrica-ci" {
 		t.Errorf("Name = %q", spec.Name)
 	}
 	if spec.ServiceRoleARN != "arn:aws:iam::123456789012:role/fabrica-ci-codebuild" {
@@ -100,7 +101,7 @@ func TestProjectSpec(t *testing.T) {
 }
 
 func TestProjectSpecWithVPC(t *testing.T) {
-	plan, err := NewCreatePlan(context.Background(), config.CIConfig{VPCId: "vpc-abc", SubnetId: "subnet-xyz"},
+	plan, err := NewCreatePlan(context.Background(), naming.Default, config.CIConfig{VPCId: "vpc-abc", SubnetId: "subnet-xyz"},
 		"123456789012", "us-west-2", "", nil)
 	if err != nil {
 		t.Fatalf("NewCreatePlan: %v", err)
@@ -120,7 +121,7 @@ func TestProjectSpecWithVPC(t *testing.T) {
 }
 
 func TestProjectSpecWithVPCMissingSG(t *testing.T) {
-	plan, err := NewCreatePlan(context.Background(), config.CIConfig{VPCId: "vpc-abc", SubnetId: "subnet-xyz"},
+	plan, err := NewCreatePlan(context.Background(), naming.Default, config.CIConfig{VPCId: "vpc-abc", SubnetId: "subnet-xyz"},
 		"123456789012", "us-west-2", "", nil)
 	if err != nil {
 		t.Fatalf("NewCreatePlan: %v", err)
@@ -140,8 +141,8 @@ func TestSGDesiredState(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if doc["GroupName"] != DefaultSGName {
-		t.Errorf("GroupName = %v, want %q", doc["GroupName"], DefaultSGName)
+	if doc["GroupName"] != "fabrica-ci-sg" {
+		t.Errorf("GroupName = %v, want %q", doc["GroupName"], "fabrica-ci-sg")
 	}
 	if _, ok := doc["SecurityGroupIngress"]; !ok {
 		t.Errorf("SecurityGroupIngress missing from desired state: %s", raw)
@@ -170,7 +171,7 @@ func TestRoleDesiredStateReadsOnlyTheHordeToken(t *testing.T) {
 		t.Fatalf("RoleDesiredState: %v", err)
 	}
 	got := string(ds)
-	if !strings.Contains(got, "ssm:GetParameters") || !strings.Contains(got, "parameter"+testHordeTokenParam) || !strings.Contains(got, HordeTokenPolicyName) {
+	if !strings.Contains(got, "ssm:GetParameters") || !strings.Contains(got, "parameter"+testHordeTokenParam) || !strings.Contains(got, "fabrica-ci-horde-token") {
 		t.Errorf("role lacks the scoped token read: %s", got)
 	}
 	plan.HordeTokenParameter = ""

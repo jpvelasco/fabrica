@@ -5,27 +5,28 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestNewSetupPlanDefaults(t *testing.T) {
-	p := NewSetupPlan(config.DeployConfig{}, "123456789012", "us-east-1")
-	if p.RoleName != defaultRoleName {
-		t.Errorf("RoleName = %q, want %q", p.RoleName, defaultRoleName)
+	p := NewSetupPlan(naming.Default, config.DeployConfig{}, "123456789012", "us-east-1")
+	if p.RoleName != "fabrica-deploy-gamelift" {
+		t.Errorf("RoleName = %q, want %q", p.RoleName, "fabrica-deploy-gamelift")
 	}
-	if p.AliasName != defaultAliasName {
-		t.Errorf("AliasName = %q, want %q", p.AliasName, defaultAliasName)
+	if p.AliasName != "fabrica-deploy" {
+		t.Errorf("AliasName = %q, want %q", p.AliasName, "fabrica-deploy")
 	}
 }
 
 func TestNewSetupPlanOverrides(t *testing.T) {
-	p := NewSetupPlan(config.DeployConfig{RoleName: "my-role", AliasName: "my-alias"}, "123456789012", "us-east-1")
+	p := NewSetupPlan(naming.Default, config.DeployConfig{RoleName: "my-role", AliasName: "my-alias"}, "123456789012", "us-east-1")
 	if p.RoleName != "my-role" || p.AliasName != "my-alias" {
 		t.Errorf("overrides not applied: %+v", p)
 	}
 }
 
 func TestNewPromotePlanDefaultsAndS3(t *testing.T) {
-	p, err := NewPromotePlan(config.DeployConfig{BuildBucket: "bkt"}, "123456789012", "us-east-1",
+	p, err := NewPromotePlan(naming.Default, config.DeployConfig{BuildBucket: "bkt"}, "123456789012", "us-east-1",
 		"v1.2.3", "arn:aws:iam::123456789012:role/fabrica-deploy", "alias-1", "", "")
 	if err != nil {
 		t.Fatalf("NewPromotePlan: %v", err)
@@ -63,7 +64,7 @@ func TestNewPromotePlanDefaultsAndS3(t *testing.T) {
 }
 
 func TestNewPromotePlanExplicitS3(t *testing.T) {
-	p, err := NewPromotePlan(config.DeployConfig{}, "123456789012", "us-east-1",
+	p, err := NewPromotePlan(naming.Default, config.DeployConfig{}, "123456789012", "us-east-1",
 		"v1", "arn:role", "alias-1", "other-bucket", "custom/key.zip")
 	if err != nil {
 		t.Fatalf("NewPromotePlan: %v", err)
@@ -74,7 +75,7 @@ func TestNewPromotePlanExplicitS3(t *testing.T) {
 }
 
 func TestNewPromotePlanAllowedCIDROverride(t *testing.T) {
-	p, err := NewPromotePlan(config.DeployConfig{AllowedCIDR: "10.0.0.0/8"}, "123456789012", "us-east-1",
+	p, err := NewPromotePlan(naming.Default, config.DeployConfig{AllowedCIDR: "10.0.0.0/8"}, "123456789012", "us-east-1",
 		"v1", "arn:role", "alias-1", "", "")
 	if err != nil {
 		t.Fatalf("NewPromotePlan: %v", err)
@@ -86,7 +87,7 @@ func TestNewPromotePlanAllowedCIDROverride(t *testing.T) {
 
 func TestNewPromotePlanInvalidAllowedCIDR(t *testing.T) {
 	for _, bad := range []string{"not-a-cidr", "0.0.0.0", "10.0.0.0/33"} {
-		if _, err := NewPromotePlan(config.DeployConfig{AllowedCIDR: bad}, "123456789012", "us-east-1",
+		if _, err := NewPromotePlan(naming.Default, config.DeployConfig{AllowedCIDR: bad}, "123456789012", "us-east-1",
 			"v1", "arn:role", "alias-1", "", ""); err == nil {
 			t.Errorf("NewPromotePlan(%q): expected error, got nil", bad)
 		}
@@ -96,7 +97,7 @@ func TestNewPromotePlanInvalidAllowedCIDR(t *testing.T) {
 func TestNewPromotePlanCapacityBounds(t *testing.T) {
 	// Desired count only: minimum stays 0, maximum falls back to desired so
 	// the fleet comes up exactly at the planned size.
-	p, err := NewPromotePlan(config.DeployConfig{BuildBucket: "bkt", DesiredInstances: 3}, "123456789012", "us-east-1",
+	p, err := NewPromotePlan(naming.Default, config.DeployConfig{BuildBucket: "bkt", DesiredInstances: 3}, "123456789012", "us-east-1",
 		"v1", "arn:role", "alias-1", "", "")
 	if err != nil {
 		t.Fatalf("NewPromotePlan: %v", err)
@@ -105,7 +106,7 @@ func TestNewPromotePlanCapacityBounds(t *testing.T) {
 		t.Errorf("bounds = %d/%d, want 0/3", p.MinimumInstances, p.MaximumInstances)
 	}
 
-	p, err = NewPromotePlan(config.DeployConfig{BuildBucket: "bkt", DesiredInstances: 2, MinimumInstances: 1, MaximumInstances: 4}, "123456789012", "us-east-1",
+	p, err = NewPromotePlan(naming.Default, config.DeployConfig{BuildBucket: "bkt", DesiredInstances: 2, MinimumInstances: 1, MaximumInstances: 4}, "123456789012", "us-east-1",
 		"v1", "arn:role", "alias-1", "", "")
 	if err != nil {
 		t.Fatalf("NewPromotePlan: %v", err)
@@ -128,7 +129,7 @@ func TestNewPromotePlanInvalidCapacityBounds(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := NewPromotePlan(tc.cfg, "123456789012", "us-east-1", "v1", "arn:role", "alias-1", "", "")
+			_, err := NewPromotePlan(naming.Default, tc.cfg, "123456789012", "us-east-1", "v1", "arn:role", "alias-1", "", "")
 			if err == nil {
 				t.Fatalf("NewPromotePlan(%s): expected error, got nil", tc.name)
 			}

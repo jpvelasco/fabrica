@@ -84,8 +84,17 @@ func (p Prefix) For(module string, kinds ...string) string {
 // SG returns the security group name for a module.
 func (p Prefix) SG(module string) string { return p.For(module, "sg") }
 
-// Role returns the IAM role name for a module.
-func (p Prefix) Role(module string) string { return p.For(module, "role") }
+// Role returns the IAM role name for a module. CI and Deploy keep the role
+// names their CodeBuild and GameLift services have always been given.
+func (p Prefix) Role(module string) string {
+	switch module {
+	case "ci":
+		return p.For("ci", "codebuild")
+	case "deploy":
+		return p.For("deploy", "gamelift")
+	}
+	return p.For(module, "role")
+}
 
 // Profile returns the instance profile name for a module.
 func (p Prefix) Profile(module string) string { return p.For(module, "profile") }

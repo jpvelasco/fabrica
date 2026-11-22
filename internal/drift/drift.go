@@ -1590,7 +1590,7 @@ func dispatchModuleSG(prefix naming.Prefix, rec *state.ModuleResource, mod *stat
 		})
 	case "ci":
 		ds, err = ci.SGDesiredState(&ci.CreatePlan{
-			SGName: ci.DefaultSGName,
+			SGName: prefix.SG("ci"),
 			VPCID:  sgVPCID(rec, cfg.CI.VPCId),
 		})
 	default:

@@ -3,6 +3,7 @@ package ci
 import (
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 // codeBuildEstimator estimates the monthly cost of a CodeBuild project. Builds
@@ -29,17 +30,14 @@ func (iamRoleEstimator) Estimate(r cost.Resource) (cost.Monthly, error) {
 
 // CostResources returns the cost inputs for the CI module at the given config,
 // applying the same defaults as NewCreatePlan.
-func CostResources(cfg config.CIConfig) []cost.Resource {
-	projectName := cfg.ProjectName
-	if projectName == "" {
-		projectName = defaultProjectName
-	}
+func CostResources(prefix naming.Prefix, cfg config.CIConfig) []cost.Resource {
+	projectName := ProjectName(prefix, cfg)
 	computeType := cfg.ComputeType
 	if computeType == "" {
 		computeType = defaultComputeType
 	}
 	return []cost.Resource{
-		{TypeName: TypeAWSIAMRole, Name: defaultRoleName},
+		{TypeName: TypeAWSIAMRole, Name: prefix.Role("ci")},
 		{TypeName: TypeAWSCodeBuildProject, Name: projectName + " (" + computeType + ")"},
 	}
 }

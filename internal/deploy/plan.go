@@ -12,6 +12,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 const (
@@ -20,10 +21,6 @@ const (
 	TypeGameLiftBuild = "AWS::GameLift::Build"
 	TypeGameLiftFleet = "AWS::GameLift::Fleet"
 
-	defaultRoleName                 = "fabrica-deploy-gamelift"
-	defaultAliasName                = "fabrica-deploy"
-	defaultFleetPrefix              = "fabrica-fleet"
-	defaultBuildPrefix              = "fabrica-build"
 	defaultInstanceType             = "c5.large"
 	defaultFleetType                = "ON_DEMAND"
 	defaultBuildOS                  = "AMAZON_LINUX_2"
@@ -40,6 +37,8 @@ const (
 
 // SetupPlan is the resolved deploy setup plan (IAM role + alias).
 type SetupPlan struct {
+	// Prefix names the role's inline policy and the default role and alias (#705).
+	Prefix        naming.Prefix
 	Account       string
 	Region        string
 	RoleName      string
@@ -79,17 +78,23 @@ type PromotePlan struct {
 	CostResources []cost.Resource
 }
 
-// NewSetupPlan builds the setup plan, applying defaults for unset config fields.
-func NewSetupPlan(cfg config.DeployConfig, account, region string) *SetupPlan {
-	roleName := cfg.RoleName
-	if roleName == "" {
-		roleName = defaultRoleName
+// roleNameFor returns deploy.roleName when set, otherwise the prefixed GameLift role.
+func roleNameFor(prefix naming.Prefix, cfg config.DeployConfig) string {
+	if cfg.RoleName != "" {
+		return cfg.RoleName
 	}
+	return prefix.Role("deploy")
+}
+
+// NewSetupPlan builds the setup plan, applying defaults for unset config fields.
+func NewSetupPlan(prefix naming.Prefix, cfg config.DeployConfig, account, region string) *SetupPlan {
+	roleName := roleNameFor(prefix, cfg)
 	aliasName := cfg.AliasName
 	if aliasName == "" {
-		aliasName = defaultAliasName
+		aliasName = prefix.Instance("deploy")
 	}
 	return &SetupPlan{
+		Prefix:      prefix,
 		Account:     account,
 		Region:      region,
 		RoleName:    roleName,
@@ -105,7 +110,7 @@ func NewSetupPlan(cfg config.DeployConfig, account, region string) *SetupPlan {
 // NewPromotePlan builds the promote plan. s3Bucket/s3Key override the convention
 // (cfg.BuildBucket + "builds/<version>/server.zip") when non-empty.
 // It returns an error when the resolved AllowedCIDR is not a valid CIDR.
-func NewPromotePlan(cfg config.DeployConfig, account, region, buildVersion, roleARN, aliasID, s3Bucket, s3Key string) (*PromotePlan, error) {
+func NewPromotePlan(prefix naming.Prefix, cfg config.DeployConfig, account, region, buildVersion, roleARN, aliasID, s3Bucket, s3Key string) (*PromotePlan, error) {
 	instanceType := cfg.InstanceType
 	if instanceType == "" {
 		instanceType = defaultInstanceType
@@ -169,19 +174,15 @@ func NewPromotePlan(cfg config.DeployConfig, account, region, buildVersion, role
 		return nil, fmt.Errorf("deploy.allowedCidr %q is not a valid CIDR (e.g. 0.0.0.0/0, 10.0.0.0/8): %w", allowedCIDR, err)
 	}
 	slug := sanitize(buildVersion)
-	roleName := cfg.RoleName
-	if roleName == "" {
-		roleName = defaultRoleName
-	}
 	return &PromotePlan{
 		Account:                  account,
 		Region:                   region,
 		BuildVersion:             buildVersion,
-		RoleName:                 roleName,
+		RoleName:                 roleNameFor(prefix, cfg),
 		RoleARN:                  roleARN,
 		AliasID:                  aliasID,
-		FleetName:                fmt.Sprintf("%s-%s", defaultFleetPrefix, slug),
-		BuildName:                fmt.Sprintf("%s-%s", defaultBuildPrefix, slug),
+		FleetName:                prefix.For("fleet", slug),
+		BuildName:                prefix.For("build", slug),
 		InstanceType:             instanceType,
 		FleetType:                fleetType,
 		LaunchPath:               launchPath,
