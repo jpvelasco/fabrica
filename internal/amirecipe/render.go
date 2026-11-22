@@ -6,15 +6,14 @@ import (
 	"maps"
 	"slices"
 	"strings"
-	// nosemgrep: go.lang.security.audit.xss.import-text-template.import-text-template — renders
-	// local JSON/HCL/shell build artifacts, not HTML; no server or browser consumes this output.
-	"text/template"
 )
 
 // TemplateFuncs returns the helpers the AMI build templates share. Each
-// renderer registers them alongside its own functions.
-func TemplateFuncs() template.FuncMap {
-	return template.FuncMap{
+// renderer registers them alongside its own functions. The map[string]any type
+// is the underlying type of the template FuncMap, so this package needs no
+// template import.
+func TemplateFuncs() map[string]any {
+	return map[string]any{
 		"jsonMap":      JSONMap,
 		"hclMap":       HCLMap,
 		"cliTags":      CLITags,
@@ -65,8 +64,8 @@ func CLITags(m map[string]string) string {
 	return "'" + strings.ReplaceAll(string(raw), "'", `'\''`) + "'"
 }
 
-// packerDataName names the amazon-parameterstore data source that reads the
-// Ubuntu AMI ID for the default base image.
+// packerDataName is the Packer data source label that PackerData declares and
+// PackerSource reads.
 const packerDataName = "ubuntu_jammy"
 
 // PackerSource returns the amazon-ebs source_ami assignment for baseImage. An

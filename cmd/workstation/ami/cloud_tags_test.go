@@ -2,20 +2,20 @@ package ami
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/amirecipe"
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // TestBuildCarriesOperatorTagsAndSnapshotStep checks that cloud.aws.tags reach
-// the recipe and AMI tags with ManagedBy protected, that the default base image
-// is the SSM reference, and that the build guide tags the output snapshots so
-// verify-ami.sh passes on a fresh bake.
+// the recipe and AMI tags with ManagedBy protected, that the default parent
+// image is the SSM reference, and that the build guide tags the output
+// snapshots so verify-ami.sh passes on a fresh bake.
 func TestBuildCarriesOperatorTagsAndSnapshotStep(t *testing.T) {
 	identity, err := tags.ResolveIdentity("studio")
 	if err != nil {
@@ -24,7 +24,7 @@ func TestBuildCarriesOperatorTagsAndSnapshotStep(t *testing.T) {
 	dir := t.TempDir()
 	c := buildCommand{
 		out:       &bytes.Buffer{},
-		cfg:       BuildConfig{Identity: identity, CloudTags: map[string]string{"Project": "studio", "ManagedBy": "foreign"}, BaseImage: amirecipe.DefaultBaseImage, Region: "us-west-2", Name: "fabrica-workstation-dcv", OutputDir: dir, RootDevice: defaultRootDevice},
+		cfg:       BuildConfig{Identity: identity, CloudTags: testutil.OperatorTagsFixture(), BaseImage: defaultBaseImage, Region: "us-west-2", Name: "fabrica-workstation-dcv", OutputDir: dir, RootDevice: defaultRootDevice},
 		writeFile: os.WriteFile,
 		mkdirAll:  os.MkdirAll,
 	}
@@ -36,21 +36,9 @@ func TestBuildCarriesOperatorTagsAndSnapshotStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var recipe struct {
-		ParentImage string            `json:"parentImage"`
-		Tags        map[string]string `json:"tags"`
-		AMITags     map[string]string `json:"amiTags"`
-	}
-	if err := json.Unmarshal(recipeRaw, &recipe); err != nil {
-		t.Fatal(err)
-	}
-	if recipe.ParentImage != amirecipe.DefaultBaseImage {
-		t.Errorf("parentImage = %q, want the SSM default", recipe.ParentImage)
-	}
-	for name, got := range map[string]map[string]string{"tags": recipe.Tags, "amiTags": recipe.AMITags} {
-		if got["Project"] != "studio" || got["ManagedBy"] != "studio" || got["FabricaModule"] != "workstation" {
-			t.Errorf("%s = %v; want Project, owner ManagedBy, and FabricaModule", name, got)
-		}
+	testutil.AssertRecipeTags(t, recipeRaw, "studio", map[string]string{"FabricaModule": "workstation"})
+	if !strings.Contains(string(recipeRaw), `"parentImage": "`+amirecipe.DefaultBaseImage+`"`) {
+		t.Errorf("parentImage should be the SSM default %q:\n%s", amirecipe.DefaultBaseImage, recipeRaw)
 	}
 
 	guideRaw, err := os.ReadFile(filepath.Join(dir, "build-guide.md"))
