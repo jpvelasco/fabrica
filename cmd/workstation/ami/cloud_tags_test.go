@@ -2,12 +2,12 @@ package ami
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
@@ -22,7 +22,7 @@ func TestBuildCarriesOperatorTagsAndSnapshotStep(t *testing.T) {
 	dir := t.TempDir()
 	c := buildCommand{
 		out:       &bytes.Buffer{},
-		cfg:       BuildConfig{Identity: identity, CloudTags: map[string]string{"Project": "studio", "ManagedBy": "foreign"}, BaseImage: defaultBaseImage, Region: "us-west-2", Name: "fabrica-workstation-dcv", OutputDir: dir, RootDevice: defaultRootDevice},
+		cfg:       BuildConfig{Identity: identity, CloudTags: testutil.OperatorTagsFixture(), BaseImage: defaultBaseImage, Region: "us-west-2", Name: "fabrica-workstation-dcv", OutputDir: dir, RootDevice: defaultRootDevice},
 		writeFile: os.WriteFile,
 		mkdirAll:  os.MkdirAll,
 	}
@@ -34,18 +34,7 @@ func TestBuildCarriesOperatorTagsAndSnapshotStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var recipe struct {
-		Tags    map[string]string `json:"tags"`
-		AMITags map[string]string `json:"amiTags"`
-	}
-	if err := json.Unmarshal(recipeRaw, &recipe); err != nil {
-		t.Fatal(err)
-	}
-	for name, got := range map[string]map[string]string{"tags": recipe.Tags, "amiTags": recipe.AMITags} {
-		if got["Project"] != "studio" || got["ManagedBy"] != "studio" || got["FabricaModule"] != "workstation" {
-			t.Errorf("%s = %v; want Project, owner ManagedBy, and FabricaModule", name, got)
-		}
-	}
+	testutil.AssertRecipeTags(t, recipeRaw, "studio", map[string]string{"FabricaModule": "workstation"})
 
 	guideRaw, err := os.ReadFile(filepath.Join(dir, "build-guide.md"))
 	if err != nil {

@@ -39,7 +39,7 @@ func RunAMIRuntimeTests(t *testing.T, newCmd func(globals.RuntimeSource, io.Writ
 				calls++
 				cfg := &config.Config{}
 				cfg.Cloud.AWS.Identity.ManagedBy = tc.owner
-				cfg.Cloud.AWS.Tags = map[string]string{"ManagedBy": "foreign", "Project": "studio"}
+				cfg.Cloud.AWS.Tags = OperatorTagsFixture()
 				return globals.Runtime{Config: cfg}, tc.sourceErr
 			}
 			cmd := newCmd(source, io.Discard)
@@ -77,25 +77,52 @@ func RunAMIRuntimeTests(t *testing.T, newCmd func(globals.RuntimeSource, io.Writ
 			if err != nil {
 				t.Fatal(err)
 			}
-			var recipe struct {
-				Tags    map[string]string `json:"tags"`
-				AMITags map[string]string `json:"amiTags"`
-			}
-			if err := json.Unmarshal(raw, &recipe); err != nil {
-				t.Fatal(err)
-			}
 			wantOwner := tc.owner
 			if wantOwner == "" {
 				wantOwner = "fabrica"
 			}
-			if recipe.Tags["ManagedBy"] != wantOwner || recipe.AMITags["ManagedBy"] != wantOwner {
-				t.Fatalf("ordinary tag selected ownership: tags=%v amiTags=%v", recipe.Tags, recipe.AMITags)
-			}
-			for name, got := range map[string]map[string]string{"tags": recipe.Tags, "amiTags": recipe.AMITags} {
-				if got["Project"] != "studio" {
-					t.Fatalf("%s lost cloud.aws.tags: %v", name, got)
-				}
-			}
+			AssertRecipeTags(t, raw, wantOwner, nil)
 		})
+	}
+}
+
+// OperatorTagsFixture is the cloud.aws.tags seed the AMI tag tests use: an
+// operator tag plus a ManagedBy that must lose to the resolved owner.
+func OperatorTagsFixture() map[string]string {
+	return map[string]string{"Project": "studio", "ManagedBy": "foreign"}
+}
+
+// AssertRecipeTags checks that an Image Builder recipe's tags and amiTags both
+// carry the operator tag, the protected owner, and every extra want entry.
+func AssertRecipeTags(t *testing.T, recipe []byte, owner string, want map[string]string) {
+	t.Helper()
+	var doc struct {
+		Tags    map[string]string `json:"tags"`
+		AMITags map[string]string `json:"amiTags"`
+	}
+	if err := json.Unmarshal(recipe, &doc); err != nil {
+		t.Fatalf("recipe is not JSON: %v", err)
+	}
+	expect := map[string]string{"Project": "studio", "ManagedBy": owner}
+	for k, v := range want {
+		expect[k] = v
+	}
+	for name, got := range map[string]map[string]string{"tags": doc.Tags, "amiTags": doc.AMITags} {
+		for k, v := range expect {
+			if got[k] != v {
+				t.Errorf("recipe %s[%s] = %q, want %q (all: %v)", name, k, got[k], v, got)
+			}
+		}
+	}
+}
+
+// AssertPackerTags checks that rendered Packer HCL carries the operator tag and
+// the protected owner in its tag sets.
+func AssertPackerTags(t *testing.T, packer []byte, owner string) {
+	t.Helper()
+	for _, want := range []string{`"Project" = "studio"`, `"ManagedBy" = "` + owner + `"`} {
+		if !strings.Contains(string(packer), want) {
+			t.Errorf("packer tags missing %s:\n%s", want, packer)
+		}
 	}
 }

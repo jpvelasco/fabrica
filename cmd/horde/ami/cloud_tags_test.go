@@ -1,10 +1,9 @@
 package ami
 
 import (
-	"encoding/json"
-	"strings"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
@@ -18,7 +17,7 @@ func TestRecipeCarriesOperatorTagsAndProtectedOwner(t *testing.T) {
 	}
 	bc := buildCommand{cfg: BuildConfig{
 		Identity:      identity,
-		CloudTags:     map[string]string{"Project": "studio", "ManagedBy": "foreign"},
+		CloudTags:     testutil.OperatorTagsFixture(),
 		Version:       "5.5.0",
 		Install:       "docker",
 		BaseImage:     defaultBaseImage,
@@ -30,23 +29,10 @@ func TestRecipeCarriesOperatorTagsAndProtectedOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var doc struct {
-		Tags    map[string]string `json:"tags"`
-		AMITags map[string]string `json:"amiTags"`
-	}
-	if err := json.Unmarshal(recipe, &doc); err != nil {
-		t.Fatal(err)
-	}
-	for name, got := range map[string]map[string]string{"tags": doc.Tags, "amiTags": doc.AMITags} {
-		if got["Project"] != "studio" || got["ManagedBy"] != "studio" || got["Name"] != "fabrica-horde-5-5-0" {
-			t.Errorf("%s = %v; want Project=studio, ManagedBy=studio, Name set", name, got)
-		}
-	}
+	testutil.AssertRecipeTags(t, recipe, "studio", map[string]string{"Name": "fabrica-horde-5-5-0"})
 	packer, err := bc.renderTemplate("packer.hcl.tmpl", bc.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(packer), `"Project" = "studio"`) || !strings.Contains(string(packer), `"ManagedBy" = "studio"`) {
-		t.Errorf("packer common_tags missing operator or owner tags:\n%s", packer)
-	}
+	testutil.AssertPackerTags(t, packer, "studio")
 }
