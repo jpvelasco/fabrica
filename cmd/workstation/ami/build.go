@@ -17,6 +17,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/amirecipe"
 	"github.com/jpvelasco/fabrica/internal/amissm"
 	"github.com/jpvelasco/fabrica/internal/ec2state"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/tags"
 	"github.com/spf13/cobra"
 )
@@ -24,7 +25,6 @@ import (
 const (
 	defaultBaseImage = amirecipe.DefaultBaseImage
 	defaultOutputDir = "workstation-ami"
-	defaultName      = "fabrica-workstation-dcv"
 	// defaultRootDevice is the root device of Canonical's Ubuntu 22.04 server
 	// AMIs, the documented base image. Pass --root-device when the base image
 	// reports another RootDeviceName; verify-ami.sh fails the bake if the
@@ -42,6 +42,8 @@ type BuildConfig struct {
 	Name       string
 	OutputDir  string
 	RootDevice string
+	// NamePrefix names the default AMI (#705); zero value is the default prefix.
+	NamePrefix naming.Prefix
 }
 
 // RecipeTags is the tag set for the AMI, its recipe, and its snapshots.
@@ -87,6 +89,11 @@ No AWS calls. Record the resulting AMI ID in workstation.amiId.`,
 			if err != nil {
 				return err
 			}
+			prefix, err := rt.Config.ResolveNamePrefix()
+			if err != nil {
+				return err
+			}
+			cfg.NamePrefix = prefix
 			cfg.Identity = identity
 			cfg.Region = amirecipe.ResolveRegion(cfg.Region, rt.Config.Cloud.AWS.Region)
 			cfg.CloudTags = rt.Config.Cloud.AWS.Tags
@@ -96,13 +103,16 @@ No AWS calls. Record the resulting AMI ID in workstation.amiId.`,
 	}
 	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", defaultBaseImage, "Base AMI ID (Ubuntu 22.04), or the default SSM parameter that resolves the latest Canonical image")
 	cmd.Flags().StringVar(&cfg.Region, "region", "", "AWS region (default: cloud.aws.region, else us-east-1)")
-	cmd.Flags().StringVar(&cfg.Name, "name", defaultName, "Image name")
+	cmd.Flags().StringVar(&cfg.Name, "name", "", `Image name (default: "<namePrefix>-workstation-dcv", "fabrica-workstation-dcv" unless namePrefix is set)`)
 	cmd.Flags().StringVar(&cfg.OutputDir, "output-dir", defaultOutputDir, "Output directory")
 	cmd.Flags().StringVar(&cfg.RootDevice, "root-device", defaultRootDevice, "Root device name of --base-image (its RootDeviceName); the recipe encrypts this device")
 	return cmd
 }
 
 func (c buildCommand) run() error {
+	if c.cfg.Name == "" {
+		c.cfg.Name = c.cfg.NamePrefix.For("workstation", "dcv")
+	}
 	if err := c.validate(); err != nil {
 		return err
 	}

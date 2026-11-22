@@ -7,6 +7,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
 
@@ -26,14 +27,13 @@ const (
 	// Programmer template defaults (c7i.xlarge — Intel Sapphire Rapids).
 	ProgrammerInstanceType = "c7i.xlarge"
 	ProgrammerVolumeSize   = 100
-
-	// DefaultSGName is the workstation security group name.
-	DefaultSGName = "fabrica-workstation-sg"
 )
 
 // CreatePlan holds everything needed to provision a workstation. No AWS SDK
 // types — callers execute the plan via rt.Provider.Resources().
 type CreatePlan struct {
+	// Prefix is the resource-name prefix every physical name derives from.
+	Prefix             naming.Prefix
 	Account            string
 	Region             string
 	AmiID              string
@@ -129,7 +129,7 @@ func resolveSizing(cfg config.WorkstationConfig, tmpl string) (instanceType stri
 // and config win per field.
 // perforceAddr, when non-empty, is the Perforce server address to mount; it is
 // threaded through to UserDataConfig at apply time and toggles MountPerforce.
-func NewCreatePlan(ctx context.Context, cfg config.WorkstationConfig, account, region string, resolver cloud.VPCResolver, tmpl, perforceAddr string) (*CreatePlan, error) {
+func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.WorkstationConfig, account, region string, resolver cloud.VPCResolver, tmpl, perforceAddr string) (*CreatePlan, error) {
 	if cfg.AmiID == "" {
 		return nil, fmt.Errorf("workstation.amiId is required. Provide a NICE DCV-enabled AMI ID.\nSee: https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-installing.html")
 	}
@@ -160,6 +160,7 @@ func NewCreatePlan(ctx context.Context, cfg config.WorkstationConfig, account, r
 	}
 
 	return &CreatePlan{
+		Prefix:              prefix,
 		Account:             account,
 		Region:              region,
 		AmiID:               cfg.AmiID,
@@ -173,10 +174,10 @@ func NewCreatePlan(ctx context.Context, cfg config.WorkstationConfig, account, r
 		DefaultVPC:          defaultVPC,
 		MountPerforce:       perforceAddr != "",
 		PerforceServerAddr:  perforceAddr,
-		SGName:              DefaultSGName,
-		InstanceName:        "fabrica-workstation",
-		RoleName:            "fabrica-workstation-role",
-		InstanceProfileName: "fabrica-workstation-profile",
+		SGName:              prefix.SG("workstation"),
+		InstanceName:        prefix.Instance("workstation"),
+		RoleName:            prefix.Role("workstation"),
+		InstanceProfileName: prefix.Profile("workstation"),
 		IAM:                 cfg.IAM,
 		CostResources:       CostResourcesFor(instanceType, volumeSize),
 	}, nil

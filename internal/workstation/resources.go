@@ -7,6 +7,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/ec2state"
 	"github.com/jpvelasco/fabrica/internal/iamrole"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 // SGDesiredState returns the Cloud Control desired-state JSON for the workstation
@@ -63,7 +64,9 @@ func InstanceDesiredState(plan *CreatePlan, sgID, userData string) (json.RawMess
 
 // DCVLicensePolicyName is the inline policy that grants s3:GetObject on the
 // regional DCV license bucket (DCVLicenseBucket) and nothing else.
-const DCVLicensePolicyName = "fabrica-workstation-dcv-license"
+func DCVLicensePolicyName(p naming.Prefix) string {
+	return p.For("workstation", "dcv", "license")
+}
 
 // DCVLicenseBucket is the regional S3 bucket the NICE DCV server reads its
 // no-cost EC2 license object from; without the grant the server fails to
@@ -79,16 +82,16 @@ func DCVLicenseBucket(region string) string {
 // (plan.SessionPasswordParameter) is set by the create layer before the role
 // is built so the role reads exactly one instance's secret.
 func RoleDesiredState(plan *CreatePlan) (json.RawMessage, error) {
-	parameterARN, err := SessionPasswordParameterARN(plan.Region, plan.Account, plan.SessionPasswordParameter)
+	parameterARN, err := SessionPasswordScope(plan.Prefix).ARN(plan.Region, plan.Account, plan.SessionPasswordParameter)
 	if err != nil {
 		return nil, err
 	}
 	return iamrole.RoleDocument(plan.RoleName, iamrole.ServiceEC2, []string{
 		"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
 	}, []map[string]any{
-		iamrole.SSMOutputPolicy(plan.Region, plan.Account),
-		iamrole.SSMParameterReadPolicy(SessionPasswordPolicyName, parameterARN),
-		iamrole.S3ObjectReadPolicy(DCVLicensePolicyName, DCVLicenseBucket(plan.Region)),
+		iamrole.SSMOutputPolicyFor(plan.Prefix, plan.Region, plan.Account),
+		iamrole.SSMParameterReadPolicy(SessionPasswordPolicyName(plan.Prefix), parameterARN),
+		iamrole.S3ObjectReadPolicy(DCVLicensePolicyName(plan.Prefix), DCVLicenseBucket(plan.Region)),
 	}, map[string]string{"FabricaModule": "workstation"},
 		iamrole.Options(plan.IAM.Path, plan.IAM.PermissionsBoundary)...)
 }

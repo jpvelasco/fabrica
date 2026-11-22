@@ -167,7 +167,7 @@ func TestBuildGuideUsesUriForOversizedComponent(t *testing.T) {
 		cfg: BuildConfig{
 			BaseImage:  defaultBaseImage,
 			Region:     "us-west-2",
-			Name:       defaultName,
+			Name:       "fabrica-workstation-dcv",
 			OutputDir:  dir,
 			RootDevice: defaultRootDevice,
 		},

@@ -4200,14 +4200,14 @@ func TestIAMRoleInlinePoliciesPerModule(t *testing.T) {
 			},
 			cfg: config.Defaults(),
 			want: func() []map[string]any {
-				arn, err := workstation.SessionPasswordParameterARN(exportRegion, exportAccount, testWSParamName)
+				arn, err := workstation.SessionPasswordScope(naming.Default).ARN(exportRegion, exportAccount, testWSParamName)
 				if err != nil {
 					panic(err)
 				}
 				return []map[string]any{
 					iamrole.SSMOutputPolicy(exportRegion, exportAccount),
-					iamrole.SSMParameterReadPolicy(workstation.SessionPasswordPolicyName, arn),
-					iamrole.S3ObjectReadPolicy(workstation.DCVLicensePolicyName, workstation.DCVLicenseBucket(exportRegion)),
+					iamrole.SSMParameterReadPolicy(workstation.SessionPasswordPolicyName(naming.Default), arn),
+					iamrole.S3ObjectReadPolicy(workstation.DCVLicensePolicyName(naming.Default), workstation.DCVLicenseBucket(exportRegion)),
 				}
 			}(),
 		},
@@ -4307,7 +4307,7 @@ func TestCloudFormationEmitsInlinePoliciesOnRole(t *testing.T) {
 			cfg:      config.Defaults(),
 			roleName: "fabrica-workstation-role",
 			policy: func() map[string]any {
-				arn, err := workstation.SessionPasswordParameterARN(exportRegion, exportAccount, testWSParamName)
+				arn, err := workstation.SessionPasswordScope(naming.Default).ARN(exportRegion, exportAccount, testWSParamName)
 				if err != nil {
 					panic(err)
 				}
@@ -4362,7 +4362,7 @@ func TestWorkstationInlinePoliciesSkipParameterWhenUnscoped(t *testing.T) {
 	if got[0]["PolicyName"] != "fabrica-ssm-output" {
 		t.Fatalf("policy = %v", got[0]["PolicyName"])
 	}
-	if got[1]["PolicyName"] != workstation.DCVLicensePolicyName {
+	if got[1]["PolicyName"] != workstation.DCVLicensePolicyName(naming.Default) {
 		t.Fatalf("policy[1] = %v", got[1]["PolicyName"])
 	}
 }
@@ -4380,10 +4380,10 @@ func TestWorkstationInlinePoliciesScopeToRecordedParameter(t *testing.T) {
 	if got[0]["PolicyName"] != "fabrica-ssm-output" {
 		t.Fatalf("policy[0] = %v", got[0]["PolicyName"])
 	}
-	if got[1]["PolicyName"] != workstation.SessionPasswordPolicyName {
+	if got[1]["PolicyName"] != workstation.SessionPasswordPolicyName(naming.Default) {
 		t.Fatalf("policy[1] = %v", got[1]["PolicyName"])
 	}
-	if got[2]["PolicyName"] != workstation.DCVLicensePolicyName {
+	if got[2]["PolicyName"] != workstation.DCVLicensePolicyName(naming.Default) {
 		t.Fatalf("policy[2] = %v", got[2]["PolicyName"])
 	}
 
@@ -4394,7 +4394,7 @@ func TestWorkstationInlinePoliciesScopeToRecordedParameter(t *testing.T) {
 	if fallback[0]["PolicyName"] != "fabrica-ssm-output" {
 		t.Fatalf("fallback policy = %v", fallback[0]["PolicyName"])
 	}
-	if fallback[1]["PolicyName"] != workstation.DCVLicensePolicyName {
+	if fallback[1]["PolicyName"] != workstation.DCVLicensePolicyName(naming.Default) {
 		t.Fatalf("fallback policy[1] = %v", fallback[1]["PolicyName"])
 	}
 }

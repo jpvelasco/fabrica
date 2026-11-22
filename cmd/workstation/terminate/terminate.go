@@ -6,6 +6,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/workstation"
 	"github.com/spf13/cobra"
@@ -30,11 +31,23 @@ var spec = teardown.Spec{
 	// as soon as the instance is deleted — deleting the parameter before the
 	// instance keeps the name referenceable until the delete succeeds, so a
 	// failed or interrupted terminate cannot orphan it (issue #524).
-	ResourceOrder: workstationResourceOrder,
-	WireCommand:   teardown.WireParameterDelete,
+	WireCommand: wireWorkstation,
 }
 
-func workstationResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
+// wireWorkstation attaches the SDK parameter delete and installs the resource
+// order, which needs the configured name prefix to validate the recorded
+// session-password name (#705).
+func wireWorkstation(tc *teardown.Command, rt globals.Runtime) {
+	teardown.WireParameterDelete(tc, rt)
+	tc.Spec.ResourceOrder = func(m *fabricastate.ModuleState) []cloud.Resource {
+		// Load rejects non-default prefixes until #705 is enabled, so this
+		// error cannot occur on a loaded config.
+		prefix, _ := rt.Config.ResolveNamePrefix()
+		return workstationResourceOrder(m, prefix)
+	}
+}
+
+func workstationResourceOrder(m *fabricastate.ModuleState, prefix naming.Prefix) []cloud.Resource {
 	byType := map[string]fabricastate.ModuleResource{}
 	for _, r := range m.Resources {
 		byType[r.TypeName] = r
@@ -62,7 +75,7 @@ func workstationResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 	// The recorded name is validated before it becomes a delete target, so a
 	// malformed name cannot widen the delete to an arbitrary SSM parameter.
 	instRes := byType[cloud.TypeAWSEC2Instance]
-	if r, ok := teardown.RecordedParameter("workstation", instRes.Properties["sessionPasswordParameter"], workstation.IsSessionPasswordName); ok {
+	if r, ok := teardown.RecordedParameter("workstation", instRes.Properties["sessionPasswordParameter"], workstation.SessionPasswordScope(prefix).IsName); ok {
 		out = append(out, r)
 	}
 	appendRecorded(cloud.TypeAWSEC2Instance)
@@ -96,7 +109,8 @@ Resources are deleted in dependency order:
   5. EC2 Security Group
 
 The per-create DCV session password SecureString
-(/fabrica/workstation/<create-nonce>/dcv-password) is deleted too. Its name is
+(/<namePrefix>/workstation/<create-nonce>/dcv-password, /fabrica/workstation/...
+by default) is deleted too. Its name is
 recorded in state on the instance, so terminate removes exactly the parameter
 that create stored and skips when none is recorded. A parameter already gone
 is success. After a fully successful teardown, terminate also removes the

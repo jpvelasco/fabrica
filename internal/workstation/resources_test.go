@@ -3,6 +3,7 @@ package workstation
 import (
 	"context"
 	"encoding/json"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"strings"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 
 func testPlan(t *testing.T) *CreatePlan {
 	t.Helper()
-	plan, err := NewCreatePlan(context.Background(), config.WorkstationConfig{
+	plan, err := NewCreatePlan(context.Background(), naming.Default, config.WorkstationConfig{
 		AmiID:    "ami-abc123",
 		VPCId:    "vpc-test",
 		SubnetId: "subnet-test",
@@ -203,7 +204,7 @@ func TestInstanceDesiredStateStampsCreateNonce(t *testing.T) {
 func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 	plan := &CreatePlan{RoleName: "fabrica-workstation-role", Account: "123456789012", Region: "us-east-1"}
 	// The per-create name is minted by the create layer; the role reads it.
-	paramName, err := SessionPasswordParameterFor("abc123def4567890abc123def4567890")
+	paramName, err := SessionPasswordScope(naming.Default).NameFor("abc123def4567890abc123def4567890")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,8 +270,8 @@ func TestRoleDesiredState_SSMManagedPolicy(t *testing.T) {
 		t.Errorf("password policy must be the one parameter ARN, got %s", docJSON)
 	}
 	licensePolicy := policies[2].(map[string]any)
-	if licensePolicy["PolicyName"] != DCVLicensePolicyName {
-		t.Errorf("Policies[2] = %v, want %s", licensePolicy["PolicyName"], DCVLicensePolicyName)
+	if licensePolicy["PolicyName"] != DCVLicensePolicyName(naming.Default) {
+		t.Errorf("Policies[2] = %v, want %s", licensePolicy["PolicyName"], DCVLicensePolicyName(naming.Default))
 	}
 	licenseDoc := licensePolicy["PolicyDocument"].(map[string]any)
 	licenseStmts, ok := licenseDoc["Statement"].([]any)

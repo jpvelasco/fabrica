@@ -66,7 +66,8 @@ Creates four Cloud Control resources in order:
 
 The DCV session password is a Parameter Store SecureString, not a fifth
 Cloud Control resource and not a UserData field. Each create stores it under a
-per-create name /fabrica/workstation/<create-nonce>/dcv-password, so a
+per-create name /<namePrefix>/workstation/<create-nonce>/dcv-password
+(/fabrica/workstation/... by default), so a
 concurrent create cannot clobber another instance's password. Cloud-init
 reads it with aws ssm get-parameter; the instance role may ssm:GetParameter
 on that parameter ARN only. .fabrica/workstation-credentials.yaml stays the
@@ -137,6 +138,11 @@ func (c command) run(ctx context.Context) error {
 		return err
 	}
 
+	prefix, err := c.runtime.Config.ResolveNamePrefix()
+	if err != nil {
+		return err
+	}
+
 	wsCfg := c.runtime.Config.Workstation
 	if c.instanceType != "" {
 		wsCfg.InstanceType = c.instanceType
@@ -172,7 +178,7 @@ func (c command) run(ctx context.Context) error {
 	}
 	wsCfg.IAM = resolvedIAM
 
-	plan, err := workstation.NewCreatePlan(ctx, wsCfg, account, region, provision.VPCResolver(c.runtime.Provider), c.template, perforceAddr)
+	plan, err := workstation.NewCreatePlan(ctx, prefix, wsCfg, account, region, provision.VPCResolver(c.runtime.Provider), c.template, perforceAddr)
 	if err != nil {
 		return fmt.Errorf("building create plan: %w", err)
 	}
@@ -187,7 +193,7 @@ func (c command) run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("building create plan: %w", err)
 	}
-	if plan.SessionPasswordParameter, err = workstation.SessionPasswordParameterFor(nonce); err != nil {
+	if plan.SessionPasswordParameter, err = workstation.SessionPasswordScope(plan.Prefix).NameFor(nonce); err != nil {
 		return fmt.Errorf("building create plan: %w", err)
 	}
 

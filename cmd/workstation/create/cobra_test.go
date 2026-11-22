@@ -238,3 +238,20 @@ func TestCreateCobraExplicitVPCCfgSkipsResolver(t *testing.T) {
 		t.Errorf("ResolveDefaultVPC calls = %d, want 0 with explicit config", provider.Calls)
 	}
 }
+
+// A non-default namePrefix is refused until #705 enables it, before any plan
+// or write, so create never names resources from an unsupported prefix.
+func TestCreateRejectsGatedNamePrefix(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.State.Bucket = "fabrica-state-test"
+	cfg.Workstation.AmiID = "ami-test12345"
+	cfg.Workstation.VPCId = "vpc-test"
+	cfg.Workstation.SubnetId = "subnet-test"
+	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
+	rt := globals.Runtime{Config: cfg, Provider: &testutil.TestProvider{}}
+	_, err := runCreate(t, func() (globals.Runtime, error) { return rt, nil }, "--dry-run")
+	if err == nil {
+		t.Fatal("expected a non-default namePrefix to be refused")
+	}
+	testutil.AssertContains(t, err.Error(), "#705")
+}
