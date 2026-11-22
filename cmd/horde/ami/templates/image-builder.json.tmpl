@@ -1,7 +1,11 @@
 {
   "name": "{{ .Name }}",
   "semanticVersion": "1.0.0",
+{{- if .IsAgent }}
+  "description": "Horde {{ .Version }} agent (stock Linux agent, native install) AMI recipe for fabrica horde agents create",
+{{- else }}
   "description": "Horde {{ .Version }} ({{ .Install }} install) AMI recipe for fabrica horde create",
+{{- end }}
   "parentImage": "{{ .BaseImage }}",
   "blockDeviceMappings": [
     {

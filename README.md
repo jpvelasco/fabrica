@@ -339,7 +339,9 @@ Two install methods are supported:
 --install native   .NET 8 + MongoDB 7 + Redis installed directly from apt
 ```
 
-Key flags: `--horde-version`, `--base-image`, `--region`, `--output-dir`, `--include-packer`, `--dry-run`.
+`--role agent` builds the dedicated agent AMI instead: the stock Horde Linux agent under the native agent contract, with a non-root `horde-agent.service`. It requires `--install native`, an S3 artifact (`--agent-artifact s3://…/horde-agent-linux-x64.tar.gz`), and its SHA-256 (`--agent-sha256 <64 hex>`, no default). Default AMI name: `fabrica-horde-agent-<version>`. See [docs/horde-agent-ami.md](docs/horde-agent-ami.md).
+
+Key flags: `--horde-version`, `--base-image`, `--region`, `--output-dir`, `--include-packer`, `--role coordinator|agent`, `--agent-artifact`, `--agent-sha256`, `--dry-run`. `--region` defaults to `cloud.aws.region` (else `us-east-1`); `--base-image` defaults to the Canonical Ubuntu 22.04 SSM parameter (`ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id`). Pass an `ami-…` ID to pin.
 
 #### `fabrica horde agents create`
 
@@ -363,6 +365,10 @@ Prints `horde.agents.spot` and the weekly on/off window (`horde.agents.schedule`
 
 Prints the CloudWatch metric name/namespace agents must publish for queue-based autoscaling (default `ASGQueueDepth` in `Fabrica/HordeAgents`). Fabrica does not scrape Horde.
 
+#### `fabrica horde agents approve`
+
+Lists the agents waiting for enrollment on the recorded coordinator and approves them. With no selector it only lists. Approve exact hostNames with `--host` (repeatable) or every pending agent with `--all`; `--host` and `--all` are mutually exclusive. Approval is all-or-nothing: if any requested host is not pending, or is pending more than once, nothing is approved. `--dry-run` lists and previews the selection without approving; `--yes` skips the prompt; `--json` prints the report. The command runs over SSM and prints only hostnames and counts, so enrollment keys and the Admin password never leave the coordinator. It does not take the Fabrica state lock because it changes Horde state, not Fabrica state.
+
 #### `fabrica horde agents destroy`
 
 Permanently deletes the agent pool and its AWS resources (ASG, launch template, IAM role/profile, security group) in reverse-creation order. The Horde coordinator is not affected. Typed-phrase confirmation; `--yes` to skip, `--dry-run` to preview.
@@ -385,13 +391,13 @@ Terminates the EC2 instance, then the SSM instance profile and IAM role, then th
 
 #### `fabrica ddc ami build`
 
-Generates a local `build-guide.md` for baking an Unreal Cloud DDC AMI (Jupiter unit, health endpoints, `fabrica.env`). No AWS calls. Record the AMI as `ddc.amiId` and copy it for edge regions. Flags: `--base-image`, `--region`, `--output-dir`, `--backend zen|scylla`.
+Generates a local `build-guide.md` for baking an Unreal Cloud DDC AMI (Jupiter unit, health endpoints, `fabrica.env`). No AWS calls. Record the AMI as `ddc.amiId` and copy it for edge regions. Flags: `--base-image` (default: the Canonical Ubuntu 22.04 SSM parameter), `--region` (default: `cloud.aws.region`, else `us-east-1`), `--output-dir`, `--backend zen|scylla`.
 
 #### `fabrica lore ami build`
 
 Generates the files needed to build a Lore AMI. Produces an EC2 Image Builder component (`component.yaml`) and recipe (`image-builder-recipe.json`) by default, an optional Packer HCL template (`--include-packer`), and a `build-guide.md` with end-to-end instructions. No AWS calls are made — all output is written to a local directory.
 
-Key flags: `--lore-version`, `--base-image`, `--region`, `--output-dir`, `--include-packer`, `--dry-run`.
+Key flags: `--lore-version`, `--base-image`, `--region`, `--output-dir`, `--include-packer`, `--dry-run`. `--region` defaults to `cloud.aws.region` (else `us-east-1`); `--base-image` defaults to the Canonical Ubuntu 22.04 SSM parameter (`ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id`). Pass an `ami-…` ID to pin.
 
 ### DDC
 
@@ -437,7 +443,7 @@ Deletes edge nodes first (each in its region), then home resources (instances �
 
 #### `fabrica workstation ami build`
 
-Writes Image Builder component + recipe + build guide locally (no AWS calls). The component installs NICE DCV (Ubuntu 22.04 tarball) and fail-closed Amazon SSM Agent. Recipes and AMI/snapshot tags carry `cloud.aws.tags`.
+Writes Image Builder component + recipe + build guide locally (no AWS calls). The component installs NICE DCV (Ubuntu 22.04 tarball) and fail-closed Amazon SSM Agent. `--region` defaults to `cloud.aws.region` (else `us-east-1`); `--base-image` defaults to the Canonical Ubuntu 22.04 SSM parameter. Recipes and AMI/snapshot tags carry `cloud.aws.tags`.
 
 #### `fabrica workstation create`
 

@@ -7,13 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`fabrica horde agents approve` lists and approves pending agent enrollments.** Stock Horde agents wait for approval on the coordinator. The command runs one SSM script there: it reads the Admin password on the coordinator, lists `GET /api/v1/enrollment`, and POSTs only the keys of the hosts you name with `--host` or `--all`. Approval is all-or-nothing; `--dry-run`, `--yes`, and `--json` are supported. Enrollment keys and the password never leave the coordinator. The enrollment field names target Horde 5.8.4 and are pending confirmation against a live coordinator. (#701)
+
+- **`horde ami build --role agent` generates the Horde agent AMI.** The agent role bakes the stock Horde Linux agent from an S3 tarball pinned by `--agent-sha256` (verified with `sha256sum -c` before unpacking). The AMI runs `horde-agent.service` as a nologin `horde-agent` user under `ProtectSystem=strict`, writable only at `/opt/horde-agent/Data` and `~/.local/share`, writes the native contract marker, and enables the unit without starting it. The coordinator output is unchanged. (#701)
+
 ### Changed
+
+- **Horde agents are configured through the native environment contract, HTTP included (breaking for custom agent AMIs).** `horde agents create` no longer writes `/etc/horde/coordinator.conf`, exports `HORDE_COORDINATOR_*` variables, or falls back to Docker. Every agent, HTTP or TLS, gets `/etc/horde/fabrica-agent.env` (`Horde__ServerProfiles__fabrica__Url`) and a systemd `EnvironmentFile` drop-in. Cloud-init probes the coordinator up to 30 times, 10 seconds apart: TLS fails closed, while HTTP keeps the service running and exits 1 without the sentinel. The readiness sentinel is now `/etc/horde/agent-configured`, replacing `/var/lib/cloud/instance/horde-agent-ready`. **Custom agent AMIs built for the INI contract must add** `/etc/horde/fabrica-native-agent-contract` containing `1`, run `horde-agent.service` as a non-root `User=`, and make `/opt/horde-agent/Data` and the service user's `$HOME/.local/share` writable. See [docs/horde-agent-ami.md](docs/horde-agent-ami.md). (#701)
 
 - **TLS Horde agents retry the coordinator probe before configuring.** Cloud-init probes the HTTPS listener up to 30 times, 10 seconds apart, before it writes agent configuration. It still fails closed: if the probe never passes, the agent writes nothing and exits 1.
 
 ### Fixed
 
 - **AMI recipes, AMIs, and snapshots carry `cloud.aws.tags`.** `horde`, `lore`, and `workstation ami build` tagged the recipe, the AMI, and its snapshots with only the generator's own tags, so `cloud.aws.tags` never reached them. The recipe `tags` and `amiTags`, the Packer `tags`, `snapshot_tags`, and `run_tags`, and the build-guide snapshot step now share one set that includes `cloud.aws.tags`. `ManagedBy` stays the resolved owner and an operator tag cannot override it. (#702)
+
+- **AMI builds default to the Canonical Ubuntu 22.04 SSM parameter and `cloud.aws.region`.** `horde`, `lore`, `workstation`, and `ddc ami build` now take `--region` from `cloud.aws.region` (else `us-east-1`) instead of a hard-coded region. `--base-image` defaults to the public SSM parameter `/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id`, which Image Builder resolves as `parentImage` and Packer reads through an `amazon-parameterstore` data source. Pass `--base-image ami-…` to pin a specific image. The Packer build identity needs `ssm:GetParameter` on that parameter, and `AWS_REGION` must match `--region`. DDC takes the runtime config like the other generators. (#702)
 
 - **A pinned Helix Core version installs that version or fails.** apt compares `helix-p4d=<pin>` against the full Debian version (`2025.2-3148719~jammy`), so a bare release never matched and every pinned create silently installed the latest server. Cloud-init now resolves the pin against the Perforce repo, installs that exact build, and stops with the list of available versions when the repo lacks it. `perforce status` labels the version `(configured)` instead of printing it next to the probe result, and the `--version` help default now matches `DefaultHelixVersion` (2025.2). (#699)
 

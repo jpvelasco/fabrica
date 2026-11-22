@@ -17,6 +17,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/amirecipe"
 	"github.com/jpvelasco/fabrica/internal/amissm"
+	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/tags"
@@ -28,16 +29,14 @@ var templateFS embed.FS
 
 const (
 	maxNameLength      = 127
-	defaultBaseImage   = "ami-0c7217cdde317cfec"
+	defaultBaseImage   = amirecipe.DefaultBaseImage
 	defaultLoreVersion = "0.8.6"
-	defaultRegion      = "us-east-1"
+	defaultRegion      = config.DefaultAWSRegion
 	defaultOutputDir   = "lore-ami"
 )
 
 var (
 	versionRE = regexp.MustCompile(`^[0-9]+\.[0-9]+(\.[0-9]+)?$`)
-	amiRE     = regexp.MustCompile(`^ami-[0-9a-f]{8,}$`)
-	regionRE  = regexp.MustCompile(`^[a-z]{2}-[a-z]+-[0-9]$`)
 	nameRE    = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 )
 
@@ -129,6 +128,7 @@ Examples:
 			}
 			cfg.NamePrefix = prefix
 			cfg.Identity = identity
+			cfg.Region = amirecipe.ResolveRegion(cfg.Region, rt.Config.Cloud.AWS.Region)
 			cfg.CloudTags = rt.Config.Cloud.AWS.Tags
 			if f := cmd.InheritedFlags().Lookup("dry-run"); f != nil && f.Value.String() == "true" {
 				cfg.DryRun = true
@@ -145,8 +145,8 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&cfg.Version, "lore-version", defaultLoreVersion, "Lore server version (X.Y.Z); only releases with a pinned tarball SHA-256 are accepted")
-	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", defaultBaseImage, "Base Ubuntu 22.04 LTS AMI ID")
-	cmd.Flags().StringVar(&cfg.Region, "region", defaultRegion, "AWS region for the AMI build (used in component ARNs)")
+	cmd.Flags().StringVar(&cfg.BaseImage, "base-image", defaultBaseImage, "Base Ubuntu 22.04 LTS AMI ID, or the default SSM parameter that resolves the latest Canonical image")
+	cmd.Flags().StringVar(&cfg.Region, "region", "", "AWS region for the AMI build (default: cloud.aws.region, else us-east-1)")
 	cmd.Flags().StringVar(&cfg.Name, "name", "", `AMI name (default: "<namePrefix>-lore-<version>", "fabrica-lore-<version>" unless namePrefix is set)`)
 	cmd.Flags().StringVar(&cfg.OutputDir, "output-dir", defaultOutputDir, "Directory to write generated files to")
 	cmd.Flags().BoolVar(&cfg.IncludePacker, "include-packer", false, "Also generate a Packer HCL template")
@@ -235,11 +235,11 @@ func (b *buildCommand) validate() error {
 	if _, err := pinnedLoreSHA256(b.cfg.Version); err != nil {
 		return err
 	}
-	if !amiRE.MatchString(b.cfg.BaseImage) {
-		return fmt.Errorf("--base-image must be a valid AMI ID (ami- followed by 8+ hex digits); got %q", b.cfg.BaseImage)
+	if err := amirecipe.ValidateBaseImage(b.cfg.BaseImage); err != nil {
+		return err
 	}
-	if !regionRE.MatchString(b.cfg.Region) {
-		return fmt.Errorf("--region must be a valid AWS region (e.g. us-east-1, eu-west-2); got %q", b.cfg.Region)
+	if err := amirecipe.ValidateRegion(b.cfg.Region); err != nil {
+		return err
 	}
 	if b.cfg.Name != "" {
 		if !nameRE.MatchString(b.cfg.Name) {

@@ -2,20 +2,23 @@ package amirecipe
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
 )
 
 // TemplateFuncs returns the helpers the AMI build templates share. Each
-// renderer registers them with text/template's Funcs alongside its own; the
-// map[string]any type is template.FuncMap's underlying type, so it is
-// assignable without importing text/template here.
+// renderer registers them alongside its own functions. The map[string]any type
+// is the underlying type of the template FuncMap, so this package needs no
+// template import.
 func TemplateFuncs() map[string]any {
 	return map[string]any{
-		"jsonMap": JSONMap,
-		"hclMap":  HCLMap,
-		"cliTags": CLITags,
+		"jsonMap":      JSONMap,
+		"hclMap":       HCLMap,
+		"cliTags":      CLITags,
+		"packerSource": PackerSource,
+		"packerData":   PackerData,
 	}
 }
 
@@ -59,4 +62,31 @@ func CLITags(m map[string]string) string {
 	}
 	raw, _ := json.Marshal(list) // A list of string maps always marshals.
 	return "'" + strings.ReplaceAll(string(raw), "'", `'\''`) + "'"
+}
+
+// packerDataName is the Packer data source label that PackerData declares and
+// PackerSource reads.
+const packerDataName = "ubuntu_jammy"
+
+// PackerSource returns the amazon-ebs source_ami assignment for baseImage. An
+// AMI ID is pinned literally. The default SSM reference reads the value that
+// PackerData declares.
+func PackerSource(baseImage string) string {
+	if amiIDRE.MatchString(baseImage) {
+		return fmt.Sprintf("source_ami    = %q", baseImage)
+	}
+	return "source_ami    = data.amazon-parameterstore." + packerDataName + ".value"
+}
+
+// PackerData returns the top-level Packer data block that PackerSource reads,
+// or "" when baseImage is a pinned AMI ID. The data source takes only the
+// parameter name here; it runs in the Packer session's own region and
+// credentials, so the build identity needs ssm:GetParameter on the parameter.
+func PackerData(baseImage string) string {
+	if amiIDRE.MatchString(baseImage) {
+		return ""
+	}
+	return `data "amazon-parameterstore" "` + packerDataName + `" {
+  name = "` + ubuntuJammyParameter + `"
+}`
 }

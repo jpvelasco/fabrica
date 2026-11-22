@@ -73,9 +73,15 @@ func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSourc
 		Long: `Provision a pool of Horde build agents on AWS.
 
 Creates an Auto Scaling Group with a Launch Template that launches agent
-instances. HTTP agents use the existing coordinator's private IP address.
-TLS agents require the native-agent AMI contract and use the recorded DNS
-endpoint and agent-side trust bundle. Verify enrollment in Horde separately.
+instances. Each agent is configured through the native environment contract:
+cloud-init writes /etc/horde/fabrica-agent.env (Horde__Server and the
+Horde__ServerProfiles__fabrica__ Name/Url settings) and a systemd drop-in for
+horde-agent.service. HTTP agents target the coordinator's private IP address.
+TLS agents target the recorded DNS endpoint and the agent-side trust bundle.
+The agent AMI must carry the native-agent contract marker
+(/etc/horde/fabrica-native-agent-contract) and run horde-agent.service as a
+non-root user. Agents wait for enrollment approval; approve them with
+'fabrica horde agents approve'.
 
 **AMI requirement:** horde.agents.amiId must be a dedicated agent AMI — not
 the coordinator AMI (horde.amiId). The agent AMI should contain only the
@@ -467,11 +473,10 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	// 4. Launch Template
 	fmt.Fprintf(c.out, "Creating launch template %s...\n", plan.LaunchTemplateName)
 	userData, err := horde.AgentUserData(horde.AgentUserDataConfig{
-		Connection:          plan.Connection,
-		CAPath:              plan.CAPath,
-		CoordinatorIP:       plan.CoordinatorPrivateIP,
-		CoordinatorPort:     plan.CoordinatorPort,
-		CoordinatorGRPCPort: plan.CoordinatorGRPCPort,
+		Connection:      plan.Connection,
+		CAPath:          plan.CAPath,
+		CoordinatorIP:   plan.CoordinatorPrivateIP,
+		CoordinatorPort: plan.CoordinatorPort,
 	})
 	if err != nil {
 		return fmt.Errorf("generating agent user data: %w", err)
@@ -739,6 +744,7 @@ func (c command) printPostCreate(plan *horde.AgentsCreatePlan, asgID string) {
 		Details:      details,
 		NextSteps: []string{
 			"fabrica horde agents status    Check agent pool status",
+			"fabrica horde agents approve   Approve pending agent enrollments",
 			"fabrica horde status           Check coordinator health",
 		},
 		RawAfter: func(w io.Writer) {
@@ -747,6 +753,7 @@ func (c command) printPostCreate(plan *horde.AgentsCreatePlan, asgID string) {
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, "  If agents don't enroll within 5 minutes, check:")
 			fmt.Fprintln(w, "    /var/log/fabrica-horde-agent-init.log  on each agent instance")
+			fmt.Fprintln(w, "  Agents that reach Horde wait for approval: fabrica horde agents approve")
 			if plan.ScalingEnabled {
 				fmt.Fprintln(w)
 				fmt.Fprintln(w, "  "+horde.ScalingPublisherNote)

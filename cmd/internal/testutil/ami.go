@@ -11,13 +11,19 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/internal/amirecipe"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/spf13/cobra"
 )
 
+// amiRuntimeTestRegion is the cloud.aws.region the runtime tests configure. The
+// generated recipes must follow it when --region is not passed.
+const amiRuntimeTestRegion = "us-west-2"
+
 // RunAMIRuntimeTests verifies offline AMI generation without a provider, config
 // failures before file writes, help without runtime resolution, and that the
-// recipe and AMI tags carry cloud.aws.tags with the owner's ManagedBy.
+// recipe and AMI tags carry cloud.aws.tags with the owner's ManagedBy, the
+// configured region, and the default base image unless flags override them.
 func RunAMIRuntimeTests(t *testing.T, newCmd func(globals.RuntimeSource, io.Writer) *cobra.Command) {
 	t.Helper()
 	sourceErr := errors.New("configuration source failed")
@@ -25,11 +31,18 @@ func RunAMIRuntimeTests(t *testing.T, newCmd func(globals.RuntimeSource, io.Writ
 		name, owner, want string
 		sourceErr         error
 		help              bool
+		flags             []string
+		wantRegion        string
+		wantParent        string
 	}{
-		{name: "config without provider"},
+		{name: "config without provider", wantRegion: amiRuntimeTestRegion, wantParent: amirecipe.DefaultBaseImage},
 		{name: "source failure", sourceErr: sourceErr, want: sourceErr.Error()},
 		{name: "invalid identity", owner: "bad owner", want: "cloud.aws.identity.managedBy"},
-		{name: "custom ownership", owner: "studio-tools"},
+		{name: "custom ownership", owner: "studio-tools", wantRegion: amiRuntimeTestRegion, wantParent: amirecipe.DefaultBaseImage},
+		{
+			name: "flags override config", flags: []string{"--region", "eu-west-1", "--base-image", "ami-0123456789abcdef0"},
+			wantRegion: "eu-west-1", wantParent: "ami-0123456789abcdef0",
+		},
 		{name: "help without runtime", sourceErr: sourceErr, help: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -39,13 +52,14 @@ func RunAMIRuntimeTests(t *testing.T, newCmd func(globals.RuntimeSource, io.Writ
 				calls++
 				cfg := &config.Config{}
 				cfg.Cloud.AWS.Identity.ManagedBy = tc.owner
+				cfg.Cloud.AWS.Region = amiRuntimeTestRegion
 				cfg.Cloud.AWS.Tags = OperatorTagsFixture()
 				return globals.Runtime{Config: cfg}, tc.sourceErr
 			}
 			cmd := newCmd(source, io.Discard)
 			cmd.SilenceErrors, cmd.SilenceUsage = true, true
 			cmd.SetOut(io.Discard)
-			cmd.SetArgs([]string{"build", "--output-dir", dir})
+			cmd.SetArgs(append([]string{"build", "--output-dir", dir}, tc.flags...))
 			if tc.help {
 				cmd.SetArgs([]string{"build", "--help"})
 			}
@@ -82,6 +96,22 @@ func RunAMIRuntimeTests(t *testing.T, newCmd func(globals.RuntimeSource, io.Writ
 				wantOwner = "fabrica"
 			}
 			AssertRecipeTags(t, raw, wantOwner, nil)
+			var recipe struct {
+				ParentImage string `json:"parentImage"`
+				Components  []struct {
+					ComponentArn string `json:"componentArn"`
+				} `json:"components"`
+			}
+			if err := json.Unmarshal(raw, &recipe); err != nil {
+				t.Fatal(err)
+			}
+			if recipe.ParentImage != tc.wantParent {
+				t.Fatalf("parentImage = %q, want %q", recipe.ParentImage, tc.wantParent)
+			}
+			wantArn := "arn:aws:imagebuilder:" + tc.wantRegion + ":aws:component/update-linux/"
+			if len(recipe.Components) == 0 || !strings.HasPrefix(recipe.Components[0].ComponentArn, wantArn) {
+				t.Fatalf("components %+v do not use region %s", recipe.Components, tc.wantRegion)
+			}
 		})
 	}
 }

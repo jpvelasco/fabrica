@@ -3,68 +3,26 @@ package horde
 import (
 	"encoding/base64"
 	"fmt"
+	"net"
 	"strings"
-	"text/template"
-
-	"github.com/jpvelasco/fabrica/internal/userdata"
 )
 
 // AgentUserDataConfig is the input shape for the Horde agent cloud-init script.
+//
+// With Connection.TLS the agent targets the recorded HTTPS endpoint. Otherwise
+// it targets CoordinatorIP:CoordinatorPort over HTTP. Both modes configure the
+// stock agent through the native environment contract.
 type AgentUserDataConfig struct {
 	Connection Connection
 	CAPath     string
-	// CoordinatorIP is the private IP of the Horde coordinator.
+	// CoordinatorIP is the private IP of the Horde coordinator (HTTP mode only).
 	CoordinatorIP string
-	// CoordinatorPort is the HTTP port of the Horde coordinator (default 5000).
+	// CoordinatorPort is the HTTP port of the Horde coordinator, default 5000
+	// (HTTP mode only).
 	CoordinatorPort int
-	// CoordinatorGRPCPort is the gRPC port of the Horde coordinator (default
-	// 5002). Zero omits the gRPC lines from the rendered script.
-	CoordinatorGRPCPort int
 }
 
-var agentUserDataRenderer = userdata.New(template.Must(template.New("horde-agent-userdata").Parse(`#!/bin/bash
-set -euo pipefail
-exec > >(tee /var/log/fabrica-horde-agent-init.log) 2>&1
-
-echo "Configuring Horde agent to enroll against coordinator..."
-
-# Set the coordinator address for the Horde agent
-export HORDE_COORDINATOR_HOST={{ .CoordinatorIP }}
-export HORDE_COORDINATOR_PORT={{ .CoordinatorPort }}
-{{- if .CoordinatorGRPCPort }}
-export HORDE_COORDINATOR_GRPC_PORT={{ .CoordinatorGRPCPort }}
-{{- end }}
-
-# Write the coordinator configuration for the agent
-mkdir -p /etc/horde
-cat > /etc/horde/coordinator.conf << EOF
-[coordinator]
-host = {{ .CoordinatorIP }}
-port = {{ .CoordinatorPort }}
-{{- if .CoordinatorGRPCPort }}
-grpc_port = {{ .CoordinatorGRPCPort }}
-{{- end }}
-EOF
-
-echo "Horde agent configured to connect to {{ .CoordinatorIP }}:{{ .CoordinatorPort }}"
-
-# Start the Horde agent service
-if command -v systemctl > /dev/null 2>&1; then
-  systemctl enable horde-agent 2>/dev/null || true
-  systemctl start horde-agent 2>/dev/null || true
-fi
-
-# If using Docker-based agent, start the container
-if command -v docker > /dev/null 2>&1; then
-  cd /etc/horde
-  docker compose up -d agent 2>/dev/null || true
-fi
-
-echo "Horde agent initialization complete"
-touch /var/lib/cloud/instance/horde-agent-ready
-`)))
-
-// agentProbeAttempts and agentProbeIntervalSeconds bound how long TLS cloud-init
+// agentProbeAttempts and agentProbeIntervalSeconds bound how long cloud-init
 // waits for the coordinator listener: 30 attempts, 10 seconds apart.
 const (
 	agentProbeAttempts        = 30
@@ -79,10 +37,10 @@ touch /etc/horde/agent-configured
 echo "Agent service configured; verify enrollment and an active session in Horde."
 `
 
-// validate checks required fields. Returns nil if valid.
+// validate checks the HTTP-mode fields. Returns nil if valid.
 func (cfg *AgentUserDataConfig) validate() error {
-	if cfg.CoordinatorIP == "" {
-		return fmt.Errorf("CoordinatorIP must not be empty")
+	if net.ParseIP(cfg.CoordinatorIP) == nil {
+		return fmt.Errorf("CoordinatorIP must be the coordinator's private IP address (set by horde agents create), got %q", cfg.CoordinatorIP)
 	}
 	if cfg.CoordinatorPort <= 0 {
 		return fmt.Errorf("CoordinatorPort must be positive")
@@ -93,13 +51,14 @@ func (cfg *AgentUserDataConfig) validate() error {
 // AgentUserDataRaw renders the agent cloud-init script without base64 encoding.
 // Used in tests to inspect script content directly.
 func AgentUserDataRaw(cfg AgentUserDataConfig) (string, error) {
-	if cfg.Connection.TLS {
-		return tlsAgentUserData(cfg)
-	}
-	if err := userdata.Prepare(nil, cfg.validate); err != nil {
+	c, err := agentConnection(cfg)
+	if err != nil {
 		return "", err
 	}
-	return agentUserDataRenderer.Render(cfg)
+	if err := ValidateTrustPath("horde.agents.caPath", cfg.CAPath); err != nil {
+		return "", err
+	}
+	return agentScript(cfg, c), nil
 }
 
 // AgentUserData renders the agent cloud-init script and returns it
@@ -112,16 +71,38 @@ func AgentUserData(cfg AgentUserDataConfig) (string, error) {
 	return base64.StdEncoding.EncodeToString([]byte(raw)), nil
 }
 
-// tlsAgentUserData probes the coordinator before writing any agent
-// configuration, so a coordinator that never answers leaves the instance
-// unconfigured and fails the script.
-func tlsAgentUserData(cfg AgentUserDataConfig) (string, error) {
-	c := cfg.Connection
-	if err := c.validate(); err != nil {
-		return "", err
+// agentConnection returns the coordinator endpoint the agent is pointed at.
+// TLS uses the recorded connection (DNS identity); HTTP uses the live address.
+func agentConnection(cfg AgentUserDataConfig) (Connection, error) {
+	if cfg.Connection.TLS {
+		return cfg.Connection, cfg.Connection.validate()
 	}
-	if err := ValidateTrustPath("horde.agents.caPath", cfg.CAPath); err != nil {
-		return "", err
+	if err := cfg.validate(); err != nil {
+		return Connection{}, err
+	}
+	return Connection{Version: 1, Port: cfg.CoordinatorPort}, nil
+}
+
+// agentScript renders the native-contract script for both transports. The
+// transport changes the URL, the curl protocol, and when the probe runs. TLS
+// probes before writing configuration and fails closed. HTTP starts the service
+// first so it can reconnect, then records success only after the probe passes.
+func agentScript(cfg AgentUserDataConfig, c Connection) string {
+	url := c.URL(cfg.CoordinatorIP)
+	configure := agentConfigure(cfg, url)
+	steps := configure + "probe_coordinator\n"
+	if c.TLS {
+		steps = "probe_coordinator\n" + configure
+	}
+	return agentPreamble(cfg, c, url) + agentProbeFunction(c) + steps + agentReadyTail
+}
+
+// agentPreamble verifies the AMI contract and the non-root service user, then
+// sets the probe options. Nothing is written to the agent configuration here.
+func agentPreamble(cfg AgentUserDataConfig, c Connection, url string) string {
+	scheme := "http"
+	if c.TLS {
+		scheme = "https"
 	}
 	script := `#!/bin/bash
 set -euo pipefail
@@ -134,12 +115,11 @@ test "$(id -u "$agent_user")" != 0
 umask 077
 mkdir -p /etc/systemd/system/horde-agent.service.d
 `
-	script += "HORDE_URL=" + ShellQuote(c.URL("")) + "\nCURL_OPTS=(--fail --silent --show-error --connect-timeout 5 --max-time 30 --proto '=https')\n"
+	script += "HORDE_URL=" + ShellQuote(url) + "\nCURL_OPTS=(--fail --silent --show-error --connect-timeout 5 --max-time 30 --proto '=" + scheme + "')\n"
 	if cfg.CAPath != "" {
 		script += "runuser -u \"$agent_user\" -- test -r " + ShellQuote(cfg.CAPath) + "\nCURL_OPTS+=(--cacert " + ShellQuote(cfg.CAPath) + ")\n"
 	}
-	script += agentProbeFunction(c) + "probe_coordinator\n" + agentConfigure(cfg, c) + agentReadyTail
-	return script, nil
+	return script
 }
 
 // agentProbeFunction defines probe_coordinator, a bounded retry of the listener
@@ -158,10 +138,20 @@ probe_coordinator() {
     echo "Horde coordinator $HORDE_URL is not ready (attempt $attempt of %[2]d); retrying in %[3]ds" >&2
     sleep %[3]d
   done
-  echo "Horde coordinator $HORDE_URL failed the listener check after %[2]d attempts. Confirm the coordinator is running, the agent security group can reach it, and the agent CA (if set) trusts its certificate; then rerun cloud-init (agent configuration was not written)." >&2
+  echo "Horde coordinator $HORDE_URL failed the listener check after %[2]d attempts. %[4]s" >&2
   return 1
 }
-`, probeChain(c), agentProbeAttempts, agentProbeIntervalSeconds)
+`, probeChain(c), agentProbeAttempts, agentProbeIntervalSeconds, probeFailureHint(c))
+}
+
+// probeFailureHint says what the operator should do after the probe gives up.
+// TLS fails before any configuration is written; HTTP has already configured
+// and started the service, so the hint must not suggest it is unconfigured.
+func probeFailureHint(c Connection) string {
+	if c.TLS {
+		return "Confirm the coordinator is running, the agent security group can reach it, and the agent CA (if set) trusts its certificate; then rerun cloud-init (agent configuration was not written)."
+	}
+	return "Confirm the coordinator is running and the agent security group can reach it. The agent service is already configured and started and keeps reconnecting, but /etc/horde/agent-configured was not written; rerun cloud-init once the coordinator is reachable."
 }
 
 // probeChain joins ListenerCheckScript's commands with && so a failure in any
@@ -173,8 +163,8 @@ func probeChain(c Connection) string {
 
 // agentConfigure writes the stock EnvironmentFile and systemd drop-in, then
 // (re)starts the unit. The rendered environment contains no secrets.
-func agentConfigure(cfg AgentUserDataConfig, c Connection) string {
-	env := "Horde__Server=fabrica\nHorde__ServerProfiles__fabrica__Name=fabrica\nHorde__ServerProfiles__fabrica__Url=" + c.URL("") + "\n"
+func agentConfigure(cfg AgentUserDataConfig, url string) string {
+	env := "Horde__Server=fabrica\nHorde__ServerProfiles__fabrica__Name=fabrica\nHorde__ServerProfiles__fabrica__Url=" + url + "\n"
 	if cfg.CAPath != "" {
 		// systemd EnvironmentFile uses its own quoting, not shell expansion.
 		env += "SSL_CERT_FILE=" + systemdQuote(cfg.CAPath) + "\n"

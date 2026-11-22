@@ -8,12 +8,14 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
+	"github.com/jpvelasco/fabrica/internal/amirecipe"
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
 // TestBuildCarriesOperatorTagsAndSnapshotStep checks that cloud.aws.tags reach
-// the recipe and AMI tags with ManagedBy protected, and that the build guide
-// tags the output snapshots so verify-ami.sh passes on a fresh bake.
+// the recipe and AMI tags with ManagedBy protected, that the default parent
+// image is the SSM reference, and that the build guide tags the output
+// snapshots so verify-ami.sh passes on a fresh bake.
 func TestBuildCarriesOperatorTagsAndSnapshotStep(t *testing.T) {
 	identity, err := tags.ResolveIdentity("studio")
 	if err != nil {
@@ -35,6 +37,9 @@ func TestBuildCarriesOperatorTagsAndSnapshotStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	testutil.AssertRecipeTags(t, recipeRaw, "studio", map[string]string{"FabricaModule": "workstation"})
+	if !strings.Contains(string(recipeRaw), `"parentImage": "`+amirecipe.DefaultBaseImage+`"`) {
+		t.Errorf("parentImage should be the SSM default %q:\n%s", amirecipe.DefaultBaseImage, recipeRaw)
+	}
 
 	guideRaw, err := os.ReadFile(filepath.Join(dir, "build-guide.md"))
 	if err != nil {

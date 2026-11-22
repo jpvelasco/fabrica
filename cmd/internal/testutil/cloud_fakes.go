@@ -120,8 +120,11 @@ func (p *EC2InstanceProvider) StopInstance(_ context.Context, instanceID string)
 type RemoteCommandProvider struct {
 	TestProvider
 
-	RemoteResult             cloud.RemoteResult
-	RemoteErr                error
+	RemoteResult cloud.RemoteResult
+	RemoteErr    error
+	// Queued, when non-empty, supplies the results of successive calls in
+	// order (for multi-step flows); the last entry repeats once drained.
+	Queued                   []cloud.RemoteResult
 	RunCommandCalls          int
 	LastRunCommandInstanceID string
 	LastRunCommands          []string
@@ -133,6 +136,13 @@ func (p *RemoteCommandProvider) RunCommand(_ context.Context, instanceID string,
 	p.RunCommandCalls++
 	p.LastRunCommandInstanceID = instanceID
 	p.LastRunCommands = append([]string(nil), commands...)
+	if len(p.Queued) > 0 {
+		next := p.Queued[0]
+		if len(p.Queued) > 1 {
+			p.Queued = p.Queued[1:]
+		}
+		return next, p.RemoteErr
+	}
 	return p.RemoteResult, p.RemoteErr
 }
 

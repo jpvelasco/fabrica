@@ -284,7 +284,7 @@ func TestRenderPackerTemplate_Docker(t *testing.T) {
 	bc := buildCommand{cfg: BuildConfig{
 		Version:   "5.5.0",
 		Install:   "docker",
-		BaseImage: "ami-packer123",
+		BaseImage: "ami-0123456789abcdef0",
 		Region:    "us-west-2",
 		Name:      "fabrica-horde-packer",
 	}}
@@ -295,8 +295,8 @@ func TestRenderPackerTemplate_Docker(t *testing.T) {
 	}
 
 	s := string(out)
-	if !strings.Contains(s, "ami-packer123") {
-		t.Error("packer template should contain base image ID")
+	if !strings.Contains(s, `source_ami    = "ami-0123456789abcdef0"`) {
+		t.Error("packer template should pin the explicit base image ID")
 	}
 	if !strings.Contains(s, "5.5.0") {
 		t.Error("packer template should contain horde version")

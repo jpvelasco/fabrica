@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/amirecipe"
 	"github.com/jpvelasco/fabrica/internal/tags"
 )
 
@@ -84,7 +85,7 @@ func TestRenderTemplates(t *testing.T) {
 			template: "image-builder.json.tmpl",
 			wantSubstr: []string{
 				`"name": "fabrica-lore-0.8.6"`,
-				`"parentImage": "ami-0c7217cdde317cfec"`,
+				`"parentImage": "ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id"`,
 				`"LoreVersion": "0.8.6"`,
 				"REPLACE_WITH_CUSTOM_COMPONENT_ARN",
 				`"ManagedBy": "fabrica"`,
@@ -135,9 +136,8 @@ func TestRenderTemplates(t *testing.T) {
 				"fabrica-lore-0.8.6",
 				"us-west-2",
 				"m7i.xlarge",
-				"ami-0c7217cdde317cfec",
-				"variable \"source_ami\"",
-				"source_ami    = var.source_ami",
+				`data "amazon-parameterstore" "ubuntu_jammy" {`,
+				"source_ami    = data.amazon-parameterstore.ubuntu_jammy.value",
 				"install-lore.sh",
 				"verify-lore-ami-bake.sh",
 				// #509: snapshots the bake takes carry the AMI tag set.
@@ -372,5 +372,33 @@ func TestValidateComponentYAML(t *testing.T) {
 				t.Errorf("validateComponentYAML() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestExplicitBaseImagePinsPackerSource checks --base-image ami-… still renders
+// the literal AMI in both the recipe and the Packer source.
+func TestExplicitBaseImagePinsPackerSource(t *testing.T) {
+	b := newRenderTestCommand(true)
+	b.cfg.BaseImage = "ami-0123456789abcdef0"
+	data, err := b.templateData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipe, err := b.renderTemplate("image-builder.json.tmpl", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(recipe), `"parentImage": "ami-0123456789abcdef0"`) {
+		t.Errorf("recipe parentImage should be the explicit AMI:\n%s", recipe)
+	}
+	packer, err := b.renderTemplate("packer.hcl.tmpl", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(packer), `source_ami    = "ami-0123456789abcdef0"`) || strings.Contains(string(packer), "amazon-parameterstore") {
+		t.Errorf("explicit AMI should pin the Packer source with no data source:\n%s", packer)
+	}
+	if amirecipe.PackerSource(b.cfg.BaseImage) != `source_ami    = "ami-0123456789abcdef0"` {
+		t.Fatal("PackerSource disagrees with the template")
 	}
 }
