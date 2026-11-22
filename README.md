@@ -437,7 +437,7 @@ Deletes edge nodes first (each in its region), then home resources (instances â†
 
 #### `fabrica workstation ami build`
 
-Writes Image Builder component + recipe + build guide locally (no AWS calls). The component installs NICE DCV (Ubuntu 22.04 tarball) and fail-closed Amazon SSM Agent.
+Writes Image Builder component + recipe + build guide locally (no AWS calls). The component installs NICE DCV (Ubuntu 22.04 tarball) and fail-closed Amazon SSM Agent. Recipes and AMI/snapshot tags carry `cloud.aws.tags`.
 
 #### `fabrica workstation create`
 

@@ -156,7 +156,7 @@ AMI=<new AMI ID>
 for s in $(aws ec2 describe-images --region {{ .Region }} --image-ids "$AMI" \
     --query 'Images[0].BlockDeviceMappings[?Ebs].Ebs.SnapshotId' --output text); do
   aws ec2 create-tags --region {{ .Region }} --resources "$s" \
-    --tags Key=ManagedBy,Value={{ .Identity.ManagedBy }} Key=FabricaModule,Value=horde Key=Name,Value={{ .Name }}
+    --tags {{ cliTags .RecipeTags }}
 done
 ```
 
