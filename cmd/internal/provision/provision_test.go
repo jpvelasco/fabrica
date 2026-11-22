@@ -365,11 +365,11 @@ func TestReadLocalStateRefusesPrefixMismatch(t *testing.T) {
 	}
 }
 
-func TestReadStateRefusesGatedAndRemoteForeignPrefix(t *testing.T) {
+func TestReadStateRefusesInvalidAndRemoteForeignPrefix(t *testing.T) {
 	cfg := config.Defaults()
-	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
+	cfg.Cloud.AWS.Identity.NamePrefix = "Bad_Prefix"
 	if _, err := ReadState(context.Background(), globals.Runtime{Config: cfg}); err == nil {
-		t.Fatal("gated prefix read state")
+		t.Fatal("invalid prefix read state")
 	}
 
 	st := fabricastate.NewState(stateTestAccount, "us-east-1")

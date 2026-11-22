@@ -8,9 +8,9 @@ import (
 	"github.com/jpvelasco/fabrica/internal/config"
 )
 
-func TestConfigShowRefusesGatedNamePrefix(t *testing.T) {
+func TestConfigShowRefusesInvalidNamePrefix(t *testing.T) {
 	cfg := config.Defaults()
-	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
+	cfg.Cloud.AWS.Identity.NamePrefix = "Bad_Prefix"
 	if err := (showCommand{runtime: globals.Runtime{Config: cfg}, out: &bytes.Buffer{}}).run(); err == nil {
 		t.Fatal("gated name prefix shown as resolved")
 	}

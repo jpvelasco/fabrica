@@ -44,11 +44,11 @@ func TestCheckNamePrefixReportsGatedPrefixAsFailure(t *testing.T) {
 	}
 }
 
-func TestCheckTableRefusesGatedPrefix(t *testing.T) {
+func TestCheckTableRefusesInvalidPrefix(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.State.Bucket = "acme-state"
-	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
+	cfg.Cloud.AWS.Identity.NamePrefix = "Bad_Prefix"
 	if got := checkTable(context.Background(), globals.Runtime{Config: cfg}, &fakeBackendChecker{}); got.Status != "fail" {
-		t.Fatalf("gated prefix table check = %+v", got)
+		t.Fatalf("invalid prefix table check = %+v", got)
 	}
 }

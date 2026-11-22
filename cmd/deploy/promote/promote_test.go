@@ -1157,16 +1157,16 @@ func TestPromoteResumeRequiresGameLiftSupport(t *testing.T) {
 	}
 }
 
-func TestPromoteRejectsGatedNamePrefix(t *testing.T) {
+func TestPromoteRejectsInvalidNamePrefix(t *testing.T) {
 	var out bytes.Buffer
 	c := newTestCmd(&out, seededState())
-	c.runtime.Config.Cloud.AWS.Identity.NamePrefix = "acme"
+	c.runtime.Config.Cloud.AWS.Identity.NamePrefix = "Bad_Prefix"
 	c.createResource = func(context.Context, *cloud.Resource) error {
 		t.Error("build registered before the prefix gate")
 		return nil
 	}
 	err := c.run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "#705") {
-		t.Fatalf("err = %v, want the #705 gate error", err)
+	if err == nil || !strings.Contains(err.Error(), "namePrefix") {
+		t.Fatalf("err = %v, want the invalid-prefix error", err)
 	}
 }
