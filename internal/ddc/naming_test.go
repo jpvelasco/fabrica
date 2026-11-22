@@ -10,8 +10,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
-// acme is a non-default prefix. It bypasses the config gate (#705) to exercise
-// the names DDC derives from the prefix.
+// acme is a non-default prefix that exercises the names DDC derives from it.
 var acme = naming.MustResolve("acme")
 
 func TestNewSetupPlanFollowsPrefix(t *testing.T) {

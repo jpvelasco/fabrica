@@ -9,6 +9,13 @@ cloud:
     profile: ""               # Named AWS profile, including IAM Identity Center / SSO profiles
     accountId: ""             # Auto-detected on first `fabrica setup`; leave empty initially
     tags: {}                  # Extra tags merged with standard Fabrica tags on every resource
+    # identity.namePrefix prefixes every AWS resource name (default fabrica).
+    # Lowercase letters, digits, and single hyphens; 1-20 characters; starts
+    # with a letter and ends with a letter or digit. Bound in state: changing
+    # it on an existing deployment is refused. Pin state.bucket and state.table
+    # before using a non-default prefix.
+    # identity:
+    #   namePrefix: acme
     # iam applies to EC2-module roles (workstation, horde including agents,
     # lore, perforce, ddc) and the CI CodeBuild role. Deploy ignores these
     # keys. path must start and end with /. permissionsBoundary is an IAM
@@ -26,7 +33,7 @@ cloud:
     #   Project: studio-workstations
 
 state:
-  bucket: ""                  # Auto-named `fabrica-state-<account-id>` on setup; override if desired
+  bucket: ""                  # Auto-named `<namePrefix>-state-<account-id>` on setup; override if desired
   table: fabrica-state-lock   # DynamoDB table name for distributed locks
   kmsKeyId: ""                # KMS key ARN for SSE-KMS encryption (optional; defaults to SSE-S3)
 

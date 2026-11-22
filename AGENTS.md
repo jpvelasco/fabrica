@@ -145,6 +145,7 @@ Reference: `cmd/perforce/` + `internal/perforce/` are the canonical Cloud-Contro
 ## Important Conventions
 
 **Naming:**
+- Physical AWS names (security groups, roles, profiles, buckets, parameters, log groups, AMIs) are built through `internal/naming` from the configured `cloud.aws.identity.namePrefix`. Never hard-code `fabrica-` or `/fabrica/`: `internal/naming/literal_guard_test.go` fails on those literals outside `internal/naming` unless they are on its fixed-name allowlist (protocol identities and local file contracts)
 - Packages: lowercase single-word (`perforce`, `horde`, `state`)
 - Files: `snake_case.go`
 - Acronyms fully uppercase: `ID`, `ARN`, `URL`, `AWS`, `IAM`

@@ -9,7 +9,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
-// acme bypasses the config gate (#705) to exercise a non-default prefix.
+// acme is a non-default prefix.
 var acme = naming.MustResolve("acme")
 
 const acmeAdminParam = "/acme/perforce/0123456789abcdef0123456789abcdef/admin-password"
