@@ -609,6 +609,9 @@ func TestDriftCobraFixDryRunJSON(t *testing.T) {
 	if _, ok := output["plan"]; !ok {
 		t.Error("expected 'plan' field in dry-run JSON output")
 	}
+	if output["namePrefix"] != "fabrica" {
+		t.Errorf("namePrefix = %v, want fabrica", output["namePrefix"])
+	}
 }
 
 // TestDriftCobraConfirmReject verifies that when --fix is used without --yes,

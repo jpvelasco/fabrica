@@ -35,7 +35,7 @@ type SetupPlan struct {
 }
 
 // ConfiguredBackendNames resolves the state names for the config's name
-// prefix. It fails when the configured prefix is not yet supported.
+// prefix. It fails when the configured prefix is invalid.
 func ConfiguredBackendNames(cfg *config.Config, account string) (BackendNames, error) {
 	prefix, err := cfg.ResolveNamePrefix()
 	if err != nil {

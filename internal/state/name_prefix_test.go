@@ -126,11 +126,18 @@ func TestBackendNamesFollowPrefix(t *testing.T) {
 	}
 }
 
-func TestConfiguredBackendNamesStillGated(t *testing.T) {
+func TestConfiguredBackendNamesFollowPrefix(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
-	if _, err := ConfiguredBackendNames(cfg, testAccount); err == nil {
-		t.Fatal("custom prefix resolved while the config gate is closed")
+	names, err := ConfiguredBackendNames(cfg, testAccount)
+	if err != nil {
+		t.Fatalf("ConfiguredBackendNames: %v", err)
+	}
+	if want := "acme-state-" + testAccount; names.Bucket != want {
+		t.Fatalf("bucket = %q, want %q", names.Bucket, want)
+	}
+	if names.Table != "acme-state-lock" {
+		t.Fatalf("table = %q, want acme-state-lock", names.Table)
 	}
 	if _, err := ConfiguredBackendNames(config.Defaults(), testAccount); err != nil {
 		t.Fatalf("default prefix names: %v", err)

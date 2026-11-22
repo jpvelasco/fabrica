@@ -35,16 +35,15 @@ func TestBuildDefaultNameFollowsPrefix(t *testing.T) {
 	}
 }
 
-// The gated prefix is refused before the default AMI name is derived from it.
-func TestBuildRejectsGatedNamePrefix(t *testing.T) {
+// A custom prefix flows through the build command into the rendered output.
+func TestBuildAcceptsCustomNamePrefix(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
 	source := func() (globals.Runtime, error) { return globals.Runtime{Config: cfg}, nil }
 	cmd := newBuildCmd(source, io.Discard)
 	cmd.SilenceErrors, cmd.SilenceUsage = true, true
 	cmd.SetArgs([]string{"--output-dir", t.TempDir()})
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "#705") {
-		t.Fatalf("Execute = %v, want the #705 gate error", err)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
 	}
 }

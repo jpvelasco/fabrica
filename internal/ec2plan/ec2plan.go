@@ -9,9 +9,9 @@ package ec2plan
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
 
@@ -37,12 +37,13 @@ type Base struct {
 type Params struct {
 	Account      string
 	Region       string
-	ModuleName   string // used for SGName / InstanceName convention
-	InstanceType string // already resolved with module defaults
-	VolumeSize   int    // already resolved with module defaults
-	AllowedCIDR  string // already resolved with module defaults
-	VPCId        string // from config (may be empty, triggers EC2 lookup)
-	SubnetId     string // from config (may be empty, triggers EC2 lookup)
+	Prefix       naming.Prefix // resource-name prefix; zero value is the default
+	ModuleName   string        // used for SGName / InstanceName convention
+	InstanceType string        // already resolved with module defaults
+	VolumeSize   int           // already resolved with module defaults
+	AllowedCIDR  string        // already resolved with module defaults
+	VPCId        string        // from config (may be empty, triggers EC2 lookup)
+	SubnetId     string        // from config (may be empty, triggers EC2 lookup)
 	Resolver     cloud.VPCResolver
 }
 
@@ -62,8 +63,8 @@ func New(ctx context.Context, p Params) (*Base, error) {
 		VPCID:        vpcID,
 		SubnetID:     subnetID,
 		DefaultVPC:   defaultVPC,
-		SGName:       fmt.Sprintf("fabrica-%s-sg", p.ModuleName),
-		InstanceName: fmt.Sprintf("fabrica-%s", p.ModuleName),
+		SGName:       p.Prefix.SG(p.ModuleName),
+		InstanceName: p.Prefix.Instance(p.ModuleName),
 	}, nil
 }
 

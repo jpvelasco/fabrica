@@ -84,6 +84,23 @@ func TestCreateCobraDryRunOutputFields(t *testing.T) {
 	}
 }
 
+// TestCreateCobraDryRunNamePrefix verifies a custom namePrefix is printed and
+// names the dry-run plan's security group and instance.
+func TestCreateCobraDryRunNamePrefix(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.State.Bucket = "fabrica-state-test"
+	cfg.State.Table = "fabrica-locks-test"
+	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
+	rt := globals.Runtime{Config: cfg, Provider: &testutil.UbuntuAMIProvider{}}
+	got, err := runCreate(t, func() (globals.Runtime, error) { return rt, nil }, "--dry-run")
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	for _, want := range []string{"Name prefix:      acme", "acme-perforce-sg", "acme-perforce"} {
+		testutil.AssertContains(t, got, want)
+	}
+}
+
 // TestCreateCobraYesFlagSkipsConfirmation verifies --yes executes without prompt.
 // Runs in a temp dir so defaultReadState/defaultWriteState find no prior state.
 func TestCreateCobraYesFlagSkipsConfirmation(t *testing.T) {

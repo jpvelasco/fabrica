@@ -115,7 +115,7 @@ func SanitizeImageBuilderName(name string) string {
 	// trailing dash/underscore that the pattern rejects.
 	s = strings.Trim(s, "-_")
 	if s == "" {
-		return "fabrica-ami"
+		return "ami"
 	}
 	if len(s) == 1 {
 		s += "f"

@@ -725,6 +725,7 @@ func agentsPlanInfo(plan *horde.AgentsCreatePlan) provision.PlanInfo {
 	return provision.PlanInfo{
 		Account:      plan.Account,
 		Region:       plan.Region,
+		NamePrefix:   plan.Prefix.String(),
 		InstanceType: plan.InstanceType,
 	}
 }

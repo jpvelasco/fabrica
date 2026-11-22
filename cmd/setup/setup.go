@@ -130,6 +130,7 @@ func (c command) printDryRun(plan fabricastate.BackendSetupApplyPlan) {
 	fmt.Fprintln(c.out, strings.Repeat("-", 50))
 	fmt.Fprintf(c.out, "  Account:  %s\n", plan.Target.Account)
 	fmt.Fprintf(c.out, "  Region:   %s\n", plan.Target.Region)
+	fmt.Fprintf(c.out, "  Name prefix: %s\n", plan.Target.Prefix)
 	fmt.Fprintln(c.out)
 	c.printBackendPlan(plan)
 	c.printCostReport(c.costs.EstimateAll(costResources(plan.Target.Resources)))
