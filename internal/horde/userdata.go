@@ -253,7 +253,7 @@ func runtimeBootstrap(cfg UserDataConfig, script string) (string, error) {
 	script = strings.Replace(script, "# horde_up reports", reset+"\n# horde_up reports", 1)
 	script = strings.Replace(script, "openssl rand -hex 24 > /etc/horde/admin-password", "[ -s /etc/horde/admin-password ] || openssl rand -hex 24 > /etc/horde/admin-password", 1)
 	if c.TLS {
-		options := "HORDE_URL=" + ShellQuote(c.URL("")) + "\nCURL_OPTS=(--silent --show-error --connect-timeout 5 --max-time 30 --proto '=https' --cacert " + ShellQuote(c.CAPath) + " --resolve " + ShellQuote(fmt.Sprintf("%s:%d:127.0.0.1", c.ServerName, c.Port)) + ")\n"
+		options := LoopbackTarget(c)
 		script = strings.ReplaceAll(script, "http://127.0.0.1:"+fmt.Sprint(cfg.Port), "$HORDE_URL")
 		script = strings.ReplaceAll(script, "curl -s ", `curl "${CURL_OPTS[@]}" `)
 		script = strings.Replace(script, "horde_up() {", options+"\nhorde_up() {", 1)
