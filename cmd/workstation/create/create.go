@@ -117,10 +117,8 @@ making any AWS calls.`,
 				if insp, ok := rt.Provider.(cloud.ImageInspector); ok {
 					c.inspectImage = insp.DescribeImage
 				}
-				if store, ok := rt.Provider.(cloud.ParameterStore); ok {
-					c.putSecureParameter = store.PutSecureParameter
-					c.deleteParameter = store.DeleteParameter
-				}
+				c.putSecureParameter = provision.ParameterPut(rt.Provider)
+				c.deleteParameter = provision.ParameterDelete(rt.Provider)
 			}
 			return c.run(cmd.Context())
 		},
@@ -330,7 +328,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		},
 	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return c.abandonSessionPassword(ctx, paramName, fmt.Errorf("creating security group: %w", err))
+		return provision.AbandonSecureParameter(ctx, c.deleteParameter, paramName, fmt.Errorf("creating security group: %w", err))
 	}
 	sgID := resources[len(resources)-1].Identifier
 
@@ -343,7 +341,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		},
 	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return c.abandonSessionPassword(ctx, paramName, fmt.Errorf("creating IAM role: %w", err))
+		return provision.AbandonSecureParameter(ctx, c.deleteParameter, paramName, fmt.Errorf("creating IAM role: %w", err))
 	}
 
 	fmt.Fprintf(c.out, "Creating instance profile %s...\n", plan.InstanceProfileName)
@@ -355,7 +353,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		},
 	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
 	if err != nil {
-		return c.abandonSessionPassword(ctx, paramName, fmt.Errorf("creating instance profile: %w", err))
+		return provision.AbandonSecureParameter(ctx, c.deleteParameter, paramName, fmt.Errorf("creating instance profile: %w", err))
 	}
 
 	fmt.Fprintf(c.out, "Creating instance %s...\n", plan.InstanceName)
@@ -367,7 +365,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		PerforceServerAddr:       plan.PerforceServerAddr,
 	})
 	if err != nil {
-		return c.abandonSessionPassword(ctx, paramName, fmt.Errorf("generating user data: %w", err))
+		return provision.AbandonSecureParameter(ctx, c.deleteParameter, paramName, fmt.Errorf("generating user data: %w", err))
 	}
 
 	// Set only when Create itself returns nil. ExecuteStep also fails when the
@@ -413,27 +411,11 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		if instanceCreated {
 			return wrapped
 		}
-		return c.abandonSessionPassword(ctx, paramName, wrapped)
+		return provision.AbandonSecureParameter(ctx, c.deleteParameter, paramName, wrapped)
 	}
 
 	c.printPostCreate(plan, resources[len(resources)-1].Identifier)
 	return nil
-}
-
-// abandonSessionPassword deletes the SecureString after a failed create so
-// the secret does not outlive the attempt. It is called only on pre-instance
-// steps; once the instance exists, create returns the error directly and the
-// parameter stays for the instance's cloud-init and for terminate. The local
-// credentials file is left in place; it is the operator record, and the next
-// create overwrites it.
-func (c command) abandonSessionPassword(ctx context.Context, name string, err error) error {
-	if c.deleteParameter == nil {
-		return fmt.Errorf("%w (SSM parameter %s was not deleted: no parameter store)", err, name)
-	}
-	if delErr := c.deleteParameter(ctx, name); delErr != nil {
-		return fmt.Errorf("%w (also failed to delete SSM parameter %s: %v)", err, name, delErr)
-	}
-	return err
 }
 
 func (c command) printDryRun(plan *workstation.CreatePlan) {

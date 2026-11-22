@@ -10,7 +10,7 @@ import (
 )
 
 func TestGenerateRaw_LatestVersion(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{Version: "latest", AdminPass: "testpass"})
+	got, err := GenerateRaw(UserDataConfig{Version: "latest", AdminPasswordParameter: testAdminParam, Region: testRegion})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestGenerateRaw_PinnedVersionFailsClosed(t *testing.T) {
 		{"2024.2/3084003", "2024.2/3084003"},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
-			got, err := GenerateRaw(UserDataConfig{Version: tc.version, AdminPass: "testpass"})
+			got, err := GenerateRaw(UserDataConfig{Version: tc.version, AdminPasswordParameter: testAdminParam, Region: testRegion})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -64,93 +64,73 @@ func TestGenerateRaw_PinnedVersionFailsClosed(t *testing.T) {
 	}
 }
 
-// TestGenerateRaw_AdminPasswordLiteralOnce verifies the raw password literal
-// appears exactly once (the ADMIN_PASS assignment); both generation branches
-// reference the variable instead of repeating the secret.
-func TestGenerateRaw_AdminPasswordLiteralOnce(t *testing.T) {
-	pass := "s3cr3tP@ssw0rd"
-	got, err := GenerateRaw(UserDataConfig{Version: "2024.2", AdminPass: pass})
+const (
+	testAdminParam = "/fabrica/perforce/0123456789abcdef0123456789abcdef/admin-password"
+	testRegion     = "us-west-2"
+)
+
+// TestGenerateRaw_NoAdminPasswordInUserData pins #700: the admin password is
+// not a userdata input and never reaches the rendered script. The script
+// carries only the per-create parameter name and region, which cloud-init
+// uses to fetch the secret at boot.
+func TestGenerateRaw_NoAdminPasswordInUserData(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPasswordParameter: testAdminParam, Region: testRegion})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if count := strings.Count(got, pass); count != 1 {
-		t.Errorf("admin password appears %d times, want exactly 1", count)
+	if strings.Contains(got, "ADMIN_PASS=\"") {
+		t.Error("rendered script must not assign a literal admin password")
 	}
-	if !strings.Contains(got, `ADMIN_PASS="`+pass+`"`) {
-		t.Error("password assignment missing")
-	}
-	if !strings.Contains(got, `"$ADMIN_PASS"`) {
-		t.Error("configure branches must reference $ADMIN_PASS")
+	for _, want := range []string{testAdminParam, testRegion} {
+		if strings.Count(got, want) == 0 {
+			t.Errorf("rendered script missing %q", want)
+		}
 	}
 }
 
-// TestGenerateRaw_ScrubsUserDataAfterConfigure verifies the admin password
-// still reaches configure exactly once, and the long-lived local UserData
-// copies are truncated only after configure and the service start have run.
-// The scrub is local-only: IMDS is read-only to the instance, so the script
-// must not contact the metadata service (#489).
-func TestGenerateRaw_ScrubsUserDataAfterConfigure(t *testing.T) {
-	pass := "s3cr3tP@ssw0rd"
-	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: pass})
+// TestGenerateRaw_FetchesAdminPasswordFromSSM verifies the boot-time fetch:
+// the AWS CLI is installed when missing, the secret is read with
+// --with-decryption, and the read fails closed before configure runs.
+func TestGenerateRaw_FetchesAdminPasswordFromSSM(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPasswordParameter: testAdminParam, Region: testRegion})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if count := strings.Count(got, pass); count != 1 {
-		t.Errorf("admin password appears %d times, want exactly 1 (the ADMIN_PASS assignment)", count)
-	}
 	for _, want := range []string{
-		"truncate -s 0 /var/lib/cloud/instance/user-data.txt",
-		"truncate -s 0 /var/lib/cloud/instance/user-data.txt.i",
-		"truncate -s 0 /var/lib/cloud/instance/user-data\n",
-		"test -s /var/lib/cloud/instance/user-data; then",
-		"ERROR: userdata scrub failed after configure",
-		"Scrubbed EC2 userdata (local).",
+		"command -v aws >/dev/null 2>&1 ||",
+		"apt-get install -y awscli",
+		`if ! ADMIN_PASS=$(aws ssm get-parameter --name "` + testAdminParam + `" --with-decryption --query Parameter.Value --output text --region "` + testRegion + `"); then`,
+		"ERROR: failed to read the Helix Core admin password from SSM parameter " + testAdminParam,
+		`if [ -z "$ADMIN_PASS" ] || [ "$ADMIN_PASS" = "None" ]; then`,
 	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("scrub block missing %q", want)
+			t.Errorf("fetch fragment missing %q", want)
 		}
 	}
-	for _, gone := range []string{"169.254.169.254", "curl", "IMDS_TOKEN"} {
-		if strings.Contains(got, gone) {
-			t.Errorf("scrub must not contact IMDS; found %q", gone)
-		}
+	install := strings.Index(got, "apt-get install -y awscli")
+	fetch := strings.Index(got, "aws ssm get-parameter")
+	configure := strings.Index(got, `"$CONFIGURE" -n`)
+	if configure < 0 {
+		configure = strings.Index(got, `"$CONFIGURE" "$SERVER_ID"`)
 	}
+	if install < 0 || fetch < 0 || configure < 0 || install > fetch || fetch > configure {
+		t.Error("the AWS CLI must install, then the password must be fetched, before configure runs")
+	}
+}
 
-	configureIdx := strings.Index(got, `--super-passwd "$ADMIN_PASS"`)
-	pinnedIdx := strings.Index(got, `-P "$ADMIN_PASS"`)
-	helixIdx := strings.Index(got, "systemctl restart helix-p4d")
-	p4dctlIdx := strings.Index(got, `p4dctl start "$SERVER_ID"`)
-	scrubIdx := strings.Index(got, "truncate -s 0 /var/lib/cloud/instance/user-data.txt")
-	if configureIdx < 0 || pinnedIdx < 0 || helixIdx < 0 || p4dctlIdx < 0 || scrubIdx < 0 ||
-		configureIdx > scrubIdx || pinnedIdx > scrubIdx || helixIdx > scrubIdx || p4dctlIdx > scrubIdx {
-		t.Error("userdata must configure and start the server before scrubbing user-data")
+// TestGenerateRaw_NoLocalScrubOrIMDS: user data no longer carries the secret,
+// so the scrub that truncated local copies is gone, and the script never
+// contacts IMDS.
+func TestGenerateRaw_NoLocalScrubOrIMDS(t *testing.T) {
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPasswordParameter: testAdminParam, Region: testRegion})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-
-	errIdx := strings.Index(got, "ERROR: userdata scrub failed after configure")
-	okIdx := strings.Index(got, "Scrubbed EC2 userdata (local).")
-	if errIdx < 0 || okIdx < errIdx {
-		t.Fatal("scrub error and success lines missing or out of order")
-	}
-	// The scrub's own exit 1 must sit between its error line and the success
-	// line. (Earlier error paths also exit 1 — the first one after the scrub
-	// block's error would be the pin-fallback exit if it came before the
-	// re-verify, so search the error..success region explicitly.)
-	if exitRel := strings.Index(got[errIdx:okIdx], "exit 1"); exitRel < 0 {
-		t.Error("scrub failure must exit 1 between the error line and the success line")
-	}
-	// part-001 is the file cloud-init is executing, so the wipe must be the
-	// last statement of the script — nothing may follow it (#490).
-	part := "truncate -s 0 /var/lib/cloud/instance/scripts/part-001"
-	if !strings.Contains(got, part) {
-		t.Fatal("part-001 wipe missing from rendered userdata")
-	}
-	if !strings.HasSuffix(strings.TrimRight(got, " \t\r\n"), part) {
-		t.Error("part-001 must be the last statement of the rendered script — cloud-init is executing that file")
-	}
+	assert.NoneOf(t, got, "truncate -s 0", "Scrubbed EC2 userdata", "169.254.169.254", "IMDS_TOKEN")
 }
 
 func TestGenerateRaw_DataDeviceAutoDetection(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: "pw"})
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPasswordParameter: testAdminParam, Region: testRegion})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -171,7 +151,7 @@ func TestGenerateRaw_DataDeviceAutoDetection(t *testing.T) {
 // TestGenerateRaw_ExplicitDataDeviceHonored verifies an explicit device skips
 // auto-detection and is used verbatim.
 func TestGenerateRaw_ExplicitDataDeviceHonored(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: "pw", DataDevice: "/dev/nvme2n1"})
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPasswordParameter: testAdminParam, Region: testRegion, DataDevice: "/dev/nvme2n1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -185,7 +165,7 @@ func TestGenerateRaw_ExplicitDataDeviceHonored(t *testing.T) {
 // render time — the installed version can differ from the requested pin when
 // the archive dropped it.
 func TestGenerateRaw_RuntimeInterfaceDetection(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: "pw"})
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPasswordParameter: testAdminParam, Region: testRegion})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -204,7 +184,7 @@ func TestGenerateRaw_RuntimeInterfaceDetection(t *testing.T) {
 }
 
 func TestGenerateRaw_MountPoint(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: "testpass"})
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPasswordParameter: testAdminParam, Region: testRegion})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -217,7 +197,7 @@ func TestGenerateRaw_MountPoint(t *testing.T) {
 // rendered script must never enable shell xtrace (set -x / set +x), or the
 // embedded admin password would leak into cloud-init-output.log.
 func TestGenerateRaw_NeverXtrace(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: "s3cr3tP@ssw0rd"})
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPasswordParameter: testAdminParam, Region: testRegion})
 	if err != nil {
 		t.Fatalf("GenerateRaw: %v", err)
 	}
@@ -225,7 +205,7 @@ func TestGenerateRaw_NeverXtrace(t *testing.T) {
 }
 
 func TestGenerateRaw_PipefailPresent(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: "testpass"})
+	got, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPasswordParameter: testAdminParam, Region: testRegion})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -234,16 +214,36 @@ func TestGenerateRaw_PipefailPresent(t *testing.T) {
 	}
 }
 
-func TestGenerateRaw_EmptyAdminPassError(t *testing.T) {
-	_, err := GenerateRaw(UserDataConfig{Version: "2025.2", AdminPass: ""})
-	if err == nil {
-		t.Error("expected error for empty AdminPass")
+// TestValidateAdminPasswordParameter pins the fail-closed inputs: a missing,
+// malformed, or shell-unsafe parameter name and an empty region are refused
+// before anything is rendered. The name is interpolated into the boot script,
+// so only the per-create shape is allowed.
+func TestValidateAdminPasswordParameter(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  UserDataConfig
+		want string
+	}{
+		{"empty name", UserDataConfig{Region: testRegion}, "AdminPasswordParameter"},
+		{"legacy shared name", UserDataConfig{AdminPasswordParameter: "/fabrica/perforce/admin-password", Region: testRegion}, "AdminPasswordParameter"},
+		{"shell metacharacters", UserDataConfig{AdminPasswordParameter: "/fabrica/perforce/0123456789abcdef0123456789abcdef/admin-password\"; reboot; #", Region: testRegion}, "AdminPasswordParameter"},
+		{"empty region", UserDataConfig{AdminPasswordParameter: testAdminParam}, "Region"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := GenerateRaw(tc.cfg)
+			if err == nil {
+				t.Fatal("expected a validation error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q should mention %q", err.Error(), tc.want)
+			}
+		})
 	}
 }
 
 func TestApplyDefaults(t *testing.T) {
 	t.Run("fills all zeros", func(t *testing.T) {
-		cfg := UserDataConfig{AdminPass: "pw"}
+		cfg := UserDataConfig{AdminPasswordParameter: testAdminParam, Region: testRegion}
 		cfg.applyDefaults()
 		if cfg.DataMount != "/hxdepots" {
 			t.Errorf("DataMount = %q, want /hxdepots", cfg.DataMount)
@@ -254,10 +254,11 @@ func TestApplyDefaults(t *testing.T) {
 	})
 	t.Run("preserves existing values", func(t *testing.T) {
 		cfg := UserDataConfig{
-			AdminPass:  "pw",
-			DataDevice: "/dev/custom",
-			DataMount:  "/custom",
-			ServerID:   "my-server",
+			AdminPasswordParameter: testAdminParam,
+			Region:                 testRegion,
+			DataDevice:             "/dev/custom",
+			DataMount:              "/custom",
+			ServerID:               "my-server",
 		}
 		cfg.applyDefaults()
 		if cfg.DataDevice != "/dev/custom" {
@@ -273,18 +274,18 @@ func TestApplyDefaults(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
-	t.Run("empty admin pass", func(t *testing.T) {
-		cfg := UserDataConfig{}
+	t.Run("empty admin password parameter", func(t *testing.T) {
+		cfg := UserDataConfig{Region: testRegion}
 		err := cfg.validate()
 		if err == nil {
-			t.Fatal("expected error for empty AdminPass")
+			t.Fatal("expected error for empty AdminPasswordParameter")
 		}
-		if !strings.Contains(err.Error(), "AdminPass") {
-			t.Errorf("error %q should mention AdminPass", err.Error())
+		if !strings.Contains(err.Error(), "AdminPasswordParameter") {
+			t.Errorf("error %q should mention AdminPasswordParameter", err.Error())
 		}
 	})
 	t.Run("valid config", func(t *testing.T) {
-		cfg := UserDataConfig{AdminPass: "secret"}
+		cfg := UserDataConfig{AdminPasswordParameter: testAdminParam, Region: testRegion}
 		if err := cfg.validate(); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -292,14 +293,14 @@ func TestValidate(t *testing.T) {
 }
 
 func TestGenerate_ValidationError(t *testing.T) {
-	_, err := Generate(UserDataConfig{AdminPass: ""})
+	_, err := Generate(UserDataConfig{Region: testRegion})
 	if err == nil {
-		t.Fatal("expected error for empty AdminPass")
+		t.Fatal("expected error for empty AdminPasswordParameter")
 	}
 }
 
 func TestGenerate_ReturnsBase64(t *testing.T) {
-	got, err := Generate(UserDataConfig{Version: "2025.2", AdminPass: "testpass"})
+	got, err := Generate(UserDataConfig{Version: "2025.2", AdminPasswordParameter: testAdminParam, Region: testRegion})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -318,7 +319,7 @@ func isBase64Char(c rune) bool {
 }
 
 func TestGenerate_DefaultsApplied(t *testing.T) {
-	got, err := Generate(UserDataConfig{Version: "latest", AdminPass: "pass"})
+	got, err := Generate(UserDataConfig{Version: "latest", AdminPasswordParameter: testAdminParam, Region: testRegion})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -332,7 +333,7 @@ func TestGenerate_DefaultsApplied(t *testing.T) {
 }
 
 func TestGenerateRaw_PerforceAptKeyringPinned(t *testing.T) {
-	got, err := GenerateRaw(UserDataConfig{Version: "latest", AdminPass: "testpass"})
+	got, err := GenerateRaw(UserDataConfig{Version: "latest", AdminPasswordParameter: testAdminParam, Region: testRegion})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
