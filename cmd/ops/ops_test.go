@@ -149,3 +149,14 @@ func TestExportUnknownModule(t *testing.T) {
 }
 
 func ioDiscard() *bytes.Buffer { return &bytes.Buffer{} }
+
+func TestExportRejectsGatedNamePrefix(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Ops.Enabled = true
+	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
+	c := exportCommand{rt: globals.Runtime{Config: cfg}, dryRun: true, out: ioDiscard()}
+	err := c.run()
+	if err == nil || !strings.Contains(err.Error(), "#705") {
+		t.Fatalf("err = %v, want the #705 gate error", err)
+	}
+}
