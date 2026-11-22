@@ -39,13 +39,19 @@ DATA_MOUNT="{{ .DataMount }}"
 const perforceUserDataBody = `{{ if eq .Version "latest" -}}
 apt-get install -y helix-p4d
 {{- else -}}
-# Pinned versions rot out of Perforce's release archive; fall back to the
-# current repo version rather than failing the whole bootstrap.
-if ! apt-get install -y "helix-p4d={{ .Version }}"; then
-  echo "WARNING: helix-p4d {{ .Version }} unavailable in the Perforce jammy repo — falling back to the latest available version"
-  apt-get install -y helix-p4d
+# apt matches pkg=version against the full Debian version (for example
+# 2025.2-3148719~jammy), so a bare release never matches. Resolve the pin to
+# the newest repo build of that release (or the exact build for YYYY.N/BUILD)
+# and fail closed when the repo no longer carries it (#699).
+HELIX_PIN="$(echo '{{ .Version }}' | tr / -)"
+HELIX_DEB_VERSION="$(apt-cache madison helix-p4d | awk -F'|' -v pin="$HELIX_PIN" '{v=$2; gsub(/ /, "", v); if (!found && (index(v, pin "-") == 1 || index(v, pin "~") == 1)) {print v; found = 1}}')"
+if [ -z "$HELIX_DEB_VERSION" ]; then
+  echo "ERROR: Helix Core {{ .Version }} is not in the Perforce apt repo (available: $(apt-cache madison helix-p4d | awk -F'|' '{gsub(/ /, "", $2); printf "%s ", $2}')). Set perforce.version to an available release, or \"latest\", and re-run fabrica perforce create." >&2
+  exit 1
 fi
+apt-get install -y "helix-p4d=$HELIX_DEB_VERSION"
 {{- end }}
+echo "Installed helix-p4d $(dpkg-query -W -f='${Version}' helix-p4d)"
 
 # Identify the data volume: the largest disk that is not the root disk.
 # NVMe enumeration order is NOT deterministic across EC2 launches, so a

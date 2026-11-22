@@ -87,10 +87,10 @@ provisioned hosts, and (for npm installs) GitHub Releases.
 
 | Destination | Why | Source |
 |-------------|-----|--------|
-| `get.docker.com` | Docker Engine install (Horde/agent docker bakes) | `cmd/horde/ami/templates/component.yaml.tmpl` |
-| `packages.microsoft.com` | Docker MS repo key (same bakes) | `cmd/horde/ami/templates/component.yaml.tmpl` |
-| `www.mongodb.org` + `repo.mongodb.org` | MongoDB 7.0 key + apt repo (same bakes) | `cmd/horde/ami/templates/component.yaml.tmpl` |
-| `awscli.amazonaws.com` | AWS CLI v2 download (generated docker bakes) | `cmd/horde/ami/docker_bake.go` |
+| `download.docker.com` | Docker Engine apt key + repo (Horde/agent docker bakes); key pinned by fingerprint | `cmd/horde/ami/pinned_apt.go` |
+| `packages.microsoft.com` | .NET 8 apt key + repo (Horde native bakes); key pinned by fingerprint | `cmd/horde/ami/pinned_apt.go` |
+| `www.mongodb.org` + `repo.mongodb.org` | MongoDB 7.0 apt key + repo (Horde native bakes); key pinned by fingerprint | `cmd/horde/ami/pinned_apt.go` |
+| `awscli.amazonaws.com` | AWS CLI v2 zip + detached signature (Horde Packer bakes; signature checked against a pinned key) | `cmd/horde/ami/awscli_install.go` |
 | `github.com` (`EpicGames/lore` releases) | Lore binary download (Lore Image Builder bakes) | `cmd/lore/ami/templates/component.yaml.tmpl` |
 | `d1uj6qtbmh3dt5.cloudfront.net` | NICE DCV GPG key + pinned versioned tarball (workstation bakes) | `cmd/workstation/ami/templates/component.yaml.tmpl` |
 | `package.perforce.com` | Helix Core apt key (pinned by fingerprint, dedicated keyring) + repo (Perforce + workstation cloud-init) | `internal/userdata/apt.go` (used by `internal/perforce/userdata.go`, `internal/workstation/userdata.go`) |
@@ -314,11 +314,12 @@ Verifies an operator-installed Docker TLS coordinator over SSM and pinned privat
 
 #### `fabrica horde submit`
 
-Parses a BuildGraph XML file and POSTs the job to the recorded Horde endpoint (private IP for HTTP; configured DNS identity for TLS). The target is resolved from the XML (first `<Agent>`'s first `<Node>` name). Use `examples/BuildGraph.sample.xml` as a starting point. Options:
+Parses a BuildGraph XML file and POSTs the job to the recorded Horde endpoint (private IP for HTTP; configured DNS identity for TLS). The target is the first `<Aggregate>` in the XML, or the first `<Node>` of the first `<Agent>` when there is no aggregate. Use `examples/BuildGraph.sample.xml` as a starting point. Options:
 
 ```
 --wait         Poll until the job completes (exits non-zero if the job errors, the wait times out, or polling is cancelled)
---dry-run      Preview the job and coordinator address without submitting
+--dry-run      Preview the job, the chosen target and why, and the coordinator address without submitting
+--target NAME  Run this <Aggregate> or <Node> name instead of the default (warns if the name is not in the file)
 ```
 
 Requires VPN or same-VPC access; no public IP is assigned in V1.
@@ -440,7 +441,7 @@ Deletes edge nodes first (each in its region), then home resources (instances â†
 
 #### `fabrica workstation ami build`
 
-Writes Image Builder component + recipe + build guide locally (no AWS calls). The component installs NICE DCV (Ubuntu 22.04 tarball) and fail-closed Amazon SSM Agent.
+Writes Image Builder component + recipe + build guide locally (no AWS calls). The component installs NICE DCV (Ubuntu 22.04 tarball) and fail-closed Amazon SSM Agent. Recipes and AMI/snapshot tags carry `cloud.aws.tags`.
 
 #### `fabrica workstation create`
 

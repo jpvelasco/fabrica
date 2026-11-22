@@ -13,12 +13,6 @@ variable "aws_region" {
   description = "AWS region to build the AMI in."
 }
 
-variable "horde_version" {
-  type        = string
-  default     = "{{ .Version }}"
-  description = "Horde server version recorded in AMI tags."
-}
-
 variable "instance_type" {
   type        = string
   default     = "m7i.xlarge"
@@ -32,6 +26,8 @@ variable "horde_source_dir" {
 {{ end }}
 locals {
   ami_name = "{{ .Name }}-${formatdate("YYYYMMDD-hhmmss", timestamp())}"
+  # The AMI, its snapshots, and the builder instance carry the same tag set.
+  common_tags = merge({{ hclMap .RecipeTags }}, { Name = local.ami_name })
 }
 
 source "amazon-ebs" "horde" {
@@ -49,21 +45,14 @@ source "amazon-ebs" "horde" {
     encrypted             = true
   }
 
-  tags = {
-    ManagedBy     = "{{ .Identity.ManagedBy }}"
-    HordeVersion  = var.horde_version
-    InstallMethod = "{{ .Install }}"
-    Name          = local.ami_name
-  }
+  tags = local.common_tags
 
   # Keep the AMI tag set on its snapshots for identification and operator
   # cleanup (`tags` alone tags the AMI only).
-  snapshot_tags = {
-    ManagedBy     = "{{ .Identity.ManagedBy }}"
-    HordeVersion  = var.horde_version
-    InstallMethod = "{{ .Install }}"
-    Name          = local.ami_name
-  }
+  snapshot_tags = local.common_tags
+
+  # Tag the builder instance too, so tag-gated RunInstances policies pass.
+  run_tags = local.common_tags
 }
 
 # Docker install: the bake script (shared with component.yaml via
@@ -87,10 +76,8 @@ build {
     inline_shebang  = "/bin/bash -euo pipefail"
 {{- if eq .Install "docker" }}
     inline = [
-      {{ hclInline (awsCliInstall) }},
-      "curl -fsSL https://get.docker.com | sh",
-      "systemctl enable docker",
-      "usermod -aG docker ubuntu",
+      {{ hclInline (awsCliVerifiedInstall) }},
+      {{ hclInline (dockerInstall) }},
       {{ hclInline (dockerBake .Version) }},
       {{ hclInline (hordeDockerUnitCommand) }},
       "systemctl daemon-reload",
@@ -98,16 +85,11 @@ build {
     ]
 {{- else }}
     inline = [
-      {{ hclInline (awsCliInstall) }},
-      "wget -q https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -O /tmp/ms.deb",
-      "dpkg -i /tmp/ms.deb",
-      "apt-get update -q",
-      "apt-get install -y dotnet-sdk-8.0",
-      "curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | gpg -o /usr/share/keyrings/mongodb-7.0.gpg --dearmor",
-      "echo 'deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-7.0.gpg] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse' >/etc/apt/sources.list.d/mongodb-org-7.0.list",
-      "apt-get update -q",
-      "apt-get install -y mongodb-org redis-server",
-      "systemctl enable mongod redis-server",
+      {{ hclInline (awsCliVerifiedInstall) }},
+      {{ hclInline (dotnetInstall) }},
+      {{ hclInline (mongoDBInstall) }},
+      "apt-get install -y redis-server",
+      "systemctl enable redis-server",
       "mkdir -p /opt/horde /etc/horde",
       "cp -r /tmp/horde-bin/. /opt/horde/",
       "cat >/etc/horde/env <<'ENV'\nASPNETCORE_ENVIRONMENT=Production\nHorde__DataDir=/etc/horde\nENV",

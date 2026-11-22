@@ -224,8 +224,24 @@ overhead to every agent instance. Prefer Method 1 for production.
 
 #### Step 2: Install Docker CE
 
+Install Docker from Docker's signed apt repository. The keyring is exported with
+only the pinned fingerprint `9DC858229FC7DD38854AE2D88D81803C0EBFCD88`, so
+`signed-by` cannot trust any other key in the downloaded file. `test -s` fails
+the step if the download does not contain that key:
+
 ```bash
-curl -fsSL https://get.docker.com | sh
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker-key.asc
+gnupg_home="$(mktemp -d)"
+GNUPGHOME="$gnupg_home" gpg --batch --quiet --import /tmp/docker-key.asc
+GNUPGHOME="$gnupg_home" gpg --batch --quiet --export 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 | sudo tee /etc/apt/keyrings/docker.gpg >/dev/null
+rm -rf "$gnupg_home" /tmp/docker-key.asc
+test -s /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+. /etc/os-release
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+sudo apt-get update -q
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 sudo usermod -aG docker ubuntu
 sudo systemctl enable docker
 ```
