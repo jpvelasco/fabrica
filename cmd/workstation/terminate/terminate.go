@@ -1,13 +1,11 @@
 package terminate
 
 import (
-	"context"
 	"io"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/internal/cloud"
-	"github.com/jpvelasco/fabrica/internal/oplog"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/workstation"
 	"github.com/spf13/cobra"
@@ -33,27 +31,7 @@ var spec = teardown.Spec{
 	// instance keeps the name referenceable until the delete succeeds, so a
 	// failed or interrupted terminate cannot orphan it (issue #524).
 	ResourceOrder: workstationResourceOrder,
-	WireCommand:   wireSessionPasswordDelete,
-}
-
-// wireSessionPasswordDelete removes the DCV SecureString. The parameter is
-// appended by workstationResourceOrder and is not a Cloud Control resource,
-// so this hook handles only that type and returns nil. Every other type
-// falls through. A missing parameter is success. Dry-run never calls it.
-func wireSessionPasswordDelete(tc *teardown.Command, rt globals.Runtime) {
-	if rt.Provider == nil {
-		return
-	}
-	store, ok := rt.Provider.(cloud.ParameterStore)
-	if !ok {
-		return
-	}
-	tc.SDKDeleteFunc = func(ctx context.Context, typeName, identifier string) error {
-		if typeName != cloud.TypeAWSSSMParameter {
-			return cloud.ErrNotHandled
-		}
-		return store.DeleteParameter(ctx, identifier)
-	}
+	WireCommand:   teardown.WireParameterDelete,
 }
 
 func workstationResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
@@ -81,15 +59,11 @@ func workstationResourceOrder(m *fabricastate.ModuleState) []cloud.Resource {
 	// terminate deletes exactly the recorded name and skips when it is absent
 	// (nothing recorded means no secret to clean up). Delete is success when
 	// it is already gone.
+	// The recorded name is validated before it becomes a delete target, so a
+	// malformed name cannot widen the delete to an arbitrary SSM parameter.
 	instRes := byType[cloud.TypeAWSEC2Instance]
-	if name := instRes.Properties["sessionPasswordParameter"]; name != "" {
-		// Validate before deleting: a malformed recorded name must not widen
-		// the delete target to an arbitrary SSM parameter.
-		if !workstation.IsSessionPasswordName(name) {
-			oplog.WithModule("workstation").Warn("skipping DCV session password parameter: the recorded name is not a well-formed per-create name", "name", name)
-		} else {
-			out = append(out, cloud.Resource{TypeName: cloud.TypeAWSSSMParameter, Identifier: name})
-		}
+	if r, ok := teardown.RecordedParameter("workstation", instRes.Properties["sessionPasswordParameter"], workstation.IsSessionPasswordName); ok {
+		out = append(out, r)
 	}
 	appendRecorded(cloud.TypeAWSEC2Instance)
 	appendRecorded(cloud.TypeAWSIAMInstanceProfile)
