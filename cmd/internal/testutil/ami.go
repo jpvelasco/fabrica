@@ -16,7 +16,8 @@ import (
 )
 
 // RunAMIRuntimeTests verifies offline AMI generation without a provider, config
-// failures before file writes, and help without runtime resolution.
+// failures before file writes, help without runtime resolution, and that the
+// recipe and AMI tags carry cloud.aws.tags with the owner's ManagedBy.
 func RunAMIRuntimeTests(t *testing.T, newCmd func(globals.RuntimeSource, io.Writer) *cobra.Command) {
 	t.Helper()
 	sourceErr := errors.New("configuration source failed")
@@ -77,7 +78,8 @@ func RunAMIRuntimeTests(t *testing.T, newCmd func(globals.RuntimeSource, io.Writ
 				t.Fatal(err)
 			}
 			var recipe struct {
-				Tags map[string]string `json:"tags"`
+				Tags    map[string]string `json:"tags"`
+				AMITags map[string]string `json:"amiTags"`
 			}
 			if err := json.Unmarshal(raw, &recipe); err != nil {
 				t.Fatal(err)
@@ -86,8 +88,13 @@ func RunAMIRuntimeTests(t *testing.T, newCmd func(globals.RuntimeSource, io.Writ
 			if wantOwner == "" {
 				wantOwner = "fabrica"
 			}
-			if recipe.Tags["ManagedBy"] != wantOwner {
-				t.Fatalf("ordinary tag selected ownership: %v", recipe.Tags)
+			if recipe.Tags["ManagedBy"] != wantOwner || recipe.AMITags["ManagedBy"] != wantOwner {
+				t.Fatalf("ordinary tag selected ownership: tags=%v amiTags=%v", recipe.Tags, recipe.AMITags)
+			}
+			for name, got := range map[string]map[string]string{"tags": recipe.Tags, "amiTags": recipe.AMITags} {
+				if got["Project"] != "studio" {
+					t.Fatalf("%s lost cloud.aws.tags: %v", name, got)
+				}
 			}
 		})
 	}
