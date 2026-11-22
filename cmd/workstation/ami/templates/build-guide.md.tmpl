@@ -69,14 +69,14 @@ recipe, infrastructure configuration, and pipeline sequence in
 build instance and the output AMI, so the snapshot is encrypted even when
 the parent image's snapshot is not and EBS default encryption is off.
 `amiTags` tag the output AMI. Image Builder does not tag the AMI's
-snapshots, so tag them after the build:
+snapshots, so tag them after the build. `verify-ami.sh` fails on any
+snapshot without `ManagedBy`:
 
 ```bash
 AMI=<new AMI ID>
 for s in $(aws ec2 describe-images --region {{ .Region }} --image-ids "$AMI" \
     --query 'Images[0].BlockDeviceMappings[?Ebs].Ebs.SnapshotId' --output text); do
-  aws ec2 create-tags --region {{ .Region }} --resources "$s" \
-    --tags Key=ManagedBy,Value={{ .Identity.ManagedBy }} Key=FabricaModule,Value=workstation Key=Name,Value={{ .Name }}
+  aws ec2 create-tags --region {{ .Region }} --resources "$s" --tags {{ cliTags .RecipeTags }}
 done
 ```
 
