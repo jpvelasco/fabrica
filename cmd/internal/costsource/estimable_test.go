@@ -32,7 +32,7 @@ func TestModuleCostResourcesEstimable(t *testing.T) {
 		{"workstation", workstation.CostResources(config.WorkstationConfig{})},
 		{"workstation-artist", workstation.CostResourcesFor(workstation.ArtistInstanceType, workstation.ArtistVolumeSize)},
 		{"workstation-programmer", workstation.CostResourcesFor(workstation.ProgrammerInstanceType, workstation.ProgrammerVolumeSize)},
-		{"ci", ci.CostResources(config.CIConfig{})},
+		{"ci", ci.CostResources(naming.Default, config.CIConfig{})},
 	}
 	for _, tc := range cases {
 		if len(tc.resources) == 0 {

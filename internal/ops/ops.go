@@ -12,6 +12,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 const (
@@ -84,8 +85,9 @@ func RetentionDays(cfg config.OpsConfig) int {
 	return cfg.LogRetentionDays
 }
 
-// BuildExport builds the local hook document for the resolved modules.
-func BuildExport(cfg config.OpsConfig) (Export, error) {
+// BuildExport builds the local hook document for the resolved modules. Log
+// groups and alarms follow the name prefix p (#705).
+func BuildExport(p naming.Prefix, cfg config.OpsConfig) (Export, error) {
 	modules, err := ResolveModules(cfg)
 	if err != nil {
 		return Export{}, err
@@ -94,8 +96,8 @@ func BuildExport(cfg config.OpsConfig) (Export, error) {
 	for _, name := range modules {
 		hooks = append(hooks, Hook{
 			Module:    name,
-			LogGroup:  "/fabrica/" + name,
-			Alarm:     "fabrica-" + name + "-unhealthy",
+			LogGroup:  p.LogGroup(name),
+			Alarm:     p.For(name, "unhealthy"),
 			Namespace: "Fabrica/" + strings.ToUpper(name[:1]) + name[1:],
 			Metric:    "Unhealthy",
 		})
@@ -110,7 +112,7 @@ func BuildExport(cfg config.OpsConfig) (Export, error) {
 }
 
 // CostResources returns standing CloudWatch lines when ops is enabled.
-func CostResources(cfg config.OpsConfig) []cost.Resource {
+func CostResources(p naming.Prefix, cfg config.OpsConfig) []cost.Resource {
 	modules, err := ResolveModules(cfg)
 	if err != nil || len(modules) == 0 {
 		return nil
@@ -118,8 +120,8 @@ func CostResources(cfg config.OpsConfig) []cost.Resource {
 	out := make([]cost.Resource, 0, len(modules)*2)
 	for _, name := range modules {
 		out = append(out,
-			cost.Resource{TypeName: cloud.TypeAWSCloudWatchAlarm, Name: "fabrica-" + name + "-unhealthy"},
-			cost.Resource{TypeName: TypeAWSLogsLogGroup, Name: "/fabrica/" + name},
+			cost.Resource{TypeName: cloud.TypeAWSCloudWatchAlarm, Name: p.For(name, "unhealthy")},
+			cost.Resource{TypeName: TypeAWSLogsLogGroup, Name: p.LogGroup(name)},
 		)
 	}
 	return out

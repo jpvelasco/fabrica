@@ -1156,3 +1156,17 @@ func TestPromoteResumeRequiresGameLiftSupport(t *testing.T) {
 		t.Fatal("expected error when the provider lacks GameLift support on resume")
 	}
 }
+
+func TestPromoteRejectsGatedNamePrefix(t *testing.T) {
+	var out bytes.Buffer
+	c := newTestCmd(&out, seededState())
+	c.runtime.Config.Cloud.AWS.Identity.NamePrefix = "acme"
+	c.createResource = func(context.Context, *cloud.Resource) error {
+		t.Error("build registered before the prefix gate")
+		return nil
+	}
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "#705") {
+		t.Fatalf("err = %v, want the #705 gate error", err)
+	}
+}

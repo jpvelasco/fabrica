@@ -47,3 +47,17 @@ func TestPipelineCobraRuntimeError(t *testing.T) {
 		t.Fatal("expected runtime error")
 	}
 }
+
+func TestPipelineRejectsGatedNamePrefix(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.Identity.NamePrefix = "acme"
+	src := func() (globals.Runtime, error) { return globals.Runtime{Config: cfg}, nil }
+	var out bytes.Buffer
+	root, optionsSource := testutil.BuildTestSubcommand(&out)
+	root.AddCommand(New(src, optionsSource, &out))
+	_, err := testutil.RunCommandWithOut(t, root, &out, "ci", "pipeline")
+	if err == nil {
+		t.Fatal("expected a non-default namePrefix to be refused")
+	}
+	testutil.AssertContains(t, err.Error(), "#705")
+}

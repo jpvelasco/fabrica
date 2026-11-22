@@ -131,7 +131,11 @@ func (c command) run(ctx context.Context) error {
 	}
 	ciCfg.IAM = resolvedIAM
 
-	plan, err := ci.NewCreatePlan(ctx, ciCfg, account, region, hordeURL, provision.VPCResolver(c.runtime.Provider))
+	prefix, err := c.runtime.Config.ResolveNamePrefix()
+	if err != nil {
+		return err
+	}
+	plan, err := ci.NewCreatePlan(ctx, prefix, ciCfg, account, region, hordeURL, provision.VPCResolver(c.runtime.Provider))
 	if err != nil {
 		return fmt.Errorf("building CI plan: %w", err)
 	}

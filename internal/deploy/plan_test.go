@@ -1,31 +1,33 @@
 package deploy
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestNewSetupPlanDefaults(t *testing.T) {
-	p := NewSetupPlan(config.DeployConfig{}, "123456789012", "us-east-1")
-	if p.RoleName != defaultRoleName {
-		t.Errorf("RoleName = %q, want %q", p.RoleName, defaultRoleName)
+	p := NewSetupPlan(naming.Default, config.DeployConfig{}, "123456789012", "us-east-1")
+	if p.RoleName != "fabrica-deploy-gamelift" {
+		t.Errorf("RoleName = %q, want %q", p.RoleName, "fabrica-deploy-gamelift")
 	}
-	if p.AliasName != defaultAliasName {
-		t.Errorf("AliasName = %q, want %q", p.AliasName, defaultAliasName)
+	if p.AliasName != "fabrica-deploy" {
+		t.Errorf("AliasName = %q, want %q", p.AliasName, "fabrica-deploy")
 	}
 }
 
 func TestNewSetupPlanOverrides(t *testing.T) {
-	p := NewSetupPlan(config.DeployConfig{RoleName: "my-role", AliasName: "my-alias"}, "123456789012", "us-east-1")
+	p := NewSetupPlan(naming.Default, config.DeployConfig{RoleName: "my-role", AliasName: "my-alias"}, "123456789012", "us-east-1")
 	if p.RoleName != "my-role" || p.AliasName != "my-alias" {
 		t.Errorf("overrides not applied: %+v", p)
 	}
 }
 
 func TestNewPromotePlanDefaultsAndS3(t *testing.T) {
-	p, err := NewPromotePlan(config.DeployConfig{BuildBucket: "bkt"}, "123456789012", "us-east-1",
+	p, err := NewPromotePlan(naming.Default, config.DeployConfig{BuildBucket: "bkt"}, "123456789012", "us-east-1",
 		"v1.2.3", "arn:aws:iam::123456789012:role/fabrica-deploy", "alias-1", "", "")
 	if err != nil {
 		t.Fatalf("NewPromotePlan: %v", err)
@@ -63,7 +65,7 @@ func TestNewPromotePlanDefaultsAndS3(t *testing.T) {
 }
 
 func TestNewPromotePlanExplicitS3(t *testing.T) {
-	p, err := NewPromotePlan(config.DeployConfig{}, "123456789012", "us-east-1",
+	p, err := NewPromotePlan(naming.Default, config.DeployConfig{}, "123456789012", "us-east-1",
 		"v1", "arn:role", "alias-1", "other-bucket", "custom/key.zip")
 	if err != nil {
 		t.Fatalf("NewPromotePlan: %v", err)
@@ -74,7 +76,7 @@ func TestNewPromotePlanExplicitS3(t *testing.T) {
 }
 
 func TestNewPromotePlanAllowedCIDROverride(t *testing.T) {
-	p, err := NewPromotePlan(config.DeployConfig{AllowedCIDR: "10.0.0.0/8"}, "123456789012", "us-east-1",
+	p, err := NewPromotePlan(naming.Default, config.DeployConfig{AllowedCIDR: "10.0.0.0/8"}, "123456789012", "us-east-1",
 		"v1", "arn:role", "alias-1", "", "")
 	if err != nil {
 		t.Fatalf("NewPromotePlan: %v", err)
@@ -86,7 +88,7 @@ func TestNewPromotePlanAllowedCIDROverride(t *testing.T) {
 
 func TestNewPromotePlanInvalidAllowedCIDR(t *testing.T) {
 	for _, bad := range []string{"not-a-cidr", "0.0.0.0", "10.0.0.0/33"} {
-		if _, err := NewPromotePlan(config.DeployConfig{AllowedCIDR: bad}, "123456789012", "us-east-1",
+		if _, err := NewPromotePlan(naming.Default, config.DeployConfig{AllowedCIDR: bad}, "123456789012", "us-east-1",
 			"v1", "arn:role", "alias-1", "", ""); err == nil {
 			t.Errorf("NewPromotePlan(%q): expected error, got nil", bad)
 		}
@@ -96,7 +98,7 @@ func TestNewPromotePlanInvalidAllowedCIDR(t *testing.T) {
 func TestNewPromotePlanCapacityBounds(t *testing.T) {
 	// Desired count only: minimum stays 0, maximum falls back to desired so
 	// the fleet comes up exactly at the planned size.
-	p, err := NewPromotePlan(config.DeployConfig{BuildBucket: "bkt", DesiredInstances: 3}, "123456789012", "us-east-1",
+	p, err := NewPromotePlan(naming.Default, config.DeployConfig{BuildBucket: "bkt", DesiredInstances: 3}, "123456789012", "us-east-1",
 		"v1", "arn:role", "alias-1", "", "")
 	if err != nil {
 		t.Fatalf("NewPromotePlan: %v", err)
@@ -105,7 +107,7 @@ func TestNewPromotePlanCapacityBounds(t *testing.T) {
 		t.Errorf("bounds = %d/%d, want 0/3", p.MinimumInstances, p.MaximumInstances)
 	}
 
-	p, err = NewPromotePlan(config.DeployConfig{BuildBucket: "bkt", DesiredInstances: 2, MinimumInstances: 1, MaximumInstances: 4}, "123456789012", "us-east-1",
+	p, err = NewPromotePlan(naming.Default, config.DeployConfig{BuildBucket: "bkt", DesiredInstances: 2, MinimumInstances: 1, MaximumInstances: 4}, "123456789012", "us-east-1",
 		"v1", "arn:role", "alias-1", "", "")
 	if err != nil {
 		t.Fatalf("NewPromotePlan: %v", err)
@@ -128,7 +130,7 @@ func TestNewPromotePlanInvalidCapacityBounds(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := NewPromotePlan(tc.cfg, "123456789012", "us-east-1", "v1", "arn:role", "alias-1", "", "")
+			_, err := NewPromotePlan(naming.Default, tc.cfg, "123456789012", "us-east-1", "v1", "arn:role", "alias-1", "", "")
 			if err == nil {
 				t.Fatalf("NewPromotePlan(%s): expected error, got nil", tc.name)
 			}
@@ -142,5 +144,52 @@ func TestNewPromotePlanInvalidCapacityBounds(t *testing.T) {
 func TestFleetCostName(t *testing.T) {
 	if got := FleetCostName("c5.large", 2); got != "c5.largex2" {
 		t.Errorf("FleetCostName = %q", got)
+	}
+}
+
+func TestNamesFollowPrefix(t *testing.T) {
+	acme := naming.MustResolve("acme")
+	setup := NewSetupPlan(acme, config.DeployConfig{}, "123456789012", "us-east-1")
+	if setup.RoleName != "acme-deploy-gamelift" || setup.AliasName != "acme-deploy" {
+		t.Errorf("setup role/alias = %q/%q, want acme-deploy-gamelift/acme-deploy", setup.RoleName, setup.AliasName)
+	}
+	promote, err := NewPromotePlan(acme, config.DeployConfig{BuildBucket: "bkt"}, "123456789012", "us-east-1", "v1.2", "arn:role", "alias-1", "", "")
+	if err != nil {
+		t.Fatalf("NewPromotePlan: %v", err)
+	}
+	if promote.FleetName != "acme-fleet-v1-2" || promote.BuildName != "acme-build-v1-2" {
+		t.Errorf("fleet/build = %q/%q, want acme-fleet-v1-2/acme-build-v1-2", promote.FleetName, promote.BuildName)
+	}
+	if promote.RoleName != "acme-deploy-gamelift" {
+		t.Errorf("promote RoleName = %q, want acme-deploy-gamelift", promote.RoleName)
+	}
+}
+
+func TestRoleDesiredStateFollowsPrefix(t *testing.T) {
+	acme := naming.MustResolve("acme")
+	plan := NewSetupPlan(acme, config.DeployConfig{BuildBucket: "bkt"}, "123456789012", "us-east-1")
+	raw, err := RoleDesiredState(plan)
+	if err != nil {
+		t.Fatalf("RoleDesiredState: %v", err)
+	}
+	var doc struct {
+		RoleName string `json:"RoleName"`
+		Policies []struct {
+			PolicyName string `json:"PolicyName"`
+		} `json:"Policies"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal role: %v", err)
+	}
+	if doc.RoleName != "acme-deploy-gamelift" || len(doc.Policies) != 1 || doc.Policies[0].PolicyName != "acme-deploy-s3-read" {
+		t.Errorf("role = %+v, want acme-deploy-gamelift with acme-deploy-s3-read", doc)
+	}
+}
+
+func TestConfiguredRoleOverridesPrefix(t *testing.T) {
+	acme := naming.MustResolve("acme")
+	plan := NewSetupPlan(acme, config.DeployConfig{RoleName: "my-role"}, "123456789012", "us-east-1")
+	if plan.RoleName != "my-role" {
+		t.Errorf("RoleName = %q, want configured my-role", plan.RoleName)
 	}
 }

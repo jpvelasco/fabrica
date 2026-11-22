@@ -6,6 +6,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestResolveModulesDisabled(t *testing.T) {
@@ -33,7 +34,7 @@ func TestResolveModulesDefaultAndUnknown(t *testing.T) {
 
 func TestBuildExportAndCost(t *testing.T) {
 	cfg := config.OpsConfig{Enabled: true, Modules: []string{"horde", "perforce"}, LogRetentionDays: 14}
-	exp, err := BuildExport(cfg)
+	exp, err := BuildExport(naming.Default, cfg)
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -43,11 +44,11 @@ func TestBuildExportAndCost(t *testing.T) {
 	if exp.Hooks[0].LogGroup == "" || exp.Hooks[0].Alarm == "" {
 		t.Fatalf("hook incomplete: %+v", exp.Hooks[0])
 	}
-	res := CostResources(cfg)
+	res := CostResources(naming.Default, cfg)
 	if len(res) != 4 {
 		t.Fatalf("cost resources = %d, want 4: %+v", len(res), res)
 	}
-	if CostResources(config.OpsConfig{}) != nil {
+	if CostResources(naming.Default, config.OpsConfig{}) != nil {
 		t.Fatal("disabled ops should have no cost")
 	}
 	var sawLog, sawAlarm bool
@@ -75,7 +76,7 @@ func TestResolveModulesDedupAndCostError(t *testing.T) {
 	if len(got) != 2 || got[0] != "ci" || got[1] != "horde" {
 		t.Fatalf("dedup = %v", got)
 	}
-	if CostResources(config.OpsConfig{Enabled: true, Modules: []string{"mystery"}}) != nil {
+	if CostResources(naming.Default, config.OpsConfig{Enabled: true, Modules: []string{"mystery"}}) != nil {
 		t.Fatal("unknown module should yield no cost resources")
 	}
 }
@@ -83,5 +84,24 @@ func TestResolveModulesDedupAndCostError(t *testing.T) {
 func TestRetentionDefault(t *testing.T) {
 	if RetentionDays(config.OpsConfig{}) != DefaultLogRetentionDays {
 		t.Fatalf("default retention = %d", RetentionDays(config.OpsConfig{}))
+	}
+}
+
+func TestHooksFollowPrefix(t *testing.T) {
+	acme := naming.MustResolve("acme")
+	cfg := config.OpsConfig{Enabled: true, Modules: []string{"ci"}}
+	doc, err := BuildExport(acme, cfg)
+	if err != nil {
+		t.Fatalf("BuildExport: %v", err)
+	}
+	if len(doc.Hooks) != 1 {
+		t.Fatalf("hooks = %+v, want one ci hook", doc.Hooks)
+	}
+	if h := doc.Hooks[0]; h.LogGroup != "/acme/ci" || h.Alarm != "acme-ci-unhealthy" {
+		t.Errorf("hook = %+v, want /acme/ci and acme-ci-unhealthy", h)
+	}
+	res := CostResources(acme, cfg)
+	if len(res) != 2 || res[0].Name != "acme-ci-unhealthy" || res[1].Name != "/acme/ci" {
+		t.Errorf("cost resources = %+v, want acme-ci-unhealthy and /acme/ci", res)
 	}
 }

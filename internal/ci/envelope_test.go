@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jpvelasco/fabrica/internal/iamrole"
+	"github.com/jpvelasco/fabrica/internal/naming"
 )
 
 func TestNoInlinePolicyDocument(t *testing.T) {
@@ -30,7 +31,7 @@ func TestRoleDesiredState_MatchesRoleDocument(t *testing.T) {
 	if err := json.Unmarshal(gotRaw, &got); err != nil {
 		t.Fatalf("unmarshal got: %v", err)
 	}
-	wantRaw, err := iamrole.RoleDocument(plan.RoleName, iamrole.ServiceCodeBuild, nil, []map[string]any{iamrole.CICodeBuildInlinePolicy(plan.Region, plan.Account, plan.ProjectName)}, map[string]string{"FabricaModule": "ci"})
+	wantRaw, err := iamrole.RoleDocument(plan.RoleName, iamrole.ServiceCodeBuild, nil, []map[string]any{iamrole.CICodeBuildInlinePolicy(naming.Default, plan.Region, plan.Account, plan.ProjectName)}, map[string]string{"FabricaModule": "ci"})
 	if err != nil {
 		t.Fatalf("RoleDocument: %v", err)
 	}

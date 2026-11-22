@@ -244,3 +244,20 @@ func TestSetupPreservesFleetAndBuildRecords(t *testing.T) {
 			haveRole, haveAlias, haveBuild, haveFleet, m.Resources)
 	}
 }
+
+func TestSetupRejectsGatedNamePrefix(t *testing.T) {
+	var out bytes.Buffer
+	rt := baseRuntime()
+	rt.Config.Cloud.AWS.Identity.NamePrefix = "acme"
+	c := newTestCmd(rt, &out)
+	c.assumeYes = true
+	c.runtime.Provider = &testutil.TestProvider{}
+	c.createResource = func(context.Context, *cloud.Resource) error {
+		t.Error("role or alias created before the prefix gate")
+		return nil
+	}
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "#705") {
+		t.Fatalf("err = %v, want the #705 gate error", err)
+	}
+}
