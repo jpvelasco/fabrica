@@ -61,8 +61,6 @@ Set the resulting AMI as `horde.agents.amiId` in `fabrica.yaml`.
 
 ---
 
-## Manual bake (reference)
-
 ## Requirements
 
 The AMI must meet all of the following:
