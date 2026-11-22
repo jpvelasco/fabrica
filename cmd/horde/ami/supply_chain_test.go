@@ -161,6 +161,8 @@ func TestBakeInstallScriptsParseAsBash(t *testing.T) {
 		"awsCliVerifiedInstall": awsCliVerifiedInstallScript(),
 		"awsCliPresenceCheck":   awsCliPresenceCheckScript(),
 		"dockerBake":            dockerBakeScript("5.8.0"),
+		"agentBake":             agentBakeScript(testAgentArtifact, testAgentSHA),
+		"agentValidate":         agentValidateScript(),
 	}
 	dir := t.TempDir()
 	for name, body := range scripts {

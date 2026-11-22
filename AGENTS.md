@@ -268,6 +268,7 @@ git config core.hooksPath .githooks
 
 ### Horde
 - **AMI-first provisioning** — AMI must contain MongoDB 7, Redis 6.2, and the Horde server binary. See `docs/horde-ami.md`.
+- **Agent AMI generator (#701)** — `horde ami build --role agent` (requires `--install native`, `--agent-artifact s3://…tar.gz`, `--agent-sha256`) renders the agent component, recipe, and Packer block under `cmd/horde/ami/` (`agent_bake.go`, `agent-component.yaml.tmpl`). The bake contract (marker `/etc/horde/fabrica-native-agent-contract`, unit `horde-agent.service`, writable paths) must match `internal/horde/agents_userdata.go`. `TestCoordinatorRenderHasNoAgentContent` in `agent_test.go` keeps agent content out of the coordinator output. See `docs/horde-agent-ami.md`.
 - **No credentials in UserData** — MongoDB password is written to `.fabrica/horde-credentials.yaml` (mode 0600) only.
 - **Root volume encrypted at launch (#513)** — `horde create` inspects `horde.amiId`'s root device via `cloud.ImageInspector` and maps exactly that device with `Encrypted=true` (the root keeps its existing `DeleteOnTermination=false` behavior, so terminating the coordinator leaves its data volume); a provider that cannot inspect AMIs, an inspect error, a missing or malformed root device name, or a non-EBS root fails create before anything is written. The device name is recorded on the instance as `Properties.rootDevice` for `drift --fix` rebuilds. No `KmsKeyId` is set, so EBS uses the account's default key.
 - **Ports** — 5000 (HTTP/web UI), 5002 (gRPC for agents). Status probes port 5000 only.
