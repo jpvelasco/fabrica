@@ -217,6 +217,13 @@ func newCobraHTTPRuntime(provider cloud.Provider, port int) globals.RuntimeSourc
 // REST API: POST /api/v1/jobs returns jobID, every status GET returns state.
 func startFakeHordeServer(t *testing.T, jobID, state string) (host string, port int) {
 	t.Helper()
+	return startFakeHordeServerBody(t, jobID, fmt.Sprintf(`{"state":%q}`, state))
+}
+
+// startFakeHordeServerBody is startFakeHordeServer with the raw
+// GET /api/v1/jobs/{id} JSON, so a test can report batches and steps.
+func startFakeHordeServerBody(t *testing.T, jobID, statusBody string) (host string, port int) {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/jobs" {
 			w.WriteHeader(http.StatusOK)
@@ -224,7 +231,7 @@ func startFakeHordeServer(t *testing.T, jobID, state string) (host string, port 
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"state":%q}`, state)
+		fmt.Fprint(w, statusBody)
 	}))
 	t.Cleanup(srv.Close)
 	host, portStr, err := net.SplitHostPort(srv.Listener.Addr().String())
@@ -263,6 +270,26 @@ func TestSubmitCobraWaitCompleteExitZero(t *testing.T) {
 	}
 	testutil.AssertContains(t, got, "cobra-wait-job")
 	testutil.AssertContains(t, got, "Complete")
+}
+
+// TestSubmitCobraWaitFailedStepExitsNonZero verifies the command-level exit
+// status for a job that reports Complete while a step failed: ExecuteContext
+// returns an error that names the job, the failed step, and the dashboard link.
+func TestSubmitCobraWaitFailedStepExitsNonZero(t *testing.T) {
+	const body = `{"state":"Complete","batches":[{"state":"Complete","error":"None","steps":[{"name":"Compile","state":"Completed","outcome":"Failure"}]}]}`
+	host, port := startFakeHordeServerBody(t, "cobra-failed-job", body)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, submitProvisionedStateJSON())
+
+	got, err := runSubmit(t, newCobraHTTPRuntime(cobraHTTPProvider(host), port), "--wait", writeTempBuildGraph(t))
+	if err == nil {
+		t.Fatal("expected non-zero exit for a completed job with a failed step")
+	}
+	testutil.AssertContains(t, err.Error(), "cobra-failed-job")
+	testutil.AssertContains(t, err.Error(), "step Compile: Completed/Failure")
+	testutil.AssertContains(t, err.Error(), "/job/cobra-failed-job")
+	testutil.AssertContains(t, got, "Job cobra-failed-job: Complete")
 }
 
 // TestSubmitCobraUnknownStateExitNonZero verifies the command-level exit

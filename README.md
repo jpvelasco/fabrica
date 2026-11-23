@@ -322,7 +322,7 @@ POSTs a job to the recorded Horde endpoint (private IP for HTTP; configured DNS 
 --change N      Perforce changelist to build (overrides horde.change; 0 lets Horde pick the latest)
 --name NAME     Job name shown in the Horde web UI (default: the BuildGraph agent name)
 --target NAME   Run this <Aggregate> or <Node> name instead of the default (warns if the name is not in the file)
---wait          Poll until the job completes (exits non-zero if the job state is not recognised, the wait times out, or polling is cancelled)
+--wait          Poll until the job completes. Exits non-zero when any step fails or any batch errors, the job state is not recognised, the wait times out, or polling is cancelled
 --dry-run       Preview the request JSON, the target and why, and the coordinator address without submitting
 ```
 
