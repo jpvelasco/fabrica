@@ -18,6 +18,16 @@ func VPCResolver(p cloud.Provider) cloud.VPCResolver {
 	return nil
 }
 
+// NetworkInspector returns the provider's network inspector, or nil when the
+// provider cannot inspect VPC placement. Preflight treats nil as a warning,
+// never a block.
+func NetworkInspector(p cloud.Provider) cloud.NetworkInspector {
+	if ni, ok := p.(cloud.NetworkInspector); ok {
+		return ni
+	}
+	return nil
+}
+
 // VolumeTagger returns the provider's EBS volume tagger, or nil when it does
 // not implement cloud.VolumeTagger. Instance create steps use it in PostCreate
 // to tag BlockDeviceMapping volumes, which Cloud Control cannot tag at creation.

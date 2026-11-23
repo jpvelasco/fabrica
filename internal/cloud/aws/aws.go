@@ -78,6 +78,7 @@ var _ fabricac.ImageInspector = (*awsProvider)(nil)
 var _ fabricac.VPCResolver = (*awsProvider)(nil)
 var _ fabricac.VPCCIDRResolver = (*awsProvider)(nil)
 var _ fabricac.RegionProvider = (*awsProvider)(nil)
+var _ fabricac.NetworkInspector = (*awsProvider)(nil)
 
 // TagInstanceVolumes delegates to the EC2 service so *awsProvider satisfies
 // cloud.VolumeTagger — create flows assert the capability on the provider,
@@ -189,6 +190,17 @@ func (p *awsProvider) ResolveDefaultVPC(ctx context.Context) (string, string, er
 // cloud.VPCCIDRResolver interface so that type assertions in module commands work.
 func (p *awsProvider) ResolveVPCCIDR(ctx context.Context, vpcID string) (string, error) {
 	return p.ec2.ResolveVPCCIDR(ctx, vpcID)
+}
+
+// BlockPublicAccess delegates to the EC2 service so *awsProvider satisfies
+// cloud.NetworkInspector; preflight asserts the capability on the provider.
+func (p *awsProvider) BlockPublicAccess(ctx context.Context) (fabricac.BPAStatus, error) {
+	return p.ec2.BlockPublicAccess(ctx)
+}
+
+// SubnetEgress delegates to the EC2 service (see BlockPublicAccess).
+func (p *awsProvider) SubnetEgress(ctx context.Context, subnetID string) (fabricac.SubnetNetwork, error) {
+	return p.ec2.SubnetEgress(ctx, subnetID)
 }
 
 // WithRegion returns a RegionView bound to the given region, reusing the

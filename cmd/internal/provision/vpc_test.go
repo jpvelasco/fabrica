@@ -20,6 +20,9 @@ func TestVPCResolverFromProvider(t *testing.T) {
 	if got := VPCResolver(nil); got != nil {
 		t.Fatalf("VPCResolver(nil) = %v, want nil", got)
 	}
+	if got := NetworkInspector(&testutil.TestProvider{}); got != nil {
+		t.Fatalf("NetworkInspector(TestProvider) = %v, want nil", got)
+	}
 }
 
 // TestTagVolumesPostCreate verifies the hook tags via the provider tagger and
