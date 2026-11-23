@@ -20,7 +20,8 @@ var spec = teardown.Spec{
 	NotProvisioned: "Perforce is not provisioned. Nothing to destroy.",
 	PlanHeader:     "Perforce Helix Core — destroy plan",
 	DryRunHeader:   "Perforce Helix Core (destroy dry run)",
-	Irreversible: "IRREVERSIBLE: This deletes the Perforce instance, security group, IAM profile/role, and the admin password SecureString. " +
+	Irreversible: "IRREVERSIBLE: This deletes the Perforce instance, security group, the admin password SecureString, and the IAM profile/role Fabrica created. " +
+		"A perforce.instanceProfile you pre-created is referenced, not managed, so it and its role are kept. " +
 		"The data volume is retained (DeleteOnTermination=false) so local backups survive as an orphan EBS volume. " +
 		"S3 exports are not deleted. Delete backups explicitly if you intend a full purge.",
 	SuccessMessage: "Perforce Helix Core destroyed. Data volume (and any local backups on it) retained; S3 exports untouched.",
