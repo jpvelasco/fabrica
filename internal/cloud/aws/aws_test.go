@@ -238,3 +238,19 @@ func (stubEC2) DescribeInstances(context.Context, *ec2.DescribeInstancesInput, .
 func (stubEC2) DescribeSecurityGroupRules(context.Context, *ec2.DescribeSecurityGroupRulesInput, ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupRulesOutput, error) {
 	return &ec2.DescribeSecurityGroupRulesOutput{}, nil
 }
+
+func (stubEC2) DescribeVpcBlockPublicAccessOptions(context.Context, *ec2.DescribeVpcBlockPublicAccessOptionsInput, ...func(*ec2.Options)) (*ec2.DescribeVpcBlockPublicAccessOptionsOutput, error) {
+	return &ec2.DescribeVpcBlockPublicAccessOptionsOutput{}, nil
+}
+
+func (stubEC2) DescribeVpcBlockPublicAccessExclusions(context.Context, *ec2.DescribeVpcBlockPublicAccessExclusionsInput, ...func(*ec2.Options)) (*ec2.DescribeVpcBlockPublicAccessExclusionsOutput, error) {
+	return &ec2.DescribeVpcBlockPublicAccessExclusionsOutput{}, nil
+}
+
+func (stubEC2) DescribeRouteTables(context.Context, *ec2.DescribeRouteTablesInput, ...func(*ec2.Options)) (*ec2.DescribeRouteTablesOutput, error) {
+	return &ec2.DescribeRouteTablesOutput{}, nil
+}
+
+func (stubEC2) DescribeVpcEndpoints(context.Context, *ec2.DescribeVpcEndpointsInput, ...func(*ec2.Options)) (*ec2.DescribeVpcEndpointsOutput, error) {
+	return &ec2.DescribeVpcEndpointsOutput{}, nil
+}
