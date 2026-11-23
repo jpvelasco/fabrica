@@ -18,7 +18,7 @@ import (
 // The interface lives here (not in internal/) because only submit needs it in V1.
 type HordeClient interface {
 	SubmitJob(ctx context.Context, req horde.CreateJobRequest) (jobID string, err error)
-	GetJobStatus(ctx context.Context, jobID string) (state string, err error)
+	GetJobStatus(ctx context.Context, jobID string) (horde.JobStatus, error)
 }
 
 // hordeHTTPTimeout bounds every Horde API request. Without it a server that
@@ -130,10 +130,10 @@ func (c *hordeHTTPClient) jobsRouteMissing(ctx context.Context) bool {
 	return resp.StatusCode == http.StatusNotFound
 }
 
-func (c *hordeHTTPClient) GetJobStatus(ctx context.Context, jobID string) (string, error) {
+func (c *hordeHTTPClient) GetJobStatus(ctx context.Context, jobID string) (horde.JobStatus, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/jobs/"+jobID, nil)
 	if err != nil {
-		return "", fmt.Errorf("building request: %w", err)
+		return horde.JobStatus{}, fmt.Errorf("building request: %w", err)
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "ServiceAccount "+c.token)
@@ -141,24 +141,22 @@ func (c *hordeHTTPClient) GetJobStatus(ctx context.Context, jobID string) (strin
 
 	resp, err := c.http.Do(req) //nolint:gosec // URL sourced from provisioned instance state, not user input
 	if err != nil {
-		return "", fmt.Errorf("connecting to Horde at %s: %w", c.baseURL, err)
+		return horde.JobStatus{}, fmt.Errorf("connecting to Horde at %s: %w", c.baseURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", fmt.Errorf("Horde returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
+		return horde.JobStatus{}, fmt.Errorf("Horde returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
 	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("reading response: %w", err)
+		return horde.JobStatus{}, fmt.Errorf("reading response: %w", err)
 	}
-	var result struct {
-		State string `json:"state"`
+	var status horde.JobStatus
+	if err := json.Unmarshal(data, &status); err != nil {
+		return horde.JobStatus{}, fmt.Errorf("parsing response: %w", err)
 	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return "", fmt.Errorf("parsing response: %w", err)
-	}
-	return result.State, nil
+	return status, nil
 }

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,7 +25,7 @@ import (
 type fakeHordeClient struct {
 	submitErr   error
 	submitJobID string
-	statusMap   map[string]string
+	statusMap   map[string]horde.JobStatus
 	statusErr   error
 	submitCalls int
 	statusCalls int
@@ -43,15 +44,15 @@ func (f *fakeHordeClient) SubmitJob(_ context.Context, req horde.CreateJobReques
 	return f.submitJobID, nil
 }
 
-func (f *fakeHordeClient) GetJobStatus(_ context.Context, jobID string) (string, error) {
+func (f *fakeHordeClient) GetJobStatus(_ context.Context, jobID string) (horde.JobStatus, error) {
 	f.statusCalls++
 	if f.statusErr != nil {
-		return "", f.statusErr
+		return horde.JobStatus{}, f.statusErr
 	}
 	if s, ok := f.statusMap[jobID]; ok {
 		return s, nil
 	}
-	return "Waiting", nil
+	return horde.JobStatus{State: horde.JobStateWaiting}, nil
 }
 
 func writeTempBuildGraph(t *testing.T) string {
@@ -213,7 +214,7 @@ func TestSubmitWaitPollsUntilComplete(t *testing.T) {
 	callCount := 0
 	seqClient := &sequentialFakeClient{
 		submitJobID: "job-wait-001",
-		statusSeq:   []string{"Waiting", "Running", "Complete"},
+		statusSeq:   []horde.JobStatus{{State: "Waiting"}, {State: "Running"}, {State: "Complete"}},
 		idx:         &callCount,
 	}
 	c := newTestCommand(&out, seqClient, st)
@@ -308,10 +309,135 @@ func TestSubmitReadStateError(t *testing.T) {
 	assert.Contains(t, err.Error(), "reading state")
 }
 
+// TestSubmitWaitCompleteWithFailedStepFails verifies a job that reports
+// Complete but has a failed step fails --wait instead of reporting success.
+func TestSubmitWaitCompleteWithFailedStepFails(t *testing.T) {
+	var out bytes.Buffer
+	st := hordeProvisionedState()
+	client := &fakeHordeClient{
+		submitJobID: "job-failed",
+		statusMap: map[string]horde.JobStatus{"job-failed": {
+			State: horde.JobStateComplete,
+			Batches: []horde.JobBatch{{Steps: []horde.JobStep{
+				{Name: "Compile", State: horde.JobStepStateCompleted, Outcome: horde.JobStepOutcomeFailure},
+			}}},
+		}},
+	}
+	c := newTestCommand(&out, client, st)
+	c.buildGraphPath = writeTempBuildGraph(t)
+	c.wait = true
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error for a completed job with a failed step")
+	}
+	assert.Contains(t, err.Error(), "job job-failed")
+	assert.Contains(t, err.Error(), "step Compile: Completed/Failure")
+	assert.Contains(t, out.String(), "Job job-failed: Complete")
+	if client.statusCalls != 1 {
+		t.Errorf("statusCalls = %d, want 1 (Complete stops polling)", client.statusCalls)
+	}
+}
+
+// TestSubmitWaitWarningsAreReported verifies warnings print and the job still
+// succeeds.
+func TestSubmitWaitWarningsAreReported(t *testing.T) {
+	var out bytes.Buffer
+	st := hordeProvisionedState()
+	client := &fakeHordeClient{
+		submitJobID: "job-warn",
+		statusMap: map[string]horde.JobStatus{"job-warn": {
+			State: horde.JobStateComplete,
+			Batches: []horde.JobBatch{{Steps: []horde.JobStep{
+				{Name: "Cook", State: horde.JobStepStateCompleted, Outcome: horde.JobStepOutcomeWarnings},
+			}}},
+		}},
+	}
+	c := newTestCommand(&out, client, st)
+	c.buildGraphPath = writeTempBuildGraph(t)
+	c.wait = true
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	assert.Contains(t, out.String(), "Warning: job job-warn: step Cook finished with warnings")
+}
+
+// TestSubmitWaitNoAgentsNamesAgentsHint verifies a batch with no online agent
+// fails and points at the agents commands.
+func TestSubmitWaitNoAgentsNamesAgentsHint(t *testing.T) {
+	var out bytes.Buffer
+	st := hordeProvisionedState()
+	client := &fakeHordeClient{
+		submitJobID: "job-noagents",
+		statusMap: map[string]horde.JobStatus{"job-noagents": {
+			State:   horde.JobStateComplete,
+			Batches: []horde.JobBatch{{Error: horde.JobBatchErrorNoAgentsOnline, AgentID: "agent-9"}},
+		}},
+	}
+	c := newTestCommand(&out, client, st)
+	c.buildGraphPath = writeTempBuildGraph(t)
+	c.wait = true
+
+	err := c.run(context.Background())
+	if err == nil {
+		t.Fatal("expected error for a batch with no online agent")
+	}
+	assert.Contains(t, err.Error(), "batch (agent agent-9): NoAgentsOnline")
+	assert.Contains(t, err.Error(), "fabrica horde agents approve")
+}
+
+// TestJobFailedErrorCapsListedFailures verifies at most MaxListedFailures items
+// are named, the remainder is counted, and a coordinator URL builds the
+// dashboard link.
+func TestJobFailedErrorCapsListedFailures(t *testing.T) {
+	var steps []horde.JobStep
+	for i := range 12 {
+		steps = append(steps, horde.JobStep{Name: fmt.Sprintf("s%02d", i), State: horde.JobStepStateAborted})
+	}
+	outcome := horde.EvaluateCompleted(horde.JobStatus{State: horde.JobStateComplete, Batches: []horde.JobBatch{{Steps: steps}}})
+
+	err := jobFailedError("job-cap", "http://10.0.1.42:5000", outcome)
+	assert.Contains(t, err.Error(), "failing item(s)")
+	assert.Contains(t, err.Error(), "step s09: Aborted/")
+	assert.Contains(t, err.Error(), "; and 2 more")
+	assert.Contains(t, err.Error(), "http://10.0.1.42:5000/job/job-cap")
+	if strings.Contains(err.Error(), "step s10") {
+		t.Errorf("error lists item beyond the cap: %v", err)
+	}
+}
+
+// TestHordeHTTPClientGetJobStatusDecodesBatches verifies the client decodes
+// Horde's camelCase JSON with string enums into the batch and step fields.
+func TestHordeHTTPClientGetJobStatusDecodesBatches(t *testing.T) {
+	const body = `{"state":"Complete","batches":[{"state":"Complete","error":"NoLongerNeeded","agentType":"Linux","agentId":"agent-3","steps":[{"name":"Compile","state":"Completed","outcome":"Warnings"},{"name":"Cook","state":"Aborted"}]}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	client := newHordeHTTPClient(srv.URL, "")
+	status, err := client.GetJobStatus(context.Background(), "job-decode")
+	if err != nil {
+		t.Fatalf("GetJobStatus: %v", err)
+	}
+	if status.State != horde.JobStateComplete || len(status.Batches) != 1 {
+		t.Fatalf("status = %+v, want Complete with one batch", status)
+	}
+	b := status.Batches[0]
+	if b.Error != horde.JobBatchErrorNoLongerNeeded || b.AgentID != "agent-3" || b.AgentType != "Linux" {
+		t.Errorf("batch = %+v, want NoLongerNeeded on agent-3", b)
+	}
+	if len(b.Steps) != 2 || b.Steps[0].Outcome != horde.JobStepOutcomeWarnings || b.Steps[1].State != horde.JobStepStateAborted {
+		t.Errorf("steps = %+v, want Warnings outcome then Aborted state", b.Steps)
+	}
+}
+
 // sequentialFakeClient returns status values in sequence.
 type sequentialFakeClient struct {
 	submitJobID string
-	statusSeq   []string
+	statusSeq   []horde.JobStatus
 	idx         *int
 }
 
@@ -319,7 +445,7 @@ func (f *sequentialFakeClient) SubmitJob(_ context.Context, _ horde.CreateJobReq
 	return f.submitJobID, nil
 }
 
-func (f *sequentialFakeClient) GetJobStatus(_ context.Context, _ string) (string, error) {
+func (f *sequentialFakeClient) GetJobStatus(_ context.Context, _ string) (horde.JobStatus, error) {
 	i := *f.idx
 	*f.idx++
 	if i >= len(f.statusSeq) {
@@ -414,7 +540,7 @@ func TestSubmitWaitUnknownState(t *testing.T) {
 	st := hordeProvisionedState()
 	client := &fakeHordeClient{
 		submitJobID: "job-err-state",
-		statusMap:   map[string]string{"job-err-state": "Failed"},
+		statusMap:   map[string]horde.JobStatus{"job-err-state": {State: "Failed"}},
 	}
 	c := newTestCommand(&out, client, st)
 	c.buildGraphPath = writeTempBuildGraph(t)
@@ -712,12 +838,12 @@ func TestHordeHTTPClientGetJobStatusSuccess(t *testing.T) {
 	defer srv.Close()
 
 	client := newHordeHTTPClient(srv.URL, "")
-	state, err := client.GetJobStatus(context.Background(), "job-123")
+	status, err := client.GetJobStatus(context.Background(), "job-123")
 	if err != nil {
 		t.Fatalf("GetJobStatus: %v", err)
 	}
-	if state != "Complete" {
-		t.Errorf("state = %q, want complete", state)
+	if status.State != "Complete" {
+		t.Errorf("state = %q, want Complete", status.State)
 	}
 }
 
