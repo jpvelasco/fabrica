@@ -317,7 +317,7 @@ type cobraFakeProvider struct {
 	tableDeleteCalls  int
 }
 
-func (f *cobraFakeProvider) DeleteStateBucket(_ context.Context, bucket string) (cloud.StateBackendDeleteResult, error) {
+func (f *cobraFakeProvider) DeleteStateBucket(_ context.Context, bucket string, _ cloud.StateBucketDeleteSpec) (cloud.StateBackendDeleteResult, error) {
 	f.bucketDeleteCalls++
 	f.deletedBucket = true
 	return cloud.StateBackendDeleteResult{Identifier: bucket, Deleted: true}, nil

@@ -22,9 +22,16 @@ type StateBackendDeleteResult struct {
 	Missing    bool
 }
 
+// StateBucketDeleteSpec names the objects Fabrica itself writes to a state
+// bucket. DeleteStateBucket purges every version and delete marker of exactly
+// these keys before deleting the bucket; any other key refuses the delete.
+type StateBucketDeleteSpec struct {
+	OwnedKeys []string
+}
+
 // StateBackendDestroyer deletes the storage primitives used by Fabrica state.
 type StateBackendDestroyer interface {
-	DeleteStateBucket(ctx context.Context, bucket string) (StateBackendDeleteResult, error)
+	DeleteStateBucket(ctx context.Context, bucket string, spec StateBucketDeleteSpec) (StateBackendDeleteResult, error)
 	DeleteStateLockTable(ctx context.Context, table string) (StateBackendDeleteResult, error)
 }
 

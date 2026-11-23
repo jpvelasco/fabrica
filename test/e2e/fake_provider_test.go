@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -406,9 +407,27 @@ func (p *fakeProvider) StateLockTableExists(_ context.Context, table string) (bo
 
 // --- StateBackendDestroyer ---
 
-func (p *fakeProvider) DeleteStateBucket(_ context.Context, bucket string) (cloud.StateBackendDeleteResult, error) {
+// DeleteStateBucket models the AWS purge: a bucket holding any document whose
+// key is not in spec.OwnedKeys is refused before anything is deleted.
+func (p *fakeProvider) DeleteStateBucket(_ context.Context, bucket string, spec cloud.StateBucketDeleteSpec) (cloud.StateBackendDeleteResult, error) {
 	p.store.mu.Lock()
 	defer p.store.mu.Unlock()
+	var owned, foreign []string
+	for doc := range p.store.stateDocs {
+		if key, ok := strings.CutPrefix(doc, bucket+"/"); ok {
+			if slices.Contains(spec.OwnedKeys, key) {
+				owned = append(owned, doc)
+			} else {
+				foreign = append(foreign, key)
+			}
+		}
+	}
+	if len(foreign) > 0 {
+		return cloud.StateBackendDeleteResult{Identifier: bucket}, fmt.Errorf("state bucket %s holds %s, which Fabrica did not write; nothing was deleted: move or delete it, then re-run destroy --all", bucket, strings.Join(foreign, ", "))
+	}
+	for _, doc := range owned {
+		delete(p.store.stateDocs, doc)
+	}
 	existed := p.store.buckets[bucket]
 	delete(p.store.buckets, bucket)
 	delete(p.store.bucketTags, bucket)

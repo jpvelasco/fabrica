@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -36,6 +38,8 @@ type stateBackendS3Client interface {
 	PutPublicAccessBlock(context.Context, *s3.PutPublicAccessBlockInput, ...func(*s3.Options)) (*s3.PutPublicAccessBlockOutput, error)
 	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	ListObjectVersions(context.Context, *s3.ListObjectVersionsInput, ...func(*s3.Options)) (*s3.ListObjectVersionsOutput, error)
+	DeleteObjects(context.Context, *s3.DeleteObjectsInput, ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error)
 }
 
 type stateBackendDynamoDBClient interface {
@@ -112,7 +116,10 @@ func (p *awsProvider) StateLockTableExists(ctx context.Context, table string) (b
 	return true, nil
 }
 
-func (p *awsProvider) DeleteStateBucket(ctx context.Context, bucket string) (fabricac.StateBackendDeleteResult, error) {
+// DeleteStateBucket purges the bucket's Fabrica-owned versions and then deletes
+// it. A bucket holding any key outside spec.OwnedKeys is refused before any
+// object is deleted.
+func (p *awsProvider) DeleteStateBucket(ctx context.Context, bucket string, spec fabricac.StateBucketDeleteSpec) (fabricac.StateBackendDeleteResult, error) {
 	result := fabricac.StateBackendDeleteResult{Identifier: bucket}
 	cfg, err := p.stateBackendConfig(ctx)
 	if err != nil {
@@ -123,6 +130,14 @@ func (p *awsProvider) DeleteStateBucket(ctx context.Context, bucket string) (fab
 	defer cancel()
 
 	client := p.s3StateClient(cfg)
+	if err := purgeOwnedVersions(ctx, client, bucket, spec.OwnedKeys); err != nil {
+		if isNoSuchBucket(err) {
+			result.Missing = true
+			return result, nil
+		}
+		return result, err
+	}
+
 	_, err = client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)})
 	if err != nil {
 		var apiErr smithy.APIError
@@ -145,6 +160,46 @@ func (p *awsProvider) DeleteStateBucket(ctx context.Context, bucket string) (fab
 
 	result.Deleted = true
 	return result, nil
+}
+
+// foreignKeyNamesShown caps how many foreign keys a refusal names.
+const foreignKeyNamesShown = 10
+
+// purgeOwnedVersions deletes every version and delete marker in the bucket,
+// but only when every listed key is one of ownedKeys. It lists the whole
+// bucket first, so a single foreign key refuses the purge before anything is
+// deleted.
+func purgeOwnedVersions(ctx context.Context, client purgeS3Client, bucket string, ownedKeys []string) error {
+	objects, err := listAllVersions(ctx, client, bucket)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]bool)
+	var foreign []string
+	for _, o := range objects {
+		k := aws.ToString(o.Key)
+		if !slices.Contains(ownedKeys, k) && !seen[k] {
+			seen[k] = true
+			foreign = append(foreign, k)
+		}
+	}
+	if len(foreign) > 0 {
+		return foreignKeysError(bucket, foreign)
+	}
+	return deleteObjectBatches(ctx, client, bucket, objects)
+}
+
+// foreignKeysError names up to foreignKeyNamesShown foreign keys and the total
+// count, and says what the operator must do before the destroy can continue.
+func foreignKeysError(bucket string, foreign []string) error {
+	shown := foreign
+	more := ""
+	if len(foreign) > foreignKeyNamesShown {
+		shown = foreign[:foreignKeyNamesShown]
+		more = fmt.Sprintf(" and %d more", len(foreign)-foreignKeyNamesShown)
+	}
+	return fmt.Errorf("state bucket %s holds %d object key(s) Fabrica did not write (%s%s); nothing was deleted: move or delete those objects yourself, then re-run 'fabrica destroy --all'",
+		bucket, len(foreign), strings.Join(shown, ", "), more)
 }
 
 func (p *awsProvider) DeleteStateLockTable(ctx context.Context, table string) (fabricac.StateBackendDeleteResult, error) {

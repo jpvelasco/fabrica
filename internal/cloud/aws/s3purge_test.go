@@ -48,7 +48,9 @@ func TestPurgeBucketDeletesVersionsAndMarkers(t *testing.T) {
 	fake := &fakePurgeS3Client{
 		pages: []s3.ListObjectVersionsOutput{
 			{
-				IsTruncated: awssdk.Bool(true),
+				IsTruncated:         awssdk.Bool(true),
+				NextKeyMarker:       awssdk.String("k2"),
+				NextVersionIdMarker: awssdk.String("v2"),
 				Versions: []s3types.ObjectVersion{
 					{Key: awssdk.String("k1"), VersionId: awssdk.String("v1")},
 					{Key: awssdk.String("k2"), VersionId: awssdk.String("v2")},
@@ -82,6 +84,22 @@ func TestPurgeBucketDeletesVersionsAndMarkers(t *testing.T) {
 		if awssdk.ToString(o.Key) == "" || awssdk.ToString(o.VersionId) == "" {
 			t.Errorf("object identifier missing key/version: %+v", o)
 		}
+	}
+}
+
+func TestListAllVersionsTruncatedWithoutMarkerFails(t *testing.T) {
+	fake := &fakePurgeS3Client{
+		pages: []s3.ListObjectVersionsOutput{
+			{IsTruncated: awssdk.Bool(true), Versions: []s3types.ObjectVersion{{Key: awssdk.String("k1"), VersionId: awssdk.String("v1")}}},
+		},
+	}
+	_, err := listAllVersions(context.Background(), fake, "store-bucket")
+	if err == nil {
+		t.Fatal("expected error for a truncated listing with no continuation marker")
+	}
+	assertStringContains(t, err.Error(), "continuation marker")
+	if fake.calls != 1 {
+		t.Errorf("ListObjectVersions calls = %d, want 1 (must not loop on an unadvanceable listing)", fake.calls)
 	}
 }
 
@@ -220,7 +238,9 @@ func TestPurgeBucketTruncatedListWithPersistentFailure(t *testing.T) {
 	fake := &fakePurgeS3Client{
 		pages: []s3.ListObjectVersionsOutput{
 			{
-				IsTruncated: awssdk.Bool(true),
+				IsTruncated:         awssdk.Bool(true),
+				NextKeyMarker:       awssdk.String("locked"),
+				NextVersionIdMarker: awssdk.String("v1"),
 				Versions: []s3types.ObjectVersion{
 					{Key: awssdk.String("locked"), VersionId: awssdk.String("v1")},
 				},

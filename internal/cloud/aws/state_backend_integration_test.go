@@ -70,7 +70,7 @@ func TestIntegrationStateBackend(t *testing.T) {
 		// Best-effort cleanup only for components created by this invocation.
 		// The bucket holds no objects, so no empty step is needed.
 		if bucketCreated {
-			_, _ = destroyer.DeleteStateBucket(context.Background(), bucket)
+			_, _ = destroyer.DeleteStateBucket(context.Background(), bucket, fabricac.StateBucketDeleteSpec{OwnedKeys: []string{"state.json"}})
 		}
 		if tableCreated {
 			_, _ = destroyer.DeleteStateLockTable(context.Background(), table)
