@@ -34,11 +34,15 @@ var (
 		fingerprint: "E58830201F7DD82CD808AA84160D26BB1785BA38",
 		suite:       "https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse",
 	}
-	microsoftAptRepo = aptRepo{
-		name:        "microsoft-prod",
-		keyURL:      "https://packages.microsoft.com/keys/microsoft.asc",
-		fingerprint: "BC528686B50D79E339D3721CEB3E94ADBE1229CF",
-		suite:       "https://packages.microsoft.com/ubuntu/22.04/prod jammy main",
+	// dotnetBackportsAptRepo is Canonical's ppa:dotnet/backports, the only apt
+	// source that carries .NET 10 for jammy (Microsoft's feed stops at 8.0 for
+	// this base). The key is the "Launchpad PPA for .NET @ Canonical" signing
+	// key, fetched from the keyserver by its public key ID.
+	dotnetBackportsAptRepo = aptRepo{
+		name:        "dotnet-backports",
+		keyURL:      "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x45A3F127159BE9E5017811C62125B164E8E5D3FA",
+		fingerprint: "45A3F127159BE9E5017811C62125B164E8E5D3FA",
+		suite:       "https://ppa.launchpadcontent.net/dotnet/backports/ubuntu ${VERSION_CODENAME} main",
 	}
 )
 
@@ -58,7 +62,7 @@ func (r aptRepo) setupScript() string {
 		"command -v gpg >/dev/null || { apt-get update -q && apt-get install -y gnupg; }",
 		"install -m 0755 -d /etc/apt/keyrings",
 		`key_file="$(mktemp)"`,
-		"curl -fsSL " + r.keyURL + ` -o "$key_file"`,
+		"curl -fsSL '" + r.keyURL + `' -o "$key_file"`,
 		pinnedKeyringCommands("$key_file", r.fingerprint, keyring),
 		`rm -f "$key_file"`,
 		". /etc/os-release",
@@ -75,11 +79,13 @@ systemctl enable docker
 usermod -aG docker ubuntu`
 }
 
-// dotnetInstallScript installs the .NET 8 SDK from Microsoft's signed repository.
-func dotnetInstallScript() string {
-	return microsoftAptRepo.setupScript() + `
+// dotnetRuntimeInstallScript installs the .NET 10 ASP.NET Core runtime from the
+// pinned backports PPA. The native coordinator bake (prebuilt server binaries)
+// and the stock agent bake (dotnet HordeAgent.dll) share this one owner.
+func dotnetRuntimeInstallScript() string {
+	return dotnetBackportsAptRepo.setupScript() + `
 apt-get update -q
-apt-get install -y dotnet-sdk-8.0`
+apt-get install -y aspnetcore-runtime-10.0`
 }
 
 // mongoDBInstallScript installs MongoDB 7.0 from MongoDB's signed repository.

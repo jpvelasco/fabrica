@@ -6,15 +6,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jpvelasco/fabrica/internal/assert"
 )
 
 // Independent copies of the pinned fingerprints: the tests assert the literal
 // values so a wrong constant in the generator cannot pass by matching itself.
 const (
-	testDockerKeyFPR    = "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
-	testMongoDBKeyFPR   = "E58830201F7DD82CD808AA84160D26BB1785BA38"
-	testMicrosoftKeyFPR = "BC528686B50D79E339D3721CEB3E94ADBE1229CF"
-	testAWSCliKeyFPR    = "FB5DB77FD5C118B80511ADA8A6310ACC4672475C"
+	testDockerKeyFPR  = "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+	testMongoDBKeyFPR = "E58830201F7DD82CD808AA84160D26BB1785BA38"
+	testDotNetKeyFPR  = "45A3F127159BE9E5017811C62125B164E8E5D3FA"
+	testAWSCliKeyFPR  = "FB5DB77FD5C118B80511ADA8A6310ACC4672475C"
 )
 
 func renderBakeTemplate(t *testing.T, tmpl, install string) string {
@@ -52,6 +54,8 @@ func TestBakesHaveNoPipeToShellOrUnverifiedDownloads(t *testing.T) {
 		"| bash",
 		"get.docker.com",
 		"packages-microsoft-prod.deb",
+		"packages.microsoft.com",
+		"dotnet-sdk-8.0",
 		"server-7.0.asc | gpg",
 		"--dearmor",
 	}
@@ -127,9 +131,9 @@ func TestBakeAptReposExportPinnedKeyring(t *testing.T) {
 			"https://download.docker.com/linux/ubuntu",
 		},
 		"native": {
-			"gpg --batch --quiet --export " + testMicrosoftKeyFPR + " >",
-			"signed-by=/etc/apt/keyrings/microsoft-prod.gpg",
-			"https://packages.microsoft.com/ubuntu/22.04/prod",
+			"gpg --batch --quiet --export " + testDotNetKeyFPR + " >",
+			"signed-by=/etc/apt/keyrings/dotnet-backports.gpg",
+			"https://ppa.launchpadcontent.net/dotnet/backports/ubuntu",
 			"gpg --batch --quiet --export " + testMongoDBKeyFPR + " >",
 			"signed-by=/etc/apt/keyrings/mongodb-server-7.0.gpg",
 			"https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0",
@@ -149,6 +153,22 @@ func TestBakeAptReposExportPinnedKeyring(t *testing.T) {
 	}
 }
 
+// The .NET runtime comes only from the pinned Canonical backports PPA: the
+// Microsoft feed has no .NET 10 for jammy and must not be mixed in.
+func TestDotNetRuntimeInstallPinsBackportsPPA(t *testing.T) {
+	s := dotnetRuntimeInstallScript()
+	for _, want := range []string{
+		"curl -fsSL 'https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x" + testDotNetKeyFPR + "' -o",
+		"gpg --batch --quiet --export " + testDotNetKeyFPR + " >",
+		"signed-by=/etc/apt/keyrings/dotnet-backports.gpg",
+		"https://ppa.launchpadcontent.net/dotnet/backports/ubuntu ${VERSION_CODENAME} main",
+		"apt-get install -y aspnetcore-runtime-10.0",
+	} {
+		assert.Contains(t, s, want)
+	}
+	assert.NoneOf(t, s, "packages.microsoft.com", "dotnet-sdk-8.0", "microsoft-prod", "| sh", "| bash")
+}
+
 func TestBakeInstallScriptsParseAsBash(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
@@ -156,7 +176,7 @@ func TestBakeInstallScriptsParseAsBash(t *testing.T) {
 	}
 	scripts := map[string]string{
 		"dockerInstall":         dockerInstallScript(),
-		"dotnetInstall":         dotnetInstallScript(),
+		"dotnetRuntimeInstall":  dotnetRuntimeInstallScript(),
 		"mongoDBInstall":        mongoDBInstallScript(),
 		"awsCliVerifiedInstall": awsCliVerifiedInstallScript(),
 		"awsCliPresenceCheck":   awsCliPresenceCheckScript(),

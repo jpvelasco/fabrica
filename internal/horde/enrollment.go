@@ -21,10 +21,10 @@ const (
 
 // Horde enrollment API field names. They are defined only here.
 //
-// These target Horde 5.8.4 (GET and POST /api/v1/enrollment) and were taken
-// from the issue author's working coordinator; they are NOT yet confirmed.
-// Pin them from a live 5.8.4 coordinator before release. The script matches
-// them case-insensitively, and an unexpected response shape fails loudly.
+// Pinned from the Horde 5.8.4 source: GET /api/v1/enrollment returns
+// {"agents":[{"key","hostName","description"}]} and POST takes
+// {"agents":[{"key","agentId?"}]}. The script matches the names
+// case-insensitively, and an unexpected response shape fails loudly.
 const (
 	enrollmentHostField   = "hostName"
 	enrollmentKeyField    = "key"
@@ -54,7 +54,9 @@ type EnrollmentReport struct {
 //
 // The script reads the Admin password on the coordinator into a 0600 file in
 // a private temp directory, logs in over loopback (see LoopbackTarget), and
-// lists pending enrollments. In approve mode it POSTs only the keys of the
+// lists pending enrollments. The login is POST /account/login/dashboard with
+// {"username","password"}, which answers 302 on success (pinned from the Horde
+// 5.8.4 source). In approve mode it POSTs only the keys of the
 // named hosts, all or nothing: every host must match exactly one pending
 // enrollment before anything is sent. JSON is handled with python3, not jq:
 // the coordinator bootstrap already requires python3 (the Admin account step

@@ -367,8 +367,11 @@ func TestRenderPackerTemplate_Native(t *testing.T) {
 	}
 
 	s := string(out)
-	if !strings.Contains(s, "dotnet-sdk-8.0") {
-		t.Error("native packer template should install .NET 8")
+	if !strings.Contains(s, "aspnetcore-runtime-10.0") {
+		t.Error("native packer template should install the .NET 10 ASP.NET Core runtime")
+	}
+	if strings.Contains(s, "dotnet-sdk-8.0") {
+		t.Error("native packer template must not install the .NET 8 SDK")
 	}
 	if !strings.Contains(s, "horde_source_dir") {
 		t.Error("native packer template should declare horde_source_dir variable")

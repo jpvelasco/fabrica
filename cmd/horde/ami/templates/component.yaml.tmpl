@@ -56,7 +56,7 @@ phases:
           commands:
             - |
               set -euo pipefail
-{{ indent 14 (dotnetInstall) }}
+{{ indent 14 (dotnetRuntimeInstall) }}
       - name: InstallMongoDB
         action: ExecuteBash
         inputs:

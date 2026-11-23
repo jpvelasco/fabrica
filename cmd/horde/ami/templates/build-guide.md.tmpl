@@ -13,8 +13,9 @@ or coordinator server.
 |--------------|------------------------------------------------------|--------------------------------------|
 | Ubuntu       | 22.04 LTS (jammy)                                    | —                                    |
 | AWS CLI v2   | `/usr/local/bin/aws` (verified present or installed) | —                                    |
-| libicu70     | runtime dependency of the agent                      | —                                    |
-| Horde agent  | `/opt/horde-agent`, root-owned, SHA-256 pinned       | `horde-agent` (enabled, not started) |
+| libicu70     | runtime dependency of the .NET runtime               | —                                    |
+| .NET 10      | `aspnetcore-runtime-10.0` (pinned dotnet backports PPA) | —                                 |
+| Horde agent  | `HordeAgent.zip` unzipped to `/opt/horde-agent`, root-owned, SHA-256 pinned | `horde-agent` (enabled, not started) |
 | Service user | `horde-agent` (nologin), home `/var/lib/horde-agent` | —                                    |
 
 The unit runs as `horde-agent` with `NoNewPrivileges=true` and `ProtectSystem=strict`.
@@ -72,20 +73,25 @@ Image Builder runs your component inside a managed pipeline and handles AMI hard
 
 ### Prerequisites (agent role)
 
-The bake fetches the agent from S3 and never contacts the coordinator. Fetch the
-tarball once, hash it, and stage it:
+The bake fetches the agent from S3 and never contacts the coordinator. Download the
+zip once, hash it, and stage it:
 
-1. Download the Linux x64 agent archive for Horde {{ .Version }} from the coordinator's
-   **Tools** page in the Horde web UI. This is the stock agent, not the server image.
+1. Download the stock agent package for Horde {{ .Version }} from your coordinator. This
+   is the agent, not the server image:
+   ```bash
+   curl https://<coordinator>/api/v1/agentsoftware/default/zip --output HordeAgent.zip -H "Authorization: Bearer <AUTH-TOKEN>"
+   ```
+   The token is on the coordinator's `/account` page ("Get agent software download token").
+   An unauthenticated coordinator needs no header.
 2. Compute its digest and keep the 64-character hash:
    ```bash
-   sha256sum horde-agent-linux-x64.tar.gz
+   sha256sum HordeAgent.zip
    ```
-3. Upload the tarball to a bucket the build can read:
+3. Upload the zip to a bucket the build can read:
    ```bash
-   aws s3 cp horde-agent-linux-x64.tar.gz s3://YOUR_BUCKET/horde/horde-agent-linux-x64.tar.gz
+   aws s3 cp HordeAgent.zip s3://YOUR_BUCKET/horde/HordeAgent.zip
    ```
-4. Build with `--agent-artifact s3://YOUR_BUCKET/horde/horde-agent-linux-x64.tar.gz --agent-sha256 <hash>`.
+4. Build with `--agent-artifact s3://YOUR_BUCKET/horde/HordeAgent.zip --agent-sha256 <hash>`.
    The component fails closed if the downloaded bytes do not match the hash.
 
 **IAM for the bake** — the Image Builder instance profile (or the Packer builder
@@ -404,6 +410,6 @@ Notes:
 | `aws: command not found` inside an SSM session | Use `/usr/local/bin/aws` or `export PATH="/usr/local/bin:$PATH"` |
 | Stock jammy has no `unzip` / `aws` CLI | The generated component installs both (AWS CLI v2 via zip + `unzip`); if baking manually, install them first |
 {{- if .IsAgent }}
-| `sha256sum: ... FAILED` during the bake | The tarball does not match `--agent-sha256`; re-download it from the Tools page, re-hash, and re-stage it |
+| `sha256sum: ... FAILED` during the bake | HordeAgent.zip does not match `--agent-sha256`; re-download it from the coordinator, re-hash, and re-stage it |
 | `aws s3 cp` fails with AccessDenied | The build role lacks `s3:GetObject` on the `--agent-artifact` key |
 {{- end }}
