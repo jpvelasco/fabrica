@@ -16,10 +16,12 @@ phases:
             - |
               set -euo pipefail
 {{ indent 14 (awsCliPresenceCheck) }}
-      # Fetches the agent tarball, checks it against the pinned SHA-256 with
-      # sha256sum -c before unpacking, creates the horde-agent service user and
-      # its two writable paths, writes the systemd unit and the native contract
-      # marker, and enables the unit. The unit is not started at bake time.
+      # Fetches HordeAgent.zip, checks it against the pinned SHA-256 with
+      # sha256sum -c before unzipping, installs the .NET 10 ASP.NET Core runtime
+      # from the pinned backports PPA, creates the horde-agent service user and
+      # its two writable paths, writes the systemd unit (dotnet HordeAgent.dll)
+      # and the native contract marker, and enables the unit. The unit is not
+      # started at bake time.
       - name: InstallHordeAgent
         action: ExecuteBash
         inputs:

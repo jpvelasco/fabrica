@@ -100,7 +100,7 @@ func TestAmiBuild_AgentRoleWritesFiles(t *testing.T) {
 	var out bytes.Buffer
 
 	err := execAmi(t, &out, "ami", "build", "--output-dir", dir, "--role", "agent", "--install", "native",
-		"--agent-artifact", "s3://my-bucket/horde/horde-agent-linux-x64.tar.gz",
+		"--agent-artifact", "s3://my-bucket/horde/HordeAgent.zip",
 		"--agent-sha256", strings.Repeat("a", 64))
 	if err != nil {
 		t.Fatalf("execute returned error: %v", err)
@@ -125,7 +125,7 @@ func TestAmiBuild_AgentRoleWritesFiles(t *testing.T) {
 func TestAmiBuild_AgentRoleRejectsDocker(t *testing.T) {
 	var out bytes.Buffer
 	err := execAmi(t, &out, "ami", "build", "--output-dir", t.TempDir(), "--role", "agent",
-		"--agent-artifact", "s3://my-bucket/horde/horde-agent-linux-x64.tar.gz",
+		"--agent-artifact", "s3://my-bucket/horde/HordeAgent.zip",
 		"--agent-sha256", strings.Repeat("a", 64))
 	if err == nil || !strings.Contains(err.Error(), "--role agent requires --install native") {
 		t.Fatalf("expected --install native error, got %v", err)

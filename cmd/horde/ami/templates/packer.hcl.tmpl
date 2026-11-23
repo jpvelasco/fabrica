@@ -92,7 +92,7 @@ build {
 {{- else }}
     inline = [
       {{ hclInline (awsCliVerifiedInstall) }},
-      {{ hclInline (dotnetInstall) }},
+      {{ hclInline (dotnetRuntimeInstall) }},
       {{ hclInline (mongoDBInstall) }},
       "apt-get install -y redis-server",
       "systemctl enable redis-server",

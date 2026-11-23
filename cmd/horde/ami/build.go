@@ -115,7 +115,7 @@ Examples:
 
   # Agent AMI: stage the agent tarball in S3 first (see the generated build guide)
   fabrica horde ami build --role agent --install native \
-    --agent-artifact s3://my-bucket/horde/horde-agent-linux-x64.tar.gz --agent-sha256 <64-hex>
+    --agent-artifact s3://my-bucket/horde/HordeAgent.zip --agent-sha256 <64-hex>
 
   # Preview what would be generated without writing any files
   fabrica horde ami build --dry-run`,
@@ -157,8 +157,8 @@ Examples:
 	cmd.Flags().StringVar(&cfg.OutputDir, "output-dir", defaultOutputDir, "Directory to write generated files to")
 	cmd.Flags().BoolVar(&cfg.IncludePacker, "include-packer", false, "Also generate a Packer HCL template")
 	cmd.Flags().StringVar(&cfg.Role, "role", roleCoordinator, `AMI role: "coordinator" (Horde server stack) or "agent" (stock Horde Linux agent; requires --install native)`)
-	cmd.Flags().StringVar(&cfg.AgentArtifact, "agent-artifact", "", "s3:// URI of the Horde agent Linux tarball (.tar.gz); required with --role agent")
-	cmd.Flags().StringVar(&cfg.AgentSHA256, "agent-sha256", "", "SHA-256 of the agent tarball (64 hex characters); required with --role agent, no default")
+	cmd.Flags().StringVar(&cfg.AgentArtifact, "agent-artifact", "", "s3:// URI of the stock Horde agent package (HordeAgent.zip); required with --role agent")
+	cmd.Flags().StringVar(&cfg.AgentSHA256, "agent-sha256", "", "SHA-256 of HordeAgent.zip (64 hex characters); required with --role agent, no default")
 
 	return cmd
 }
@@ -353,7 +353,7 @@ func (b *buildCommand) renderTemplate(name string, data any) ([]byte, error) {
 		"awsCliPresenceCheck":    awsCliPresenceCheckScript,
 		"awsCliVerifiedInstall":  awsCliVerifiedInstallScript,
 		"dockerInstall":          dockerInstallScript,
-		"dotnetInstall":          dotnetInstallScript,
+		"dotnetRuntimeInstall":   dotnetRuntimeInstallScript,
 		"mongoDBInstall":         mongoDBInstallScript,
 		"dockerBake":             dockerBakeScript,
 		"hordeDockerUnit":        func() string { return hordeDockerUnitText },
