@@ -26,9 +26,11 @@ status, tear down — with typed-phrase confirmations and recoverable partial st
 
 ## Current Status
 
-**Current stable: v0.7.2** (2026-11-16). Patch release that updates the AWS SDK
-group and teaches the provider identity tests to read CodeBuild Smithy RPC v2
-requests. v0.7.1 (2026-11-15) fixed `npm install -g fabrica-cli` on Windows
+**Current stable: v0.8.0** (2026-11-23). Feature release that adds pre-created
+instance profiles, a resource name prefix, a VPC Block Public Access preflight, and a
+generated Horde agent AMI, and fixes Horde 5.8 job submission. v0.7.2
+(2026-11-16) updated the AWS SDK group. v0.7.1 (2026-11-15) fixed
+`npm install -g fabrica-cli` on Windows
 under PowerShell 7. v0.7.0
 (2026-11-15) added TLS-secured Horde operations, configurable deployment ownership
 (`cloud.aws.identity.managedBy`), safer state backend setup and persistence,
