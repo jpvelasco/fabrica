@@ -162,7 +162,9 @@ func probeChain(c Connection) string {
 }
 
 // agentConfigure writes the stock EnvironmentFile and systemd drop-in, then
-// (re)starts the unit. The rendered environment contains no secrets.
+// (re)starts the unit. The rendered environment contains no secrets. The keys
+// are pinned from the Horde 5.8.4 source: the config section is `Horde`, and
+// ServerProfiles is a Dictionary<string, ServerProfile> keyed by profile name.
 func agentConfigure(cfg AgentUserDataConfig, url string) string {
 	env := "Horde__Server=fabrica\nHorde__ServerProfiles__fabrica__Name=fabrica\nHorde__ServerProfiles__fabrica__Url=" + url + "\n"
 	if cfg.CAPath != "" {

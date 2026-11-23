@@ -185,6 +185,12 @@ substitute `REPLACE_WITH_ECR_REPOSITORY` in `component.yaml`. The IAM and SSM
 footguns this path depends on are in [Jammy base and SSM footguns](#jammy-base-and-ssm-footguns).
 The rendered `build-guide.md` carries the same guidance per bake.
 
+The native install (`--install native`) runs the prebuilt server on the .NET 10
+ASP.NET Core runtime (`aspnetcore-runtime-10.0`). It comes from Canonical's
+`ppa:dotnet/backports`, pinned by fingerprint, because Microsoft's apt feed has no
+.NET 10 for jammy and is not mixed in. The agent AMI uses the same runtime; see
+[horde-agent-ami.md](horde-agent-ami.md).
+
 ### Path B — Manual bake (what the AMI must contain)
 
 The steps below are the manual equivalent of the generated bake; use them when

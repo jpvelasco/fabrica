@@ -33,29 +33,34 @@ recipe, and build guide that bake the stock Horde Linux agent under the
 manual steps below, which remain as reference.
 
 ```bash
-# 1. Fetch the agent tarball once from the coordinator's Tools page, hash it, stage it in S3
-sha256sum horde-agent-linux-x64.tar.gz
-aws s3 cp horde-agent-linux-x64.tar.gz s3://my-bucket/horde/horde-agent-linux-x64.tar.gz
+# 1. Download the stock agent package once, hash it, stage it in S3
+curl https://<coordinator>/api/v1/agentsoftware/default/zip --output HordeAgent.zip -H "Authorization: Bearer <AUTH-TOKEN>"
+sha256sum HordeAgent.zip
+aws s3 cp HordeAgent.zip s3://my-bucket/horde/HordeAgent.zip
 
 # 2. Generate the agent build files
 fabrica horde ami build --role agent --install native --horde-version 5.8.4 \
-  --agent-artifact s3://my-bucket/horde/horde-agent-linux-x64.tar.gz \
+  --agent-artifact s3://my-bucket/horde/HordeAgent.zip \
   --agent-sha256 <64-hex-from-step-1> \
   --output-dir horde-agent-ami --include-packer
 ```
 
+The `<AUTH-TOKEN>` is on the coordinator's `/account` page ("Get agent software
+download token"). An unauthenticated coordinator needs no `Authorization` header.
+
 Then follow `horde-agent-ami/build-guide.md`. The generator enforces:
 
-- `--install native`, an `s3://…tar.gz` URI, and a 64-hex `--agent-sha256`. There is no default hash.
-- The tarball is checked with `sha256sum -c` before anything is unpacked, and extracted root-owned under `/opt/horde-agent`.
+- `--install native`, an `s3://…zip` URI, and a 64-hex `--agent-sha256`. There is no default hash. A `.tar.gz` is rejected: Horde 5.8.4 publishes the agent as a zip.
+- `HordeAgent.zip` is checked with `sha256sum -c` before anything is unpacked, then `unzip`ed root-owned under `/opt/horde-agent` with no group or other write bits.
+- The .NET 10 ASP.NET Core runtime (`aspnetcore-runtime-10.0`) from Canonical's dotnet backports PPA, pinned by fingerprint. The Microsoft apt feed has no .NET 10 for Ubuntu 22.04.
 - A nologin `horde-agent` service user, with `/opt/horde-agent/Data` and `/var/lib/horde-agent/.local/share` as the only writable paths.
 - `horde-agent.service` runs as `User=horde-agent` with `NoNewPrivileges=true`, `ProtectSystem=strict`, and `ReadWritePaths=` those two paths. It is enabled but not started at bake time.
 - The contract marker `/etc/horde/fabrica-native-agent-contract` (contents `1`).
-- A validate phase that runs as the service user (`runuser -u horde-agent -- test -w …`), plus `systemctl is-enabled` and `! systemctl is-active`.
+- A validate phase that checks `HordeAgent.dll` exists, that the service user cannot write it, and that `/usr/bin/dotnet --list-runtimes` lists a `Microsoft.NETCore.App 10.x` runtime. It also runs as the service user (`runuser -u horde-agent -- test -w …`), plus `systemctl is-enabled` and `! systemctl is-active`.
 
-The unit's `ExecStart` is `/opt/horde-agent/horde-agent`, taken from the manual
-bake below. Confirm that path against the 5.8.4 tarball layout before the first
-bake; the validate phase fails if it is not an executable.
+The unit runs `ExecStart=/usr/bin/dotnet /opt/horde-agent/HordeAgent.dll -WorkingDir=/opt/horde-agent/Data`
+from `WorkingDirectory=/opt/horde-agent/Data`. This is the framework-dependent
+5.8.4 layout that Epic's agent guide documents; the stock package has no native executable.
 
 Set the resulting AMI as `horde.agents.amiId` in `fabrica.yaml`.
 
@@ -68,7 +73,7 @@ The AMI must meet all of the following:
 | Requirement | Detail |
 |-------------|--------|
 | **OS** | Ubuntu 22.04 LTS (jammy) — cloud-init script targets Ubuntu |
-| **Horde agent** | The Unreal Horde agent binary installed and available on PATH, or a Docker image pre-loaded |
+| **Horde agent** | The stock Horde agent (`HordeAgent.zip` unzipped to `/opt/horde-agent`, with `HordeAgent.dll`) running on the .NET 10 runtime (`/usr/bin/dotnet`) |
 | **SSM Agent** | `amazon-ssm-agent` installed and enabled (deb `amazon-ssm-agent.service` or snap `snap.amazon-ssm-agent.amazon-ssm-agent.service`). Bake must **fail closed** if the unit cannot be enabled. Required for Session Manager access on private subnets. |
 | **Architecture** | `x86_64` (matches default `c7i.xlarge` instance type) |
 | **No full server** | The AMI should NOT include MongoDB, Redis, or the Horde coordinator server binary — only the agent |
@@ -137,31 +142,29 @@ aws ec2 run-instances \
 
 #### Step 2: Install the Horde agent
 
-Copy the agent binary to `/opt/horde-agent/` and ensure it's executable:
+Install the .NET 10 ASP.NET Core runtime from Canonical's dotnet backports PPA
+(`ppa:dotnet/backports`, signing key fingerprint `45A3F127159BE9E5017811C62125B164E8E5D3FA`).
+The generated bake pins that fingerprint in a keyring instead of using
+`add-apt-repository`:
 
 ```bash
+sudo add-apt-repository -y ppa:dotnet/backports
+sudo apt-get update -q
+sudo apt-get install -y aspnetcore-runtime-10.0
+```
+
+Unzip the stock agent package (`HordeAgent.zip`, from your coordinator's
+`/api/v1/agentsoftware/default/zip`) into `/opt/horde-agent`, root-owned:
+
+```bash
+sudo apt-get install -y unzip
 sudo mkdir -p /opt/horde-agent
-sudo cp horde-agent /opt/horde-agent/
-sudo chmod +x /opt/horde-agent/horde-agent
-sudo ln -sf /opt/horde-agent/horde-agent /usr/local/bin/horde-agent
+sudo unzip -q HordeAgent.zip -d /opt/horde-agent
+sudo chown -R root:root /opt/horde-agent
+sudo chmod -R go-w /opt/horde-agent
 ```
 
-If using Epic's official Docker image as a binary source:
-
-```bash
-# Log in to GitHub Container Registry (if required)
-echo "<YOUR_GITHUB_PAT>" | docker login ghcr.io -u <YOUR_GITHUB_USERNAME> --password-stdin
-
-# Extract the binary from the image
-docker pull ghcr.io/epicgames/unrealengine/horde-agent:5.8.0
-docker create --name horde-agent-extract ghcr.io/epicgames/unrealengine/horde-agent:5.8.0
-docker cp horde-agent-extract:/path/to/horde-agent /opt/horde-agent/
-docker rm horde-agent-extract
-```
-
-> **Note:** Verify the binary path inside the container first with
-> `docker run --rm ghcr.io/epicgames/unrealengine/horde-agent:5.8.0 which horde-agent`
-> or inspect the image layers. The exact path depends on the image build.
+There is no native `horde-agent` executable. The agent runs as `dotnet HordeAgent.dll`.
 
 #### Step 3: Create the systemd unit
 
@@ -178,9 +181,15 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=horde-agent
-ExecStart=/opt/horde-agent/horde-agent
+WorkingDirectory=/opt/horde-agent/Data
+ExecStart=/usr/bin/dotnet /opt/horde-agent/HordeAgent.dll -WorkingDir=/opt/horde-agent/Data
+Environment=DOTNET_NOLOGO=1
+Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
 Restart=always
 RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/horde-agent/Data /var/lib/horde-agent/.local/share
 StandardOutput=journal
 StandardError=journal
 
@@ -216,8 +225,9 @@ and Fabrica's cloud-init will start it with the correct coordinator IP.
 #### Step 5: Verify the bake
 
 ```bash
-# Confirm the binary is available
-which horde-agent
+# Confirm the agent and the .NET 10 runtime are present
+test -f /opt/horde-agent/HordeAgent.dll
+dotnet --list-runtimes | grep 'Microsoft.NETCore.App 10\.'
 
 # Confirm the systemd unit is enabled
 systemctl is-enabled horde-agent
@@ -284,15 +294,20 @@ build {
   provisioner "shell" {
     inline = [
       "sudo apt-get update && sudo apt-get install -y unzip",
-      # Install the Horde agent binary
+      # Install the .NET 10 runtime (see the generated bake for the pinned PPA) and unzip the agent
+      "sudo add-apt-repository -y ppa:dotnet/backports && sudo apt-get update && sudo apt-get install -y aspnetcore-runtime-10.0",
       "sudo mkdir -p /opt/horde-agent",
-      "sudo cp /tmp/horde-agent /opt/horde-agent/",
-      "sudo chmod +x /opt/horde-agent/horde-agent",
-      "sudo ln -sf /opt/horde-agent/horde-agent /usr/local/bin/horde-agent",
+      "sudo unzip -q /tmp/HordeAgent.zip -d /opt/horde-agent",
+      "sudo chown -R root:root /opt/horde-agent",
       # Ensure SSM agent is running
       "sudo systemctl enable amazon-ssm-agent",
       "sudo systemctl start amazon-ssm-agent",
     ]
+  }
+
+  provisioner "file" {
+    source      = "HordeAgent.zip"
+    destination = "/tmp/HordeAgent.zip"
   }
 
   provisioner "file" {
@@ -340,7 +355,7 @@ region-scoped — do not share IDs across accounts.
 | # | Check | Command | Pass criteria |
 |---|-------|---------|---------------|
 | 1 | SSM agent running | `systemctl status amazon-ssm-agent` | `active (running)` |
-| 2 | Agent binary available | `which horde-agent` | Returns a path |
+| 2 | Agent and runtime present | `test -f /opt/horde-agent/HordeAgent.dll && dotnet --list-runtimes` | `HordeAgent.dll` exists and a `Microsoft.NETCore.App 10.x` runtime is listed |
 | 3 | Systemd unit enabled | `systemctl is-enabled horde-agent` | `enabled` |
 | 4 | Native contract marker | `cat /etc/horde/fabrica-native-agent-contract` | `1` |
 | 5 | Agent starts | `sudo systemctl start horde-agent && systemctl status horde-agent` | `active (running)` or `exited 0` |
@@ -363,11 +378,11 @@ else
   exit 1
 fi
 
-# 2. Agent binary
-if command -v horde-agent > /dev/null 2>&1; then
-  echo "[PASS] horde-agent binary found at $(which horde-agent)"
+# 2. Agent assembly and .NET 10 runtime
+if [ -f /opt/horde-agent/HordeAgent.dll ] && dotnet --list-runtimes | grep -q 'Microsoft.NETCore.App 10\.'; then
+  echo "[PASS] HordeAgent.dll present and the .NET 10 runtime is installed"
 else
-  echo "[FAIL] horde-agent binary not found on PATH"
+  echo "[FAIL] HordeAgent.dll or the .NET 10 runtime is missing"
   exit 1
 fi
 
@@ -510,7 +525,7 @@ ls -la /etc/horde/agent-configured
 | ASG instances fail health check | Agent binary missing or crashing | Check `/var/log/syslog` on the instance via SSM |
 | Agent can't reach coordinator | Security group or routing issue | Verify agent SG allows outbound to coordinator port; confirm VPC routing |
 | Using coordinator AMI as agent AMI | Wrong AMI in `horde.agents.amiId` | Bake a dedicated agent AMI; the coordinator AMI runs unnecessary services (MongoDB, Redis, full server) on every builder |
-| `horde-agent` not found on PATH | Binary not in `/usr/local/bin` or not symlinked | Ensure the binary is accessible via `which horde-agent` |
+| `HordeAgent.dll` missing, or `dotnet` not found | The zip was not unzipped into `/opt/horde-agent`, or the .NET 10 runtime is not installed | Check `test -f /opt/horde-agent/HordeAgent.dll` and `dotnet --list-runtimes` |
 | `horde.agents.amiId` missing | Config not set and no `--ami-id` flag | Set `horde.agents.amiId` in `fabrica.yaml` or pass `--ami-id` — Fabrica will not fall back to the coordinator AMI |
 | AMI in wrong region | AMI IDs are region-scoped | Re-copy the AMI to each region: `aws ec2 copy-image` |
 | `x86_64` vs `arm64` mismatch | AMI architecture doesn't match instance type | Build the AMI on the same instance family you plan to run (c7i = x86_64) |
