@@ -1193,7 +1193,7 @@ func (f *fakeCodeBuildRunner) ProjectExists(_ context.Context, _ string) (bool, 
 	return f.projectExists, f.projectErr
 }
 
-func (f *fakeCodeBuildRunner) StartBuild(_ context.Context, _ string, _ map[string]string) (string, error) {
+func (f *fakeCodeBuildRunner) StartBuild(_ context.Context, _ string, _ map[string]string, _ string) (string, error) {
 	return "", nil
 }
 

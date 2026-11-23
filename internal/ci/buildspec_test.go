@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/iamrole"
 	"github.com/jpvelasco/fabrica/internal/naming"
+	"go.yaml.in/yaml/v3"
 )
 
 func TestBuildspecRawSubmitsToHorde(t *testing.T) {
@@ -15,13 +17,63 @@ func TestBuildspecRawSubmitsToHorde(t *testing.T) {
 	for _, want := range []string{
 		"version: 0.2",
 		"$HORDE_URL/api/v1/jobs",
-		"$TARGET",
-		"BUILDGRAPH",
+		`--data-binary "$HORDE_JOB_REQUEST"`,
+		`test -n "$HORDE_JOB_REQUEST"`,
 	} {
 		if !strings.Contains(spec, want) {
 			t.Errorf("buildspec missing %q:\n%s", want, spec)
 		}
 	}
+	for _, stale := range []string{"$TARGET", "BUILDGRAPH", `\"name\"`} {
+		if strings.Contains(spec, stale) {
+			t.Errorf("buildspec still builds the old name+target request: found %q", stale)
+		}
+	}
+}
+
+// TestBuildspecRawPostsJobRequestWithoutFail checks both listener variants: the
+// POST must not use --fail (the body is captured and reported on non-2xx), and
+// the rejected-response path must print the body before exiting non-zero.
+func TestBuildspecRawPostsJobRequestWithoutFail(t *testing.T) {
+	tls := &CreatePlan{HordeConnection: horde.Connection{TLS: true, Port: 5000}}
+	for name, plan := range map[string]*CreatePlan{"http": testPlan(), "tls": tls} {
+		t.Run(name, func(t *testing.T) {
+			submit := buildspecCommand(t, BuildspecRaw(plan), "build", "-X POST")
+			if strings.Contains(submit, "--fail") {
+				t.Errorf("job POST must not use --fail:\n%s", submit)
+			}
+			for _, want := range []string{
+				`-X POST "$HORDE_URL/api/v1/jobs"`,
+				`--data-binary "$HORDE_JOB_REQUEST"`,
+				`head -c 2048 "$response" >&2`,
+				"exit 1",
+			} {
+				if !strings.Contains(submit, want) {
+					t.Errorf("submit step missing %q:\n%s", want, submit)
+				}
+			}
+		})
+	}
+}
+
+// buildspecCommand returns the first command in phase whose text contains marker.
+func buildspecCommand(t *testing.T, raw, phase, marker string) string {
+	t.Helper()
+	var doc struct {
+		Phases map[string]struct {
+			Commands []string `yaml:"commands"`
+		} `yaml:"phases"`
+	}
+	if err := yaml.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatal("invalid buildspec", err)
+	}
+	for _, c := range doc.Phases[phase].Commands {
+		if strings.Contains(c, marker) {
+			return c
+		}
+	}
+	t.Fatalf("%s phase has no command containing %q", phase, marker)
+	return ""
 }
 
 func TestBuildspecIsBase64OfRaw(t *testing.T) {

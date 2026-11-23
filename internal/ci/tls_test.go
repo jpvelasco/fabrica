@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -51,6 +52,109 @@ func TestTLSBuildspec(t *testing.T) {
 	}
 }
 
+// fixtureJobRequest is the HORDE_JOB_REQUEST value `ci trigger` sends.
+const fixtureJobRequest = `{"streamId":"fixture-stream","templateId":"fixture-template"}`
+
+// curlStub replays a canned response: the -o file gets TEST_RESPONSE, stdout
+// gets TEST_CODE, and the exit status is TEST_CURL_EXIT.
+const curlStub = `curl() {
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    if [ "$TEST_RESPONSE" = "oversized" ]; then python3 -c 'print(" " * 65537)' >"$1"; else printf '%s' "$TEST_RESPONSE" >"$1"; fi
+  fi
+  shift
+done
+printf '%s' "$TEST_CODE"
+return "$TEST_CURL_EXIT"
+}`
+
+func TestGeneratedSubmissionSendsJobRequestBody(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash unavailable")
+	}
+	argsFile := filepath.Join(t.TempDir(), "args")
+	stub := `curl() {
+printf '%s\n' "$@" >"$TEST_ARGS"
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then shift; printf '%s' '{"id":"job-1"}' >"$1"; fi
+  shift
+done
+printf '200'
+}`
+	cmd := exec.Command(bash, "-c", stub+"\n"+buildspecCommand(t, BuildspecRaw(nil), "build", "-X POST"))
+	cmd.Env = append(os.Environ(), "TEST_ARGS="+filepath.ToSlash(argsFile), "HORDE_URL=https://horde.example.internal:5000",
+		"HORDE_CA_FILE=", "HORDE_TOKEN=fixture-credential", "HORDE_JOB_REQUEST="+fixtureJobRequest)
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "job-1") {
+		t.Fatalf("submit: %v %s", err, out)
+	}
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	if slices.Contains(args, "--fail") {
+		t.Fatal("job POST must not pass --fail")
+	}
+	idx := slices.Index(args, "--data-binary")
+	if idx < 0 || idx+1 >= len(args) || args[idx+1] != fixtureJobRequest {
+		t.Fatalf("--data-binary must carry HORDE_JOB_REQUEST verbatim, args: %q", args)
+	}
+}
+
+func TestGeneratedSubmissionSurfacesRejectedBody(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash unavailable")
+	}
+	cmd := exec.Command(bash, "-c", curlStub+"\n"+buildspecCommand(t, BuildspecRaw(nil), "build", "-X POST"))
+	cmd.Env = append(os.Environ(), "TEST_CODE=404", "TEST_RESPONSE="+`{"message":"Stream fixture-stream not found"}`, "TEST_CURL_EXIT=0",
+		"TMPDIR="+filepath.ToSlash(t.TempDir()), "HORDE_URL=https://horde.example.internal:5000",
+		"HORDE_CA_FILE=", "HORDE_TOKEN=fixture-credential", "HORDE_JOB_REQUEST="+fixtureJobRequest)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("404 must fail the build, got success: %s", out)
+	}
+	for _, want := range []string{"HTTP 404", "Stream fixture-stream not found"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(string(out), "fixture-credential") {
+		t.Fatal("token leaked into build output")
+	}
+}
+
+func TestPreBuildRequiresJobRequest(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash unavailable")
+	}
+	check := buildspecCommand(t, BuildspecRaw(nil), "pre_build", `"$HORDE_JOB_REQUEST"`)
+	cmd := exec.Command(bash, "-c", check)
+	cmd.Env = withoutEnv(os.Environ(), "HORDE_JOB_REQUEST")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("pre_build must fail without HORDE_JOB_REQUEST")
+	}
+	if !strings.Contains(string(out), "fabrica ci trigger") {
+		t.Fatalf("pre_build error does not say how to fix it:\n%s", out)
+	}
+
+	cmd = exec.Command(bash, "-c", check)
+	cmd.Env = append(os.Environ(), "HORDE_JOB_REQUEST="+fixtureJobRequest)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("pre_build with HORDE_JOB_REQUEST set: %v %s", err, out)
+	}
+}
+
+// withoutEnv returns env with every entry for key removed.
+func withoutEnv(env []string, key string) []string {
+	return slices.DeleteFunc(env, func(kv string) bool { return strings.HasPrefix(kv, key+"=") })
+}
+
 func TestGeneratedSubmissionRejectsRedirectAndAuthFailure(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
@@ -81,21 +185,10 @@ func TestGeneratedSubmissionRejectsRedirectAndAuthFailure(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			curl := `curl() {
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "-o" ]; then
-    shift
-    if [ "$TEST_RESPONSE" = "oversized" ]; then python3 -c 'print(" " * 65537)' >"$1"; else printf '%s' "$TEST_RESPONSE" >"$1"; fi
-  fi
-  shift
-done
-printf '%s' "$TEST_CODE"
-return "$TEST_CURL_EXIT"
-}`
-			cmd := exec.Command(bash, "-c", curl+"\n"+submit)
+			cmd := exec.Command(bash, "-c", curlStub+"\n"+submit)
 			cmd.Env = append(os.Environ(), "TEST_CODE="+tc.code, "TEST_RESPONSE="+tc.body, "TEST_CURL_EXIT="+tc.curlExit,
 				"TMPDIR="+filepath.ToSlash(dir), "HORDE_URL=https://horde.example.internal:5000",
-				"HORDE_CA_FILE=", "HORDE_TOKEN=fixture-credential", "BUILDGRAPH=fixture", "TARGET=Build")
+				"HORDE_CA_FILE=", "HORDE_TOKEN=fixture-credential", "HORDE_JOB_REQUEST="+fixtureJobRequest)
 			out, err := cmd.CombinedOutput()
 			if (err == nil) != tc.ok || strings.Contains(string(out), "fixture-credential") {
 				t.Fatalf("submission result: %v %s", err, out)
@@ -178,7 +271,7 @@ func TestTLSBuildspecRejectsPlaintextURLOverride(t *testing.T) {
 			cmd := exec.Command(bash, "-c", curl+commands[len(commands)-1])
 			cmd.Env = append(os.Environ(), "CANARY="+filepath.ToSlash(canary),
 				"HORDE_URL=http://horde.example.internal:5000", "HORDE_CA_FILE=", "HORDE_TOKEN=fixture-credential",
-				"BUILDGRAPH=fixture", "TARGET=Build")
+				"HORDE_JOB_REQUEST="+fixtureJobRequest)
 			out, err := cmd.CombinedOutput()
 			if err == nil || strings.Contains(string(out), "fixture-credential") {
 				t.Fatalf("plaintext override: %v %s", err, out)

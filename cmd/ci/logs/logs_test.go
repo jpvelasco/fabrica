@@ -16,7 +16,7 @@ type fakeRunner struct {
 	err error
 }
 
-func (f fakeRunner) StartBuild(context.Context, string, map[string]string) (string, error) {
+func (f fakeRunner) StartBuild(context.Context, string, map[string]string, string) (string, error) {
 	return "", nil
 }
 func (f fakeRunner) BuildStatus(context.Context, string) (cloud.BuildInfo, error) {

@@ -770,7 +770,7 @@ func (f *fakeDriftProvider) ProjectExists(_ context.Context, _ string) (bool, er
 	return false, nil
 }
 
-func (f *fakeDriftProvider) StartBuild(_ context.Context, _ string, _ map[string]string) (string, error) {
+func (f *fakeDriftProvider) StartBuild(_ context.Context, _ string, _ map[string]string, _ string) (string, error) {
 	return "", nil
 }
 

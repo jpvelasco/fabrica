@@ -18,8 +18,10 @@ type CodeBuildRunner interface {
 	// detection and idempotency checks.
 	ProjectExists(ctx context.Context, name string) (bool, error)
 	// StartBuild starts a build of the named project with the given environment
-	// variable overrides, returning the build ID.
-	StartBuild(ctx context.Context, project string, env map[string]string) (buildID string, err error)
+	// variable overrides, returning the build ID. A non-empty buildspecOverride
+	// replaces the project's buildspec for this build only (inline YAML), so a
+	// project created by an older release picks up the current buildspec.
+	StartBuild(ctx context.Context, project string, env map[string]string, buildspecOverride string) (buildID string, err error)
 	// BuildStatus returns the current status of a build.
 	BuildStatus(ctx context.Context, buildID string) (BuildInfo, error)
 	// BuildLog returns the CloudWatch log output for a build.

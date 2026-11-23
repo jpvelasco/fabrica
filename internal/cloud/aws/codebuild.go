@@ -150,7 +150,7 @@ func (p *awsProvider) DeleteProject(ctx context.Context, name string) error {
 	return nil
 }
 
-func (p *awsProvider) StartBuild(ctx context.Context, project string, env map[string]string) (string, error) {
+func (p *awsProvider) StartBuild(ctx context.Context, project string, env map[string]string, buildspecOverride string) (string, error) {
 	cfg, err := p.stateBackendConfig(ctx)
 	if err != nil {
 		return "", err
@@ -167,11 +167,15 @@ func (p *awsProvider) StartBuild(ctx context.Context, project string, env map[st
 		})
 	}
 
-	client := p.codeBuildClient(cfg)
-	out, err := client.StartBuild(ctx, &codebuild.StartBuildInput{
+	input := &codebuild.StartBuildInput{
 		ProjectName:                  aws.String(project),
 		EnvironmentVariablesOverride: overrides,
-	})
+	}
+	if buildspecOverride != "" {
+		input.BuildspecOverride = aws.String(buildspecOverride)
+	}
+	client := p.codeBuildClient(cfg)
+	out, err := client.StartBuild(ctx, input)
 	if err != nil {
 		return "", fmt.Errorf("starting CodeBuild project %s: %w — check the project exists (fabrica ci setup) and you have codebuild:StartBuild", project, err)
 	}

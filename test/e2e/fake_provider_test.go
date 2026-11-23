@@ -483,7 +483,7 @@ func (p *fakeProvider) DeleteProject(_ context.Context, name string) error {
 	return nil
 }
 
-func (p *fakeProvider) StartBuild(_ context.Context, _ string, _ map[string]string) (string, error) {
+func (p *fakeProvider) StartBuild(_ context.Context, _ string, _ map[string]string, _ string) (string, error) {
 	return "fake-build-1", nil
 }
 

@@ -8,10 +8,11 @@ import (
 )
 
 // buildspecTemplate is the inline CodeBuild buildspec. On each build it submits
-// a BuildGraph job to the Horde coordinator at $HORDE_URL, mirroring the request
-// that `horde submit` makes (POST /api/v1/jobs with name+target). BUILDGRAPH and
-// TARGET are supplied as env overrides by `ci trigger`; HORDE_URL defaults to the
-// project's configured value but can also be overridden per build.
+// a job to the Horde coordinator at $HORDE_URL with POST /api/v1/jobs. The body
+// is HORDE_JOB_REQUEST, the horde.CreateJobRequest JSON that `ci trigger` renders
+// from config and flags (streamId, templateId, and optional name, commitId,
+// targets). HORDE_URL defaults to the project's configured value but can also be
+// overridden per build.
 //
 // A Perforce sync step is intentionally left as a documented placeholder — the
 // IAM role can describe the Perforce instance, but active P4 sync is out of
@@ -24,7 +25,7 @@ phases:
     commands:
       - 'echo "Fabrica CI build starting"'
       - 'test -n "$HORDE_URL" || { echo "HORDE_URL not set — is Horde provisioned?"; exit 1; }'
-      - 'test -n "$TARGET" || { echo "TARGET not set"; exit 1; }'
+      - 'test -n "$HORDE_JOB_REQUEST" || { echo "HORDE_JOB_REQUEST not set: start builds with fabrica ci trigger, which sends the Horde stream and template request" >&2; exit 1; }'
       # HORDE_TOKEN is a PARAMETER_STORE variable holding the fabrica-ci
       # service-account token; CodeBuild resolves it at build start and masks
       # it in logs. The header is rebuilt in each block that calls Horde.
@@ -53,19 +54,23 @@ phases:
       # - 'p4 -p "$P4PORT" sync ...'
   build:
     commands:
-      - 'echo "Submitting BuildGraph job to Horde at $HORDE_URL"'
+      - 'echo "Submitting Horde job to $HORDE_URL"'
       - |
         # FABRICA_CURL_OPTIONS
         HORDE_AUTH=()
         if [ -n "${HORDE_TOKEN:-}" ]; then HORDE_AUTH=(-H "Authorization: ServiceAccount ${HORDE_TOKEN}"); fi
         response=$(mktemp)
         trap 'rm -f "$response"' EXIT
-        code=$(curl "${CURL_OPTS[@]}" --fail --max-filesize 65536 -o "$response" -w '%{http_code}' -X POST "$HORDE_URL/api/v1/jobs" "${HORDE_AUTH[@]}" \
+        code=$(curl "${CURL_OPTS[@]}" --max-filesize 65536 -o "$response" -w '%{http_code}' -X POST "$HORDE_URL/api/v1/jobs" "${HORDE_AUTH[@]}" \
           -H "Content-Type: application/json" \
-          -d "{\"name\":\"${BUILDGRAPH:-fabrica-ci}\",\"target\":\"$TARGET\"}")
+          --data-binary "$HORDE_JOB_REQUEST")
         case "$code" in
           2??) ;;
-          *) echo "Horde job submission failed (HTTP $code)" >&2; exit 1 ;;
+          *)
+            echo "Horde job submission failed (HTTP $code). Response body:" >&2
+            head -c 2048 "$response" >&2
+            echo >&2
+            exit 1 ;;
         esac
         python3 - "$response" <<'PY'
         import json, re, sys
