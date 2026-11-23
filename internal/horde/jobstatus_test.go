@@ -66,10 +66,10 @@ func TestEvaluateCompleted(t *testing.T) {
 		{
 			name: "batch error NoAgentsOnline names the agent and asks for the agents hint",
 			status: JobStatus{State: JobStateComplete, Batches: []JobBatch{{
-				Error: JobBatchErrorNoAgentsOnline, AgentID: "agent-1",
+				Error: JobBatchErrorNoAgentsOnline, AgentType: "Linux", AgentID: "agent-1",
 			}}},
 			wantFailed:   true,
-			wantFailures: []string{"batch on agent agent-1: NoAgentsOnline"},
+			wantFailures: []string{"batch on Linux (agent agent-1): NoAgentsOnline"},
 			wantAgents:   true,
 		},
 		{
@@ -87,7 +87,7 @@ func TestEvaluateCompleted(t *testing.T) {
 				Error: "ExecutionError", AgentID: "agent-2",
 			}}},
 			wantFailed:   true,
-			wantFailures: []string{"batch on agent agent-2: ExecutionError"},
+			wantFailures: []string{"batch (agent agent-2): ExecutionError"},
 		},
 		{
 			name: "batch error NoLongerNeeded is not a failure",

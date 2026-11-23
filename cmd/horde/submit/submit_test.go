@@ -383,7 +383,7 @@ func TestSubmitWaitNoAgentsNamesAgentsHint(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for a batch with no online agent")
 	}
-	assert.Contains(t, err.Error(), "batch on agent agent-9: NoAgentsOnline")
+	assert.Contains(t, err.Error(), "batch (agent agent-9): NoAgentsOnline")
 	assert.Contains(t, err.Error(), "fabrica horde agents approve")
 }
 
@@ -410,7 +410,7 @@ func TestJobFailedErrorCapsListedFailures(t *testing.T) {
 // TestHordeHTTPClientGetJobStatusDecodesBatches verifies the client decodes
 // Horde's camelCase JSON with string enums into the batch and step fields.
 func TestHordeHTTPClientGetJobStatusDecodesBatches(t *testing.T) {
-	const body = `{"state":"Complete","batches":[{"state":"Complete","error":"NoLongerNeeded","agentId":"agent-3","steps":[{"name":"Compile","state":"Completed","outcome":"Warnings"},{"name":"Cook","state":"Aborted"}]}]}`
+	const body = `{"state":"Complete","batches":[{"state":"Complete","error":"NoLongerNeeded","agentType":"Linux","agentId":"agent-3","steps":[{"name":"Compile","state":"Completed","outcome":"Warnings"},{"name":"Cook","state":"Aborted"}]}]}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(body))
@@ -426,7 +426,7 @@ func TestHordeHTTPClientGetJobStatusDecodesBatches(t *testing.T) {
 		t.Fatalf("status = %+v, want Complete with one batch", status)
 	}
 	b := status.Batches[0]
-	if b.Error != horde.JobBatchErrorNoLongerNeeded || b.AgentID != "agent-3" {
+	if b.Error != horde.JobBatchErrorNoLongerNeeded || b.AgentID != "agent-3" || b.AgentType != "Linux" {
 		t.Errorf("batch = %+v, want NoLongerNeeded on agent-3", b)
 	}
 	if len(b.Steps) != 2 || b.Steps[0].Outcome != horde.JobStepOutcomeWarnings || b.Steps[1].State != horde.JobStepStateAborted {

@@ -30,10 +30,11 @@ type JobStatus struct {
 
 // JobBatch is one agent's share of a job. Error is empty when Horde omits it.
 type JobBatch struct {
-	State   string    `json:"state"`
-	Error   string    `json:"error,omitempty"`
-	AgentID string    `json:"agentId,omitempty"`
-	Steps   []JobStep `json:"steps"`
+	State     string    `json:"state"`
+	Error     string    `json:"error,omitempty"`
+	AgentType string    `json:"agentType,omitempty"`
+	AgentID   string    `json:"agentId,omitempty"`
+	Steps     []JobStep `json:"steps"`
 }
 
 // JobStep is one BuildGraph step inside a batch.
@@ -93,8 +94,12 @@ func (o *JobOutcome) addFailure(item string) {
 }
 
 func batchFailure(b JobBatch) string {
-	if b.AgentID == "" {
-		return fmt.Sprintf("batch: %s", b.Error)
+	label := "batch"
+	if b.AgentType != "" {
+		label += " on " + b.AgentType
 	}
-	return fmt.Sprintf("batch on agent %s: %s", b.AgentID, b.Error)
+	if b.AgentID != "" {
+		label += " (agent " + b.AgentID + ")"
+	}
+	return fmt.Sprintf("%s: %s", label, b.Error)
 }
