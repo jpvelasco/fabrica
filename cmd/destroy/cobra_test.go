@@ -275,7 +275,7 @@ func (f *cobraFakeProviderWithCI) DeleteProject(ctx context.Context, name string
 	return nil
 }
 
-func (f *cobraFakeProviderWithCI) StartBuild(ctx context.Context, project string, env map[string]string) (string, error) {
+func (f *cobraFakeProviderWithCI) StartBuild(ctx context.Context, project string, env map[string]string, buildspecOverride string) (string, error) {
 	return "build-1", nil
 }
 

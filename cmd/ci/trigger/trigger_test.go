@@ -3,9 +3,12 @@ package trigger
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -13,21 +16,24 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/horde"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
 type fakeRunner struct {
-	startProject string
-	startEnv     map[string]string
-	startID      string
-	startErr     error
-	statuses     []cloud.BuildInfo
-	statusIdx    int
+	startProject   string
+	startEnv       map[string]string
+	startBuildspec string
+	startID        string
+	startErr       error
+	statuses       []cloud.BuildInfo
+	statusIdx      int
 }
 
-func (f *fakeRunner) StartBuild(_ context.Context, project string, env map[string]string) (string, error) {
+func (f *fakeRunner) StartBuild(_ context.Context, project string, env map[string]string, buildspec string) (string, error) {
 	f.startProject = project
 	f.startEnv = env
+	f.startBuildspec = buildspec
 	return f.startID, f.startErr
 }
 
@@ -71,9 +77,39 @@ func provisionedState() *fabricastate.State {
 	return st
 }
 
+// testStream and testTemplate are the horde.streamId and horde.templateId the
+// trigger tests configure; jobConfig is the only place they are set.
+const (
+	testStream   = "//UE5/Main"
+	testTemplate = "build-template"
+)
+
+// jobConfig is the default config with the stream and template a trigger needs.
+func jobConfig() *config.Config {
+	cfg := config.Defaults()
+	cfg.Horde.StreamID = testStream
+	cfg.Horde.TemplateID = testTemplate
+	return cfg
+}
+
+// decodeJobRequest returns the HORDE_JOB_REQUEST env value as a generic map, so
+// assertions see exactly the keys the buildspec receives.
+func decodeJobRequest(t *testing.T, env map[string]string) map[string]any {
+	t.Helper()
+	raw, ok := env["HORDE_JOB_REQUEST"]
+	if !ok {
+		t.Fatalf("HORDE_JOB_REQUEST not in env: %v", env)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("HORDE_JOB_REQUEST is not JSON: %v (%q)", err, raw)
+	}
+	return got
+}
+
 func newCmd(out *bytes.Buffer, runner cloud.CodeBuildRunner, st *fabricastate.State) command {
 	return command{
-		runtime:        globals.Runtime{Config: config.Defaults()},
+		runtime:        globals.Runtime{Config: jobConfig()},
 		buildGraphPath: "",
 		out:            out,
 		readState:      func() (*fabricastate.State, error) { return st, nil },
@@ -102,11 +138,119 @@ func TestTriggerStartsBuildWithHordeEnv(t *testing.T) {
 	if runner.startEnv["HORDE_URL"] != "http://10.0.1.42:5000" {
 		t.Errorf("HORDE_URL = %q", runner.startEnv["HORDE_URL"])
 	}
-	if runner.startEnv["TARGET"] != "Compile" {
-		t.Errorf("TARGET = %q", runner.startEnv["TARGET"])
+	wantReq := map[string]any{"streamId": testStream, "templateId": testTemplate, "name": "BuildAgent", "targets": []any{"Compile"}}
+	if got := decodeJobRequest(t, runner.startEnv); !reflect.DeepEqual(got, wantReq) {
+		t.Errorf("HORDE_JOB_REQUEST = %v, want %v", got, wantReq)
 	}
 	if !strings.Contains(out.String(), "Build started: build-1") {
 		t.Errorf("missing start message:\n%s", out.String())
+	}
+}
+
+func TestTriggerConfigChangeSentAsCommitID(t *testing.T) {
+	var out bytes.Buffer
+	runner := &fakeRunner{startID: "build-1"}
+	c := newCmd(&out, runner, provisionedState())
+	c.buildGraphPath = writeTempBuildGraph(t)
+	c.runtime.Config.Horde.Change = 7
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got := decodeJobRequest(t, runner.startEnv)["commitId"]; got != "7" {
+		t.Errorf("commitId = %v, want \"7\" from horde.change", got)
+	}
+}
+
+// TestTriggerFlagsOverrideConfig checks that per-invocation overrides win over
+// horde.* config, and that a request never carries an arguments field.
+func TestTriggerFlagsOverrideConfig(t *testing.T) {
+	var out bytes.Buffer
+	runner := &fakeRunner{startID: "build-1"}
+	c := newCmd(&out, runner, provisionedState())
+	c.buildGraphPath = writeTempBuildGraph(t)
+	c.runtime.Config.Horde.Change = 7
+	c.overrides = horde.JobOverrides{StreamID: "//Flag/Stream", TemplateID: "flag-template", Change: 4242, Name: "Nightly", Target: "Compile"}
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	wantReq := map[string]any{"streamId": "//Flag/Stream", "templateId": "flag-template", "name": "Nightly", "commitId": "4242", "targets": []any{"Compile"}}
+	if got := decodeJobRequest(t, runner.startEnv); !reflect.DeepEqual(got, wantReq) {
+		t.Errorf("HORDE_JOB_REQUEST = %v, want %v", got, wantReq)
+	}
+}
+
+func TestTriggerUnknownTargetWarnsAndIsSent(t *testing.T) {
+	var out bytes.Buffer
+	runner := &fakeRunner{startID: "build-1"}
+	c := newCmd(&out, runner, provisionedState())
+	c.buildGraphPath = writeTempBuildGraph(t)
+	c.overrides.Target = "Cook"
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.Contains(out.String(), "Warning: target \"Cook\"") {
+		t.Errorf("expected unknown-target warning:\n%s", out.String())
+	}
+	if got := decodeJobRequest(t, runner.startEnv)["targets"]; !reflect.DeepEqual(got, []any{"Cook"}) {
+		t.Errorf("targets = %v, want [Cook]", got)
+	}
+}
+
+// TestTriggerInvalidJobRequestFailsBeforeState checks that a missing stream or
+// template, or a bad change, fails before any state read or CodeBuild call,
+// including under --dry-run.
+func TestTriggerInvalidJobRequestFailsBeforeState(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*command)
+		wantErr string
+	}{
+		{"missing stream", func(c *command) { c.runtime.Config.Horde.StreamID = "" }, "need a stream and template"},
+		{"missing template", func(c *command) { c.runtime.Config.Horde.TemplateID = "" }, "need a stream and template"},
+		{"no config loaded", func(c *command) { c.runtime.Config = nil }, "need a stream and template"},
+		{"bad change", func(c *command) { c.overrides.Change = -3 }, "not a positive Perforce changelist"},
+	} {
+		for _, dryRun := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/dry_run=%v", tc.name, dryRun), func(t *testing.T) {
+				var out bytes.Buffer
+				runner := &fakeRunner{startID: "build-1"}
+				c := newCmd(&out, runner, provisionedState())
+				c.buildGraphPath = writeTempBuildGraph(t)
+				c.dryRun = dryRun
+				c.readState = func() (*fabricastate.State, error) {
+					t.Fatal("state read before the job request was validated")
+					return nil, nil
+				}
+				tc.mutate(&c)
+
+				err := c.run(context.Background())
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("run() error = %v, want %q", err, tc.wantErr)
+				}
+				if runner.startProject != "" {
+					t.Errorf("CodeBuild started for an invalid request: %q", runner.startProject)
+				}
+			})
+		}
+	}
+}
+
+func TestTriggerSendsCurrentBuildspec(t *testing.T) {
+	var out bytes.Buffer
+	runner := &fakeRunner{startID: "build-1"}
+	c := newCmd(&out, runner, provisionedState())
+	c.buildGraphPath = writeTempBuildGraph(t)
+
+	if err := c.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	for _, want := range []string{"version: 0.2", `--data-binary "$HORDE_JOB_REQUEST"`, `test -n "$HORDE_JOB_REQUEST"`} {
+		if !strings.Contains(runner.startBuildspec, want) {
+			t.Errorf("buildspec override missing %q", want)
+		}
 	}
 }
 
@@ -126,7 +270,7 @@ func TestTriggerDryRunNoStart(t *testing.T) {
 	if !strings.Contains(out.String(), "dry run") {
 		t.Errorf("expected dry-run preview header:\n%s", out.String())
 	}
-	for _, want := range []string{"fabrica-ci", "Compile", "http://10.0.1.42:5000"} {
+	for _, want := range []string{"fabrica-ci", "Compile", "http://10.0.1.42:5000", testStream, testTemplate} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("preview missing %q:\n%s", want, out.String())
 		}
@@ -222,7 +366,7 @@ func TestTriggerWaitTimeout(t *testing.T) {
 
 type alwaysInProgressRunner struct{ startID string }
 
-func (f *alwaysInProgressRunner) StartBuild(_ context.Context, project string, env map[string]string) (string, error) {
+func (f *alwaysInProgressRunner) StartBuild(_ context.Context, project string, env map[string]string, _ string) (string, error) {
 	return f.startID, nil
 }
 func (f *alwaysInProgressRunner) BuildStatus(_ context.Context, _ string) (cloud.BuildInfo, error) {
@@ -243,7 +387,7 @@ func TestTriggerNoRunnerErrors(t *testing.T) {
 	var out bytes.Buffer
 	st := provisionedState()
 	c := command{
-		runtime:        globals.Runtime{Config: config.Defaults()},
+		runtime:        globals.Runtime{Config: jobConfig()},
 		buildGraphPath: writeTempBuildGraph(t),
 		out:            &out,
 		readState:      func() (*fabricastate.State, error) { return st, nil },
@@ -276,7 +420,7 @@ func TestTriggerResolveHordeNoGetInstance(t *testing.T) {
 	var out bytes.Buffer
 	st := provisionedState()
 	c := command{
-		runtime:        globals.Runtime{Config: config.Defaults()},
+		runtime:        globals.Runtime{Config: jobConfig()},
 		buildGraphPath: writeTempBuildGraph(t),
 		out:            &out,
 		readState:      func() (*fabricastate.State, error) { return st, nil },
@@ -294,7 +438,7 @@ func TestTriggerResolveHordeNoPrivateIP(t *testing.T) {
 	var out bytes.Buffer
 	st := provisionedState()
 	c := command{
-		runtime:        globals.Runtime{Config: config.Defaults()},
+		runtime:        globals.Runtime{Config: jobConfig()},
 		buildGraphPath: writeTempBuildGraph(t),
 		out:            &out,
 		readState:      func() (*fabricastate.State, error) { return st, nil },
@@ -315,7 +459,7 @@ func TestTriggerResolveHordeGetResourceError(t *testing.T) {
 	var out bytes.Buffer
 	st := provisionedState()
 	c := command{
-		runtime:        globals.Runtime{Config: config.Defaults()},
+		runtime:        globals.Runtime{Config: jobConfig()},
 		buildGraphPath: writeTempBuildGraph(t),
 		out:            &out,
 		readState:      func() (*fabricastate.State, error) { return st, nil },
@@ -331,7 +475,7 @@ func TestTriggerResolveHordeGetResourceError(t *testing.T) {
 
 func TestTriggerCustomHordePort(t *testing.T) {
 	var out bytes.Buffer
-	cfg := config.Defaults()
+	cfg := jobConfig()
 	cfg.Horde.Port = 5555
 	st := provisionedState()
 	runner := &fakeRunner{startID: "x"}
@@ -360,7 +504,7 @@ func TestTriggerWaitBuildStatusError(t *testing.T) {
 	var out bytes.Buffer
 	st := provisionedState()
 	c := command{
-		runtime:        globals.Runtime{Config: config.Defaults()},
+		runtime:        globals.Runtime{Config: jobConfig()},
 		buildGraphPath: writeTempBuildGraph(t),
 		out:            &out,
 		readState:      func() (*fabricastate.State, error) { return st, nil },
@@ -424,7 +568,7 @@ func TestIsTerminal(t *testing.T) {
 func TestTriggerReadStateError(t *testing.T) {
 	var out bytes.Buffer
 	c := command{
-		runtime:        globals.Runtime{Config: config.Defaults()},
+		runtime:        globals.Runtime{Config: jobConfig()},
 		buildGraphPath: writeTempBuildGraph(t),
 		out:            &out,
 		readState:      func() (*fabricastate.State, error) { return nil, errors.New("state read error") },

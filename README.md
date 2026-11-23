@@ -500,7 +500,7 @@ By default the CodeBuild project is placed inside the account's default VPC (or 
 
 #### `fabrica ci trigger <buildgraph.xml>`
 
-Starts a build run. Parses the BuildGraph XML for the job name and target (first `<Agent>`'s first `<Node>` name), resolves the Horde coordinator's address from local state, and starts the CodeBuild project with those values as environment overrides; the build submits the job to Horde. Requires `fabrica ci setup` and a provisioned, reachable Horde coordinator. Use `--wait` to poll until the build reaches a terminal state, or `--dry-run` to preview the job, project, and Horde URL without starting a build.
+Starts a build run. The job runs from `horde.streamId` and `horde.templateId` (or `--stream` and `--template`), the same request `horde submit` sends; a missing stream or template fails before any AWS call. The BuildGraph XML is parsed locally for the job name and target: `--target` overrides the target, `--name` sets the job name, and `--change` sets the changelist (overriding `horde.change`). The request is passed to the build as `HORDE_JOB_REQUEST`, and the build's buildspec POSTs it to Horde. Every trigger also sends the current buildspec, so a CodeBuild project created by an earlier release picks up the fix without `ci destroy` and `ci setup`. Requires `fabrica ci setup` and a provisioned, reachable Horde coordinator. Use `--wait` to poll until the build reaches a terminal state, or `--dry-run` to preview the stream, template, job, project, and Horde URL without starting a build. See [docs/horde-jobs.md](docs/horde-jobs.md).
 
 If the BuildGraph has no `<Agent>`/`<Node>` elements, the command fails fast with an actionable error pointing to `examples/BuildGraph.sample.xml`.
 
@@ -526,7 +526,7 @@ Tears down the CI infrastructure: deletes the CodeBuild project (via the AWS SDK
 # One-time: provision the CI infrastructure
 fabrica ci setup
 
-# Trigger a build for a BuildGraph script and watch it run
+# Trigger a build for a BuildGraph script and watch it run (needs horde.streamId and horde.templateId in fabrica.yaml)
 fabrica ci trigger examples/BuildGraph.sample.xml --wait
 
 # Or fire-and-forget, then check status / logs by build ID

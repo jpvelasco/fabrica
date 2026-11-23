@@ -131,12 +131,15 @@ func TestCodeBuildProvider(t *testing.T) {
 			BuildLogErr:    wantErr,
 		}
 
-		buildID, err := provider.StartBuild(context.Background(), "project", wantEnv)
+		buildID, err := provider.StartBuild(context.Background(), "project", wantEnv, "version: 0.2")
 		if buildID != "build-42" || !errors.Is(err, wantErr) || provider.StartBuildCalls != 1 {
 			t.Fatalf("StartBuild() = (%q, %v), calls = %d", buildID, err, provider.StartBuildCalls)
 		}
 		if provider.LastStartBuildProject != "project" || !reflect.DeepEqual(provider.LastStartBuildEnv, wantEnv) {
 			t.Fatalf("StartBuild() captured project %q, env %v", provider.LastStartBuildProject, provider.LastStartBuildEnv)
+		}
+		if provider.LastStartBuildBuildspec != "version: 0.2" {
+			t.Fatalf("StartBuild() captured buildspec %q", provider.LastStartBuildBuildspec)
 		}
 		info, err := provider.BuildStatus(context.Background(), buildID)
 		if info != wantInfo || !errors.Is(err, wantErr) {
@@ -148,7 +151,7 @@ func TestCodeBuildProvider(t *testing.T) {
 		}
 
 		provider.StartBuildID = ""
-		buildID, _ = provider.StartBuild(context.Background(), "project", nil)
+		buildID, _ = provider.StartBuild(context.Background(), "project", nil, "")
 		if buildID != "build-1" {
 			t.Fatalf("default StartBuild() ID = %q", buildID)
 		}

@@ -2,15 +2,19 @@ package trigger_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/ci/trigger"
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/spf13/cobra"
 )
 
@@ -77,7 +81,7 @@ func TestTriggerCobraHappyPath(t *testing.T) {
 	bg := writeBuildGraph(t, dir)
 
 	provider := newTriggerProvider("fabrica-ci:abc123")
-	got, err := runCITrigger(t, testutil.NewTestRuntime(provider), bg)
+	got, err := runCITrigger(t, jobRuntime(provider), bg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -91,9 +95,71 @@ func TestTriggerCobraHappyPath(t *testing.T) {
 	if provider.LastStartBuildEnv["HORDE_URL"] != "http://10.0.1.42:5000" {
 		t.Errorf("HORDE_URL = %q, want http://10.0.1.42:5000", provider.LastStartBuildEnv["HORDE_URL"])
 	}
-	if provider.LastStartBuildEnv["TARGET"] != "Compile" {
-		t.Errorf("TARGET = %q, want Compile", provider.LastStartBuildEnv["TARGET"])
+	req := decodeCobraJobRequest(t, provider.LastStartBuildEnv)
+	if req.StreamID != "//UE5/Main" || req.TemplateID != "build-template" || !slices.Equal(req.Targets, []string{"Compile"}) {
+		t.Errorf("job request = %+v, want the configured stream/template and Compile target", req)
 	}
+}
+
+// TestTriggerCobraFlagsBuildRequest checks that the shared job flags reach the
+// request through the real Cobra command.
+func TestTriggerCobraFlagsBuildRequest(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, provisionedStateJSON())
+	bg := writeBuildGraph(t, dir)
+
+	provider := newTriggerProvider("fabrica-ci:flags")
+	_, err := runCITrigger(t, jobRuntime(provider), bg,
+		"--stream", "//Cobra/Stream", "--template", "cobra-template", "--change", "99", "--name", "Nightly", "--target", "Compile")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	req := decodeCobraJobRequest(t, provider.LastStartBuildEnv)
+	want := horde.CreateJobRequest{StreamID: "//Cobra/Stream", TemplateID: "cobra-template", CommitID: "99", Name: "Nightly", Targets: []string{"Compile"}}
+	if !reflect.DeepEqual(req, want) {
+		t.Errorf("job request = %+v, want %+v", req, want)
+	}
+}
+
+// TestTriggerCobraMissingStreamFailsBeforeStart checks that an unset stream
+// stops the command before CodeBuild is called.
+func TestTriggerCobraMissingStreamFailsBeforeStart(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	testutil.WriteStateFile(t, dir, provisionedStateJSON())
+	bg := writeBuildGraph(t, dir)
+
+	provider := newTriggerProvider("fabrica-ci:never")
+	_, err := runCITrigger(t, testutil.NewTestRuntime(provider), bg)
+	if err == nil {
+		t.Fatal("expected an error without horde.streamId")
+	}
+	testutil.AssertContains(t, err.Error(), "horde.streamId")
+	if provider.StartBuildCalls != 0 {
+		t.Errorf("CodeBuild called %d times for an invalid request", provider.StartBuildCalls)
+	}
+}
+
+// jobRuntime is testutil.NewTestRuntime with the stream and template a trigger
+// needs to build its request.
+func jobRuntime(provider cloud.Provider) globals.RuntimeSource {
+	src := testutil.NewTestRuntime(provider)
+	return func() (globals.Runtime, error) {
+		rt, err := src()
+		rt.Config.Horde.StreamID = "//UE5/Main"
+		rt.Config.Horde.TemplateID = "build-template"
+		return rt, err
+	}
+}
+
+func decodeCobraJobRequest(t *testing.T, env map[string]string) horde.CreateJobRequest {
+	t.Helper()
+	var req horde.CreateJobRequest
+	if err := json.Unmarshal([]byte(env["HORDE_JOB_REQUEST"]), &req); err != nil {
+		t.Fatalf("HORDE_JOB_REQUEST is not JSON: %v", err)
+	}
+	return req
 }
 
 // TestTriggerCobraDryRunNoStart verifies --dry-run renders the preview and
@@ -105,7 +171,7 @@ func TestTriggerCobraDryRunNoStart(t *testing.T) {
 	bg := writeBuildGraph(t, dir)
 
 	provider := newTriggerProvider("fabrica-ci:dry0000")
-	got, err := runCITrigger(t, testutil.NewTestRuntime(provider), bg, "--dry-run")
+	got, err := runCITrigger(t, jobRuntime(provider), bg, "--dry-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -124,7 +190,7 @@ func TestTriggerCobraNotProvisioned(t *testing.T) {
 	t.Chdir(dir)
 	bg := writeBuildGraph(t, dir)
 
-	_, err := runCITrigger(t, testutil.NewTestRuntime(newTriggerProvider("x")), bg)
+	_, err := runCITrigger(t, jobRuntime(newTriggerProvider("x")), bg)
 	if err == nil {
 		t.Fatal("expected error when CI is not provisioned")
 	}
@@ -134,7 +200,7 @@ func TestTriggerCobraNotProvisioned(t *testing.T) {
 // TestTriggerCobraMissingBuildGraphArg enforces ExactArgs via Cobra.
 func TestTriggerCobraMissingBuildGraphArg(t *testing.T) {
 	t.Chdir(t.TempDir())
-	_, err := runCITrigger(t, testutil.NewTestRuntime(newTriggerProvider("")))
+	_, err := runCITrigger(t, jobRuntime(newTriggerProvider("")))
 	if err == nil {
 		t.Fatal("expected error when buildgraph path is omitted")
 	}
@@ -149,7 +215,7 @@ func TestTriggerCobraBadBuildGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := newTriggerProvider("x")
-	_, err := runCITrigger(t, testutil.NewTestRuntime(provider), path)
+	_, err := runCITrigger(t, jobRuntime(provider), path)
 	if err == nil {
 		t.Fatal("expected parse error for invalid BuildGraph")
 	}

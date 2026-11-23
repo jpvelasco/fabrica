@@ -325,7 +325,7 @@ func TestStartBuildPassesEnvOverrides(t *testing.T) {
 	cb := &fakeCodeBuildClient{startID: "build-123"}
 	p := newCodeBuildTestProvider(cb, nil)
 
-	id, err := p.StartBuild(context.Background(), "fabrica-ci", map[string]string{"TARGET": "Compile", "HORDE_URL": "http://10.0.0.5:5000"})
+	id, err := p.StartBuild(context.Background(), "fabrica-ci", map[string]string{"TARGET": "Compile", "HORDE_URL": "http://10.0.0.5:5000"}, "")
 	if err != nil {
 		t.Fatalf("StartBuild: %v", err)
 	}
@@ -340,10 +340,30 @@ func TestStartBuildPassesEnvOverrides(t *testing.T) {
 	}
 }
 
+func TestStartBuildSetsBuildspecOverride(t *testing.T) {
+	cb := &fakeCodeBuildClient{startID: "build-9"}
+	p := newCodeBuildTestProvider(cb, nil)
+
+	if _, err := p.StartBuild(context.Background(), "fabrica-ci", nil, "version: 0.2\n"); err != nil {
+		t.Fatalf("StartBuild: %v", err)
+	}
+	if got := awssdk.ToString(cb.startInput.BuildspecOverride); got != "version: 0.2\n" {
+		t.Errorf("BuildspecOverride = %q, want the rendered buildspec", got)
+	}
+
+	cb.startInput = nil
+	if _, err := p.StartBuild(context.Background(), "fabrica-ci", nil, ""); err != nil {
+		t.Fatalf("StartBuild: %v", err)
+	}
+	if cb.startInput.BuildspecOverride != nil {
+		t.Errorf("BuildspecOverride = %q, want unset when no override is given", awssdk.ToString(cb.startInput.BuildspecOverride))
+	}
+}
+
 func TestStartBuildError(t *testing.T) {
 	cb := &fakeCodeBuildClient{startErr: fmt.Errorf("AccessDenied")}
 	p := newCodeBuildTestProvider(cb, nil)
-	if _, err := p.StartBuild(context.Background(), "fabrica-ci", nil); err == nil {
+	if _, err := p.StartBuild(context.Background(), "fabrica-ci", nil, ""); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -489,7 +509,7 @@ func TestStartBuildNilBuild(t *testing.T) {
 			return &codeBuildNilBuildClient{}
 		},
 	}
-	_, err := p.StartBuild(context.Background(), "fabrica-ci", nil)
+	_, err := p.StartBuild(context.Background(), "fabrica-ci", nil, "")
 	if err == nil {
 		t.Fatal("expected error when Build is nil")
 	}
@@ -516,7 +536,7 @@ func TestStartBuildNilBuildID(t *testing.T) {
 			return &codeBuildNilBuildIDClient{}
 		},
 	}
-	_, err := p.StartBuild(context.Background(), "fabrica-ci", nil)
+	_, err := p.StartBuild(context.Background(), "fabrica-ci", nil, "")
 	if err == nil {
 		t.Fatal("expected error when Build.Id is nil")
 	}

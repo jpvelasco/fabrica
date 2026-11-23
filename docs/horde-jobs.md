@@ -57,3 +57,14 @@ failing items, and the dashboard link `<coordinator>/job/<id>`. For
 pending agents with `fabrica horde agents approve`.
 
 A 401 or 403 means the `fabrica-ci` service account lacks job permission.
+
+## CI builds
+
+`fabrica ci trigger <buildgraph.xml>` sends the same request. It is rendered
+into the build's `HORDE_JOB_REQUEST` variable, and the CodeBuild buildspec
+POSTs that body to `/api/v1/jobs` unchanged. A rejected job prints Horde's
+response body, for example `Stream X not found`, and the build exits 1.
+
+Every `ci trigger` sends the current buildspec with the build, so a CodeBuild
+project created by an earlier release picks up the request on its next trigger.
+`ci destroy` and `ci setup` are not needed.

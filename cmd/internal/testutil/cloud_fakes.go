@@ -237,11 +237,12 @@ type CodeBuildProvider struct {
 	ProjectExistsResult bool
 	ProjectExistsErr    error
 
-	StartBuildID          string
-	StartBuildErr         error
-	StartBuildCalls       int
-	LastStartBuildProject string
-	LastStartBuildEnv     map[string]string
+	StartBuildID            string
+	StartBuildErr           error
+	StartBuildCalls         int
+	LastStartBuildProject   string
+	LastStartBuildEnv       map[string]string
+	LastStartBuildBuildspec string
 
 	BuildInfo      cloud.BuildInfo
 	BuildStatusErr error
@@ -270,10 +271,11 @@ func (p *CodeBuildProvider) DeleteProject(_ context.Context, _ string) error {
 	return p.DeleteProjectErr
 }
 
-func (p *CodeBuildProvider) StartBuild(_ context.Context, project string, env map[string]string) (string, error) {
+func (p *CodeBuildProvider) StartBuild(_ context.Context, project string, env map[string]string, buildspecOverride string) (string, error) {
 	p.StartBuildCalls++
 	p.LastStartBuildProject = project
 	p.LastStartBuildEnv = env
+	p.LastStartBuildBuildspec = buildspecOverride
 	if p.StartBuildID == "" {
 		return "build-1", p.StartBuildErr
 	}
