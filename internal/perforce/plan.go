@@ -63,8 +63,7 @@ type CreatePlan struct {
 	// IAM is the resolved path and permissions boundary for the instance role.
 	IAM config.IAM
 
-	// Profile is the pre-created instance profile reference (perforce.instanceProfile).
-	// When external, Fabrica creates no role and no profile.
+	// Profile is the perforce.instanceProfile reference; external means no role or profile is created.
 	Profile instanceprofile.Ref
 
 	CostResources []cost.Resource

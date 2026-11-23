@@ -36,9 +36,7 @@ type CreateStep struct {
 	// IgnoreWriteError, when true, causes writeState failures to be silently
 	// ignored after this step. Defaults to false (fail on writeState error).
 	IgnoreWriteError bool
-	// ExternalID, when set, records a pre-created resource the module references
-	// instead of creating it: no desired state, no create call. The entry is
-	// marked external so teardown, drift, and export leave it alone.
+	// ExternalID, when set, records a referenced (pre-created) resource without a create call.
 	ExternalID string
 }
 

@@ -405,11 +405,11 @@ func buildModule(prefix naming.Prefix, ms state.ModuleState, cfg *config.Config,
 	// kind get a unique, stable per-suffix ID instead.
 	tableLogicalIDs := loreStoreTableLogicalIDs(ms)
 
-	ref, hasRef := referencedProfileFor(ms)
+	profile, role := referencedProfileFor(ms)
 	for i := range ms.Resources {
 		r := &ms.Resources[i]
 		if instanceprofile.IsExternal(*r) {
-			// Referenced by name below; the profile is never exported as an IAM resource.
+			// Referenced by name on the instance; never exported as an IAM resource.
 			continue
 		}
 		logicalID := toLogicalID(ms.Name, r.TypeName, r.Identifier)
@@ -417,8 +417,9 @@ func buildModule(prefix naming.Prefix, ms state.ModuleState, cfg *config.Config,
 			logicalID = id
 		}
 		props := extractProperties(prefix, ms.Name, *r, cfg, account, region, sessionPasswordParamName(ms))
-		if hasRef && r.Properties["role"] == ref.role {
-			referenceProfile(r.TypeName, props, ref.name)
+		if profile != "" && r.Properties["role"] == role && r.TypeName == "AWS::EC2::Instance" {
+			// The instance launches under the pre-created profile; no IAM resource is declared.
+			props["IamInstanceProfile"] = profile
 		}
 		mod.Resources = append(mod.Resources, ExportResource{
 			TypeName:   r.TypeName,
@@ -432,38 +433,15 @@ func buildModule(prefix naming.Prefix, ms state.ModuleState, cfg *config.Config,
 	return mod
 }
 
-// referencedProfile is a module's pre-created instance profile and the role
-// tag of the resources that launch under it.
-type referencedProfile struct {
-	name string
-	role string
-}
-
-// referencedProfileFor returns the module's pre-created profile, if it records one.
-func referencedProfileFor(ms state.ModuleState) (referencedProfile, bool) {
+// referencedProfileFor returns the name and role tag of a module's pre-created
+// profile; the name is empty when the module records none.
+func referencedProfileFor(ms state.ModuleState) (string, string) {
 	for _, r := range ms.Resources {
 		if instanceprofile.IsExternal(r) {
-			return referencedProfile{name: r.Identifier, role: r.Properties["role"]}, true
+			return r.Identifier, r.Properties["role"]
 		}
 	}
-	return referencedProfile{}, false
-}
-
-// referenceProfile points an instance or launch template at a pre-created
-// profile by name, so the export refers to the existing profile instead of
-// declaring one.
-func referenceProfile(typeName string, props map[string]any, name string) {
-	switch typeName {
-	case "AWS::EC2::Instance":
-		props["IamInstanceProfile"] = name
-	case "AWS::EC2::LaunchTemplate":
-		data, ok := props["LaunchTemplateData"].(map[string]any)
-		if !ok {
-			data = map[string]any{}
-			props["LaunchTemplateData"] = data
-		}
-		data["IamInstanceProfile"] = map[string]any{"Name": name}
-	}
+	return "", ""
 }
 
 // loreStoreTableLogicalIDs maps state-index positions of DynamoDB tables

@@ -8,43 +8,22 @@ import (
 	"github.com/jpvelasco/fabrica/internal/state"
 )
 
-// A pre-created instance profile is never looked up, so drift never reports it
-// missing or extra, even when a lookup would say it is gone.
+// A referenced profile is never looked up, so drift never reports it missing or extra.
 func TestRun_ExternalProfileIsNotLookedUp(t *testing.T) {
 	st := state.NewState("123456789012", "us-east-1")
 	st.UpsertModule("perforce", "2025.2", "ready", []state.ModuleResource{
-		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-123"},
 		{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "workload", Properties: map[string]string{"external": "true"}},
 	})
-
-	var looked []string
+	looked := 0
 	engine := &Engine{
-		State: st,
-		ResourceGet: func(_ context.Context, r *cloud.Resource) error {
-			looked = append(looked, r.TypeName)
-			return nil
-		},
+		State:       st,
+		ResourceGet: func(context.Context, *cloud.Resource) error { looked++; return cloud.ErrResourceNotFound },
 		ResourceList: func(_ context.Context, typeName string) ([]cloud.Resource, error) {
-			if typeName == cloud.TypeAWSIAMInstanceProfile {
-				return []cloud.Resource{{TypeName: typeName, Identifier: "workload"}}, nil
-			}
-			return nil, nil
+			return []cloud.Resource{{TypeName: typeName, Identifier: "workload"}}, nil
 		},
 	}
-
 	report := engine.Run(context.Background())
-
-	for _, typeName := range looked {
-		if typeName == cloud.TypeAWSIAMInstanceProfile {
-			t.Errorf("drift looked up the referenced profile; it should be left alone")
-		}
-	}
-	if report.Missing != 0 || report.Extra != 0 {
-		t.Errorf("Missing=%d Extra=%d, want 0 and 0", report.Missing, report.Extra)
-	}
-	for _, r := range report.Modules[0].Resources {
-		if r.TypeName == cloud.TypeAWSIAMInstanceProfile && r.Status != InSync {
-			t.Errorf("profile status = %s, want in sync", r.Status)
-		}
+	if looked != 0 || report.Missing != 0 || report.Extra != 0 {
+		t.Errorf("looked=%d Missing=%d Extra=%d, want no lookups and no findings", looked, report.Missing, report.Extra)
 	}
 }

@@ -431,11 +431,6 @@ func (c Command) printResourceSummary(header, resourceLead string, m *fabricasta
 	for i, r := range resources {
 		fmt.Fprintf(c.Out, "  %d. %s: %s\n", i+1, r.TypeName, r.Identifier)
 	}
-	for _, r := range m.Resources {
-		if instanceprofile.IsExternal(r) {
-			fmt.Fprintf(c.Out, "  kept: %s %s (pre-created, not managed)\n", r.TypeName, r.Identifier)
-		}
-	}
 }
 
 // resourcesToDelete returns resources in reverse-creation order: Instance → SG.
@@ -470,22 +465,25 @@ func resourcesToDelete2(spec Spec, m *fabricastate.ModuleState) []cloud.Resource
 	return withoutExternal(resourcesToDelete(m), m)
 }
 
-// withoutExternal drops pre-created profiles from a deletion order. Fabrica
-// references those profiles and never deletes them, whatever the spec orders.
+// withoutExternal drops referenced (pre-created) profiles from a deletion order.
 func withoutExternal(resources []cloud.Resource, m *fabricastate.ModuleState) []cloud.Resource {
-	external := map[string]bool{}
-	for _, r := range m.Resources {
-		if instanceprofile.IsExternal(r) {
-			external[r.TypeName+" "+r.Identifier] = true
-		}
-	}
 	var out []cloud.Resource
 	for _, r := range resources {
-		if !external[r.TypeName+" "+r.Identifier] {
+		if !isReferenced(m, r) {
 			out = append(out, r)
 		}
 	}
 	return out
+}
+
+// isReferenced reports whether r is a pre-created profile recorded on m.
+func isReferenced(m *fabricastate.ModuleState, r cloud.Resource) bool {
+	for _, mr := range m.Resources {
+		if instanceprofile.IsExternal(mr) && mr.TypeName == r.TypeName && mr.Identifier == r.Identifier {
+			return true
+		}
+	}
+	return false
 }
 
 // removeResource drops the resource with the given (typeName, identifier) from

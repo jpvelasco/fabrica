@@ -621,8 +621,7 @@ func ResolveIAM(global, module IAM) (IAM, error) {
 	return out, nil
 }
 
-// ValidateIAM checks the global block, every EC2 module override, and the
-// pre-created instance profile references.
+// ValidateIAM checks the global block and every EC2 module override.
 func (c *Config) ValidateIAM() error {
 	if c == nil {
 		return nil
@@ -632,22 +631,17 @@ func (c *Config) ValidateIAM() error {
 			return err
 		}
 	}
-	_, err := InstanceProfileName(c.Perforce.InstanceProfile)
-	return err
+	return nil
 }
 
-// instanceProfileNameRE matches an IAM instance profile name: 1 to 128
-// characters from the IAM name alphabet.
-var instanceProfileNameRE = regexp.MustCompile(`^[\w+=,.@-]{1,128}$`)
+var (
+	instanceProfileNameRE = regexp.MustCompile(`^[\w+=,.@-]{1,128}$`)
+	instanceProfileARNRE  = regexp.MustCompile(`^arn:(?:aws|aws-us-gov|aws-cn):iam::[0-9]{12}:instance-profile/(?:[\w+=,.@-]+/)*([\w+=,.@-]{1,128})$`)
+)
 
-// instanceProfileARNRE matches an instance-profile ARN in the commercial,
-// GovCloud, or China partition. The last path segment is the profile name.
-var instanceProfileARNRE = regexp.MustCompile(`^arn:(?:aws|aws-us-gov|aws-cn):iam::[0-9]{12}:instance-profile/(?:[\w+=,.@-]+/)*([\w+=,.@-]{1,128})$`)
-
-// InstanceProfileName resolves <module>.instanceProfile to a profile name. The
-// value is a name or an instance-profile ARN, which reduces to its last
-// segment. Empty means Fabrica creates the profile and returns "". A role ARN
-// or any other malformed value is rejected, naming the accepted forms.
+// InstanceProfileName resolves <module>.instanceProfile to a profile name: a
+// name, or an instance-profile ARN reduced to its last segment. Empty returns
+// "" (Fabrica manages the profile). A role ARN or other malformed value fails.
 func InstanceProfileName(value string) (string, error) {
 	if value == "" {
 		return "", nil

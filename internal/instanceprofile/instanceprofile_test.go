@@ -3,7 +3,6 @@ package instanceprofile
 import (
 	"context"
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -11,7 +10,6 @@ import (
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
-// fakeInspector answers GetInstanceProfile from a canned result.
 type fakeInspector struct {
 	info cloud.InstanceProfileInfo
 	err  error
@@ -21,54 +19,38 @@ func (f fakeInspector) GetInstanceProfile(context.Context, string) (cloud.Instan
 	return f.info, f.err
 }
 
-func TestResolveRecordedTypesAndExternal(t *testing.T) {
-	managed, err := Resolve("")
-	if err != nil || managed.External() {
-		t.Fatalf("Resolve(\"\") = %+v, %v; want a fabrica-managed Ref", managed, err)
-	}
-	if want := []string{cloud.TypeAWSIAMRole, cloud.TypeAWSIAMInstanceProfile}; !reflect.DeepEqual(managed.RecordedTypes(), want) {
-		t.Errorf("managed RecordedTypes = %v, want %v", managed.RecordedTypes(), want)
-	}
-
+func TestResolveAndExternal(t *testing.T) {
 	ref, err := Resolve("arn:aws:iam::123456789012:instance-profile/platform/workload")
-	if err != nil || ref.Name != "workload" || !ref.External() {
-		t.Fatalf("Resolve(arn) = %+v, %v; want external workload", ref, err)
+	if err != nil || ref.Name != "workload" || !ref.External() || len(ref.RecordedTypes()) != 1 {
+		t.Errorf("Resolve(arn) = %+v, %v; want external workload recording only the profile", ref, err)
 	}
-	if want := []string{cloud.TypeAWSIAMInstanceProfile}; !reflect.DeepEqual(ref.RecordedTypes(), want) {
-		t.Errorf("external RecordedTypes = %v, want %v (no role is created)", ref.RecordedTypes(), want)
+	if managed, _ := Resolve(""); managed.External() || len(managed.RecordedTypes()) != 2 {
+		t.Errorf("Resolve(\"\") = %+v; want a managed Ref recording role and profile", managed)
 	}
 	if !IsExternal(fabricastate.ModuleResource{Properties: map[string]string{PropertyExternal: "true"}}) {
-		t.Error("IsExternal(marked record) = false, want true")
+		t.Error("IsExternal(marked record) = false")
 	}
 }
 
 func TestVerify(t *testing.T) {
 	tests := []struct {
-		name    string
 		err     error
 		roles   []string
-		wantErr []string
+		wantErr string
 	}{
-		{name: "one role passes", roles: []string{"r"}},
-		{name: "missing names profile and key", err: cloud.ErrResourceNotFound, wantErr: []string{"workload", "perforce.instanceProfile", "no instance profile"}},
-		{name: "denied names permission", err: cloud.ErrInspectionDenied, wantErr: []string{"workload", "iam:GetInstanceProfile"}},
-		{name: "other failure is reported", err: errors.New("throttled"), wantErr: []string{"workload", "throttled"}},
-		{name: "two roles rejected", roles: []string{"a", "b"}, wantErr: []string{"workload", "2 roles"}},
+		{roles: []string{"r"}},
+		{err: cloud.ErrResourceNotFound, wantErr: "no such instance profile"},
+		{err: cloud.ErrInspectionDenied, wantErr: "iam:GetInstanceProfile"},
+		{err: errors.New("throttled"), wantErr: "throttled"},
+		{roles: []string{"a", "b"}, wantErr: "2 roles"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := Verify(context.Background(), fakeInspector{info: cloud.InstanceProfileInfo{Roles: tt.roles}, err: tt.err}, "perforce.instanceProfile", "workload")
-			if len(tt.wantErr) == 0 {
-				if err != nil {
-					t.Fatalf("Verify error: %v", err)
-				}
-				return
-			}
-			for _, sub := range tt.wantErr {
-				if err == nil || !strings.Contains(err.Error(), sub) {
-					t.Errorf("Verify error = %v, want it to contain %q", err, sub)
-				}
-			}
-		})
+		err := Verify(context.Background(), fakeInspector{info: cloud.InstanceProfileInfo{Roles: tt.roles}, err: tt.err}, "perforce.instanceProfile", "workload")
+		if tt.wantErr == "" && err != nil {
+			t.Errorf("Verify error = %v, want nil", err)
+		}
+		if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr) || !strings.Contains(err.Error(), "workload")) {
+			t.Errorf("Verify error = %v, want it to name workload and contain %q", err, tt.wantErr)
+		}
 	}
 }

@@ -8,11 +8,9 @@ import (
 	"github.com/jpvelasco/fabrica/internal/instanceprofile"
 )
 
-// VerifyProfile checks a referenced instance profile before any create step
-// runs; dry runs call it too. A fabrica-managed profile passes without a call.
-// A provider that cannot read profiles fails closed, because an instance must
-// not be attached to a profile nobody checked. key is the config setting that
-// appears in the error text.
+// VerifyProfile checks a referenced instance profile before any create runs,
+// dry runs included. A managed profile passes without a call. A provider that
+// cannot read profiles fails closed. key is the config setting named in errors.
 func VerifyProfile(ctx context.Context, p cloud.Provider, ref instanceprofile.Ref, key string) error {
 	if !ref.External() {
 		return nil
@@ -24,9 +22,8 @@ func VerifyProfile(ctx context.Context, p cloud.Provider, ref instanceprofile.Re
 	return instanceprofile.Verify(ctx, insp, key, ref.Name)
 }
 
-// ProfileLines renders a plan's instance-profile rows. A managed profile shows
-// its role and profile rows. A referenced profile shows one row, marked as not
-// managed, so the operator sees the role is not created here.
+// ProfileLines renders a plan's profile rows. A referenced profile is one row
+// marked as not managed; a managed one shows its role and profile rows.
 func ProfileLines(ref instanceprofile.Ref, roleLine, profileLine string) []string {
 	if ref.External() {
 		return []string{profileLine + " (pre-created, not managed)"}
