@@ -59,6 +59,8 @@ type DryRunSpec struct {
 	// VPCNote is the note printed when DefaultVPC is true. Defaults to the
 	// standard message when empty.
 	VPCNote string
+	// Warnings are preflight findings printed in the VPC block.
+	Warnings []string
 	// RawBetween is called between the VPC block and the blank line before
 	// "Resources to create:". Use for module-specific warnings, tips, etc.
 	RawBetween func(io.Writer)
@@ -98,6 +100,7 @@ func DryRun(out io.Writer, spec DryRunSpec) {
 		fmt.Fprintf(out, "  VPC:              %s\n", spec.Info.VPCID)
 	}
 
+	WriteDryRunWarnings(out, spec.Warnings)
 	if spec.RawBetween != nil {
 		spec.RawBetween(out)
 	}

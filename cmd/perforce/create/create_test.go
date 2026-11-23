@@ -59,7 +59,7 @@ func TestCreateDryRunDefaultVPCNote(t *testing.T) {
 		Account: "1", Region: "us-east-1", InstanceType: "m5.xlarge",
 		HelixVersion: "2024.2", VolumeSize: 500, DefaultVPC: true, VPCID: "vpc-def",
 		SGName: "sg", RoleName: "role", InstanceProfileName: "prof", InstanceName: "inst",
-	})
+	}, nil)
 	assert.Contains(t, out.String(), "default")
 	assert.Contains(t, out.String(), "vpc-def")
 	assert.Contains(t, out.String(), "Default VPC used")
@@ -72,7 +72,7 @@ func TestCreateDryRunExplicitVPCNoDefault(t *testing.T) {
 		Account: "1", Region: "us-east-1", InstanceType: "m5.xlarge",
 		HelixVersion: "2024.2", VolumeSize: 500, DefaultVPC: false, VPCID: "vpc-explicit",
 		SGName: "sg", RoleName: "role", InstanceProfileName: "prof", InstanceName: "inst",
-	})
+	}, nil)
 	assert.Contains(t, out.String(), "vpc-explicit")
 	if strings.Contains(out.String(), "Default VPC used") {
 		t.Fatal("should not print default VPC note")
@@ -86,7 +86,7 @@ func TestCreateDryRunPrintsAllowedCIDROnce(t *testing.T) {
 		Account: "1", Region: "us-east-1", InstanceType: "m5.xlarge",
 		HelixVersion: "2024.2", VolumeSize: 500, AllowedCIDR: "10.0.0.0/8", VPCID: "vpc-x",
 		SGName: "sg", RoleName: "role", InstanceProfileName: "prof", InstanceName: "inst",
-	})
+	}, nil)
 	got := out.String()
 	assert.Contains(t, got, "Allowed CIDR:     10.0.0.0/8")
 	if n := strings.Count(got, "Allowed CIDR:"); n != 1 {

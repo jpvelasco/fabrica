@@ -222,7 +222,7 @@ func (p *awsProvider) WithRegion(_ context.Context, region string) (fabricac.Reg
 	scoped.clients.volumeRequestTags = p.clients.volumeRequestTags
 	scoped.clients.instances = &scoped.ec2
 	scoped.clients.iam = &scoped.iam
-	return fabricac.RegionView{Resources: scoped.Resources(), VPCs: scoped, Images: scoped}, nil
+	return fabricac.RegionView{Resources: scoped.Resources(), VPCs: scoped, Images: scoped, Network: scoped}, nil
 }
 
 func init() {

@@ -317,7 +317,7 @@ func workflowTestSpec(events *[]string) CreateSpec[workflowTestPlan] {
 			*events = append(*events, "read-state")
 			return fabricastate.NewState("123456789012", "us-west-2"), nil
 		},
-		PrintDryRun: func(workflowTestPlan) {
+		PrintDryRun: func(workflowTestPlan, []string) {
 			*events = append(*events, "dry-run")
 		},
 		PrintApplyPlan: func(workflowTestPlan) {

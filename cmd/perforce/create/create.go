@@ -169,11 +169,14 @@ func (c command) run(ctx context.Context) error {
 		CleanupCommand:    "fabrica perforce destroy",
 		Confirm:           c.confirm,
 		ReadState:         c.readState,
-		PrintDryRun:       c.printDryRun,
-		PrintApplyPlan:    c.printApplyPlan,
-		Apply:             c.applyCreate,
-		Runtime:           c.runtime,
-		Operation:         "perforce create",
+		Preflight: provision.PreflightFor(c.runtime.Provider, provision.NetworkTarget{
+			Module: "perforce", Placement: "perforce.vpcId and perforce.subnetId", VPCID: plan.VPCID, SubnetID: plan.SubnetID, DefaultVPC: plan.DefaultVPC, InternetAtBoot: true,
+		}),
+		PrintDryRun:    c.printDryRun,
+		PrintApplyPlan: c.printApplyPlan,
+		Apply:          c.applyCreate,
+		Runtime:        c.runtime,
+		Operation:      "perforce create",
 	})
 }
 
@@ -398,13 +401,14 @@ func (c command) rootDeviceForAMI(ctx context.Context, imageID string) (string, 
 	return ec2state.RootDeviceFor("the perforce AMI", imageID, info.RootDeviceName, info.RootDeviceType)
 }
 
-func (c command) printDryRun(plan *perforce.CreatePlan) {
+func (c command) printDryRun(plan *perforce.CreatePlan, warnings []string) {
 	versionLabel := plan.HelixVersion
 	if plan.HelixVersion != "latest" {
 		versionLabel += " (pinned)"
 	}
 	provision.DryRun(c.out, provision.DryRunSpec{
-		Title: "Perforce Helix Core",
+		Warnings: warnings,
+		Title:    "Perforce Helix Core",
 		Info: provision.PlanInfo{
 			Account:      plan.Account,
 			Region:       plan.Region,

@@ -222,11 +222,14 @@ func (c command) run(ctx context.Context) error {
 		CleanupCommand:    "fabrica workstation terminate",
 		Confirm:           c.confirm,
 		ReadState:         c.readState,
-		PrintDryRun:       c.printDryRun,
-		PrintApplyPlan:    c.printApplyPlan,
-		Apply:             c.applyCreate,
-		Runtime:           c.runtime,
-		Operation:         "workstation create",
+		Preflight: provision.PreflightFor(c.runtime.Provider, provision.NetworkTarget{
+			Module: "workstation", Placement: "workstation.vpcId and workstation.subnetId", VPCID: plan.VPCID, SubnetID: plan.SubnetID, DefaultVPC: plan.DefaultVPC, InternetAtBoot: true,
+		}),
+		PrintDryRun:    c.printDryRun,
+		PrintApplyPlan: c.printApplyPlan,
+		Apply:          c.applyCreate,
+		Runtime:        c.runtime,
+		Operation:      "workstation create",
 	})
 }
 
@@ -424,7 +427,7 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	return nil
 }
 
-func (c command) printDryRun(plan *workstation.CreatePlan) {
+func (c command) printDryRun(plan *workstation.CreatePlan, warnings []string) {
 	extraFields := []provision.PlanField{
 		{Key: "AMI ID", Value: plan.AmiID},
 		{Key: "Idle timeout", Value: fmt.Sprintf("%d min", plan.IdleTimeoutMinutes)},
@@ -436,7 +439,8 @@ func (c command) printDryRun(plan *workstation.CreatePlan) {
 		extraFields = append(extraFields, provision.PlanField{Key: "Perforce server", Value: plan.PerforceServerAddr})
 	}
 	provision.DryRun(c.out, provision.DryRunSpec{
-		Title: "Cloud Workstation",
+		Warnings: warnings,
+		Title:    "Cloud Workstation",
 		Info: provision.PlanInfo{
 			Account:      plan.Account,
 			Region:       plan.Region,

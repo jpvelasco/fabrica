@@ -208,6 +208,9 @@ func (c command) run(ctx context.Context) error {
 			}
 			return st, nil
 		},
+		Preflight: provision.PreflightFor(c.runtime.Provider, provision.NetworkTarget{
+			Module: "horde", Placement: "horde.vpcId and horde.subnetId", VPCID: plan.VPCID, SubnetID: plan.SubnetID, DefaultVPC: plan.DefaultVPC,
+		}),
 		PrintDryRun:    c.printDryRun,
 		PrintApplyPlan: c.printApplyPlan,
 		Apply:          c.applyCreate,
@@ -380,7 +383,7 @@ func (c command) abandonServiceToken(ctx context.Context, name string, err error
 	return err
 }
 
-func (c command) printDryRun(plan *horde.CreatePlan) {
+func (c command) printDryRun(plan *horde.CreatePlan, warnings []string) {
 	extraFields := []provision.PlanField{
 		{Key: "AMI ID", Value: plan.AmiID},
 		{Key: "HTTP port", Value: fmt.Sprintf("%d", plan.Port)},
@@ -390,7 +393,8 @@ func (c command) printDryRun(plan *horde.CreatePlan) {
 		extraFields = append(extraFields, provision.PlanField{Key: "Root volume", Value: plan.RootDeviceName + " (encrypted)"})
 	}
 	provision.DryRun(c.out, provision.DryRunSpec{
-		Title: "Horde build coordinator",
+		Warnings: warnings,
+		Title:    "Horde build coordinator",
 		Info: provision.PlanInfo{
 			Account:      plan.Account,
 			Region:       plan.Region,

@@ -140,8 +140,12 @@ func (c command) run(ctx context.Context) error {
 		plan.ScyllaRootDeviceName = scyllaRootDevice
 	}
 
+	warnings, err := provision.NetworkPreflight(ctx, provision.NetworkInspector(c.runtime.Provider), provision.NetworkTarget{Module: "ddc", Placement: "ddc.vpcId and ddc.subnetId", VPCID: plan.VPCID, SubnetID: plan.SubnetID, DefaultVPC: plan.DefaultVPC})
+	if err != nil {
+		return err
+	}
 	if c.dryRun {
-		c.printDryRun(plan)
+		c.printDryRun(plan, warnings)
 		return nil
 	}
 
@@ -162,6 +166,7 @@ func (c command) run(ctx context.Context) error {
 		return nil
 	}
 
+	provision.WriteWarnings(c.out, warnings)
 	c.printPlan(plan)
 	if !provision.ConfirmSetup(c.out, provision.CreateResourcesPrompt, c.assumeYes, c.confirm) {
 		return nil
@@ -317,10 +322,11 @@ func (c command) writeEndpointsFile(plan *ddc.SetupPlan) error {
 	return nil
 }
 
-func (c command) printDryRun(plan *ddc.SetupPlan) {
+func (c command) printDryRun(plan *ddc.SetupPlan, warnings []string) {
 	fmt.Fprintln(c.out, "Distributed DDC (dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "  Name prefix:      %s\n", plan.Prefix)
+	provision.WriteDryRunWarnings(c.out, warnings)
 	c.printPlanBody(plan)
 	fmt.Fprintln(c.out)
 	c.costs.EstimateAll(plan.CostResources).Render(c.out, lineWidth)
