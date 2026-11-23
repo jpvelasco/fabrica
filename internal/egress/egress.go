@@ -69,7 +69,7 @@ func Classify(bpa cloud.BPAStatus, net cloud.SubnetNetwork, internetAtBoot bool)
 	case PathNAT:
 		// The NAT gateway's own subnet is not inspected, so only a VPC exclusion proves egress.
 		if bpa.Mode == cloud.BPAModeBlockBidirectional && !excluded(bpa, net.VPCID) {
-			return Verdict{Level: LevelWarn, Path: p, Message: fmt.Sprintf("subnet %s egresses through a NAT gateway, but VPC Block Public Access (%s) also blocks NAT gateway traffic unless the NAT gateway's subnet or the VPC is excluded. Fix: add an exclusion for the NAT gateway's subnet or the VPC, or add the ssm, ssmmessages and ec2messages interface endpoints plus the S3 gateway endpoint (docs/ssm-private.md).", net.SubnetID, bpa.Mode)}
+			return Verdict{Level: LevelWarn, Path: p, Message: fmt.Sprintf("subnet %s egresses through a NAT gateway, but VPC Block Public Access (%s) also blocks NAT gateway traffic unless the NAT gateway's subnet or the VPC is excluded, and fabrica can confirm only a VPC exclusion. Fix: add an allow-egress exclusion for the VPC, or add the ssm, ssmmessages and ec2messages interface endpoints plus the S3 gateway endpoint (docs/ssm-private.md).", net.SubnetID, bpa.Mode)}
 		}
 	case PathIsolated:
 		return Verdict{Level: LevelFail, Path: p, Message: fmt.Sprintf("subnet %s has no default route and no full set of SSM endpoints (ssm, ssmmessages, ec2messages and S3). Fix: %s.", net.SubnetID, fixHint)}
