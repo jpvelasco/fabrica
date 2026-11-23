@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-23
+
+**Feature release.** Adds pre-created instance profiles, a resource name prefix, a VPC Block Public Access preflight, and a generated Horde agent AMI with enrollment approval. Fixes Horde 5.8 job submission from `horde submit` and `ci trigger`, and `destroy --all` on the versioned state bucket. Breaking for custom Horde agent AMIs built for the INI contract; see Changed.
+
 ### Added
 
 - **`<module>.instanceProfile` launches under a pre-created instance profile for perforce, horde (coordinator and agent pool), lore, workstation, and ddc.** Set a profile name or an instance-profile ARN and Fabrica creates no IAM role or profile for that module, so fabrica can run as a bounded workload role that passes roles but cannot create them. Create checks the profile with `iam:GetInstanceProfile` before anything is created. destroy, drift, and export treat the profile as external and never delete, fix, or declare it. See [Pre-created instance profiles](docs/guardrailed-accounts.md#pre-created-instance-profiles). (#746)
@@ -610,7 +614,8 @@ backup/restore, and Distributed DDC V1 (single home-region).
   status table includes `ddc` and accurate Perforce command surface; badges
   no longer use placeholder Codecov tokens.
 
-[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/jpvelasco/fabrica/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/jpvelasco/fabrica/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/jpvelasco/fabrica/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/jpvelasco/fabrica/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/jpvelasco/fabrica/releases/tag/v0.7.0
