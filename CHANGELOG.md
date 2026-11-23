@@ -15,11 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`horde ami build --role agent` generates the Horde agent AMI.** The agent role bakes the stock Horde Linux agent from an S3 tarball pinned by `--agent-sha256` (verified with `sha256sum -c` before unpacking). The AMI runs `horde-agent.service` as a nologin `horde-agent` user under `ProtectSystem=strict`, writable only at `/opt/horde-agent/Data` and `~/.local/share`, writes the native contract marker, and enables the unit without starting it. The coordinator output is unchanged. (#701)
 
+- **Create flows check VPC Block Public Access before placing resources.** When BPA is on, `perforce`, `horde`, `horde agents`, `lore`, `workstation`, `ddc`, and `ci` create and dry run inspect the subnet they use. A subnet that reaches the internet only through an internet gateway, or has no route and no SSM endpoints, fails before anything is created. A subnet that reaches AWS through endpoints only warns for `perforce` and `workstation`, which install packages at boot. `fabrica doctor` adds a `Network placement` check. Without the four `ec2:Describe*` inspection actions, the check warns instead of blocking. (#718)
+
 ### Changed
 
 - **Horde agents are configured through the native environment contract, HTTP included (breaking for custom agent AMIs).** `horde agents create` no longer writes `/etc/horde/coordinator.conf`, exports `HORDE_COORDINATOR_*` variables, or falls back to Docker. Every agent, HTTP or TLS, gets `/etc/horde/fabrica-agent.env` (`Horde__ServerProfiles__fabrica__Url`) and a systemd `EnvironmentFile` drop-in. Cloud-init probes the coordinator up to 30 times, 10 seconds apart: TLS fails closed, while HTTP keeps the service running and exits 1 without the sentinel. The readiness sentinel is now `/etc/horde/agent-configured`, replacing `/var/lib/cloud/instance/horde-agent-ready`. **Custom agent AMIs built for the INI contract must add** `/etc/horde/fabrica-native-agent-contract` containing `1`, run `horde-agent.service` as a non-root `User=`, and make `/opt/horde-agent/Data` and the service user's `$HOME/.local/share` writable. See [docs/horde-agent-ami.md](docs/horde-agent-ami.md). (#701)
 
 - **TLS Horde agents retry the coordinator probe before configuring.** Cloud-init probes the HTTPS listener up to 30 times, 10 seconds apart, before it writes agent configuration. It still fails closed: if the probe never passes, the agent writes nothing and exits 1.
+
+- **With VPC Block Public Access on, the default-VPC fallback is refused.** A module that leaves `vpcId` and `subnetId` unset would otherwise land in the account default VPC, which BPA cuts off from SSM. Under BPA the create refuses and asks you to set both keys to a private subnet. Accounts with BPA off are unchanged. (#718)
 
 ### Fixed
 

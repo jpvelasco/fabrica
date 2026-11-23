@@ -179,12 +179,12 @@ func TestCheckerRun(t *testing.T) {
 	cfg.State.Table = "t"
 
 	checks := doctorchecks.RunChecks(context.Background(),
-		globals.Runtime{Config: cfg, Provider: &testutil.TestProvider{}},
+		globals.Runtime{Config: cfg, Provider: &testutil.NetworkProvider{}},
 		&fakeStateBackendChecker{bucketExists: true, tableExists: true},
 	)
 
-	if len(checks) != 9 {
-		t.Fatalf("got %d checks, want 9", len(checks))
+	if len(checks) != 10 {
+		t.Fatalf("got %d checks, want 10", len(checks))
 	}
 	for _, d := range checks {
 		if d.Status != "ok" {
@@ -271,8 +271,8 @@ func TestCommandRunJSON(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 	}
-	if len(parsed) != 9 {
-		t.Fatalf("got %d diagnostics, want 9", len(parsed))
+	if len(parsed) != 10 {
+		t.Fatalf("got %d diagnostics, want 10", len(parsed))
 	}
 }
 

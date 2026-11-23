@@ -2,12 +2,17 @@ package doctorchecks
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/egress"
 )
 
 func newTestRuntime(bucket, table, region string) globals.Runtime {
@@ -31,8 +36,8 @@ func newTestRuntime(bucket, table, region string) globals.Runtime {
 func TestRunChecks_Count(t *testing.T) {
 	rt := newTestRuntime("fabrica-state-123456789012", "fabrica-state-lock", "us-west-2")
 	checks := RunChecks(context.Background(), rt, nil)
-	if len(checks) != 9 {
-		t.Fatalf("expected 9 checks, got %d", len(checks))
+	if len(checks) != 10 {
+		t.Fatalf("expected 10 checks, got %d", len(checks))
 	}
 }
 
@@ -79,8 +84,8 @@ func TestRunChecks_NoConfig(t *testing.T) {
 	rt := globals.Runtime{}
 	checks := RunChecks(context.Background(), rt, nil)
 
-	if len(checks) != 9 {
-		t.Fatalf("expected 9 checks, got %d", len(checks))
+	if len(checks) != 10 {
+		t.Fatalf("expected 10 checks, got %d", len(checks))
 	}
 
 	// Region should be warning when config is nil
@@ -436,4 +441,169 @@ func (f *fakeProvider) Identity(_ context.Context) (string, string, string, erro
 
 func (f *fakeProvider) Resources() cloud.ResourceClient {
 	return nil
+}
+
+func TestClassifyNetworkPlacement(t *testing.T) {
+	ingress := cloud.BPAStatus{Mode: cloud.BPAModeBlockIngress}
+	igw := placement{modulePin{"perforce", "subnet-a", true}, testutil.IGWOnlySubnet("subnet-a")}
+	ssm := placement{modulePin{"horde", "subnet-b", false}, testutil.SSMOnlySubnet("subnet-b")}
+	ssmBoot := placement{modulePin{"workstation", "subnet-c", true}, testutil.SSMOnlySubnet("subnet-c")}
+	nat := placement{modulePin{"ci", "subnet-d", false}, cloud.SubnetNetwork{SubnetID: "subnet-d", DefaultRoute: cloud.RouteNAT}}
+	tests := []struct {
+		name       string
+		bpa        cloud.BPAStatus
+		placed     []placement
+		wantStatus string
+		wantParts  []string
+	}{
+		{"bpa off", cloud.BPAStatus{Mode: cloud.BPAModeOff}, []placement{igw}, "ok", []string{"VPC Block Public Access: off"}},
+		{"bpa empty mode is off", cloud.BPAStatus{}, nil, "ok", []string{"VPC Block Public Access: off"}},
+		{"bpa on without pinned subnets", ingress, nil, "warning", []string{"block-ingress", "no module pins a subnetId", "perforce, horde, horde.agents, lore, ddc, workstation or ci"}},
+		{"single nat module ok", ingress, []placement{nat}, "ok", []string{"ci: ok (nat)"}},
+		{"single igw module fails", ingress, []placement{igw}, "fail", []string{"perforce: subnet subnet-a reaches the internet only through an internet gateway"}},
+		{"endpoints module ok", ingress, []placement{ssm}, "ok", []string{"horde: ok (endpoints)"}},
+		{"endpoints module warns at boot", ingress, []placement{ssmBoot}, "warning", []string{"workstation: subnet subnet-c reaches AWS through VPC endpoints only"}},
+		{"warn beats ok", ingress, []placement{nat, ssmBoot}, "warning", []string{"ci: ok (nat)", "workstation: "}},
+		{"fail beats warn and ok", ingress, []placement{ssmBoot, nat, igw}, "fail", []string{"workstation: ", "ci: ok (nat)", "perforce: subnet subnet-a"}},
+		{"warn after fail keeps fail", ingress, []placement{igw, ssmBoot}, "fail", []string{"perforce: ", "; workstation: "}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classifyNetworkPlacement(tt.bpa, tt.placed)
+			if got.Name != networkPlacementName {
+				t.Errorf("Name = %q, want %q", got.Name, networkPlacementName)
+			}
+			if got.Status != tt.wantStatus {
+				t.Errorf("Status = %q, want %q (message %q)", got.Status, tt.wantStatus, got.Message)
+			}
+			for _, part := range tt.wantParts {
+				if !strings.Contains(got.Message, part) {
+					t.Errorf("Message = %q, want substring %q", got.Message, part)
+				}
+			}
+		})
+	}
+}
+
+func TestClassifyNetworkPlacement_JoinsModuleLines(t *testing.T) {
+	ingress := cloud.BPAStatus{Mode: cloud.BPAModeBlockIngress}
+	placed := []placement{
+		{modulePin{"ci", "subnet-d", false}, cloud.SubnetNetwork{SubnetID: "subnet-d", DefaultRoute: cloud.RouteNAT}},
+		{modulePin{"horde", "subnet-b", false}, testutil.SSMOnlySubnet("subnet-b")},
+	}
+	got := classifyNetworkPlacement(ingress, placed)
+	want := "ci: ok (nat); horde: ok (endpoints)"
+	if got.Message != want {
+		t.Fatalf("Message = %q, want %q", got.Message, want)
+	}
+}
+
+func TestVerdictText(t *testing.T) {
+	if got := verdictText(egress.Verdict{Level: egress.LevelOK, Path: egress.PathNAT}); got != "ok (nat)" {
+		t.Errorf("ok verdict = %q, want %q", got, "ok (nat)")
+	}
+	if got := verdictText(egress.Verdict{Level: egress.LevelFail, Message: "blocked"}); got != "blocked" {
+		t.Errorf("fail verdict = %q, want %q", got, "blocked")
+	}
+}
+
+func TestLevelRankAndCheckStatus(t *testing.T) {
+	tests := []struct {
+		level  egress.Level
+		rank   int
+		status string
+	}{
+		{egress.LevelOK, 0, "ok"},
+		{egress.LevelWarn, 1, "warning"},
+		{egress.LevelFail, 2, "fail"},
+	}
+	for _, tt := range tests {
+		if got := levelRank(tt.level); got != tt.rank {
+			t.Errorf("levelRank(%s) = %d, want %d", tt.level, got, tt.rank)
+		}
+		if got := checkStatus(tt.level); got != tt.status {
+			t.Errorf("checkStatus(%s) = %q, want %q", tt.level, got, tt.status)
+		}
+	}
+}
+
+func TestPinnedModules(t *testing.T) {
+	if got := pinnedModules(nil); got != nil {
+		t.Fatalf("nil config = %v, want nil", got)
+	}
+	cfg := config.Defaults()
+	cfg.Perforce.SubnetId = "subnet-p"
+	cfg.Horde.Agents.SubnetID = "subnet-a"
+	cfg.CI.SubnetId = "subnet-c"
+	cfg.Horde.VPCId = "vpc-only" // a vpcId without a subnetId does not pin
+	got := pinnedModules(cfg)
+	want := []modulePin{
+		{"perforce", "subnet-p", true},
+		{"horde.agents", "subnet-a", false},
+		{"ci", "subnet-c", false},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("pinnedModules = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("pinnedModules[%d] = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestPinnedModules_InternetAtBoot(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Perforce.SubnetId = "subnet-p"
+	cfg.Workstation.SubnetId = "subnet-w"
+	cfg.Lore.SubnetId = "subnet-l"
+	for _, m := range pinnedModules(cfg) {
+		wantBoot := m.module == "perforce" || m.module == "workstation"
+		if m.internetAtBoot != wantBoot {
+			t.Errorf("%s internetAtBoot = %v, want %v", m.module, m.internetAtBoot, wantBoot)
+		}
+	}
+}
+
+func TestCheckNetworkPlacement(t *testing.T) {
+	ingress := cloud.BPAStatus{Mode: cloud.BPAModeBlockIngress}
+	withPin := func() *config.Config {
+		c := config.Defaults()
+		c.Perforce.SubnetId = "subnet-p"
+		return c
+	}
+	denied := fmt.Errorf("describe: %w", cloud.ErrInspectionDenied)
+	tests := []struct {
+		name       string
+		rt         globals.Runtime
+		wantStatus string
+		wantMsg    string
+	}{
+		{"no provider", globals.Runtime{}, "warning", provision.NotInspectableMessage},
+		{"provider cannot inspect", globals.Runtime{Provider: &testutil.TestProvider{}}, "warning", provision.NotInspectableMessage},
+		{"bpa denied", globals.Runtime{Provider: &testutil.NetworkProvider{BPAErr: denied}}, "warning", "ec2:DescribeVpcBlockPublicAccessOptions"},
+		{"bpa other error", globals.Runtime{Provider: &testutil.NetworkProvider{BPAErr: errors.New("throttled")}}, "fail", "check failed: throttled"},
+		{"bpa off", globals.Runtime{Provider: &testutil.NetworkProvider{BPA: cloud.BPAStatus{Mode: cloud.BPAModeOff}}, Config: withPin()}, "ok", "VPC Block Public Access: off"},
+		{"bpa on no pins", globals.Runtime{Provider: &testutil.NetworkProvider{BPA: ingress}, Config: config.Defaults()}, "warning", "no module pins a subnetId"},
+		{"bpa on nil config", globals.Runtime{Provider: &testutil.NetworkProvider{BPA: ingress}}, "warning", "no module pins a subnetId"},
+		{"bpa on subnet denied", globals.Runtime{Provider: &testutil.NetworkProvider{BPA: ingress, SubnetErr: denied}, Config: withPin()}, "warning", "ec2:DescribeVpcBlockPublicAccessOptions"},
+		{"bpa on subnet other error", globals.Runtime{Provider: &testutil.NetworkProvider{BPA: ingress, SubnetErr: errors.New("boom")}, Config: withPin()}, "fail", "check failed: boom"},
+		{"bpa on igw pin fails", globals.Runtime{Provider: &testutil.NetworkProvider{BPA: ingress, Subnet: testutil.IGWOnlySubnet("subnet-p")}, Config: withPin()}, "fail", "perforce: subnet subnet-p reaches the internet only"},
+		{"bpa on endpoints pin ok", globals.Runtime{Provider: &testutil.NetworkProvider{BPA: ingress, Subnet: testutil.SSMOnlySubnet("subnet-p")}, Config: func() *config.Config {
+			c := config.Defaults()
+			c.Lore.SubnetId = "subnet-p"
+			return c
+		}()}, "ok", "lore: ok (endpoints)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := checkNetworkPlacement(context.Background(), tt.rt)
+			if got.Status != tt.wantStatus {
+				t.Errorf("Status = %q, want %q (message %q)", got.Status, tt.wantStatus, got.Message)
+			}
+			if !strings.Contains(got.Message, tt.wantMsg) {
+				t.Errorf("Message = %q, want substring %q", got.Message, tt.wantMsg)
+			}
+		})
+	}
 }
