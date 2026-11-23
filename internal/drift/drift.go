@@ -32,6 +32,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/credentials"
 	"github.com/jpvelasco/fabrica/internal/ddc"
 	"github.com/jpvelasco/fabrica/internal/horde"
+	"github.com/jpvelasco/fabrica/internal/instanceprofile"
 	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/perforce"
@@ -460,6 +461,14 @@ func (e *Engine) checkResource(ctx context.Context, m *state.ModuleState, r *sta
 	// CodeBuildRunner auxiliary interface instead.
 	if r.TypeName == "AWS::CodeBuild::Project" {
 		return e.checkCodeBuildProject(ctx, res)
+	}
+
+	// A pre-created instance profile is referenced, not managed: drift never
+	// looks it up, so it is never reported missing or extra and never remediated.
+	if instanceprofile.IsExternal(*r) {
+		res.Status = InSync
+		res.Details = "pre-created instance profile, not managed"
+		return res
 	}
 
 	// All other resources use the standard ResourceClient.Get path.

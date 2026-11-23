@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/instanceprofile"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -34,6 +36,23 @@ type CreateStep struct {
 	// IgnoreWriteError, when true, causes writeState failures to be silently
 	// ignored after this step. Defaults to false (fail on writeState error).
 	IgnoreWriteError bool
+	// ExternalID, when set, records a pre-created resource the module references
+	// instead of creating it: no desired state, no create call. The entry is
+	// marked external so teardown, drift, and export leave it alone.
+	ExternalID string
+}
+
+// recordReferenced records a referenced (pre-created) resource and persists state.
+func recordReferenced(step CreateStep, moduleName, version, status string, resources []fabricastate.ModuleResource, st *fabricastate.State, out io.Writer, writeState func(*fabricastate.State) error) ([]fabricastate.ModuleResource, error) {
+	fmt.Fprintf(out, "  %s referenced (pre-created, not managed): %s\n", step.Label, step.ExternalID)
+	props := map[string]string{instanceprofile.PropertyExternal: "true"}
+	maps.Copy(props, step.Properties)
+	resources = append(resources, fabricastate.ModuleResource{TypeName: step.TypeName, Identifier: step.ExternalID, Properties: props})
+	st.UpsertModule(moduleName, version, status, resources)
+	if err := writeState(st); err != nil {
+		return nil, fmt.Errorf("writing state after %s: %w", step.Label, err)
+	}
+	return resources, nil
 }
 
 // ExecuteStep runs one create step: build desired state → create → print →
@@ -50,6 +69,9 @@ func ExecuteStep(
 	createResource func(ctx context.Context, r *cloud.Resource) error,
 	writeState func(*fabricastate.State) error,
 ) ([]fabricastate.ModuleResource, error) {
+	if step.ExternalID != "" {
+		return recordReferenced(step, moduleName, version, status, resources, st, out, writeState)
+	}
 	if step.ReuseExisting {
 		if existing, ok := ExistingResource(st, moduleName, step.TypeName); ok {
 			fmt.Fprintf(out, "  %s already exists — skipping: %s\n", step.Label, existing.Identifier)

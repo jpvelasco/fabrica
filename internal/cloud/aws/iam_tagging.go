@@ -31,6 +31,7 @@ type iamService struct {
 // iamAPIClient is the subset of the IAM SDK client surface used by iamService.
 type iamAPIClient interface {
 	TagInstanceProfile(ctx context.Context, params *iam.TagInstanceProfileInput, optFns ...func(*iam.Options)) (*iam.TagInstanceProfileOutput, error)
+	GetInstanceProfile(ctx context.Context, params *iam.GetInstanceProfileInput, optFns ...func(*iam.Options)) (*iam.GetInstanceProfileOutput, error)
 }
 
 func (s *iamService) ensureClient(ctx context.Context) error {

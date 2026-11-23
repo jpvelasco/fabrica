@@ -500,7 +500,7 @@ By default the CodeBuild project is placed inside the account's default VPC (or 
 
 #### `fabrica ci trigger <buildgraph.xml>`
 
-Starts a build run. The job runs from `horde.streamId` and `horde.templateId` (or `--stream` and `--template`), the same request `horde submit` sends; a missing stream or template fails before any AWS call. The BuildGraph XML is parsed locally for the job name and target: `--target` overrides the target, `--name` sets the job name, and `--change` sets the changelist (overriding `horde.change`). The request is passed to the build as `HORDE_JOB_REQUEST`, and the build's buildspec POSTs it to Horde. Every trigger also sends the current buildspec, so a CodeBuild project created by an earlier release picks up the fix without `ci destroy` and `ci setup`. Requires `fabrica ci setup` and a provisioned, reachable Horde coordinator. Use `--wait` to poll until the build reaches a terminal state, or `--dry-run` to preview the stream, template, job, project, and Horde URL without starting a build. See [docs/horde-jobs.md](docs/horde-jobs.md).
+Starts a build run. Parses the BuildGraph XML for the job name and target (first `<Agent>`'s first `<Node>` name), resolves the Horde coordinator's address from local state, and starts the CodeBuild project with those values as environment overrides; the build submits the job to Horde. Requires `fabrica ci setup` and a provisioned, reachable Horde coordinator. Use `--wait` to poll until the build reaches a terminal state, or `--dry-run` to preview the job, project, and Horde URL without starting a build.
 
 If the BuildGraph has no `<Agent>`/`<Node>` elements, the command fails fast with an actionable error pointing to `examples/BuildGraph.sample.xml`.
 
@@ -526,7 +526,7 @@ Tears down the CI infrastructure: deletes the CodeBuild project (via the AWS SDK
 # One-time: provision the CI infrastructure
 fabrica ci setup
 
-# Trigger a build for a BuildGraph script and watch it run (needs horde.streamId and horde.templateId in fabrica.yaml)
+# Trigger a build for a BuildGraph script and watch it run
 fabrica ci trigger examples/BuildGraph.sample.xml --wait
 
 # Or fire-and-forget, then check status / logs by build ID
@@ -670,12 +670,14 @@ perforce:
   instance_type: c5.2xlarge
   ami_id: ami-xxxxxxxxxxxxxxxxx
   volume_size_gb: 500
+  instanceProfile: ""           # optional — a pre-created profile name or ARN (see docs/guardrailed-accounts.md)
 
 horde:
   instance_type: m7i.2xlarge
   ami_id: ami-xxxxxxxxxxxxxxxxx   # job-capable Docker compose AMI (MongoDB, Redis, Horde with jobs API)
   agents:
     amiId: ami-yyyyyyyyyyyyyyyyy  # dedicated agent AMI (see docs/horde-agent-ami.md)
+    instanceProfile: ""           # optional — a pre-created profile name or ARN (see docs/guardrailed-accounts.md)
     instanceType: m7i.xlarge
     minSize: 2
     desiredCapacity: 3
@@ -715,6 +717,8 @@ Set `cloud.aws.identity.namePrefix` to rename the AWS resources Fabrica creates 
 Choose the owner before running `fabrica setup`. Custom ownership requires a compatible remote state bucket and lock table before module mutations. New custom backends carry `FabricaOwnershipVersion=1`; ambiguous existing backends are refused. Ownership is recorded in canonical state and remains fixed, including when its module inventory is empty. Legacy state without an owner belongs to `fabrica`. Changing the setting does not retag or migrate an existing deployment: restore its original setting, or use a separate state backend and config for a new deployment. Teardown deletes recorded resources and leaves unrelated owners alone. Match your IAM request/resource-tag conditions and manual AMI bake commands to the configured owner; examples in the bake guides use the default.
 
 Accounts that require an IAM path and permissions boundary, or a project tag on both the instance and its root volume, set `cloud.aws.iam` and `cloud.aws.volumeRequestTags`. See [docs/guardrailed-accounts.md](docs/guardrailed-accounts.md).
+
+Set `perforce.instanceProfile` or `horde.agents.instanceProfile` (a name or an instance-profile ARN) to launch under a profile the platform team pre-created. Fabrica then creates no IAM role or profile for that module and never deletes the profile. See [Pre-created instance profiles](docs/guardrailed-accounts.md#pre-created-instance-profiles).
 
 ## Architecture
 

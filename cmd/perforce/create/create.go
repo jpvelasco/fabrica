@@ -156,6 +156,9 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("building create plan: %w", err)
 	}
 
+	network := provision.PreflightFor(c.runtime.Provider, provision.NetworkTarget{
+		Module: "perforce", Placement: "perforce.vpcId and perforce.subnetId", VPCID: plan.VPCID, SubnetID: plan.SubnetID, DefaultVPC: plan.DefaultVPC, InternetAtBoot: true,
+	})
 	return provision.RunCreate(ctx, provision.CreateSpec[*perforce.CreatePlan]{
 		ModuleName:        moduleName,
 		Account:           account,
@@ -169,9 +172,14 @@ func (c command) run(ctx context.Context) error {
 		CleanupCommand:    "fabrica perforce destroy",
 		Confirm:           c.confirm,
 		ReadState:         c.readState,
-		Preflight: provision.PreflightFor(c.runtime.Provider, provision.NetworkTarget{
-			Module: "perforce", Placement: "perforce.vpcId and perforce.subnetId", VPCID: plan.VPCID, SubnetID: plan.SubnetID, DefaultVPC: plan.DefaultVPC, InternetAtBoot: true,
-		}),
+		// The profile check runs before the network check, so a bad profile
+		// fails dry runs and creates alike before anything is created.
+		Preflight: func(ctx context.Context) ([]string, error) {
+			if err := provision.VerifyProfile(ctx, c.runtime.Provider, plan.Profile, "perforce.instanceProfile"); err != nil {
+				return nil, err
+			}
+			return network(ctx)
+		},
 		PrintDryRun:    c.printDryRun,
 		PrintApplyPlan: c.printApplyPlan,
 		Apply:          c.applyCreate,
@@ -245,6 +253,19 @@ func (c command) createSecurityGroupAndIAM(ctx context.Context, st *fabricastate
 		return nil, "", "", fmt.Errorf("creating security group: %w", err)
 	}
 	sgID := resources[len(resources)-1].Identifier
+
+	if plan.Profile.External() {
+		// The platform team owns the role and profile: reference the profile, create no IAM.
+		resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+			Label:      "Instance profile",
+			TypeName:   cloud.TypeAWSIAMInstanceProfile,
+			ExternalID: plan.Profile.Name,
+		}, moduleName, plan.HelixVersion, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+		if err != nil {
+			return nil, "", "", fmt.Errorf("recording instance profile: %w", err)
+		}
+		return resources, sgID, plan.Profile.Name, nil
+	}
 
 	fmt.Fprintf(c.out, "Creating IAM role %s...\n", plan.RoleName)
 	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
@@ -422,12 +443,7 @@ func (c command) printDryRun(plan *perforce.CreatePlan, warnings []string) {
 		ExtraFields: []provision.PlanField{
 			{Key: "Helix Core", Value: versionLabel},
 		},
-		Resources: append([]string{
-			"Security Group:   " + plan.SGName,
-			"IAM Role:         " + plan.RoleName,
-			"Instance Profile: " + plan.InstanceProfileName,
-			"EC2 Instance:     " + plan.InstanceName,
-		}, provision.IAMResourceLines(plan.IAM)...),
+		Resources:     resourceLines(plan),
 		CostResources: plan.CostResources,
 		Costs:         c.costs,
 		CidrWarning:   "P4 port (1666) open to the entire internet. Set perforce.allowedCidr in fabrica.yaml.",
@@ -442,12 +458,16 @@ func (c command) printApplyPlan(plan *perforce.CreatePlan) {
 		VolumeSize:   plan.VolumeSize,
 	}, []provision.PlanField{
 		{Key: "Helix Core", Value: plan.HelixVersion},
-	}, append([]string{
-		"Security Group:   " + plan.SGName,
-		"IAM Role:         " + plan.RoleName,
-		"Instance Profile: " + plan.InstanceProfileName,
-		"EC2 Instance:     " + plan.InstanceName,
-	}, provision.IAMResourceLines(plan.IAM)...))
+	}, resourceLines(plan))
+}
+
+// resourceLines lists the plan's resources. A referenced profile is one row,
+// marked as not managed, and no IAM role row, since none is created.
+func resourceLines(plan *perforce.CreatePlan) []string {
+	lines := []string{"Security Group:   " + plan.SGName}
+	lines = append(lines, provision.ProfileLines(plan.Profile, "IAM Role:         "+plan.RoleName, "Instance Profile: "+plan.InstanceProfileName)...)
+	lines = append(lines, "EC2 Instance:     "+plan.InstanceName)
+	return append(lines, provision.IAMResourceLines(plan.IAM)...)
 }
 
 func (c command) printPostCreate(_ *perforce.CreatePlan, instanceID string) {

@@ -21,6 +21,29 @@ The same `iam` block is read for workstation, horde (the coordinator and the age
 
 On `AWS::IAM::Role`, Fabrica sends `Path` and `PermissionsBoundary`. On `AWS::IAM::InstanceProfile`, it sends `Path` only. `export` writes the same properties. Fabrica accepts the root path `/` and paths that start and end with `/` with no empty segments (`//`); any other path fails before any create. `permissionsBoundary` must be a policy ARN in the commercial, GovCloud, or China partition (`arn:aws:iam::ACCOUNT:policy/name`, `arn:aws-us-gov:iam::...`, or `arn:aws-cn:iam::...`). A role ARN is rejected.
 
+## Pre-created instance profiles
+
+Use this when fabrica runs as a bounded workload role that can pass roles but cannot create them: its permissions boundary allows `iam:PassRole` on its own path and no `iam:CreateRole` or `iam:CreateInstanceProfile`. Set `instanceProfile` on the module, to a profile name or an instance-profile ARN:
+
+```yaml
+perforce:
+  instanceProfile: arn:aws:iam::123456789012:instance-profile/platform/fabrica-perforce   # name is fabrica-perforce
+horde:
+  agents:
+    instanceProfile: fabrica-horde-agents                                                 # a name works too
+```
+
+With it set, Fabrica creates no IAM role or instance profile for that module. create, dry run, and plan make zero IAM create calls. Fabrica reads the profile with `iam:GetInstanceProfile` before any resource is created, and fails if the profile is missing, unreadable, or does not have exactly one role attached. The error names the profile and the permission. The instance (or agent launch template) attaches the profile by name.
+
+The profile is recorded as external. `destroy` never deletes it or its role, `drift` neither reports it missing or extra nor fixes it, and `export` references it by name instead of declaring it. Dry-run and plan output show `Instance Profile: <name> (pre-created, not managed)`.
+
+The operator running fabrica needs `iam:GetInstanceProfile` on the profile and `iam:PassRole` on its role. The platform team creates the role and profile, attaches the module's policies to the role, and grants those two permissions. The role carries `AmazonSSMManagedInstanceCore` and the inline policies that each module's create generates:
+
+- `perforce`: `internal/perforce/resources.go` (`RoleDesiredState`): the SSM output policy, `ssm:GetParameter` on the per-create admin-password parameter, and the S3 backup policy when `perforce.backup.s3Export` is on.
+- `horde` agents: `internal/horde/agents_resources.go` (`AgentRoleDesiredState`): the SSM output policy.
+
+Both call the shared helpers in `internal/iamrole`. `fabrica export --format cloudformation` writes the role documents Fabrica derives from recorded state, which the platform team can use as a reference.
+
 ## Volume request tags
 
 ```yaml

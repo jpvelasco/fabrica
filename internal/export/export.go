@@ -21,6 +21,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/ddc"
 	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/iamrole"
+	"github.com/jpvelasco/fabrica/internal/instanceprofile"
 	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/perforce"
@@ -404,22 +405,65 @@ func buildModule(prefix naming.Prefix, ms state.ModuleState, cfg *config.Config,
 	// kind get a unique, stable per-suffix ID instead.
 	tableLogicalIDs := loreStoreTableLogicalIDs(ms)
 
+	ref, hasRef := referencedProfileFor(ms)
 	for i := range ms.Resources {
 		r := &ms.Resources[i]
+		if instanceprofile.IsExternal(*r) {
+			// Referenced by name below; the profile is never exported as an IAM resource.
+			continue
+		}
 		logicalID := toLogicalID(ms.Name, r.TypeName, r.Identifier)
 		if id, ok := tableLogicalIDs[i]; ok {
 			logicalID = id
+		}
+		props := extractProperties(prefix, ms.Name, *r, cfg, account, region, sessionPasswordParamName(ms))
+		if hasRef && r.Properties["role"] == ref.role {
+			referenceProfile(r.TypeName, props, ref.name)
 		}
 		mod.Resources = append(mod.Resources, ExportResource{
 			TypeName:   r.TypeName,
 			LogicalID:  logicalID,
 			Identifier: r.Identifier,
-			Properties: sanitize(extractProperties(prefix, ms.Name, *r, cfg, account, region, sessionPasswordParamName(ms))),
+			Properties: sanitize(props),
 			Module:     ms.Name,
 		})
 	}
 
 	return mod
+}
+
+// referencedProfile is a module's pre-created instance profile and the role
+// tag of the resources that launch under it.
+type referencedProfile struct {
+	name string
+	role string
+}
+
+// referencedProfileFor returns the module's pre-created profile, if it records one.
+func referencedProfileFor(ms state.ModuleState) (referencedProfile, bool) {
+	for _, r := range ms.Resources {
+		if instanceprofile.IsExternal(r) {
+			return referencedProfile{name: r.Identifier, role: r.Properties["role"]}, true
+		}
+	}
+	return referencedProfile{}, false
+}
+
+// referenceProfile points an instance or launch template at a pre-created
+// profile by name, so the export refers to the existing profile instead of
+// declaring one.
+func referenceProfile(typeName string, props map[string]any, name string) {
+	switch typeName {
+	case "AWS::EC2::Instance":
+		props["IamInstanceProfile"] = name
+	case "AWS::EC2::LaunchTemplate":
+		data, ok := props["LaunchTemplateData"].(map[string]any)
+		if !ok {
+			data = map[string]any{}
+			props["LaunchTemplateData"] = data
+		}
+		data["IamInstanceProfile"] = map[string]any{"Name": name}
+	}
 }
 
 // loreStoreTableLogicalIDs maps state-index positions of DynamoDB tables

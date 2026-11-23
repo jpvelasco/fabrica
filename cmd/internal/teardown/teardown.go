@@ -18,6 +18,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/instanceprofile"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
@@ -430,6 +431,11 @@ func (c Command) printResourceSummary(header, resourceLead string, m *fabricasta
 	for i, r := range resources {
 		fmt.Fprintf(c.Out, "  %d. %s: %s\n", i+1, r.TypeName, r.Identifier)
 	}
+	for _, r := range m.Resources {
+		if instanceprofile.IsExternal(r) {
+			fmt.Fprintf(c.Out, "  kept: %s %s (pre-created, not managed)\n", r.TypeName, r.Identifier)
+		}
+	}
 }
 
 // resourcesToDelete returns resources in reverse-creation order: Instance → SG.
@@ -459,9 +465,27 @@ func resourcesToDelete(m *fabricastate.ModuleState) []cloud.Resource {
 // EC2 Instance -> SecurityGroup order is used.
 func resourcesToDelete2(spec Spec, m *fabricastate.ModuleState) []cloud.Resource {
 	if spec.ResourceOrder != nil {
-		return spec.ResourceOrder(m)
+		return withoutExternal(spec.ResourceOrder(m), m)
 	}
-	return resourcesToDelete(m)
+	return withoutExternal(resourcesToDelete(m), m)
+}
+
+// withoutExternal drops pre-created profiles from a deletion order. Fabrica
+// references those profiles and never deletes them, whatever the spec orders.
+func withoutExternal(resources []cloud.Resource, m *fabricastate.ModuleState) []cloud.Resource {
+	external := map[string]bool{}
+	for _, r := range m.Resources {
+		if instanceprofile.IsExternal(r) {
+			external[r.TypeName+" "+r.Identifier] = true
+		}
+	}
+	var out []cloud.Resource
+	for _, r := range resources {
+		if !external[r.TypeName+" "+r.Identifier] {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // removeResource drops the resource with the given (typeName, identifier) from

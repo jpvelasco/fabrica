@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/internal/naming"
@@ -70,6 +71,9 @@ type PerforceConfig struct {
 	Backup       PerforceBackupConfig `mapstructure:"backup"       yaml:"backup"`
 	// IAM overrides cloud.aws.iam for this module when a field is set.
 	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
+	// InstanceProfile names a pre-created instance profile (a name or an
+	// instance-profile ARN). Empty means Fabrica creates the role and profile.
+	InstanceProfile string `mapstructure:"instanceProfile" yaml:"instanceProfile,omitempty"`
 }
 
 // PerforceBackupConfig holds the perforce.backup: section of fabrica.yaml.
@@ -617,7 +621,8 @@ func ResolveIAM(global, module IAM) (IAM, error) {
 	return out, nil
 }
 
-// ValidateIAM checks the global block and every EC2 module override.
+// ValidateIAM checks the global block, every EC2 module override, and the
+// pre-created instance profile references.
 func (c *Config) ValidateIAM() error {
 	if c == nil {
 		return nil
@@ -627,5 +632,35 @@ func (c *Config) ValidateIAM() error {
 			return err
 		}
 	}
-	return nil
+	_, err := InstanceProfileName(c.Perforce.InstanceProfile)
+	return err
+}
+
+// instanceProfileNameRE matches an IAM instance profile name: 1 to 128
+// characters from the IAM name alphabet.
+var instanceProfileNameRE = regexp.MustCompile(`^[\w+=,.@-]{1,128}$`)
+
+// instanceProfileARNRE matches an instance-profile ARN in the commercial,
+// GovCloud, or China partition. The last path segment is the profile name.
+var instanceProfileARNRE = regexp.MustCompile(`^arn:(?:aws|aws-us-gov|aws-cn):iam::[0-9]{12}:instance-profile/(?:[\w+=,.@-]+/)*([\w+=,.@-]{1,128})$`)
+
+// InstanceProfileName resolves <module>.instanceProfile to a profile name. The
+// value is a name or an instance-profile ARN, which reduces to its last
+// segment. Empty means Fabrica creates the profile and returns "". A role ARN
+// or any other malformed value is rejected, naming the accepted forms.
+func InstanceProfileName(value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	if !strings.HasPrefix(value, "arn:") {
+		if !instanceProfileNameRE.MatchString(value) {
+			return "", fmt.Errorf("instanceProfile %q must be an instance profile name (1-128 letters, digits, or +=,.@_-) or an instance-profile ARN such as arn:aws:iam::123456789012:instance-profile/name", value)
+		}
+		return value, nil
+	}
+	match := instanceProfileARNRE.FindStringSubmatch(value)
+	if match == nil {
+		return "", fmt.Errorf("instanceProfile %q is not an instance-profile ARN. Use arn:aws:iam::<account-id>:instance-profile/<name> (a role ARN is not accepted), or set the profile name instead", value)
+	}
+	return match[1], nil
 }

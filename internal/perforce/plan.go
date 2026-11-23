@@ -8,6 +8,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/instanceprofile"
 	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
@@ -62,20 +63,20 @@ type CreatePlan struct {
 	// IAM is the resolved path and permissions boundary for the instance role.
 	IAM config.IAM
 
+	// Profile is the pre-created instance profile reference (perforce.instanceProfile).
+	// When external, Fabrica creates no role and no profile.
+	Profile instanceprofile.Ref
+
 	CostResources []cost.Resource
 }
 
 // RequiredResources lists the resource TypeNames a complete Perforce module
 // records in state. Create retries compare a module's recorded inventory
 // against this list to separate a fully provisioned module (in any
-// transitional status) from a partial one.
+// transitional status) from a partial one. A referenced profile records no role.
 func (p CreatePlan) RequiredResources() []string {
-	return []string{
-		cloud.TypeAWSEC2SecurityGroup,
-		cloud.TypeAWSIAMRole,
-		cloud.TypeAWSIAMInstanceProfile,
-		cloud.TypeAWSEC2Instance,
-	}
+	types := append([]string{cloud.TypeAWSEC2SecurityGroup}, p.Profile.RecordedTypes()...)
+	return append(types, cloud.TypeAWSEC2Instance)
 }
 
 // NewCreatePlan validates inputs and builds a CreatePlan. VPCResolver is called
@@ -86,6 +87,10 @@ func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.Perforc
 		return nil, err
 	}
 	if err := cfg.IAM.Validate(); err != nil {
+		return nil, err
+	}
+	profile, err := instanceprofile.Resolve(cfg.InstanceProfile)
+	if err != nil {
 		return nil, err
 	}
 
@@ -108,6 +113,10 @@ func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.Perforc
 	}
 
 	s3Prefix := ResolveS3Prefix(cfg.Backup.S3Prefix)
+	profileName := prefix.Profile("perforce")
+	if profile.External() {
+		profileName = profile.Name
+	}
 	return &CreatePlan{
 		Prefix:              prefix,
 		Account:             account,
@@ -122,11 +131,12 @@ func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.Perforc
 		SGName:              prefix.SG("perforce"),
 		InstanceName:        prefix.Instance("perforce"),
 		RoleName:            prefix.Role("perforce"),
-		InstanceProfileName: prefix.Profile("perforce"),
+		InstanceProfileName: profileName,
 		BackupS3Export:      cfg.Backup.S3Export,
 		BackupS3Bucket:      cfg.Backup.S3Bucket,
 		BackupS3Prefix:      s3Prefix,
 		IAM:                 cfg.IAM,
+		Profile:             profile,
 		CostResources:       CostResources(cfg),
 	}, nil
 }

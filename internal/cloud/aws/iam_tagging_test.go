@@ -15,6 +15,10 @@ type fakeIAMClient struct {
 	tagErr    error
 	calls     int
 	lastInput *iam.TagInstanceProfileInput
+
+	// profile and profileErr answer GetInstanceProfile.
+	profile    *iam.GetInstanceProfileOutput
+	profileErr error
 }
 
 func (f *fakeIAMClient) TagInstanceProfile(_ context.Context, in *iam.TagInstanceProfileInput, _ ...func(*iam.Options)) (*iam.TagInstanceProfileOutput, error) {
@@ -24,6 +28,13 @@ func (f *fakeIAMClient) TagInstanceProfile(_ context.Context, in *iam.TagInstanc
 	f.calls++
 	f.lastInput = in
 	return &iam.TagInstanceProfileOutput{}, nil
+}
+
+func (f *fakeIAMClient) GetInstanceProfile(_ context.Context, _ *iam.GetInstanceProfileInput, _ ...func(*iam.Options)) (*iam.GetInstanceProfileOutput, error) {
+	if f.profileErr != nil {
+		return nil, f.profileErr
+	}
+	return f.profile, nil
 }
 
 func newIamTaggingTest(t *testing.T, fake *fakeIAMClient) *iamService {
