@@ -7,6 +7,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/instanceprofile"
 	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
@@ -54,6 +55,9 @@ type CreatePlan struct {
 	// IAM is the resolved path and permissions boundary for the instance role.
 	IAM config.IAM
 
+	// Profile is the horde.instanceProfile reference; external means no role or profile is created.
+	Profile instanceprofile.Ref
+
 	// ServiceTokenParameter is the per-create SSM SecureString cloud-init
 	// publishes the Horde service-account token to. The create layer mints it
 	// (ServiceTokenParameterFor) before the plan is printed, so the role scope,
@@ -68,12 +72,8 @@ type CreatePlan struct {
 // against this list to separate a fully provisioned module (in any
 // transitional status) from a partial one.
 func (p CreatePlan) RequiredResources() []string {
-	return []string{
-		cloud.TypeAWSEC2SecurityGroup,
-		cloud.TypeAWSIAMRole,
-		cloud.TypeAWSIAMInstanceProfile,
-		cloud.TypeAWSEC2Instance,
-	}
+	types := append([]string{cloud.TypeAWSEC2SecurityGroup}, p.Profile.RecordedTypes()...)
+	return append(types, cloud.TypeAWSEC2Instance)
 }
 
 func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.HordeConfig, account, region string, resolver cloud.VPCResolver, cidrResolver cloud.VPCCIDRResolver) (*CreatePlan, error) {
@@ -81,6 +81,10 @@ func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.HordeCo
 		return nil, fmt.Errorf("horde.amiId is required. Provide an AMI ID that contains MongoDB, Redis,\nand the Horde server. See: https://github.com/jpvelasco/fabrica/blob/main/docs/horde-ami.md")
 	}
 	if err := cfg.IAM.Validate(); err != nil {
+		return nil, err
+	}
+	profile, err := instanceprofile.Resolve(cfg.InstanceProfile)
+	if err != nil {
 		return nil, err
 	}
 
@@ -103,6 +107,10 @@ func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.HordeCo
 	}
 	allowedCIDR := topology.ResolveAllowedCIDR(ctx, cfg.AllowedCIDR, vpcID, cidrResolver, DefaultAllowedCIDR)
 
+	profileName := prefix.Profile("horde")
+	if profile.External() {
+		profileName = profile.Name
+	}
 	return &CreatePlan{
 		Prefix:              prefix,
 		Connection:          connection,
@@ -120,7 +128,8 @@ func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.HordeCo
 		SGName:              prefix.SG("horde"),
 		InstanceName:        prefix.Instance("horde"),
 		RoleName:            prefix.Role("horde"),
-		InstanceProfileName: prefix.Profile("horde"),
+		InstanceProfileName: profileName,
+		Profile:             profile,
 		IAM:                 cfg.IAM,
 		CostResources:       CostResources(cfg),
 	}, nil

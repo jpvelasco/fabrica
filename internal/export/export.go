@@ -405,7 +405,7 @@ func buildModule(prefix naming.Prefix, ms state.ModuleState, cfg *config.Config,
 	// kind get a unique, stable per-suffix ID instead.
 	tableLogicalIDs := loreStoreTableLogicalIDs(ms)
 
-	profile, role := referencedProfileFor(ms)
+	profiles := referencedProfiles(ms)
 	for i := range ms.Resources {
 		r := &ms.Resources[i]
 		if instanceprofile.IsExternal(*r) {
@@ -417,7 +417,7 @@ func buildModule(prefix naming.Prefix, ms state.ModuleState, cfg *config.Config,
 			logicalID = id
 		}
 		props := extractProperties(prefix, ms.Name, *r, cfg, account, region, sessionPasswordParamName(ms))
-		if profile != "" && r.Properties["role"] == role {
+		if profile, ok := profiles[r.Properties["role"]]; ok {
 			referenceProfile(r.TypeName, props, profile)
 		}
 		mod.Resources = append(mod.Resources, ExportResource{
@@ -448,15 +448,16 @@ func referenceProfile(typeName string, props map[string]any, name string) {
 	}
 }
 
-// referencedProfileFor returns the name and role tag of a module's pre-created
-// profile; the name is empty when the module records none.
-func referencedProfileFor(ms state.ModuleState) (string, string) {
+// referencedProfiles maps each role tag to the module's pre-created profile for
+// that role. Resources carrying the tag launch under the profile.
+func referencedProfiles(ms state.ModuleState) map[string]string {
+	profiles := map[string]string{}
 	for _, r := range ms.Resources {
 		if instanceprofile.IsExternal(r) {
-			return r.Identifier, r.Properties["role"]
+			profiles[r.Properties["role"]] = r.Identifier
 		}
 	}
-	return "", ""
+	return profiles
 }
 
 // loreStoreTableLogicalIDs maps state-index positions of DynamoDB tables

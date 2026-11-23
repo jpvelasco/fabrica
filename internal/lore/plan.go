@@ -9,6 +9,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/instanceprofile"
 	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
@@ -65,6 +66,9 @@ type CreatePlan struct {
 	// IAM is the resolved path and permissions boundary for the instance role.
 	IAM config.IAM
 
+	// Profile is the lore.instanceProfile reference; external means no role or profile is created.
+	Profile instanceprofile.Ref
+
 	// TLS settings (optional).
 	TLSConfig config.LoreTLSConfig
 
@@ -77,12 +81,8 @@ type CreatePlan struct {
 // against this list to separate a fully provisioned module (in any
 // transitional status) from a partial one.
 func (p CreatePlan) RequiredResources() []string {
-	required := []string{
-		cloud.TypeAWSEC2SecurityGroup,
-		cloud.TypeAWSIAMRole,
-		cloud.TypeAWSIAMInstanceProfile,
-		cloud.TypeAWSEC2Instance,
-	}
+	required := append([]string{cloud.TypeAWSEC2SecurityGroup}, p.Profile.RecordedTypes()...)
+	required = append(required, cloud.TypeAWSEC2Instance)
 	if p.StoreBackend == StoreBackendS3 {
 		required = append(required, cloud.TypeAWSS3Bucket)
 		for range p.StoreTables {
@@ -109,6 +109,10 @@ func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.LoreCon
 		return nil, err
 	}
 	if err := cfg.IAM.Validate(); err != nil {
+		return nil, err
+	}
+	profile, err := instanceprofile.Resolve(cfg.InstanceProfile)
+	if err != nil {
 		return nil, err
 	}
 
@@ -149,7 +153,8 @@ func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.LoreCon
 		StoreBucket:         storeBucket,
 		StoreTables:         s3StoreTables(storeBackend, storeBucket),
 		RoleName:            prefix.Role("lore"),
-		InstanceProfileName: prefix.Profile("lore"),
+		InstanceProfileName: profile.NameOr(prefix.Profile("lore")),
+		Profile:             profile,
 		IAM:                 cfg.IAM,
 		TLSConfig:           cfg.TLSConfig,
 		CostResources:       CostResources(prefix, cfg),

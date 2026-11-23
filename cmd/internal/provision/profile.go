@@ -22,6 +22,19 @@ func VerifyProfile(ctx context.Context, p cloud.Provider, ref instanceprofile.Re
 	return instanceprofile.Verify(ctx, insp, key, ref.Name)
 }
 
+// ProfilePreflight returns a create preflight that verifies the referenced
+// profile first, then checks network placement. A bad profile fails dry runs
+// and creates alike before anything is created.
+func ProfilePreflight(p cloud.Provider, ref instanceprofile.Ref, key string, target NetworkTarget) func(context.Context) ([]string, error) {
+	network := PreflightFor(p, target)
+	return func(ctx context.Context) ([]string, error) {
+		if err := VerifyProfile(ctx, p, ref, key); err != nil {
+			return nil, err
+		}
+		return network(ctx)
+	}
+}
+
 // ProfileLines renders a plan's profile rows. A referenced profile is one row
 // marked as not managed; a managed one shows its role and profile rows.
 func ProfileLines(ref instanceprofile.Ref, roleLine, profileLine string) []string {

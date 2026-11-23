@@ -30,6 +30,14 @@ func Resolve(value string) (Ref, error) {
 // External reports whether the profile is referenced rather than managed.
 func (r Ref) External() bool { return r.Name != "" }
 
+// NameOr returns the referenced profile name, or fallback when Fabrica manages the profile.
+func (r Ref) NameOr(fallback string) string {
+	if r.External() {
+		return r.Name
+	}
+	return fallback
+}
+
 // RecordedTypes lists the IAM types a module records: role and profile when
 // managed, the profile alone when referenced.
 func (r Ref) RecordedTypes() []string {

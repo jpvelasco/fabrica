@@ -54,3 +54,25 @@ func TestBuildModuleReferencesProfileOnlyOnItsRole(t *testing.T) {
 		t.Errorf("launch template IamInstanceProfile = %v, want Name workload", data["IamInstanceProfile"])
 	}
 }
+
+// A module can reference two profiles (coordinator and agent pool); each
+// resource gets the profile for its own role tag.
+func TestBuildModuleReferencesOneProfilePerRole(t *testing.T) {
+	ms := state.ModuleState{
+		Name: "horde",
+		Resources: []state.ModuleResource{
+			{TypeName: "AWS::EC2::Instance", Identifier: "i-coord"},
+			{TypeName: "AWS::IAM::InstanceProfile", Identifier: "coord-profile", Properties: map[string]string{"external": "true"}},
+			{TypeName: "AWS::IAM::InstanceProfile", Identifier: "agent-profile", Properties: map[string]string{"role": "agent", "external": "true"}},
+			{TypeName: "AWS::EC2::LaunchTemplate", Identifier: "lt-agent", Properties: map[string]string{"role": "agent"}},
+		},
+	}
+	mod := buildModule(naming.Default, ms, config.Defaults(), "123456789012", "us-east-1")
+	if mod.Resources[0].Properties["IamInstanceProfile"] != "coord-profile" {
+		t.Errorf("coordinator IamInstanceProfile = %v, want coord-profile", mod.Resources[0].Properties["IamInstanceProfile"])
+	}
+	data, _ := mod.Resources[1].Properties["LaunchTemplateData"].(map[string]any)
+	if profile, _ := data["IamInstanceProfile"].(map[string]any); profile["Name"] != "agent-profile" {
+		t.Errorf("launch template profile = %v, want agent-profile", data["IamInstanceProfile"])
+	}
+}
