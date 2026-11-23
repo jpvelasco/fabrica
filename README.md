@@ -172,7 +172,7 @@ fabrica horde status
 fabrica ci setup
 fabrica ci trigger examples/BuildGraph.sample.xml --wait
 # low-level direct submit also works:
-fabrica horde submit examples/BuildGraph.sample.xml
+fabrica horde submit examples/BuildGraph.sample.xml   # needs horde.streamId and horde.templateId in fabrica.yaml; see docs/horde-jobs.md
 ```
 
 ### 5. Deploy to GameLift (blue/green)
@@ -314,12 +314,16 @@ Verifies an operator-installed Docker TLS coordinator over SSM and pinned privat
 
 #### `fabrica horde submit`
 
-Parses a BuildGraph XML file and POSTs the job to the recorded Horde endpoint (private IP for HTTP; configured DNS identity for TLS). The target is the first `<Aggregate>` in the XML, or the first `<Node>` of the first `<Agent>` when there is no aggregate. Use `examples/BuildGraph.sample.xml` as a starting point. Options:
+POSTs a job to the recorded Horde endpoint (private IP for HTTP; configured DNS identity for TLS). The job runs the stream's job template, so `horde.streamId` and `horde.templateId` in `fabrica.yaml` are required; both must exist in the coordinator's `globals.json`. See [docs/horde-jobs.md](docs/horde-jobs.md). An optional BuildGraph XML file is parsed locally to pick the target (the first `<Aggregate>`, or the first `<Node>` of the first `<Agent>`); the file is never uploaded, and Horde runs the script from the synced stream. Use `examples/BuildGraph.sample.xml` as a starting point. Options:
 
 ```
---wait         Poll until the job completes (exits non-zero if the job errors, the wait times out, or polling is cancelled)
---dry-run      Preview the job, the chosen target and why, and the coordinator address without submitting
---target NAME  Run this <Aggregate> or <Node> name instead of the default (warns if the name is not in the file)
+--stream ID     Horde stream to run in (overrides horde.streamId)
+--template ID   Horde job template (overrides horde.templateId)
+--change N      Perforce changelist to build (overrides horde.change; 0 lets Horde pick the latest)
+--name NAME     Job name shown in the Horde web UI (default: the BuildGraph agent name)
+--target NAME   Run this <Aggregate> or <Node> name instead of the default (warns if the name is not in the file)
+--wait          Poll until the job completes (exits non-zero if the job state is not recognised, the wait times out, or polling is cancelled)
+--dry-run       Preview the request JSON, the target and why, and the coordinator address without submitting
 ```
 
 Requires VPN or same-VPC access; no public IP is assigned in V1.

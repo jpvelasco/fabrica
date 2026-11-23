@@ -17,7 +17,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
-	"github.com/jpvelasco/fabrica/internal/horde/buildgraph"
+	"github.com/jpvelasco/fabrica/internal/horde"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
 
@@ -28,10 +28,12 @@ type fakeHordeClient struct {
 	statusErr   error
 	submitCalls int
 	statusCalls int
+	lastReq     horde.CreateJobRequest
 }
 
-func (f *fakeHordeClient) SubmitJob(_ context.Context, _ *buildgraph.BuildGraphJob) (string, error) {
+func (f *fakeHordeClient) SubmitJob(_ context.Context, req horde.CreateJobRequest) (string, error) {
 	f.submitCalls++
+	f.lastReq = req
 	if f.submitErr != nil {
 		return "", f.submitErr
 	}
@@ -49,7 +51,7 @@ func (f *fakeHordeClient) GetJobStatus(_ context.Context, jobID string) (string,
 	if s, ok := f.statusMap[jobID]; ok {
 		return s, nil
 	}
-	return "waiting", nil
+	return "Waiting", nil
 }
 
 func writeTempBuildGraph(t *testing.T) string {
@@ -65,8 +67,17 @@ func writeTempBuildGraph(t *testing.T) string {
 	return path
 }
 
-func newTestCommand(out *bytes.Buffer, client HordeClient, st *fabricastate.State) command {
+// testJobConfig returns config.Defaults with the stream and template that
+// every submit test needs to pass request validation.
+func testJobConfig() *config.Config {
 	cfg := config.Defaults()
+	cfg.Horde.StreamID = "stream-main"
+	cfg.Horde.TemplateID = "template-compile"
+	return cfg
+}
+
+func newTestCommand(out *bytes.Buffer, client HordeClient, st *fabricastate.State) command {
+	cfg := testJobConfig()
 	c := command{
 		runtime:     globals.Runtime{Config: cfg, Provider: nil},
 		out:         out,
@@ -177,7 +188,7 @@ func TestSubmitDryRunResolvesCoordinator(t *testing.T) {
 		},
 	}
 	fakeProv := &fakeSubmitProvider{rc: fakeRC}
-	cfg := config.Defaults()
+	cfg := testJobConfig()
 	c := command{
 		runtime: globals.Runtime{Config: cfg, Provider: fakeProv},
 		out:     &out,
@@ -202,7 +213,7 @@ func TestSubmitWaitPollsUntilComplete(t *testing.T) {
 	callCount := 0
 	seqClient := &sequentialFakeClient{
 		submitJobID: "job-wait-001",
-		statusSeq:   []string{"waiting", "running", "complete"},
+		statusSeq:   []string{"Waiting", "Running", "Complete"},
 		idx:         &callCount,
 	}
 	c := newTestCommand(&out, seqClient, st)
@@ -212,7 +223,7 @@ func TestSubmitWaitPollsUntilComplete(t *testing.T) {
 	if err := c.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	assert.Contains(t, out.String(), "complete")
+	assert.Contains(t, out.String(), "Complete")
 }
 
 // TestSubmitWaitTimeout verifies --wait returns a timeout error after 60
@@ -304,7 +315,7 @@ type sequentialFakeClient struct {
 	idx         *int
 }
 
-func (f *sequentialFakeClient) SubmitJob(_ context.Context, _ *buildgraph.BuildGraphJob) (string, error) {
+func (f *sequentialFakeClient) SubmitJob(_ context.Context, _ horde.CreateJobRequest) (string, error) {
 	return f.submitJobID, nil
 }
 
@@ -396,14 +407,14 @@ func TestSubmitWaitStatusError(t *testing.T) {
 	assert.Contains(t, err.Error(), "polling job")
 }
 
-// TestSubmitWaitErrorState verifies --wait returns an actionable error naming
-// the job when the job finishes in error.
-func TestSubmitWaitErrorState(t *testing.T) {
+// TestSubmitWaitUnknownState verifies --wait stops with an actionable error
+// naming the job when Horde reports a state outside Waiting/Running/Complete.
+func TestSubmitWaitUnknownState(t *testing.T) {
 	var out bytes.Buffer
 	st := hordeProvisionedState()
 	client := &fakeHordeClient{
 		submitJobID: "job-err-state",
-		statusMap:   map[string]string{"job-err-state": "error"},
+		statusMap:   map[string]string{"job-err-state": "Failed"},
 	}
 	c := newTestCommand(&out, client, st)
 	c.buildGraphPath = writeTempBuildGraph(t)
@@ -411,10 +422,11 @@ func TestSubmitWaitErrorState(t *testing.T) {
 
 	err := c.run(context.Background())
 	if err == nil {
-		t.Fatal("expected error when the job finishes in error")
+		t.Fatal("expected error for an unrecognised job state")
 	}
 	assert.Contains(t, err.Error(), "job-err-state")
-	assert.Contains(t, out.String(), "Job job-err-state: error")
+	assert.Contains(t, err.Error(), `"Failed"`)
+	assert.Contains(t, out.String(), "Job job-err-state: Failed")
 	if client.statusCalls != 1 {
 		t.Errorf("statusCalls = %d, want 1 (terminal state stops polling)", client.statusCalls)
 	}
@@ -453,7 +465,7 @@ func newSubmitCommandWithFakeRC(t *testing.T, actualStateJSON string) command {
 		},
 	}
 	fakeProv := &fakeSubmitProvider{rc: fakeRC}
-	cfg := config.Defaults()
+	cfg := testJobConfig()
 	c := command{
 		runtime:     globals.Runtime{Config: cfg, Provider: fakeProv},
 		out:         &bytes.Buffer{},
@@ -500,7 +512,7 @@ func TestSubmitResolvePrivateIPGetError(t *testing.T) {
 		},
 	}
 	fakeProv := &fakeSubmitProvider{rc: fakeRC}
-	cfg := config.Defaults()
+	cfg := testJobConfig()
 	c := command{
 		runtime:     globals.Runtime{Config: cfg, Provider: fakeProv},
 		out:         &out,
@@ -523,7 +535,7 @@ func TestSubmitResolvePrivateIPGetError(t *testing.T) {
 func TestSubmitResolvePrivateIPNoProvider(t *testing.T) {
 	var out bytes.Buffer
 	st := hordeProvisionedState()
-	cfg := config.Defaults()
+	cfg := testJobConfig()
 	c := command{
 		runtime:     globals.Runtime{Config: cfg, Provider: nil},
 		out:         &out,
@@ -583,8 +595,8 @@ func TestHordeHTTPClientSubmitSuccess(t *testing.T) {
 	defer srv.Close()
 
 	client := newHordeHTTPClient(srv.URL, "")
-	jobID, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{
-		Name: "MyAgent", Target: "Compile",
+	jobID, err := client.SubmitJob(context.Background(), horde.CreateJobRequest{
+		StreamID: "stream-main", TemplateID: "template-compile", Name: "MyAgent", Targets: []string{"Compile"},
 	})
 	if err != nil {
 		t.Fatalf("SubmitJob: %v", err)
@@ -604,9 +616,7 @@ func TestHordeHTTPClientSubmitWithToken(t *testing.T) {
 	defer srv.Close()
 
 	client := newHordeHTTPClient(srv.URL, "my-secret-token")
-	_, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{
-		Name: "A", Target: "T",
-	})
+	_, err := client.SubmitJob(context.Background(), testJobRequest())
 	if err != nil {
 		t.Fatalf("SubmitJob: %v", err)
 	}
@@ -622,7 +632,7 @@ func TestHordeHTTPClientSubmitAuthError(t *testing.T) {
 	defer srv.Close()
 
 	client := newHordeHTTPClient(srv.URL, "")
-	_, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{Name: "A", Target: "T"})
+	_, err := client.SubmitJob(context.Background(), testJobRequest())
 	if err == nil {
 		t.Fatal("expected auth error, got nil")
 	}
@@ -636,7 +646,7 @@ func TestHordeHTTPClientSubmitForbidden(t *testing.T) {
 	defer srv.Close()
 
 	client := newHordeHTTPClient(srv.URL, "")
-	_, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{Name: "A", Target: "T"})
+	_, err := client.SubmitJob(context.Background(), testJobRequest())
 	if err == nil {
 		t.Fatal("expected auth error, got nil")
 	}
@@ -653,7 +663,7 @@ func TestHordeHTTPClientRejectsServiceAccountToken(t *testing.T) {
 	defer srv.Close()
 
 	client := newHordeHTTPClient(srv.URL, "tok-rejected")
-	_, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{Name: "A", Target: "T"})
+	_, err := client.SubmitJob(context.Background(), testJobRequest())
 	if err == nil {
 		t.Fatal("expected auth error, got nil")
 	}
@@ -669,7 +679,7 @@ func TestHordeHTTPClientSubmitNon2xx(t *testing.T) {
 	defer srv.Close()
 
 	client := newHordeHTTPClient(srv.URL, "")
-	_, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{Name: "A", Target: "T"})
+	_, err := client.SubmitJob(context.Background(), testJobRequest())
 	if err == nil {
 		t.Fatal("expected non-2xx error, got nil")
 	}
@@ -684,7 +694,7 @@ func TestHordeHTTPClientSubmitBadResponse(t *testing.T) {
 	defer srv.Close()
 
 	client := newHordeHTTPClient(srv.URL, "")
-	_, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{Name: "A", Target: "T"})
+	_, err := client.SubmitJob(context.Background(), testJobRequest())
 	if err == nil {
 		t.Fatal("expected parse error, got nil")
 	}
@@ -697,7 +707,7 @@ func TestHordeHTTPClientGetJobStatusSuccess(t *testing.T) {
 			t.Fatalf("expected GET, got %s", r.Method)
 		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"state":"complete"}`))
+		_, _ = w.Write([]byte(`{"state":"Complete"}`))
 	}))
 	defer srv.Close()
 
@@ -706,7 +716,7 @@ func TestHordeHTTPClientGetJobStatusSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetJobStatus: %v", err)
 	}
-	if state != "complete" {
+	if state != "Complete" {
 		t.Errorf("state = %q, want complete", state)
 	}
 }
@@ -716,7 +726,7 @@ func TestHordeHTTPClientGetJobStatusWithToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotToken = r.Header.Get("Authorization")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"state":"running"}`))
+		_, _ = w.Write([]byte(`{"state":"Running"}`))
 	}))
 	defer srv.Close()
 
@@ -776,7 +786,7 @@ func TestHordeHTTPClientSubmitJobAPI404(t *testing.T) {
 	defer srv.Close()
 
 	client := newHordeHTTPClient(srv.URL, "")
-	_, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{Name: "A", Target: "T"})
+	_, err := client.SubmitJob(context.Background(), testJobRequest())
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -801,7 +811,7 @@ func TestHordeHTTPClientSubmitJobAPI404RouteExists(t *testing.T) {
 	defer srv.Close()
 
 	client := newHordeHTTPClient(srv.URL, "")
-	_, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{Name: "A", Target: "T"})
+	_, err := client.SubmitJob(context.Background(), testJobRequest())
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -855,7 +865,7 @@ func tokenTestCommand(t *testing.T, out *bytes.Buffer, tokenParam string, get fu
 	client := &fakeHordeClient{}
 	var gotToken string
 	c := command{
-		runtime:            globals.Runtime{Config: config.Defaults(), Provider: &fakeSubmitProvider{rc: fakeRC}},
+		runtime:            globals.Runtime{Config: testJobConfig(), Provider: &fakeSubmitProvider{rc: fakeRC}},
 		out:                out,
 		waitCtx:            func(context.Context, time.Duration) error { return nil },
 		now:                time.Now,

@@ -12,13 +12,12 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/internal/hordeapi"
 	"github.com/jpvelasco/fabrica/internal/horde"
-	"github.com/jpvelasco/fabrica/internal/horde/buildgraph"
 )
 
 // HordeClient abstracts communication with the Horde REST API.
 // The interface lives here (not in internal/) because only submit needs it in V1.
 type HordeClient interface {
-	SubmitJob(ctx context.Context, job *buildgraph.BuildGraphJob) (jobID string, err error)
+	SubmitJob(ctx context.Context, req horde.CreateJobRequest) (jobID string, err error)
 	GetJobStatus(ctx context.Context, jobID string) (state string, err error)
 }
 
@@ -42,11 +41,8 @@ func newHordeHTTPClient(baseURL, token string) *hordeHTTPClient {
 	}
 }
 
-func (c *hordeHTTPClient) SubmitJob(ctx context.Context, job *buildgraph.BuildGraphJob) (string, error) {
-	body, err := json.Marshal(map[string]string{
-		"name":   job.Name,
-		"target": job.Target,
-	})
+func (c *hordeHTTPClient) SubmitJob(ctx context.Context, jobReq horde.CreateJobRequest) (string, error) {
+	body, err := json.Marshal(jobReq)
 	if err != nil {
 		return "", fmt.Errorf("marshaling job request: %w", err)
 	}
@@ -77,7 +73,7 @@ func (c *hordeHTTPClient) SubmitJob(ctx context.Context, job *buildgraph.BuildGr
 			return "", fmt.Errorf("Horde has no job-creation API: POST %s/api/v1/jobs returned HTTP 404. This Horde build does not expose the jobs/graphs/agents API surface, so it cannot accept jobs. Rebuild the Horde AMI with a server image that includes the job API (see docs/horde-ami.md), or use a supported Horde version.", c.baseURL)
 		}
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", fmt.Errorf("Horde returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
+		return "", jobRejectedError(resp.StatusCode, errBody, jobReq)
 	}
 
 	data, err := io.ReadAll(resp.Body)
@@ -91,6 +87,26 @@ func (c *hordeHTTPClient) SubmitJob(ctx context.Context, job *buildgraph.BuildGr
 		return "", fmt.Errorf("parsing response: %w", err)
 	}
 	return result.ID, nil
+}
+
+// jobRejectedError reports a non-2xx job creation. Horde's LogEvent message is
+// kept; a stream or template rejection also names the config key to set.
+func jobRejectedError(status int, body []byte, req horde.CreateJobRequest) error {
+	msg := strings.TrimSpace(string(body))
+	var event struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &event) == nil && event.Message != "" {
+		msg = event.Message
+	}
+	lower := strings.ToLower(msg)
+	switch {
+	case status == http.StatusNotFound && strings.Contains(lower, "stream"):
+		msg += fmt.Sprintf(". Set horde.streamId or --stream to a stream on the coordinator (sent %q); its stream IDs are in globals.json under projects/streams. See docs/horde-jobs.md", req.StreamID)
+	case status == http.StatusBadRequest && strings.Contains(lower, "template"):
+		msg += fmt.Sprintf(". Set horde.templateId or --template to a template the stream offers (sent %q for stream %q). See docs/horde-jobs.md", req.TemplateID, req.StreamID)
+	}
+	return fmt.Errorf("Horde returned HTTP %d: %s", status, msg)
 }
 
 // jobsRouteMissing reports whether the Horde server provably lacks the

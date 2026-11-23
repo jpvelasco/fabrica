@@ -100,6 +100,11 @@ type HordeConfig struct {
 	ClientCAPath string            `mapstructure:"clientCAPath" yaml:"clientCAPath"`
 	AllowedCIDR  string            `mapstructure:"allowedCidr"  yaml:"allowedCidr"`
 	Agents       HordeAgentsConfig `mapstructure:"agents"       yaml:"agents"`
+	// StreamID and TemplateID name a stream and job template in the
+	// coordinator's globals.json (docs/horde-jobs.md). Change 0 means latest.
+	StreamID   string `mapstructure:"streamId"   yaml:"streamId"`
+	TemplateID string `mapstructure:"templateId" yaml:"templateId"`
+	Change     int    `mapstructure:"change"     yaml:"change"`
 	// IAM overrides cloud.aws.iam for the coordinator and the agent pool.
 	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
 }
