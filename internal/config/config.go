@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/jpvelasco/fabrica/internal/naming"
@@ -70,6 +71,9 @@ type PerforceConfig struct {
 	Backup       PerforceBackupConfig `mapstructure:"backup"       yaml:"backup"`
 	// IAM overrides cloud.aws.iam for this module when a field is set.
 	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
+	// InstanceProfile names a pre-created instance profile (a name or an
+	// instance-profile ARN). Empty means Fabrica creates the role and profile.
+	InstanceProfile string `mapstructure:"instanceProfile" yaml:"instanceProfile,omitempty"`
 }
 
 // PerforceBackupConfig holds the perforce.backup: section of fabrica.yaml.
@@ -628,4 +632,29 @@ func (c *Config) ValidateIAM() error {
 		}
 	}
 	return nil
+}
+
+var (
+	instanceProfileNameRE = regexp.MustCompile(`^[\w+=,.@-]{1,128}$`)
+	instanceProfileARNRE  = regexp.MustCompile(`^arn:(?:aws|aws-us-gov|aws-cn):iam::[0-9]{12}:instance-profile/(?:[\w+=,.@-]+/)*([\w+=,.@-]{1,128})$`)
+)
+
+// InstanceProfileName resolves <module>.instanceProfile to a profile name: a
+// name, or an instance-profile ARN reduced to its last segment. Empty returns
+// "" (Fabrica manages the profile). A role ARN or other malformed value fails.
+func InstanceProfileName(value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	if !strings.HasPrefix(value, "arn:") {
+		if !instanceProfileNameRE.MatchString(value) {
+			return "", fmt.Errorf("instanceProfile %q must be an instance profile name (1-128 letters, digits, or +=,.@_-) or an instance-profile ARN such as arn:aws:iam::123456789012:instance-profile/name", value)
+		}
+		return value, nil
+	}
+	match := instanceProfileARNRE.FindStringSubmatch(value)
+	if match == nil {
+		return "", fmt.Errorf("instanceProfile %q is not an instance-profile ARN. Use arn:aws:iam::<account-id>:instance-profile/<name> (a role ARN is not accepted), or set the profile name instead", value)
+	}
+	return match[1], nil
 }

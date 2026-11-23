@@ -21,6 +21,19 @@ The same `iam` block is read for workstation, horde (the coordinator and the age
 
 On `AWS::IAM::Role`, Fabrica sends `Path` and `PermissionsBoundary`. On `AWS::IAM::InstanceProfile`, it sends `Path` only. `export` writes the same properties. Fabrica accepts the root path `/` and paths that start and end with `/` with no empty segments (`//`); any other path fails before any create. `permissionsBoundary` must be a policy ARN in the commercial, GovCloud, or China partition (`arn:aws:iam::ACCOUNT:policy/name`, `arn:aws-us-gov:iam::...`, or `arn:aws-cn:iam::...`). A role ARN is rejected.
 
+## Pre-created instance profiles
+
+Use this when fabrica runs as a bounded workload role that can pass roles but cannot create them. Set `perforce.instanceProfile` to a profile name or an instance-profile ARN:
+
+```yaml
+perforce:
+  instanceProfile: arn:aws:iam::123456789012:instance-profile/platform/fabrica-perforce
+```
+
+Fabrica then creates no IAM role or profile for Perforce, and create, dry run, and plan make zero IAM create calls. Before anything is created, Fabrica checks the profile with `iam:GetInstanceProfile`; the check fails if the profile is missing, unreadable, or lacks exactly one role. The error names the profile and the permission. destroy never deletes the profile or its role, drift neither reports nor fixes it, and export references it by name. Dry-run output shows `Instance Profile: <name> (pre-created, not managed)`.
+
+The operator needs `iam:GetInstanceProfile` on the profile and `iam:PassRole` on its role. The platform team creates the role and profile and attaches the Perforce role policies: `AmazonSSMManagedInstanceCore`, the SSM output policy and admin-password read from `internal/perforce/resources.go` (`RoleDesiredState`), and the S3 backup policy when `perforce.backup.s3Export` is on.
+
 ## Volume request tags
 
 ```yaml

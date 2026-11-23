@@ -18,6 +18,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/internal/modstatus"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/instanceprofile"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 	"github.com/spf13/cobra"
@@ -459,9 +460,30 @@ func resourcesToDelete(m *fabricastate.ModuleState) []cloud.Resource {
 // EC2 Instance -> SecurityGroup order is used.
 func resourcesToDelete2(spec Spec, m *fabricastate.ModuleState) []cloud.Resource {
 	if spec.ResourceOrder != nil {
-		return spec.ResourceOrder(m)
+		return withoutExternal(spec.ResourceOrder(m), m)
 	}
-	return resourcesToDelete(m)
+	return withoutExternal(resourcesToDelete(m), m)
+}
+
+// withoutExternal drops referenced (pre-created) profiles from a deletion order.
+func withoutExternal(resources []cloud.Resource, m *fabricastate.ModuleState) []cloud.Resource {
+	var out []cloud.Resource
+	for _, r := range resources {
+		if !isReferenced(m, r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// isReferenced reports whether r is a pre-created profile recorded on m.
+func isReferenced(m *fabricastate.ModuleState, r cloud.Resource) bool {
+	for _, mr := range m.Resources {
+		if instanceprofile.IsExternal(mr) && mr.TypeName == r.TypeName && mr.Identifier == r.Identifier {
+			return true
+		}
+	}
+	return false
 }
 
 // removeResource drops the resource with the given (typeName, identifier) from

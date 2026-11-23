@@ -21,6 +21,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/ddc"
 	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/iamrole"
+	"github.com/jpvelasco/fabrica/internal/instanceprofile"
 	"github.com/jpvelasco/fabrica/internal/lore"
 	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/perforce"
@@ -404,22 +405,43 @@ func buildModule(prefix naming.Prefix, ms state.ModuleState, cfg *config.Config,
 	// kind get a unique, stable per-suffix ID instead.
 	tableLogicalIDs := loreStoreTableLogicalIDs(ms)
 
+	profile, role := referencedProfileFor(ms)
 	for i := range ms.Resources {
 		r := &ms.Resources[i]
+		if instanceprofile.IsExternal(*r) {
+			// Referenced by name on the instance; never exported as an IAM resource.
+			continue
+		}
 		logicalID := toLogicalID(ms.Name, r.TypeName, r.Identifier)
 		if id, ok := tableLogicalIDs[i]; ok {
 			logicalID = id
+		}
+		props := extractProperties(prefix, ms.Name, *r, cfg, account, region, sessionPasswordParamName(ms))
+		if profile != "" && r.Properties["role"] == role && r.TypeName == "AWS::EC2::Instance" {
+			// The instance launches under the pre-created profile; no IAM resource is declared.
+			props["IamInstanceProfile"] = profile
 		}
 		mod.Resources = append(mod.Resources, ExportResource{
 			TypeName:   r.TypeName,
 			LogicalID:  logicalID,
 			Identifier: r.Identifier,
-			Properties: sanitize(extractProperties(prefix, ms.Name, *r, cfg, account, region, sessionPasswordParamName(ms))),
+			Properties: sanitize(props),
 			Module:     ms.Name,
 		})
 	}
 
 	return mod
+}
+
+// referencedProfileFor returns the name and role tag of a module's pre-created
+// profile; the name is empty when the module records none.
+func referencedProfileFor(ms state.ModuleState) (string, string) {
+	for _, r := range ms.Resources {
+		if instanceprofile.IsExternal(r) {
+			return r.Identifier, r.Properties["role"]
+		}
+	}
+	return "", ""
 }
 
 // loreStoreTableLogicalIDs maps state-index positions of DynamoDB tables
