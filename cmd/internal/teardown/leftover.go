@@ -10,7 +10,7 @@ import (
 
 const (
 	// HintEmptyBucket is the next step after a non-empty S3 delete failure.
-	HintEmptyBucket = "Empty the bucket, then re-run destroy. Run 'fabrica drift' to list Extra leftovers."
+	HintEmptyBucket = "Delete every object version and delete marker (aws s3api list-object-versions, then delete-objects; 'aws s3 rm' leaves versions behind), then re-run destroy. Run 'fabrica drift' to list Extra leftovers."
 	// HintPartial is the next step after a generic or partial destroy failure.
 	HintPartial = "Run 'fabrica drift' to list Extra leftovers, then retry destroy. The state backend is preserved so remaining managed resources stay tracked."
 )

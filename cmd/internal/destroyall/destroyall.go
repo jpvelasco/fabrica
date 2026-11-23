@@ -56,7 +56,10 @@ type Engine struct {
 	Table   string
 	Modules []Module
 
-	Backend cloud.StateBackendDestroyer
+	// BucketSpec lists the state-bucket keys Fabrica owns; the bucket purge
+	// deletes only those and refuses a bucket holding anything else.
+	BucketSpec cloud.StateBucketDeleteSpec
+	Backend    cloud.StateBackendDestroyer
 
 	DryRun    bool
 	AssumeYes bool
@@ -224,7 +227,7 @@ func (e Engine) deleteBackend(ctx context.Context, res *Result) error {
 		fmt.Fprintln(e.Out, "\n=== Deleting state backend ===")
 	}
 	if e.Bucket != "" {
-		b, err := e.Backend.DeleteStateBucket(ctx, e.Bucket)
+		b, err := e.Backend.DeleteStateBucket(ctx, e.Bucket, e.BucketSpec)
 		if err != nil {
 			e.printBackendFailure("S3 state bucket", e.Bucket, err)
 			return fmt.Errorf("deleting state bucket %s: %w", e.Bucket, err)

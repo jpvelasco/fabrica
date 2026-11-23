@@ -146,17 +146,19 @@ func runAll(ctx context.Context, rt globals.Runtime, opts globals.Options, out i
 	destroyer, _ := rt.Provider.(cloud.StateBackendDestroyer)
 
 	e := destroyall.Engine{
-		Account:   account,
-		Region:    region,
-		Bucket:    names.Bucket,
-		Table:     names.Table,
-		Modules:   mods,
-		Backend:   destroyer,
-		DryRun:    opts.DryRun,
-		AssumeYes: opts.AssumeYes,
-		JSONOut:   opts.JSONOutput,
-		Out:       out,
-		Confirm:   prompt.ConfirmExact,
+		Account: account,
+		Region:  region,
+		Bucket:  names.Bucket,
+		Table:   names.Table,
+		Modules: mods,
+		// The state document is the only object Fabrica writes to the bucket.
+		BucketSpec: cloud.StateBucketDeleteSpec{OwnedKeys: []string{fabricastate.StateDocumentKey}},
+		Backend:    destroyer,
+		DryRun:     opts.DryRun,
+		AssumeYes:  opts.AssumeYes,
+		JSONOut:    opts.JSONOutput,
+		Out:        out,
+		Confirm:    prompt.ConfirmExact,
 	}
 	return e.Run(ctx)
 }

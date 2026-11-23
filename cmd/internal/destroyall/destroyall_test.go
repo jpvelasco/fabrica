@@ -25,10 +25,12 @@ func failTeardown(msg string) ModuleTeardown {
 
 type fakeBackend struct {
 	bucketDeleted, tableDeleted bool
+	bucketSpec                  cloud.StateBucketDeleteSpec
 }
 
-func (f *fakeBackend) DeleteStateBucket(_ context.Context, b string) (cloud.StateBackendDeleteResult, error) {
+func (f *fakeBackend) DeleteStateBucket(_ context.Context, b string, spec cloud.StateBucketDeleteSpec) (cloud.StateBackendDeleteResult, error) {
 	f.bucketDeleted = true
+	f.bucketSpec = spec
 	return cloud.StateBackendDeleteResult{Identifier: b, Deleted: true}, nil
 }
 func (f *fakeBackend) DeleteStateLockTable(_ context.Context, t string) (cloud.StateBackendDeleteResult, error) {
@@ -39,7 +41,7 @@ func (f *fakeBackend) DeleteStateLockTable(_ context.Context, t string) (cloud.S
 // errBackend fails on bucket deletion, modelling e.g. a non-empty S3 bucket.
 type errBackend struct{ tableDeleted bool }
 
-func (errBackend) DeleteStateBucket(_ context.Context, b string) (cloud.StateBackendDeleteResult, error) {
+func (errBackend) DeleteStateBucket(_ context.Context, b string, _ cloud.StateBucketDeleteSpec) (cloud.StateBackendDeleteResult, error) {
 	return cloud.StateBackendDeleteResult{Identifier: b}, errors.New("bucket not empty")
 }
 func (e *errBackend) DeleteStateLockTable(_ context.Context, t string) (cloud.StateBackendDeleteResult, error) {
@@ -98,6 +100,19 @@ func TestRunAllSucceedDeletesBackend(t *testing.T) {
 	}
 }
 
+func TestRunAllForwardsBucketOwnedKeys(t *testing.T) {
+	var out bytes.Buffer
+	be := &fakeBackend{}
+	e := baseEngine(&out, be, []Module{{Name: "deploy", Teardown: okTeardown()}})
+	e.BucketSpec = cloud.StateBucketDeleteSpec{OwnedKeys: []string{"state.json"}}
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(be.bucketSpec.OwnedKeys) != 1 || be.bucketSpec.OwnedKeys[0] != "state.json" {
+		t.Fatalf("bucket spec = %+v, want the engine's owned keys forwarded unchanged", be.bucketSpec)
+	}
+}
+
 func TestRunBackendDeleteError(t *testing.T) {
 	var out bytes.Buffer
 	be := &errBackend{}
@@ -137,7 +152,7 @@ func TestRunBackendNotEmptySentinel(t *testing.T) {
 
 type sentinelEmptyBackend struct{}
 
-func (sentinelEmptyBackend) DeleteStateBucket(_ context.Context, b string) (cloud.StateBackendDeleteResult, error) {
+func (sentinelEmptyBackend) DeleteStateBucket(_ context.Context, b string, _ cloud.StateBucketDeleteSpec) (cloud.StateBackendDeleteResult, error) {
 	return cloud.StateBackendDeleteResult{Identifier: b}, fmt.Errorf("deleting S3 bucket %s: %w", b, cloud.ErrStateBucketNotEmpty)
 }
 func (sentinelEmptyBackend) DeleteStateLockTable(_ context.Context, t string) (cloud.StateBackendDeleteResult, error) {
@@ -367,7 +382,7 @@ func TestBackendDeleteUnchanged(t *testing.T) {
 // missingBackend returns Missing=true when asked to delete.
 type missingBackend struct{ tableDeleted bool }
 
-func (missingBackend) DeleteStateBucket(_ context.Context, b string) (cloud.StateBackendDeleteResult, error) {
+func (missingBackend) DeleteStateBucket(_ context.Context, b string, _ cloud.StateBucketDeleteSpec) (cloud.StateBackendDeleteResult, error) {
 	return cloud.StateBackendDeleteResult{Identifier: b, Missing: true}, nil
 }
 func (m *missingBackend) DeleteStateLockTable(_ context.Context, t string) (cloud.StateBackendDeleteResult, error) {
@@ -378,7 +393,7 @@ func (m *missingBackend) DeleteStateLockTable(_ context.Context, t string) (clou
 // unchangedBackend returns Deleted=false, Missing=false.
 type unchangedBackend struct{}
 
-func (unchangedBackend) DeleteStateBucket(_ context.Context, b string) (cloud.StateBackendDeleteResult, error) {
+func (unchangedBackend) DeleteStateBucket(_ context.Context, b string, _ cloud.StateBucketDeleteSpec) (cloud.StateBackendDeleteResult, error) {
 	return cloud.StateBackendDeleteResult{Identifier: b, Deleted: false, Missing: false}, nil
 }
 func (unchangedBackend) DeleteStateLockTable(_ context.Context, t string) (cloud.StateBackendDeleteResult, error) {
@@ -420,7 +435,7 @@ func TestRunTableDeleteError(t *testing.T) {
 // tableErrorBackend fails on table deletion only.
 type tableErrorBackend struct{}
 
-func (tableErrorBackend) DeleteStateBucket(_ context.Context, b string) (cloud.StateBackendDeleteResult, error) {
+func (tableErrorBackend) DeleteStateBucket(_ context.Context, b string, _ cloud.StateBucketDeleteSpec) (cloud.StateBackendDeleteResult, error) {
 	return cloud.StateBackendDeleteResult{Identifier: b, Deleted: true}, nil
 }
 func (tableErrorBackend) DeleteStateLockTable(_ context.Context, t string) (cloud.StateBackendDeleteResult, error) {

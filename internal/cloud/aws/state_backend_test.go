@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 )
@@ -184,7 +187,7 @@ func TestDeleteStateBucketUsesS3DeleteAndWaiter(t *testing.T) {
 			waiter := &fakeBucketNotExistsWaiter{err: tt.waitErr}
 			p := newStateBackendTestProvider(s3Client, nil, waiter, nil)
 
-			result, err := p.DeleteStateBucket(context.Background(), "state-bucket")
+			result, err := p.DeleteStateBucket(context.Background(), "state-bucket", fabricaStateSpec)
 
 			if tt.wantErr {
 				if err == nil {
@@ -232,7 +235,7 @@ func TestDeleteStateBucketReturnsConfigErrorWithoutCallingS3(t *testing.T) {
 		return awssdk.Config{}, fmt.Errorf("config unavailable")
 	}
 
-	_, err := p.DeleteStateBucket(context.Background(), "state-bucket")
+	_, err := p.DeleteStateBucket(context.Background(), "state-bucket", fabricaStateSpec)
 
 	if err == nil {
 		t.Fatal("expected error")
@@ -336,7 +339,7 @@ func TestStateBackendConfigLoaderReceivesRegionAndProfile(t *testing.T) {
 		return awssdk.Config{Region: region}, nil
 	}
 
-	if _, err := p.DeleteStateBucket(context.Background(), "state-bucket"); err != nil {
+	if _, err := p.DeleteStateBucket(context.Background(), "state-bucket", fabricaStateSpec); err != nil {
 		t.Fatalf("DeleteStateBucket: %v", err)
 	}
 	if gotRegion != "us-west-2" {
@@ -455,6 +458,18 @@ type fakeS3StateBackendClient struct {
 	putObjectBody string
 	getObjectErr  error
 	putObjectErr  error
+
+	versionPages         []s3.ListObjectVersionsOutput
+	listErr              error
+	listCalls            int
+	listKeyMarkers       []string
+	listVersionMarkers   []string
+	deleteObjectsErr     error
+	deleteObjectsOut     *s3.DeleteObjectsOutput
+	deleteObjectsCalls   int
+	deleteBatchSizes     []int
+	purgedKeys           []s3types.ObjectIdentifier
+	purgedAtBucketDelete int
 }
 
 func (f *fakeS3StateBackendClient) HeadBucket(ctx context.Context, in *s3.HeadBucketInput, optFns ...func(*s3.Options)) (*s3.HeadBucketOutput, error) {
@@ -470,7 +485,35 @@ func (f *fakeS3StateBackendClient) GetBucketTagging(context.Context, *s3.GetBuck
 func (f *fakeS3StateBackendClient) DeleteBucket(ctx context.Context, in *s3.DeleteBucketInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketOutput, error) {
 	f.deleteCalls++
 	f.deleteBucket = awssdk.ToString(in.Bucket)
+	f.purgedAtBucketDelete = len(f.purgedKeys)
 	return &s3.DeleteBucketOutput{}, f.deleteErr
+}
+
+func (f *fakeS3StateBackendClient) ListObjectVersions(_ context.Context, in *s3.ListObjectVersionsInput, _ ...func(*s3.Options)) (*s3.ListObjectVersionsOutput, error) {
+	f.listKeyMarkers = append(f.listKeyMarkers, awssdk.ToString(in.KeyMarker))
+	f.listVersionMarkers = append(f.listVersionMarkers, awssdk.ToString(in.VersionIdMarker))
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	i := f.listCalls
+	f.listCalls++
+	if i >= len(f.versionPages) {
+		return &s3.ListObjectVersionsOutput{}, nil
+	}
+	return &f.versionPages[i], nil
+}
+
+func (f *fakeS3StateBackendClient) DeleteObjects(_ context.Context, in *s3.DeleteObjectsInput, _ ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error) {
+	f.deleteObjectsCalls++
+	f.deleteBatchSizes = append(f.deleteBatchSizes, len(in.Delete.Objects))
+	f.purgedKeys = append(f.purgedKeys, in.Delete.Objects...)
+	if f.deleteObjectsErr != nil {
+		return nil, f.deleteObjectsErr
+	}
+	if f.deleteObjectsOut != nil {
+		return f.deleteObjectsOut, nil
+	}
+	return &s3.DeleteObjectsOutput{}, nil
 }
 
 func (f *fakeS3StateBackendClient) GetObject(ctx context.Context, in *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
@@ -631,6 +674,262 @@ func assertStringContains(t *testing.T, s, substr string) {
 // TestStateBackendDeleteTimeoutCoversWaiterBounds pins the invariant that the
 // parent delete context outlives the declared 2-minute waiter maximums;
 // otherwise the waiter can never use its stated budget.
+// fabricaStateSpec names the one key fabrica writes to the state bucket. It
+// mirrors state.StateDocumentKey; the aws package cannot import internal/state.
+var fabricaStateSpec = fabricac.StateBucketDeleteSpec{OwnedKeys: []string{"state.json"}}
+
+// stateVersions returns n versions of state.json with ids v<from>..v<from+n-1>.
+func stateVersions(from, n int) []s3types.ObjectVersion {
+	out := make([]s3types.ObjectVersion, 0, n)
+	for i := from; i < from+n; i++ {
+		out = append(out, s3types.ObjectVersion{Key: awssdk.String("state.json"), VersionId: awssdk.String(fmt.Sprintf("v%d", i))})
+	}
+	return out
+}
+
+// foreignVersions returns n versions of distinct keys foreign-00..foreign-(n-1).
+func foreignVersions(n int) []s3types.ObjectVersion {
+	out := make([]s3types.ObjectVersion, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, s3types.ObjectVersion{Key: awssdk.String(fmt.Sprintf("foreign-%02d", i)), VersionId: awssdk.String("v")})
+	}
+	return out
+}
+
+func TestDeleteStateBucketPurgesVersionsAndMarkersBeforeDelete(t *testing.T) {
+	s3Client := &fakeS3StateBackendClient{
+		versionPages: []s3.ListObjectVersionsOutput{
+			{
+				IsTruncated:         awssdk.Bool(true),
+				NextKeyMarker:       awssdk.String("state.json"),
+				NextVersionIdMarker: awssdk.String("v2"),
+				Versions:            stateVersions(1, 2),
+			},
+			{
+				DeleteMarkers: []s3types.DeleteMarkerEntry{{Key: awssdk.String("state.json"), VersionId: awssdk.String("m1")}},
+			},
+		},
+	}
+	waiter := &fakeBucketNotExistsWaiter{}
+	p := newStateBackendTestProvider(s3Client, nil, waiter, nil)
+
+	result, err := p.DeleteStateBucket(context.Background(), "state-bucket", fabricaStateSpec)
+	if err != nil {
+		t.Fatalf("DeleteStateBucket: %v", err)
+	}
+	if !result.Deleted || result.Missing {
+		t.Fatalf("result = %+v, want Deleted", result)
+	}
+	if got := len(s3Client.purgedKeys); got != 3 {
+		t.Fatalf("purged %d objects, want 3 (2 versions + 1 delete marker)", got)
+	}
+	if want := []string{"", "state.json"}; !slices.Equal(s3Client.listKeyMarkers, want) {
+		t.Fatalf("ListObjectVersions KeyMarker sequence = %q, want %q", s3Client.listKeyMarkers, want)
+	}
+	if want := []string{"", "v2"}; !slices.Equal(s3Client.listVersionMarkers, want) {
+		t.Fatalf("ListObjectVersions VersionIdMarker sequence = %q, want %q", s3Client.listVersionMarkers, want)
+	}
+	if s3Client.deleteCalls != 1 {
+		t.Fatalf("DeleteBucket calls = %d, want 1", s3Client.deleteCalls)
+	}
+	if s3Client.purgedAtBucketDelete != 3 {
+		t.Fatalf("bucket deleted after %d purged objects, want all 3 purged first", s3Client.purgedAtBucketDelete)
+	}
+	assertWaiterUse(t, waiter.calls, true, "bucket waiter")
+}
+
+func TestDeleteStateBucketPaginatesPastOneThousandVersions(t *testing.T) {
+	s3Client := &fakeS3StateBackendClient{
+		versionPages: []s3.ListObjectVersionsOutput{
+			{
+				IsTruncated:         awssdk.Bool(true),
+				NextKeyMarker:       awssdk.String("state.json"),
+				NextVersionIdMarker: awssdk.String("v1000"),
+				Versions:            stateVersions(1, 1000),
+			},
+			{
+				Versions: stateVersions(1001, 1),
+				DeleteMarkers: []s3types.DeleteMarkerEntry{
+					{Key: awssdk.String("state.json"), VersionId: awssdk.String("m1")},
+				},
+			},
+		},
+	}
+	p := newStateBackendTestProvider(s3Client, nil, &fakeBucketNotExistsWaiter{}, nil)
+
+	if _, err := p.DeleteStateBucket(context.Background(), "state-bucket", fabricaStateSpec); err != nil {
+		t.Fatalf("DeleteStateBucket: %v", err)
+	}
+	if want := []string{"", "state.json"}; !slices.Equal(s3Client.listKeyMarkers, want) {
+		t.Fatalf("ListObjectVersions KeyMarker sequence = %q, want %q", s3Client.listKeyMarkers, want)
+	}
+	if want := []string{"", "v1000"}; !slices.Equal(s3Client.listVersionMarkers, want) {
+		t.Fatalf("ListObjectVersions VersionIdMarker sequence = %q, want %q", s3Client.listVersionMarkers, want)
+	}
+	if want := []int{1000, 2}; !slices.Equal(s3Client.deleteBatchSizes, want) {
+		t.Fatalf("DeleteObjects batch sizes = %v, want %v (each at most 1000)", s3Client.deleteBatchSizes, want)
+	}
+	if got := len(s3Client.purgedKeys); got != 1002 {
+		t.Fatalf("purged %d objects, want 1002", got)
+	}
+	if s3Client.deleteCalls != 1 {
+		t.Fatalf("DeleteBucket calls = %d, want 1", s3Client.deleteCalls)
+	}
+}
+
+func TestDeleteStateBucketRefusesForeignKeysWithoutDeleting(t *testing.T) {
+	tests := []struct {
+		name       string
+		pages      []s3.ListObjectVersionsOutput
+		wantNamed  []string
+		wantAbsent []string
+		wantCount  string
+	}{
+		{
+			name: "foreign version next to state.json",
+			pages: []s3.ListObjectVersionsOutput{{
+				Versions: []s3types.ObjectVersion{
+					{Key: awssdk.String("state.json"), VersionId: awssdk.String("v1")},
+					{Key: awssdk.String("user/notes.txt"), VersionId: awssdk.String("u1")},
+				},
+			}},
+			wantNamed: []string{"user/notes.txt"},
+			wantCount: "1 object key(s)",
+		},
+		{
+			name: "foreign delete marker only",
+			pages: []s3.ListObjectVersionsOutput{{
+				DeleteMarkers: []s3types.DeleteMarkerEntry{{Key: awssdk.String("stray.bin"), VersionId: awssdk.String("m1")}},
+			}},
+			wantNamed: []string{"stray.bin"},
+			wantCount: "1 object key(s)",
+		},
+		{
+			name: "prefix of an owned key is not owned",
+			pages: []s3.ListObjectVersionsOutput{{
+				Versions: []s3types.ObjectVersion{{Key: awssdk.String("state.json.bak"), VersionId: awssdk.String("b1")}},
+			}},
+			wantNamed: []string{"state.json.bak"},
+			wantCount: "1 object key(s)",
+		},
+		{
+			name:       "more than ten foreign keys name the first ten and count all",
+			pages:      []s3.ListObjectVersionsOutput{{Versions: foreignVersions(12)}},
+			wantNamed:  []string{"foreign-00", "foreign-09", "and 2 more"},
+			wantAbsent: []string{"foreign-10", "foreign-11"},
+			wantCount:  "12 object key(s)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s3Client := &fakeS3StateBackendClient{versionPages: tt.pages}
+			waiter := &fakeBucketNotExistsWaiter{}
+			p := newStateBackendTestProvider(s3Client, nil, waiter, nil)
+
+			result, err := p.DeleteStateBucket(context.Background(), "state-bucket", fabricaStateSpec)
+
+			if err == nil {
+				t.Fatal("expected foreign-key refusal")
+			}
+			for _, want := range append(tt.wantNamed, tt.wantCount) {
+				assertStringContains(t, err.Error(), want)
+			}
+			for _, absent := range tt.wantAbsent {
+				if strings.Contains(err.Error(), absent) {
+					t.Fatalf("error %q names %q, want only the first ten keys", err, absent)
+				}
+			}
+			if result.Deleted || result.Missing {
+				t.Fatalf("result = %+v, want untouched", result)
+			}
+			if s3Client.deleteObjectsCalls != 0 {
+				t.Fatalf("DeleteObjects calls = %d, want 0 (nothing may be deleted)", s3Client.deleteObjectsCalls)
+			}
+			if s3Client.deleteCalls != 0 {
+				t.Fatalf("DeleteBucket calls = %d, want 0", s3Client.deleteCalls)
+			}
+			assertWaiterUse(t, waiter.calls, false, "bucket waiter")
+		})
+	}
+}
+
+func TestDeleteStateBucketDeleteObjectsErrorsBlockBucketDelete(t *testing.T) {
+	s3Client := &fakeS3StateBackendClient{
+		versionPages: []s3.ListObjectVersionsOutput{{Versions: stateVersions(1, 1)}},
+		deleteObjectsOut: &s3.DeleteObjectsOutput{
+			Errors: []s3types.Error{{Key: awssdk.String("state.json"), VersionId: awssdk.String("v1"), Code: awssdk.String("AccessDenied")}},
+		},
+	}
+	waiter := &fakeBucketNotExistsWaiter{}
+	p := newStateBackendTestProvider(s3Client, nil, waiter, nil)
+
+	result, err := p.DeleteStateBucket(context.Background(), "state-bucket", fabricaStateSpec)
+
+	if err == nil {
+		t.Fatal("expected per-object delete failure to stop the bucket delete")
+	}
+	assertStringContains(t, err.Error(), "state.json (AccessDenied)")
+	if result.Deleted {
+		t.Fatal("bucket reported deleted after per-object failures")
+	}
+	if s3Client.deleteCalls != 0 {
+		t.Fatalf("DeleteBucket calls = %d, want 0", s3Client.deleteCalls)
+	}
+	assertWaiterUse(t, waiter.calls, false, "bucket waiter")
+}
+
+func TestDeleteStateBucketListErrorStopsBeforeDelete(t *testing.T) {
+	s3Client := &fakeS3StateBackendClient{listErr: apiErr("AccessDenied")}
+	p := newStateBackendTestProvider(s3Client, nil, &fakeBucketNotExistsWaiter{}, nil)
+
+	_, err := p.DeleteStateBucket(context.Background(), "state-bucket", fabricaStateSpec)
+
+	if err == nil {
+		t.Fatal("expected list error")
+	}
+	assertStringContains(t, err.Error(), "listing versions in bucket state-bucket")
+	if s3Client.deleteObjectsCalls != 0 || s3Client.deleteCalls != 0 {
+		t.Fatalf("DeleteObjects = %d, DeleteBucket = %d; want neither after a list failure", s3Client.deleteObjectsCalls, s3Client.deleteCalls)
+	}
+}
+
+func TestDeleteStateBucketMissingDuringPurgeIsMissing(t *testing.T) {
+	s3Client := &fakeS3StateBackendClient{listErr: apiErr("NoSuchBucket")}
+	waiter := &fakeBucketNotExistsWaiter{}
+	p := newStateBackendTestProvider(s3Client, nil, waiter, nil)
+
+	result, err := p.DeleteStateBucket(context.Background(), "state-bucket", fabricaStateSpec)
+
+	if err != nil {
+		t.Fatalf("DeleteStateBucket: %v", err)
+	}
+	if !result.Missing || result.Deleted {
+		t.Fatalf("result = %+v, want Missing", result)
+	}
+	if s3Client.deleteCalls != 0 {
+		t.Fatalf("DeleteBucket calls = %d, want 0 for an absent bucket", s3Client.deleteCalls)
+	}
+	assertWaiterUse(t, waiter.calls, false, "bucket waiter")
+}
+
+func TestDeleteStateBucketEmptyBucketSkipsPurge(t *testing.T) {
+	s3Client := &fakeS3StateBackendClient{}
+	p := newStateBackendTestProvider(s3Client, nil, &fakeBucketNotExistsWaiter{}, nil)
+
+	result, err := p.DeleteStateBucket(context.Background(), "state-bucket", fabricaStateSpec)
+
+	if err != nil {
+		t.Fatalf("DeleteStateBucket: %v", err)
+	}
+	if !result.Deleted {
+		t.Fatalf("result = %+v, want Deleted", result)
+	}
+	if s3Client.deleteObjectsCalls != 0 {
+		t.Fatalf("DeleteObjects calls = %d, want 0 when no versions exist", s3Client.deleteObjectsCalls)
+	}
+}
+
 func TestStateBackendDeleteTimeoutCoversWaiterBounds(t *testing.T) {
 	const waiterMax = 2 * time.Minute
 	if stateBackendDeleteTimeout <= waiterMax {

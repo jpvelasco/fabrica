@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	fabricac "github.com/jpvelasco/fabrica/internal/cloud"
 )
 
@@ -24,6 +25,9 @@ type purgeS3Client interface {
 
 type purgeS3ClientFactory func(aws.Config) purgeS3Client
 
+// maxDeleteObjectsBatch is the most keys one S3 DeleteObjects request accepts.
+const maxDeleteObjectsBatch = 1000
+
 // PurgeBucket deletes every object version and delete marker in the bucket so
 // a subsequent DeleteBucket succeeds. Versioned buckets retain old versions
 // and markers after ordinary deletes, which otherwise block deletion forever.
@@ -33,47 +37,16 @@ func (p *awsProvider) PurgeBucket(ctx context.Context, bucket string) error {
 		return err
 	}
 	client := p.purgeClient(cfg)
-	for {
-		out, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{Bucket: aws.String(bucket)})
-		if err != nil {
-			// Bucket already gone (e.g. deleted by a concurrent or prior
-			// run) — nothing to purge; Cloud Control's delete will converge.
-			var nf *s3types.NoSuchBucket
-			if errors.As(err, &nf) || strings.Contains(err.Error(), "NoSuchBucket") {
-				return nil
-			}
-			return fmt.Errorf("listing versions in bucket %s: %w", bucket, err)
-		}
-
-		var objects []s3types.ObjectIdentifier
-		for _, v := range out.Versions {
-			objects = append(objects, s3types.ObjectIdentifier{Key: v.Key, VersionId: v.VersionId})
-		}
-		for _, m := range out.DeleteMarkers {
-			objects = append(objects, s3types.ObjectIdentifier{Key: m.Key, VersionId: m.VersionId})
-		}
-		if len(objects) > 0 {
-			out, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
-				Bucket: aws.String(bucket),
-				Delete: &s3types.Delete{Objects: objects},
-			})
-			if err != nil {
-				return fmt.Errorf("deleting %d versions from bucket %s: %w", len(objects), bucket, err)
-			}
-			// S3 batch delete returns a success response even when
-			// individual deletions are denied (e.g. AccessDenied). Without
-			// this check the loop above revisits the same undeletable
-			// versions forever instead of making progress.
-			if len(out.Errors) > 0 {
-				return fmt.Errorf("deleting %d versions from bucket %s: %s; resolve the S3 errors and retry the purge",
-					len(objects), bucket, summarizeDeleteErrors(out.Errors, len(objects)))
-			}
-		}
-
-		if out.IsTruncated == nil || !*out.IsTruncated {
+	objects, err := listAllVersions(ctx, client, bucket)
+	if err != nil {
+		// Bucket already gone (e.g. deleted by a concurrent or prior
+		// run) — nothing to purge; Cloud Control's delete will converge.
+		if isNoSuchBucket(err) {
 			return nil
 		}
+		return err
 	}
+	return deleteObjectBatches(ctx, client, bucket, objects)
 }
 
 func (p *awsProvider) purgeClient(cfg aws.Config) purgeS3Client {
@@ -81,6 +54,68 @@ func (p *awsProvider) purgeClient(cfg aws.Config) purgeS3Client {
 		return p.newPurgeS3Client(cfg)
 	}
 	return s3.NewFromConfig(cfg)
+}
+
+// listAllVersions returns every object version and delete marker in bucket,
+// following KeyMarker and VersionIdMarker across pages so a bucket with more
+// than one page of versions is listed in full before anything is deleted.
+func listAllVersions(ctx context.Context, client purgeS3Client, bucket string) ([]s3types.ObjectIdentifier, error) {
+	var objects []s3types.ObjectIdentifier
+	in := &s3.ListObjectVersionsInput{Bucket: aws.String(bucket)}
+	for {
+		out, err := client.ListObjectVersions(ctx, in)
+		if err != nil {
+			return nil, fmt.Errorf("listing versions in bucket %s: %w", bucket, err)
+		}
+		for _, v := range out.Versions {
+			objects = append(objects, s3types.ObjectIdentifier{Key: v.Key, VersionId: v.VersionId})
+		}
+		for _, m := range out.DeleteMarkers {
+			objects = append(objects, s3types.ObjectIdentifier{Key: m.Key, VersionId: m.VersionId})
+		}
+		if !aws.ToBool(out.IsTruncated) {
+			return objects, nil
+		}
+		// A truncated page without a continuation marker cannot be advanced;
+		// fail instead of re-listing the same first page forever.
+		if out.NextKeyMarker == nil {
+			return nil, fmt.Errorf("listing versions in bucket %s: S3 reported a truncated listing without a continuation marker; retry the destroy", bucket)
+		}
+		in = &s3.ListObjectVersionsInput{
+			Bucket:          aws.String(bucket),
+			KeyMarker:       out.NextKeyMarker,
+			VersionIdMarker: out.NextVersionIdMarker,
+		}
+	}
+}
+
+// deleteObjectBatches deletes objects in DeleteObjects requests of at most
+// maxDeleteObjectsBatch keys. S3 batch delete returns success even when
+// individual deletions are denied, so per-key errors stop the purge.
+func deleteObjectBatches(ctx context.Context, client purgeS3Client, bucket string, objects []s3types.ObjectIdentifier) error {
+	for start := 0; start < len(objects); start += maxDeleteObjectsBatch {
+		batch := objects[start:min(start+maxDeleteObjectsBatch, len(objects))]
+		out, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+			Bucket: aws.String(bucket),
+			Delete: &s3types.Delete{Objects: batch},
+		})
+		if err != nil {
+			return fmt.Errorf("deleting %d versions from bucket %s: %w", len(batch), bucket, err)
+		}
+		// Without this check a denied key would make the caller retry the
+		// same undeletable versions forever instead of making progress.
+		if len(out.Errors) > 0 {
+			return fmt.Errorf("deleting %d versions from bucket %s: %s; resolve the S3 errors and retry the purge",
+				len(batch), bucket, summarizeDeleteErrors(out.Errors, len(batch)))
+		}
+	}
+	return nil
+}
+
+// isNoSuchBucket reports whether err is S3's NoSuchBucket service error.
+func isNoSuchBucket(err error) bool {
+	var apiErr smithy.APIError
+	return errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchBucket"
 }
 
 // summarizeDeleteErrors renders S3 batch-delete per-key failures as a
