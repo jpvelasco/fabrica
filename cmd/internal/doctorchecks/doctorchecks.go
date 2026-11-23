@@ -5,13 +5,17 @@ package doctorchecks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"runtime"
+	"strings"
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
+	"github.com/jpvelasco/fabrica/internal/egress"
 	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/perforce"
@@ -39,6 +43,7 @@ func RunChecks(ctx context.Context, rt globals.Runtime, backend cloud.StateBacke
 		checkPerforceCIDR(rt),
 		checkHordeConnection(rt),
 		checkNamePrefix(rt),
+		checkNetworkPlacement(ctx, rt),
 	}
 }
 
@@ -201,4 +206,132 @@ func classifyPerforceCIDR(cidr string) DoctorCheck {
 		return DoctorCheck{"Perforce CIDR", "warning", cidr + " opens port 1666 to the entire internet. Restrict perforce.allowedCidr to your VPC CIDR, e.g. 172.31.0.0/16"}
 	}
 	return DoctorCheck{"Perforce CIDR", "ok", cidr + " (configured)"}
+}
+
+const networkPlacementName = "Network placement"
+
+// modulePin is a module whose config pins a subnetId, and whether its boot
+// downloads packages from the internet.
+type modulePin struct {
+	module         string
+	subnetID       string
+	internetAtBoot bool
+}
+
+// placement is a pinned module with the inspected egress of its subnet.
+type placement struct {
+	modulePin
+	net cloud.SubnetNetwork
+}
+
+// pinnedModules lists the modules that pin a subnetId, in a fixed order.
+// internetAtBoot mirrors the create flows: perforce and workstation install
+// packages during boot.
+func pinnedModules(cfg *config.Config) []modulePin {
+	if cfg == nil {
+		return nil
+	}
+	all := []modulePin{
+		{"perforce", cfg.Perforce.SubnetId, true},
+		{"horde", cfg.Horde.SubnetId, false},
+		{"horde.agents", cfg.Horde.Agents.SubnetID, false},
+		{"lore", cfg.Lore.SubnetId, false},
+		{"ddc", cfg.DDC.SubnetId, false},
+		{"workstation", cfg.Workstation.SubnetId, true},
+		{"ci", cfg.CI.SubnetId, false},
+	}
+	var pinned []modulePin
+	for _, m := range all {
+		if m.subnetID != "" {
+			pinned = append(pinned, m)
+		}
+	}
+	return pinned
+}
+
+// checkNetworkPlacement reports whether configured module subnets survive
+// VPC Block Public Access. It inspects only when BPA is on.
+func checkNetworkPlacement(ctx context.Context, rt globals.Runtime) DoctorCheck {
+	insp := provision.NetworkInspector(rt.Provider)
+	if insp == nil {
+		return DoctorCheck{networkPlacementName, "warning", provision.NotInspectableMessage}
+	}
+	bpa, err := insp.BlockPublicAccess(ctx)
+	if err != nil {
+		return networkInspectionFailure(err)
+	}
+	if !bpa.On() {
+		return classifyNetworkPlacement(bpa, nil)
+	}
+	var placed []placement
+	for _, pin := range pinnedModules(rt.Config) {
+		net, err := insp.SubnetEgress(ctx, pin.subnetID)
+		if err != nil {
+			return networkInspectionFailure(err)
+		}
+		placed = append(placed, placement{pin, net})
+	}
+	return classifyNetworkPlacement(bpa, placed)
+}
+
+// classifyNetworkPlacement grades the placements against the BPA mode. BPA
+// off is ok; BPA on with no pinned subnet warns; otherwise the worst module
+// verdict sets the status and every module is listed.
+func classifyNetworkPlacement(bpa cloud.BPAStatus, placed []placement) DoctorCheck {
+	if !bpa.On() {
+		return DoctorCheck{networkPlacementName, "ok", "VPC Block Public Access: off"}
+	}
+	if len(placed) == 0 {
+		return DoctorCheck{networkPlacementName, "warning", "VPC Block Public Access is " + bpa.Mode + " and no module pins a subnetId, so modules without vpcId and subnetId are refused. Set vpcId and subnetId under perforce, horde, horde.agents, lore, ddc, workstation or ci to a private subnet"}
+	}
+	worst := egress.LevelOK
+	lines := make([]string, 0, len(placed))
+	for _, p := range placed {
+		v := egress.Classify(bpa, p.net, p.internetAtBoot)
+		lines = append(lines, p.module+": "+verdictText(v))
+		if levelRank(v.Level) > levelRank(worst) {
+			worst = v.Level
+		}
+	}
+	return DoctorCheck{networkPlacementName, checkStatus(worst), strings.Join(lines, "; ")}
+}
+
+// verdictText is the message for one module: the verdict message, or the
+// path when the subnet is fine.
+func verdictText(v egress.Verdict) string {
+	if v.Message == "" {
+		return fmt.Sprintf("ok (%s)", v.Path)
+	}
+	return v.Message
+}
+
+// levelRank orders verdict levels so the worst one wins.
+func levelRank(l egress.Level) int {
+	switch l {
+	case egress.LevelFail:
+		return 2
+	case egress.LevelWarn:
+		return 1
+	}
+	return 0
+}
+
+// checkStatus maps a verdict level to a doctor status.
+func checkStatus(l egress.Level) string {
+	switch l {
+	case egress.LevelFail:
+		return "fail"
+	case egress.LevelWarn:
+		return "warning"
+	}
+	return "ok"
+}
+
+// networkInspectionFailure degrades an IAM denial to a warning and fails
+// closed on any other inspection error.
+func networkInspectionFailure(err error) DoctorCheck {
+	if errors.Is(err, cloud.ErrInspectionDenied) {
+		return DoctorCheck{networkPlacementName, "warning", provision.InspectionDeniedMessage(err)}
+	}
+	return DoctorCheck{networkPlacementName, "fail", "check failed: " + err.Error() + ". Retry, or check AWS connectivity and credentials"}
 }

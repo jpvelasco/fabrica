@@ -27,12 +27,15 @@ type NetworkTarget struct {
 	InternetAtBoot bool
 }
 
+// NotInspectableMessage is the warning when the provider cannot inspect network placement.
+const NotInspectableMessage = "network placement was not checked: this provider cannot inspect VPC Block Public Access"
+
 // NetworkPreflight checks the target against VPC Block Public Access. It
 // returns advisory warnings, and a non-nil error that blocks the create. A nil
 // inspector, or an inspection denied by IAM, degrades to a warning.
 func NetworkPreflight(ctx context.Context, insp cloud.NetworkInspector, t NetworkTarget) ([]string, error) {
 	if insp == nil {
-		return []string{"network placement was not checked: this provider cannot inspect VPC Block Public Access"}, nil
+		return []string{NotInspectableMessage}, nil
 	}
 	bpa, err := insp.BlockPublicAccess(ctx)
 	if err != nil {
@@ -58,11 +61,17 @@ func NetworkPreflight(ctx context.Context, insp cloud.NetworkInspector, t Networ
 	return nil, nil
 }
 
+// InspectionDeniedMessage is the warning when IAM denies the inspection calls.
+// It names the actions the operator must grant.
+func InspectionDeniedMessage(err error) string {
+	return "VPC Block Public Access and subnet egress were not checked (" + err.Error() + "). Grant ec2:DescribeVpcBlockPublicAccessOptions, ec2:DescribeVpcBlockPublicAccessExclusions, ec2:DescribeRouteTables, ec2:DescribeVpcEndpoints and ec2:DescribeSubnets to enable this check."
+}
+
 // inspectionFailure degrades an IAM denial to a warning and fails closed on
 // any other inspection error, naming the step that failed.
 func inspectionFailure(step string, err error) ([]string, error) {
 	if errors.Is(err, cloud.ErrInspectionDenied) {
-		return []string{"VPC Block Public Access and subnet egress were not checked (" + err.Error() + "). Grant ec2:DescribeVpcBlockPublicAccessOptions, ec2:DescribeVpcBlockPublicAccessExclusions, ec2:DescribeRouteTables, ec2:DescribeVpcEndpoints and ec2:DescribeSubnets to enable this check."}, nil
+		return []string{InspectionDeniedMessage(err)}, nil
 	}
 	return nil, fmt.Errorf("checking %s: %w. Retry, or check AWS connectivity and credentials", step, err)
 }

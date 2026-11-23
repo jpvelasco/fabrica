@@ -134,6 +134,17 @@ A boundary policy that blocks any of the actions below breaks the affected flow 
 }
 ```
 
+**Instance-side (perforce, `ssm:GetParameter`)** — the Perforce instance reads its Helix Core admin password at boot through the instance profile:
+
+```json
+{
+  "Sid": "FabricaPerforceAdminPassword",
+  "Effect": "Allow",
+  "Action": "ssm:GetParameter",
+  "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/${prefix}/perforce/*/admin-password"
+}
+```
+
 **Instance-side (horde, `ssm:PutParameter`)** — the Horde coordinator's cloud-init publishes the `fabrica-ci` service-account token to the per-create SecureString that `horde create` pre-created:
 
 ```json
@@ -209,12 +220,12 @@ Two statements look odd until you know why:
       "Sid": "FabricaCloudControl",
       "Effect": "Allow",
       "Action": [
-        "cloudcontrol:CreateResource",
-        "cloudcontrol:GetResource",
-        "cloudcontrol:UpdateResource",
-        "cloudcontrol:DeleteResource",
-        "cloudcontrol:ListResources",
-        "cloudcontrol:GetResourceRequestStatus"
+        "cloudformation:CreateResource",
+        "cloudformation:GetResource",
+        "cloudformation:UpdateResource",
+        "cloudformation:DeleteResource",
+        "cloudformation:ListResources",
+        "cloudformation:GetResourceRequestStatus"
       ],
       "Resource": "*"
     },
@@ -238,6 +249,8 @@ Two statements look odd until you know why:
       "Effect": "Allow",
       "Action": [
         "iam:CreateRole",
+        "iam:TagRole",
+        "iam:UntagRole",
         "iam:PutRolePolicy",
         "iam:PutRolePermissionsBoundary",
         "iam:AttachRolePolicy",
@@ -275,7 +288,124 @@ Two statements look odd until you know why:
         "ec2:DescribeSecurityGroupRules",
         "ec2:DescribeImages",
         "ec2:DescribeVpcs",
-        "ec2:DescribeSubnets"
+        "ec2:DescribeSubnets",
+        "ec2:DescribeVpcBlockPublicAccessOptions",
+        "ec2:DescribeVpcBlockPublicAccessExclusions",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeVpcEndpoints"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "FabricaCloudControlComputeHandlers",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:Describe*",
+        "ec2:Get*",
+        "ec2:CreateSecurityGroup",
+        "ec2:DeleteSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:ModifySecurityGroupAttribute",
+        "ec2:UpdateSecurityGroupRuleDescriptionsIngress",
+        "ec2:UpdateSecurityGroupRuleDescriptionsEgress",
+        "ec2:CreateLaunchTemplate",
+        "ec2:CreateLaunchTemplateVersion",
+        "ec2:DeleteLaunchTemplate",
+        "ec2:CreateVolume",
+        "ec2:DeleteVolume",
+        "ec2:AttachVolume",
+        "ec2:DetachVolume",
+        "ec2:ModifyVolume",
+        "ec2:ModifyVolumeAttribute",
+        "ec2:DeleteTags",
+        "ec2:ModifyInstanceAttribute",
+        "ec2:ModifyInstanceMetadataOptions",
+        "ec2:MonitorInstances",
+        "ec2:UnmonitorInstances",
+        "ec2:AssociateIamInstanceProfile",
+        "ec2:DisassociateIamInstanceProfile",
+        "ec2:ReplaceIamInstanceProfileAssociation",
+        "autoscaling:Describe*",
+        "autoscaling:CreateAutoScalingGroup",
+        "autoscaling:UpdateAutoScalingGroup",
+        "autoscaling:DeleteAutoScalingGroup",
+        "autoscaling:CreateOrUpdateTags",
+        "autoscaling:DeleteTags",
+        "autoscaling:PutScalingPolicy",
+        "autoscaling:DeletePolicy",
+        "autoscaling:EnableMetricsCollection",
+        "autoscaling:DisableMetricsCollection",
+        "autoscaling:SuspendProcesses",
+        "autoscaling:ResumeProcesses",
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:DeleteAlarms",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:ListTagsForResource",
+        "cloudwatch:TagResource",
+        "cloudwatch:UntagResource",
+        "ssm:DescribeAssociation",
+        "ssm:ListAssociations",
+        "ssm:GetParameters",
+        "ssm:ListTagsForResource",
+        "iam:ListInstanceProfiles",
+        "iam:ListRoles"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "FabricaCloudControlDataHandlers",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:DeleteBucket",
+        "s3:ListBucket",
+        "s3:ListAllMyBuckets",
+        "s3:GetBucket*",
+        "s3:Get*Configuration",
+        "s3:PutBucket*",
+        "s3:Put*Configuration",
+        "s3:DeleteBucket*",
+        "s3:ListTagsForResource",
+        "s3:TagResource",
+        "s3:UntagResource",
+        "dynamodb:CreateTable",
+        "dynamodb:UpdateTable",
+        "dynamodb:DeleteTable",
+        "dynamodb:Describe*",
+        "dynamodb:ListTables",
+        "dynamodb:ListTagsOfResource",
+        "dynamodb:TagResource",
+        "dynamodb:UntagResource",
+        "dynamodb:UpdateContinuousBackups",
+        "dynamodb:UpdateTimeToLive",
+        "dynamodb:GetResourcePolicy",
+        "logs:CreateLogGroup",
+        "logs:DeleteLogGroup",
+        "logs:Describe*",
+        "logs:PutRetentionPolicy",
+        "logs:DeleteRetentionPolicy",
+        "logs:GetDataProtectionPolicy",
+        "logs:ListTagsForResource",
+        "logs:TagResource",
+        "logs:UntagResource",
+        "codebuild:CreateProject",
+        "codebuild:UpdateProject",
+        "codebuild:DeleteProject",
+        "codebuild:BatchGetProjects",
+        "codebuild:ListProjects",
+        "codepipeline:CreatePipeline",
+        "codepipeline:UpdatePipeline",
+        "codepipeline:DeletePipeline",
+        "codepipeline:GetPipeline",
+        "codepipeline:GetPipelineState",
+        "codepipeline:ListPipelines",
+        "codepipeline:ListTagsForResource",
+        "codepipeline:TagResource",
+        "codepipeline:UntagResource"
       ],
       "Resource": "*"
     },
@@ -334,6 +464,16 @@ Two statements look odd until you know why:
       "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/${prefix}/workstation/*/dcv-password"
     },
     {
+      "Sid": "FabricaPerforceAdminPassword",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:PutParameter",
+        "ssm:DeleteParameter",
+        "ssm:AddTagsToResource"
+      ],
+      "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/${prefix}/perforce/*/admin-password"
+    },
+    {
       "Sid": "FabricaHordeServiceToken",
       "Effect": "Allow",
       "Action": [
@@ -348,7 +488,10 @@ Two statements look odd until you know why:
       "Sid": "FabricaSSMRunner",
       "Effect": "Allow",
       "Action": ["ssm:SendCommand", "ssm:GetCommandInvocation"],
-      "Resource": "arn:aws:ssm:REGION:ACCOUNT:document/AWS-RunShellScript"
+      "Resource": [
+        "arn:aws:ssm:REGION:ACCOUNT:document/AWS-RunShellScript",
+        "arn:aws:ec2:REGION:ACCOUNT:instance/*"
+      ]
     },
     {
       "Sid": "FabricaCodeBuild",
@@ -410,12 +553,13 @@ Two statements look odd until you know why:
 
 What each statement covers:
 
-- **Cloud Control** — every module resource flows through the Cloud Control API; the API itself authorizes on `*` and the downstream service calls run with this identity's credentials, which is why the service-level statements below exist.
+- **Cloud Control** — every module resource flows through the Cloud Control API. Its IAM actions live in the `cloudformation:` namespace (`cloudformation:CreateResource`, not `cloudcontrol:CreateResource`; the latter authorizes nothing). The API itself authorizes on `*`.
+- **Cloud Control handlers** — Cloud Control runs each resource type's handler with this identity's credentials, so the identity also needs the permissions each handler declares. `FabricaCloudControlComputeHandlers` and `FabricaCloudControlDataHandlers` are those declarations for the types Fabrica provisions (EC2 instances, volumes, security groups and ingress rules, launch templates, Auto Scaling groups and policies, CloudWatch alarms, IAM roles and instance profiles, SSM parameters, S3 buckets, DynamoDB tables, log groups, CodeBuild projects and CodePipeline pipelines), minus permissions for features Fabrica never configures. Regenerate them with `aws cloudformation describe-type --type RESOURCE --type-name AWS::EC2::Instance --query Schema --output text` and read `handlers.*.permissions`. The Auto Scaling group handler itself declares `ec2:Describe*` and `ec2:Get*`. Drop the data statement if you run neither lore, ddc nor ci.
 - **IAM name lookups + path writes** — the read grant covers the handler's by-name lookups (create, re-run detection, drift); the write grant covers role/profile lifecycle including the `iam:TagInstanceProfile` hook that tags the instance profile after create. `iam:PassRole` covers EC2 launches that attach the instance profile (Cloud Control instance create and the `volumeRequestTags` direct-launch path).
-- **EC2** — launches (Cloud Control instance handler and the `volumeRequestTags` direct-launch path), stop/start, terminate on destroy, tag writes, and the AMI/VPC resolution calls.
+- **EC2** — launches (Cloud Control instance handler and the `volumeRequestTags` direct-launch path), stop/start, terminate on destroy, tag writes, and the AMI/VPC resolution calls. The VPC Block Public Access placement check reads `ec2:DescribeVpcBlockPublicAccessOptions`, `ec2:DescribeVpcBlockPublicAccessExclusions`, `ec2:DescribeRouteTables`, and `ec2:DescribeVpcEndpoints`, plus `ec2:DescribeSubnets` above. Without them the check warns instead of blocking.
 - **S3 + DynamoDB** — `fabrica setup` bootstraps the state bucket (`${prefix}-state-ACCOUNT`) and lock table (`${prefix}-state-lock`) through the S3/DynamoDB SDK; Lore S3-store and DDC blob buckets and their DynamoDB tables go through Cloud Control. The purge path needs `s3:ListObjectVersions` plus `s3:DeleteObject`/`s3:DeleteObjectVersion`. Custom `lore.storeBucket` or `ddc.bucket` names outside the `${prefix}-*` pattern need their own resource entries.
 - **Setup ownership inspection** — Setup reads S3 bucket tags with `s3:GetBucketTagging`, DynamoDB metadata with `dynamodb:DescribeTable` and `dynamodb:ListTagsOfResource`, and canonical state with `s3:GetObject`. Compatible reconciliation uses the existing S3 settings/`s3:PutBucketTagging` permissions and `dynamodb:TagResource`. Setup preserves state documents and local caches; ambiguous existing resources require inspection before retrying.
 - **Canonical state permissions** — Since v0.6.0, `<state.bucket>/state.json` is the canonical state document: commands that read provisioning state need `s3:GetObject`, and commands that mutate it need `s3:PutObject` on that key (or the bucket's `/*` object ARN). These are baseline operator permissions, including after setup. Custom `state.bucket` or `state.table` names outside `${prefix}-*` need matching resource entries in `FabricaStateBucket`, `FabricaStateObjects`, and `FabricaTables`: include both the bucket ARN and object ARN for the custom bucket, and the table ARN for the custom lock table.
-- **SSM** — the workstation session-password SecureString (per-create `parameter/${prefix}/workstation/*/dcv-password`) and the SSM command runner used to verify private instances (`SendCommand` on the `AWS-RunShellScript` document; if your account denies `GetCommandInvocation` on the document ARN, add the command ARN `command/*` to that statement's resources).
+- **SSM** — the workstation session-password and Perforce admin-password SecureStrings (per-create `parameter/${prefix}/workstation/*/dcv-password` and `parameter/${prefix}/perforce/*/admin-password`) and the SSM command runner used to verify private instances and approve Horde agents (`SendCommand` authorizes against both the `AWS-RunShellScript` document and the target instance, so the statement lists both; if your account denies `GetCommandInvocation` on the document ARN, add the command ARN `command/*` to that statement's resources).
 - **CodeBuild + GameLift** — the `ci` and `deploy` modules; drop both statements if you do not run either.
 - **Image Builder** — the `ami build` bake flows (workstation, lore, horde, ddc). Fabrica generates the artifacts locally; the bake runs as the operator's identity, which is why the creates are request-tag-gated.
