@@ -12,6 +12,7 @@ import (
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/cmd/internal/teardown"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/instanceprofile"
 	"github.com/jpvelasco/fabrica/internal/oplog"
 	"github.com/jpvelasco/fabrica/internal/prompt"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
@@ -51,7 +52,7 @@ func agentsToDelete(m *fabricastate.ModuleState) []cloud.Resource {
 	out := make([]cloud.Resource, 0, len(order))
 	for _, t := range order {
 		for _, r := range m.Resources {
-			if r.TypeName == t && isAgentResource(r) && r.Identifier != "" {
+			if r.TypeName == t && isAgentResource(r) && r.Identifier != "" && !instanceprofile.IsExternal(r) {
 				out = append(out, cloud.Resource{TypeName: r.TypeName, Identifier: r.Identifier})
 			}
 		}
@@ -203,6 +204,9 @@ func (c *command) apply(ctx context.Context, st *fabricastate.State, m *fabricas
 		destroyed = append(destroyed, res.Identifier)
 	}
 
+	// Drop the referenced-profile record with the pool: it is unreferenced,
+	// not deleted, and must not keep the module reading as an agent pool.
+	m.Resources = instanceprofile.Drop(m.Resources)
 	// Update module status but keep the module (coordinator still exists).
 	st.UpsertModule(moduleName, m.Version, origStatus, m.Resources)
 	if err := c.writeState(st); err != nil {

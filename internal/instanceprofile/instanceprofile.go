@@ -44,6 +44,17 @@ func IsExternal(r fabricastate.ModuleResource) bool {
 	return r.Properties[PropertyExternal] == "true"
 }
 
+// Drop returns the resources Fabrica owns, without referenced profiles.
+func Drop(resources []fabricastate.ModuleResource) []fabricastate.ModuleResource {
+	var owned []fabricastate.ModuleResource
+	for _, r := range resources {
+		if !IsExternal(r) {
+			owned = append(owned, r)
+		}
+	}
+	return owned
+}
+
 // Verify confirms the profile exists with exactly one role. key names the config setting in errors.
 func Verify(ctx context.Context, insp cloud.InstanceProfileInspector, key, name string) error {
 	info, err := insp.GetInstanceProfile(ctx, name)

@@ -140,6 +140,8 @@ type HordeAgentsConfig struct {
 	Spot     bool                     `mapstructure:"spot"            yaml:"spot"`
 	Schedule CapacitySchedule         `mapstructure:"schedule"        yaml:"schedule"`
 	Scaling  HordeAgentsScalingConfig `mapstructure:"scaling"        yaml:"scaling"`
+	// InstanceProfile names a pre-created instance profile for the agent pool (name or ARN).
+	InstanceProfile string `mapstructure:"instanceProfile" yaml:"instanceProfile,omitempty"`
 }
 
 // HordeAgentsScalingConfig holds queue-based autoscaling settings for the

@@ -259,6 +259,10 @@ func (c command) run(ctx context.Context) error {
 		}
 	}
 
+	// Verified before any create, dry runs included.
+	if err := provision.VerifyProfile(ctx, c.runtime.Provider, plan.Profile, "horde.agents.instanceProfile"); err != nil {
+		return err
+	}
 	warnings, err := provision.NetworkPreflight(ctx, provision.NetworkInspector(c.runtime.Provider), provision.NetworkTarget{Module: "horde.agents", Placement: "horde.agents.vpcId and horde.agents.subnetId", VPCID: plan.VPCID, SubnetID: plan.SubnetID, DefaultVPC: plan.DefaultVPC})
 	if err != nil {
 		return err
@@ -449,35 +453,23 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 		}
 	}
 
-	// 2. IAM Role
-	fmt.Fprintf(c.out, "Creating agent IAM role %s...\n", plan.RoleName)
-	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
-		Label:             "Agent IAM role",
-		TypeName:          cloud.TypeAWSIAMRole,
-		BuildDesiredState: func() ([]byte, error) { return horde.AgentRoleDesiredState(plan) },
-		Properties:        map[string]string{"role": "agent"},
-	}, moduleName, ver, "provisioning", resources, st, c.out, c.createResource, c.writeState)
-	if err != nil {
-		return fmt.Errorf("creating agent IAM role: %w", err)
-	}
-
-	// 3. Instance Profile
-	fmt.Fprintf(c.out, "Creating agent instance profile %s...\n", plan.InstanceProfileName)
-	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
-		Label:             "Agent instance profile",
-		TypeName:          cloud.TypeAWSIAMInstanceProfile,
-		BuildDesiredState: func() ([]byte, error) { return horde.AgentInstanceProfileDesiredState(plan) },
-		ResourceIdentifier: func(created *cloud.Resource) string {
-			name := plan.InstanceProfileName
-			if created.Identifier != "" && !strings.HasPrefix(created.Identifier, "arn:") {
-				name = created.Identifier
-			}
-			return name
-		},
-		Properties: map[string]string{"role": "agent"},
-	}, moduleName, ver, "provisioning", resources, st, c.out, c.createResource, c.writeState)
-	if err != nil {
-		return fmt.Errorf("creating agent instance profile: %w", err)
+	// 2-3. IAM role and instance profile. A referenced profile (horde.agents.instanceProfile)
+	// is recorded as external: no role, no profile, and no IAM create call.
+	if plan.Profile.External() {
+		resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+			Label:      "Agent instance profile",
+			TypeName:   cloud.TypeAWSIAMInstanceProfile,
+			ExternalID: plan.Profile.Name,
+			Properties: map[string]string{"role": "agent"},
+		}, moduleName, ver, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+		if err != nil {
+			return fmt.Errorf("recording agent instance profile: %w", err)
+		}
+	} else {
+		resources, err = c.createAgentIAM(ctx, st, plan, resources, ver)
+		if err != nil {
+			return err
+		}
 	}
 
 	// 4. Launch Template
@@ -544,6 +536,39 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 
 	c.printPostCreate(plan, resources[len(resources)-1].Identifier)
 	return nil
+}
+
+// createAgentIAM creates the agent IAM role and the instance profile that wraps it.
+func (c command) createAgentIAM(ctx context.Context, st *fabricastate.State, plan *horde.AgentsCreatePlan, resources []fabricastate.ModuleResource, ver string) ([]fabricastate.ModuleResource, error) {
+	fmt.Fprintf(c.out, "Creating agent IAM role %s...\n", plan.RoleName)
+	resources, err := provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:             "Agent IAM role",
+		TypeName:          cloud.TypeAWSIAMRole,
+		BuildDesiredState: func() ([]byte, error) { return horde.AgentRoleDesiredState(plan) },
+		Properties:        map[string]string{"role": "agent"},
+	}, moduleName, ver, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return nil, fmt.Errorf("creating agent IAM role: %w", err)
+	}
+
+	fmt.Fprintf(c.out, "Creating agent instance profile %s...\n", plan.InstanceProfileName)
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:             "Agent instance profile",
+		TypeName:          cloud.TypeAWSIAMInstanceProfile,
+		BuildDesiredState: func() ([]byte, error) { return horde.AgentInstanceProfileDesiredState(plan) },
+		ResourceIdentifier: func(created *cloud.Resource) string {
+			name := plan.InstanceProfileName
+			if created.Identifier != "" && !strings.HasPrefix(created.Identifier, "arn:") {
+				name = created.Identifier
+			}
+			return name
+		},
+		Properties: map[string]string{"role": "agent"},
+	}, moduleName, ver, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return nil, fmt.Errorf("creating agent instance profile: %w", err)
+	}
+	return resources, nil
 }
 
 func (c command) applyScalingResources(ctx context.Context, plan *horde.AgentsCreatePlan, resources []fabricastate.ModuleResource, st *fabricastate.State, ver string) ([]fabricastate.ModuleResource, error) {
@@ -664,14 +689,7 @@ func (c command) printDryRun(plan *horde.AgentsCreatePlan, warnings []string) {
 		)
 	}
 
-	resources := []string{
-		"Agent Security Group:   " + plan.SGName,
-		"Agent IAM Role:         " + plan.RoleName,
-		"Agent Instance Profile: " + plan.InstanceProfileName,
-		"Launch Template:        " + plan.LaunchTemplateName,
-		"Auto Scaling Group:     " + plan.ASGName,
-	}
-	resources = append(resources, provision.IAMResourceLines(plan.IAM)...)
+	resources := agentResourceLines(plan)
 	if plan.ScalingEnabled {
 		resources = append(resources,
 			"Scale-out Policy:     "+plan.ScaleOutPolicyName,
@@ -714,14 +732,17 @@ func (c command) printApplyPlan(plan *horde.AgentsCreatePlan) {
 		Info:        agentsPlanInfo(plan),
 		ExtraFields: fields,
 		OmitVolume:  true,
-		Resources: append([]string{
-			"Agent Security Group:   " + plan.SGName,
-			"Agent IAM Role:         " + plan.RoleName,
-			"Agent Instance Profile: " + plan.InstanceProfileName,
-			"Launch Template:        " + plan.LaunchTemplateName,
-			"Auto Scaling Group:     " + plan.ASGName,
-		}, provision.IAMResourceLines(plan.IAM)...),
+		Resources:   agentResourceLines(plan),
 	})
+}
+
+// agentResourceLines lists the agent pool's base resources, then the IAM
+// constraint lines. A referenced profile is one row, marked as not managed.
+func agentResourceLines(plan *horde.AgentsCreatePlan) []string {
+	lines := []string{"Agent Security Group:   " + plan.SGName}
+	lines = append(lines, provision.ProfileLines(plan.Profile, "Agent IAM Role:         "+plan.RoleName, "Agent Instance Profile: "+plan.InstanceProfileName)...)
+	lines = append(lines, "Launch Template:        "+plan.LaunchTemplateName, "Auto Scaling Group:     "+plan.ASGName)
+	return append(lines, provision.IAMResourceLines(plan.IAM)...)
 }
 
 // agentsPlanInfo is the header shared by the agent-pool dry run and apply plan.
