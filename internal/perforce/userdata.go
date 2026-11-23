@@ -43,24 +43,50 @@ DATA_MOUNT="{{ .DataMount }}"
 ` + userdata.SecureParameterFetchShell("ADMIN_PASS", "{{ .AdminPasswordParameter }}", "{{ .Region }}", "Helix Core admin password") + `
 `
 
-// perforceUserDataBody follows the apt repo fragment (which ends by
-// refreshing the apt index).
-const perforceUserDataBody = `{{ if eq .Version "latest" -}}
+// helixInstallBody installs Helix Core. Since 2025.1 the server ships as
+// p4-server and helix-p4d is a transitional package whose unversioned
+// p4-server dependency installs the newest server, so a pin resolves against
+// p4-server first (its p4-server-base dependency is exact) and falls back to
+// helix-p4d for older releases. The installed p4d must then report the pinned
+// release, or the boot fails closed (#699).
+const helixInstallBody = `{{ if eq .Version "latest" -}}
 apt-get install -y helix-p4d
 {{- else -}}
 # apt matches pkg=version against the full Debian version (for example
 # 2025.2-3148719~jammy), so a bare release never matches. Resolve the pin to
-# the newest repo build of that release (or the exact build for YYYY.N/BUILD)
-# and fail closed when the repo no longer carries it (#699).
+# the newest repo build of that release (or the exact build for YYYY.N/BUILD).
 HELIX_PIN="$(echo '{{ .Version }}' | tr / -)"
-HELIX_DEB_VERSION="$(apt-cache madison helix-p4d | awk -F'|' -v pin="$HELIX_PIN" '{v=$2; gsub(/ /, "", v); if (!found && (index(v, pin "-") == 1 || index(v, pin "~") == 1)) {print v; found = 1}}')"
+helix_resolve() { apt-cache madison "$1" | awk -F'|' -v pin="$HELIX_PIN" '{v=$2; gsub(/ /, "", v); if (!found && (index(v, pin "-") == 1 || index(v, pin "~") == 1)) {print v; found = 1}}'; }
+HELIX_PKG=p4-server
+HELIX_DEB_VERSION="$(helix_resolve p4-server)"
+if [ -z "$HELIX_DEB_VERSION" ]; then
+  HELIX_PKG=helix-p4d
+  HELIX_DEB_VERSION="$(helix_resolve helix-p4d)"
+fi
 if [ -z "$HELIX_DEB_VERSION" ]; then
   echo "ERROR: Helix Core {{ .Version }} is not in the Perforce apt repo (available: $(apt-cache madison helix-p4d | awk -F'|' '{gsub(/ /, "", $2); printf "%s ", $2}')). Set perforce.version to an available release, or \"latest\", and re-run fabrica perforce create." >&2
   exit 1
 fi
-apt-get install -y "helix-p4d=$HELIX_DEB_VERSION"
+apt-get install -y "$HELIX_PKG=$HELIX_DEB_VERSION"
 {{- end }}
-echo "Installed helix-p4d $(dpkg-query -W -f='${Version}' helix-p4d)"
+P4D_BIN=/opt/perforce/sbin/p4d
+[ -x "$P4D_BIN" ] || P4D_BIN="$(command -v p4d)"
+P4D_RELEASE="$("$P4D_BIN" -V | awk -F/ '/^Rev\./ {split($4, b, " "); print $3 "-" b[1]; exit}')"
+{{ if ne .Version "latest" -}}
+case "$P4D_RELEASE-" in
+  "$HELIX_PIN"-*) ;;
+  *)
+    echo "ERROR: the installed p4d is $P4D_RELEASE, not the pinned Helix Core {{ .Version }}; refusing to run an unpinned server. Set perforce.version to an available release, or \"latest\", and re-run fabrica perforce create." >&2
+    exit 1
+    ;;
+esac
+{{ end -}}
+echo "Installed Helix Core p4d $P4D_RELEASE"
+`
+
+// perforceUserDataBody follows the apt repo fragment (which ends by
+// refreshing the apt index).
+const perforceUserDataBody = helixInstallBody + `
 
 # Identify the data volume: the largest disk that is not the root disk.
 # NVMe enumeration order is NOT deterministic across EC2 launches, so a
