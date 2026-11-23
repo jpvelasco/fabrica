@@ -111,6 +111,8 @@ type HordeConfig struct {
 	Change     int    `mapstructure:"change"     yaml:"change"`
 	// IAM overrides cloud.aws.iam for the coordinator and the agent pool.
 	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
+	// InstanceProfile names a pre-created instance profile for the coordinator (name or ARN).
+	InstanceProfile string `mapstructure:"instanceProfile" yaml:"instanceProfile,omitempty"`
 }
 
 // HordeTLSConfig names operator-supplied PEM material on the coordinator.
@@ -182,6 +184,8 @@ type LoreConfig struct {
 	TLSConfig LoreTLSConfig `mapstructure:"tls" yaml:"tls"`
 	// IAM overrides cloud.aws.iam for this module when a field is set.
 	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
+	// InstanceProfile names a pre-created instance profile (name or ARN).
+	InstanceProfile string `mapstructure:"instanceProfile" yaml:"instanceProfile,omitempty"`
 }
 
 // LoreTLSConfig holds optional TLS settings for the Lore server.

@@ -169,7 +169,7 @@ func (c command) run(ctx context.Context) error {
 		CleanupCommand:    "fabrica lore destroy",
 		Confirm:           c.confirm,
 		ReadState:         c.readState,
-		Preflight: provision.PreflightFor(c.runtime.Provider, provision.NetworkTarget{
+		Preflight: provision.ProfilePreflight(c.runtime.Provider, plan.Profile, "lore.instanceProfile", provision.NetworkTarget{
 			Module: "lore", Placement: "lore.vpcId and lore.subnetId", VPCID: plan.VPCID, SubnetID: plan.SubnetID, DefaultVPC: plan.DefaultVPC,
 		}),
 		PrintDryRun:    c.printDryRun,
@@ -310,6 +310,14 @@ func (c command) createS3StoreResources(ctx context.Context, plan *lore.CreatePl
 }
 
 func (c command) createIAMResources(ctx context.Context, plan *lore.CreatePlan, resources []fabricastate.ModuleResource, st *fabricastate.State) ([]fabricastate.ModuleResource, error) {
+	// A referenced profile (lore.instanceProfile) is recorded, not created: no role, no profile.
+	if plan.Profile.External() {
+		return provision.ExecuteStep(ctx, provision.CreateStep{
+			Label:      "Instance profile",
+			TypeName:   cloud.TypeAWSIAMInstanceProfile,
+			ExternalID: plan.Profile.Name,
+		}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	}
 	// IAM Role
 	fmt.Fprintf(c.out, "Creating IAM role %s...\n", plan.RoleName)
 	oplog.WithModule("lore").Debug("creating IAM role", "role", plan.RoleName)
@@ -353,10 +361,7 @@ func (c command) printDryRun(plan *lore.CreatePlan, warnings []string) {
 			"DynamoDB Tables:  "+strings.Join(plan.StoreTables, ", "),
 		)
 	}
-	resources = append(resources,
-		"IAM Role:         "+plan.RoleName,
-		"Instance Profile: "+plan.InstanceProfileName,
-	)
+	resources = append(resources, provision.ProfileLines(plan.Profile, "IAM Role:         "+plan.RoleName, "Instance Profile: "+plan.InstanceProfileName)...)
 	resources = append(resources, provision.IAMResourceLines(plan.IAM)...)
 	extraFields := append([]provision.PlanField{
 		{Key: "AMI ID", Value: plan.AmiID},
@@ -404,10 +409,7 @@ func (c command) printApplyPlan(plan *lore.CreatePlan) {
 			"DynamoDB Tables:  "+strings.Join(plan.StoreTables, ", "),
 		)
 	}
-	resources = append(resources,
-		"IAM Role:         "+plan.RoleName,
-		"Instance Profile: "+plan.InstanceProfileName,
-	)
+	resources = append(resources, provision.ProfileLines(plan.Profile, "IAM Role:         "+plan.RoleName, "Instance Profile: "+plan.InstanceProfileName)...)
 	resources = append(resources, provision.IAMResourceLines(plan.IAM)...)
 	provision.ApplyPlan(c.out, "Lore loreserver", provision.PlanInfo{
 		Account:      plan.Account,

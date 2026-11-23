@@ -208,7 +208,7 @@ func (c command) run(ctx context.Context) error {
 			}
 			return st, nil
 		},
-		Preflight: provision.PreflightFor(c.runtime.Provider, provision.NetworkTarget{
+		Preflight: provision.ProfilePreflight(c.runtime.Provider, plan.Profile, "horde.instanceProfile", provision.NetworkTarget{
 			Module: "horde", Placement: "horde.vpcId and horde.subnetId", VPCID: plan.VPCID, SubnetID: plan.SubnetID, DefaultVPC: plan.DefaultVPC,
 		}),
 		PrintDryRun:    c.printDryRun,
@@ -283,33 +283,22 @@ func (c command) applyCreate(ctx context.Context, st *fabricastate.State, plan *
 	}
 	sgID := resources[len(resources)-1].Identifier
 
-	// IAM Role
-	fmt.Fprintf(c.out, "Creating IAM role %s...\n", plan.RoleName)
-	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
-		Label:             "IAM role",
-		TypeName:          cloud.TypeAWSIAMRole,
-		BuildDesiredState: func() ([]byte, error) { return horde.RoleDesiredState(plan) },
-	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
-	if err != nil {
-		return c.abandonServiceToken(ctx, tokenParam, fmt.Errorf("creating IAM role: %w", err))
-	}
-
-	// Instance Profile
-	fmt.Fprintf(c.out, "Creating instance profile %s...\n", plan.InstanceProfileName)
-	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
-		Label:             "Instance profile",
-		TypeName:          cloud.TypeAWSIAMInstanceProfile,
-		BuildDesiredState: func() ([]byte, error) { return horde.InstanceProfileDesiredState(plan) },
-		ResourceIdentifier: func(created *cloud.Resource) string {
-			name := plan.InstanceProfileName
-			if created.Identifier != "" && !strings.HasPrefix(created.Identifier, "arn:") {
-				name = created.Identifier
-			}
-			return name
-		},
-	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
-	if err != nil {
-		return c.abandonServiceToken(ctx, tokenParam, fmt.Errorf("creating instance profile: %w", err))
+	// IAM role and instance profile. A referenced profile (horde.instanceProfile)
+	// is recorded as external: no role, no profile, and no IAM create call.
+	if plan.Profile.External() {
+		resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+			Label:      "Instance profile",
+			TypeName:   cloud.TypeAWSIAMInstanceProfile,
+			ExternalID: plan.Profile.Name,
+		}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+		if err != nil {
+			return c.abandonServiceToken(ctx, tokenParam, fmt.Errorf("recording instance profile: %w", err))
+		}
+	} else {
+		resources, err = c.createIAM(ctx, st, plan, resources)
+		if err != nil {
+			return c.abandonServiceToken(ctx, tokenParam, err)
+		}
 	}
 	profileName := resources[len(resources)-1].Identifier
 
@@ -383,6 +372,45 @@ func (c command) abandonServiceToken(ctx context.Context, name string, err error
 	return err
 }
 
+// createIAM creates the coordinator IAM role and the instance profile that wraps it.
+func (c command) createIAM(ctx context.Context, st *fabricastate.State, plan *horde.CreatePlan, resources []fabricastate.ModuleResource) ([]fabricastate.ModuleResource, error) {
+	fmt.Fprintf(c.out, "Creating IAM role %s...\n", plan.RoleName)
+	resources, err := provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:             "IAM role",
+		TypeName:          cloud.TypeAWSIAMRole,
+		BuildDesiredState: func() ([]byte, error) { return horde.RoleDesiredState(plan) },
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return nil, fmt.Errorf("creating IAM role: %w", err)
+	}
+
+	fmt.Fprintf(c.out, "Creating instance profile %s...\n", plan.InstanceProfileName)
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:             "Instance profile",
+		TypeName:          cloud.TypeAWSIAMInstanceProfile,
+		BuildDesiredState: func() ([]byte, error) { return horde.InstanceProfileDesiredState(plan) },
+		ResourceIdentifier: func(created *cloud.Resource) string {
+			name := plan.InstanceProfileName
+			if created.Identifier != "" && !strings.HasPrefix(created.Identifier, "arn:") {
+				name = created.Identifier
+			}
+			return name
+		},
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return nil, fmt.Errorf("creating instance profile: %w", err)
+	}
+	return resources, nil
+}
+
+// resourceLines lists the coordinator's resources. A referenced profile is one row, marked as not managed.
+func resourceLines(plan *horde.CreatePlan) []string {
+	lines := []string{"SSM Parameter:    " + plan.ServiceTokenParameter, "Security Group:   " + plan.SGName}
+	lines = append(lines, provision.ProfileLines(plan.Profile, "IAM Role:         "+plan.RoleName, "Instance Profile: "+plan.InstanceProfileName)...)
+	lines = append(lines, "EC2 Instance:     "+plan.InstanceName)
+	return append(lines, provision.IAMResourceLines(plan.IAM)...)
+}
+
 func (c command) printDryRun(plan *horde.CreatePlan, warnings []string) {
 	extraFields := []provision.PlanField{
 		{Key: "AMI ID", Value: plan.AmiID},
@@ -405,14 +433,8 @@ func (c command) printDryRun(plan *horde.CreatePlan, warnings []string) {
 			VPCID:        plan.VPCID,
 			DefaultVPC:   plan.DefaultVPC,
 		},
-		ExtraFields: extraFields,
-		Resources: append([]string{
-			"SSM Parameter:    " + plan.ServiceTokenParameter,
-			"Security Group:   " + plan.SGName,
-			"IAM Role:         " + plan.RoleName,
-			"Instance Profile: " + plan.InstanceProfileName,
-			"EC2 Instance:     " + plan.InstanceName,
-		}, provision.IAMResourceLines(plan.IAM)...),
+		ExtraFields:   extraFields,
+		Resources:     resourceLines(plan),
 		CostResources: plan.CostResources,
 		Costs:         c.costs,
 		RawBetween: func(w io.Writer) {
@@ -433,13 +455,7 @@ func (c command) printApplyPlan(plan *horde.CreatePlan) {
 		VolumeSize:   plan.VolumeSize,
 	}, []provision.PlanField{
 		{Key: "AMI ID", Value: plan.AmiID},
-	}, append([]string{
-		"SSM Parameter:    " + plan.ServiceTokenParameter,
-		"Security Group:   " + plan.SGName,
-		"IAM Role:         " + plan.RoleName,
-		"Instance Profile: " + plan.InstanceProfileName,
-		"EC2 Instance:     " + plan.InstanceName,
-	}, provision.IAMResourceLines(plan.IAM)...))
+	}, resourceLines(plan))
 }
 
 func (c command) printPostCreate(plan *horde.CreatePlan, instanceID string) {
