@@ -11,6 +11,7 @@ import (
 
 	"github.com/jpvelasco/fabrica/cmd/globals"
 	"github.com/jpvelasco/fabrica/cmd/internal/hordeapi"
+	"github.com/jpvelasco/fabrica/cmd/internal/hordejob"
 	"github.com/jpvelasco/fabrica/cmd/internal/provision"
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/horde"
@@ -28,8 +29,8 @@ const (
 
 type command struct {
 	runtime        globals.Runtime
-	buildGraphPath string
-	target         string
+	buildGraphPath string // optional; parsed locally for the target, never uploaded
+	overrides      horde.JobOverrides
 	dryRun         bool
 	wait           bool
 	out            io.Writer
@@ -46,22 +47,24 @@ type command struct {
 // New returns the "horde submit" subcommand.
 func New(runtimeSource globals.RuntimeSource, optionsSource globals.OptionsSource, out io.Writer) *cobra.Command {
 	var wait bool
-	var target string
+	var overrides horde.JobOverrides
 	cmd := &cobra.Command{
-		Use:   "submit <buildgraph-file>",
-		Short: "Submit a BuildGraph job to the Horde coordinator",
-		Long: `Submit a BuildGraph XML file as a job to the Horde build coordinator.
+		Use:   "submit [buildgraph-file]",
+		Short: "Submit a job to the Horde coordinator",
+		Long: `Submit a job to the Horde build coordinator.
 
-Parses the BuildGraph file to extract the job name and target, then POSTs to
-the Horde REST API. The target is the first <Aggregate>, or the first <Node>
-of the first <Agent> when there is no aggregate; --target overrides it.
-By default, submits and returns immediately (fire-and-forget).
+The job runs from horde.streamId and horde.templateId (or --stream and
+--template), which must exist in the coordinator's globals.json; see
+docs/horde-jobs.md. A BuildGraph file is parsed locally to pick the target
+(--target overrides it) and is never uploaded: Horde runs the script from the
+synced stream. Without a file, the template's default target runs unless
+--target is given. By default, submits and returns immediately (fire-and-forget).
 
-Use --wait / -w to poll every 30 seconds until the job completes or errors
-(times out after 60 minutes). With --wait the command exits non-zero when
-the job finishes in error, the wait times out, or polling is cancelled (the
-job keeps running on the coordinator either way). Use --dry-run to preview
-the job and the coordinator address without submitting.
+Use --wait / -w to poll every 30 seconds until the job completes (times out
+after 60 minutes). With --wait the command exits non-zero when the job state
+is not recognised, the wait times out, or polling is cancelled (the job keeps
+running on the coordinator either way). Use --dry-run to preview the request
+and the coordinator address without submitting.
 
 The request authenticates with the fabrica-ci service-account token that the
 coordinator's cloud-init publishes to the SSM SecureString recorded at create
@@ -70,7 +73,7 @@ ssm:GetParameter on that parameter. --dry-run never reads the token.
 
 The Horde coordinator must be reachable from this machine (VPN or same VPC).
 Run 'fabrica horde status' to confirm the coordinator is ready.`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeSource()
 			if err != nil {
@@ -78,10 +81,14 @@ Run 'fabrica horde status' to confirm the coordinator is ready.`,
 			}
 			opts := optionsSource()
 
+			var graphPath string
+			if len(args) == 1 {
+				graphPath = args[0]
+			}
 			c := command{
 				runtime:        rt,
-				buildGraphPath: args[0],
-				target:         target,
+				buildGraphPath: graphPath,
+				overrides:      overrides,
 				dryRun:         opts.DryRun,
 				wait:           wait,
 				out:            out,
@@ -96,21 +103,45 @@ Run 'fabrica horde status' to confirm the coordinator is ready.`,
 		},
 	}
 	cmd.Flags().BoolVarP(&wait, "wait", "w", false, "Poll until job completes or 60 minutes elapsed")
-	cmd.Flags().StringVar(&target, "target", "", "BuildGraph <Aggregate> or <Node> name to run (default: first <Aggregate>, else first <Node>)")
+	cmd.Flags().StringVar(&overrides.Target, "target", "", "BuildGraph <Aggregate> or <Node> name, or template target, to run (default: first <Aggregate> in the file, else first <Node>)")
+	hordejob.BindFlags(cmd, &overrides)
 	return cmd
 }
 
+// buildRequest builds the job request and checks it before any state or
+// network access. A BuildGraph file is parsed only to resolve the target and
+// the default job name; choice is nil when no file was given.
+func (c command) buildRequest() (horde.CreateJobRequest, *buildgraph.TargetChoice, error) {
+	o := c.overrides
+	var choice *buildgraph.TargetChoice
+	if c.buildGraphPath != "" {
+		job, err := buildgraph.ParseBuildGraph(c.buildGraphPath)
+		if err != nil {
+			return horde.CreateJobRequest{}, nil, err
+		}
+		resolved := buildgraph.ResolveTarget(job, o.Target)
+		if resolved.Warning != "" {
+			fmt.Fprintf(c.out, "Warning: %s\n", resolved.Warning)
+		}
+		if err := buildgraph.ValidateJob(job); err != nil {
+			return horde.CreateJobRequest{}, nil, err
+		}
+		o.Target = resolved.Name
+		if o.Name == "" {
+			o.Name = job.Name
+		}
+		choice = &resolved
+	}
+	req := horde.NewCreateJobRequest(c.runtime.Config.Horde, o)
+	if err := req.Validate(); err != nil {
+		return horde.CreateJobRequest{}, nil, err
+	}
+	return req, choice, nil
+}
+
 func (c command) run(ctx context.Context) error {
-	// Parse the BuildGraph file first — fail fast before any network calls.
-	job, err := buildgraph.ParseBuildGraph(c.buildGraphPath)
+	req, choice, err := c.buildRequest()
 	if err != nil {
-		return err
-	}
-	choice := buildgraph.ResolveTarget(job, c.target)
-	if choice.Warning != "" {
-		fmt.Fprintf(c.out, "Warning: %s\n", choice.Warning)
-	}
-	if err := buildgraph.ValidateJob(job); err != nil {
 		return err
 	}
 
@@ -152,7 +183,7 @@ func (c command) run(ctx context.Context) error {
 	}
 
 	if c.dryRun {
-		c.printDryRun(job, choice, baseURL, tokenParam)
+		c.printDryRun(req, choice, baseURL, tokenParam)
 		return nil
 	}
 
@@ -174,7 +205,7 @@ func (c command) run(ctx context.Context) error {
 		client = newClient(baseURL, token)
 	}
 
-	jobID, err := client.SubmitJob(ctx, job)
+	jobID, err := client.SubmitJob(ctx, req)
 	if err != nil {
 		return fmt.Errorf("submitting job: %w", err)
 	}
@@ -215,17 +246,30 @@ func (c command) serviceToken(ctx context.Context, name string) (string, error) 
 	return token, nil
 }
 
-// printDryRun previews the job submission without contacting the coordinator.
-func (c command) printDryRun(job *buildgraph.BuildGraphJob, choice buildgraph.TargetChoice, baseURL, tokenParam string) {
+// printDryRun previews the job request without contacting the coordinator.
+// choice is nil when no BuildGraph file was given; the file is then only
+// described, never sent.
+func (c command) printDryRun(req horde.CreateJobRequest, choice *buildgraph.TargetChoice, baseURL, tokenParam string) {
 	fmt.Fprintln(c.out, "Horde submit (dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
-	fmt.Fprintf(c.out, "  job:    %s\n", job.Name)
-	fmt.Fprintf(c.out, "  target: %s (%s)\n", choice.Name, choice.Reason)
+	fmt.Fprintf(c.out, "  stream: %s\n", req.StreamID)
+	fmt.Fprintf(c.out, "  template: %s\n", req.TemplateID)
+	switch {
+	case choice != nil:
+		fmt.Fprintf(c.out, "  target: %s (%s); the file is not uploaded\n", choice.Name, choice.Reason)
+	case len(req.Targets) > 0:
+		fmt.Fprintf(c.out, "  target: %s (--target)\n", req.Targets[0])
+	default:
+		fmt.Fprintln(c.out, "  target: template default")
+	}
 	if baseURL != "" {
 		fmt.Fprintf(c.out, "  coordinator: %s\n", baseURL)
 	}
 	if tokenParam != "" {
 		fmt.Fprintf(c.out, "  auth:   %s token from SSM %s\n", horde.ServiceTokenAuthScheme, tokenParam)
+	}
+	if body, err := json.Marshal(req); err == nil {
+		fmt.Fprintf(c.out, "  request: %s\n", body)
 	}
 	fmt.Fprintln(c.out, "Run without --dry-run to submit the job.")
 }
@@ -241,10 +285,12 @@ func (c command) pollUntilDone(ctx context.Context, client HordeClient, jobID st
 		fmt.Fprintf(c.out, "Job %s: %s\n", jobID, state)
 
 		switch state {
-		case "complete":
+		case horde.JobStateComplete:
 			return nil
-		case "error":
-			return fmt.Errorf("job %s finished in error — inspect it in the Horde web UI", jobID)
+		case horde.JobStateWaiting, horde.JobStateRunning:
+		default:
+			return fmt.Errorf("job %s reported state %q, which fabrica does not recognise (expected %s, %s, or %s); inspect the job in the Horde web UI",
+				jobID, state, horde.JobStateWaiting, horde.JobStateRunning, horde.JobStateComplete)
 		}
 
 		if c.now().After(deadline) {

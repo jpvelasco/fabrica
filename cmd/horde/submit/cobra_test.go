@@ -34,8 +34,19 @@ func runSubmit(t *testing.T, runtimeSource globals.RuntimeSource, args ...string
 	return testutil.RunCommandWithOut(t, root, &out, append([]string{"submit"}, args...)...)
 }
 
+// newCobraConfig is config.Defaults with the stream and template every submit
+// run needs to pass request validation.
+func newCobraConfig() *config.Config {
+	cfg := config.Defaults()
+	cfg.Cloud.AWS.AccountID = "123456789012"
+	cfg.Horde.StreamID = "stream-main"
+	cfg.Horde.TemplateID = "template-compile"
+	return cfg
+}
+
 func newCobraRuntime(provider cloud.Provider) globals.RuntimeSource {
-	return testutil.NewTestRuntime(provider)
+	rt := globals.Runtime{Config: newCobraConfig(), Provider: provider}
+	return func() (globals.Runtime, error) { return rt, nil }
 }
 
 func writeTempBuildGraph(t *testing.T) string {
@@ -49,14 +60,6 @@ func writeTempBuildGraph(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
-}
-
-// TestSubmitCobraMissingArg verifies that omitting the positional arg produces a usage error.
-func TestSubmitCobraMissingArg(t *testing.T) {
-	_, err := runSubmit(t, newCobraRuntime(&testutil.TestProvider{}))
-	if err == nil {
-		t.Fatal("expected error when buildgraph-file arg is missing")
-	}
 }
 
 // TestSubmitCobraWaitFlagAccepted verifies --wait/-w is accepted (no parse error).
@@ -203,7 +206,7 @@ func TestSubmitCobraRuntimeError(t *testing.T) {
 // test server, so the production client path (no injected HordeClient) is
 // driven end to end through ExecuteContext.
 func newCobraHTTPRuntime(provider cloud.Provider, port int) globals.RuntimeSource {
-	cfg := config.Defaults()
+	cfg := newCobraConfig()
 	cfg.Cloud.AWS.AccountID = "123456789012"
 	cfg.Horde.Port = port
 	rt := globals.Runtime{Config: cfg, Provider: provider}
@@ -249,7 +252,7 @@ func cobraHTTPProvider(host string) *testutil.TestProvider {
 // for a job that completes: ExecuteContext returns nil and the progress
 // lines land on stdout.
 func TestSubmitCobraWaitCompleteExitZero(t *testing.T) {
-	host, port := startFakeHordeServer(t, "cobra-wait-job", "complete")
+	host, port := startFakeHordeServer(t, "cobra-wait-job", "Complete")
 	dir := t.TempDir()
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, submitProvisionedStateJSON())
@@ -259,15 +262,15 @@ func TestSubmitCobraWaitCompleteExitZero(t *testing.T) {
 		t.Fatalf("expected success exit for a completed job, got: %v", err)
 	}
 	testutil.AssertContains(t, got, "cobra-wait-job")
-	testutil.AssertContains(t, got, "complete")
+	testutil.AssertContains(t, got, "Complete")
 }
 
-// TestSubmitCobraWaitErrorStateExitNonZero verifies the command-level exit
-// status for a job that finishes in error: ExecuteContext returns a non-nil
+// TestSubmitCobraUnknownStateExitNonZero verifies the command-level exit
+// status for a job whose state is unrecognised: ExecuteContext returns a non-nil
 // error naming the job (the #539 reproduction), so automation sees a
 // non-zero exit instead of success.
-func TestSubmitCobraWaitErrorStateExitNonZero(t *testing.T) {
-	host, port := startFakeHordeServer(t, "cobra-err-job", "error")
+func TestSubmitCobraUnknownStateExitNonZero(t *testing.T) {
+	host, port := startFakeHordeServer(t, "cobra-err-job", "Failed")
 	dir := t.TempDir()
 	t.Chdir(dir)
 	testutil.WriteStateFile(t, dir, submitProvisionedStateJSON())
@@ -277,5 +280,5 @@ func TestSubmitCobraWaitErrorStateExitNonZero(t *testing.T) {
 		t.Fatal("expected non-zero exit for a job that finished in error")
 	}
 	testutil.AssertContains(t, err.Error(), "cobra-err-job")
-	testutil.AssertContains(t, got, "Job cobra-err-job: error")
+	testutil.AssertContains(t, got, "Job cobra-err-job: Failed")
 }

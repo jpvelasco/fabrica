@@ -8,8 +8,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jpvelasco/fabrica/internal/horde/buildgraph"
+	"github.com/jpvelasco/fabrica/internal/horde"
 )
+
+// testJobRequest is a valid submit request for the fake-server tests.
+func testJobRequest() horde.CreateJobRequest {
+	return horde.CreateJobRequest{StreamID: "stream-main", TemplateID: "template-compile", Name: "test", Targets: []string{"Compile"}}
+}
 
 type roundTripFunc func(req *http.Request) (*http.Response, error)
 
@@ -34,7 +39,7 @@ func newTestHTTPClient(statusCode int, body string) *hordeHTTPClient {
 
 func TestSubmitJobNonSuccessIncludesBody(t *testing.T) {
 	client := newTestHTTPClient(http.StatusInternalServerError, `{"error":"depot unavailable"}`)
-	_, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{Name: "test", Target: "Compile"})
+	_, err := client.SubmitJob(context.Background(), testJobRequest())
 	if err == nil {
 		t.Fatal("expected error for non-2xx response")
 	}
@@ -56,7 +61,7 @@ func TestGetJobStatusNonSuccessIncludesBody(t *testing.T) {
 
 func TestSubmitJobAuthErrorMessage(t *testing.T) {
 	client := newTestHTTPClient(http.StatusUnauthorized, "")
-	_, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{Name: "test", Target: "Compile"})
+	_, err := client.SubmitJob(context.Background(), testJobRequest())
 	if err == nil {
 		t.Fatal("expected error for 401 response")
 	}
@@ -86,7 +91,7 @@ func TestSubmitJob404ProbeNetworkError(t *testing.T) {
 			}),
 		},
 	}
-	_, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{Name: "test", Target: "Compile"})
+	_, err := client.SubmitJob(context.Background(), testJobRequest())
 	if err == nil {
 		t.Fatal("expected error for 404 response")
 	}
@@ -137,7 +142,7 @@ func TestSubmitJob404ProbeSendsToken(t *testing.T) {
 			}),
 		},
 	}
-	_, err := client.SubmitJob(context.Background(), &buildgraph.BuildGraphJob{Name: "test", Target: "Compile"})
+	_, err := client.SubmitJob(context.Background(), testJobRequest())
 	if err == nil {
 		t.Fatal("expected error for 404 response")
 	}
