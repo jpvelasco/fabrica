@@ -61,10 +61,11 @@ synced stream. Without a file, the template's default target runs unless
 --target is given. By default, submits and returns immediately (fire-and-forget).
 
 Use --wait / -w to poll every 30 seconds until the job completes (times out
-after 60 minutes). With --wait the command exits non-zero when the job state
-is not recognised, the wait times out, or polling is cancelled (the job keeps
-running on the coordinator either way). Use --dry-run to preview the request
-and the coordinator address without submitting.
+after 60 minutes). With --wait the command exits non-zero when any step fails or
+any batch errors, when the job state is not recognised, when the wait times out,
+or when polling is cancelled (the job keeps running on the coordinator in the
+last two cases). Use --dry-run to preview the request and the coordinator
+address without submitting.
 
 The request authenticates with the fabrica-ci service-account token that the
 coordinator's cloud-init publishes to the SSM SecureString recorded at create
@@ -215,7 +216,7 @@ func (c command) run(ctx context.Context) error {
 		return nil
 	}
 
-	return c.pollUntilDone(ctx, client, jobID)
+	return c.pollUntilDone(ctx, client, jobID, baseURL)
 }
 
 // serviceToken reads the fabrica-ci service-account token from the recorded
@@ -274,23 +275,23 @@ func (c command) printDryRun(req horde.CreateJobRequest, choice *buildgraph.Targ
 	fmt.Fprintln(c.out, "Run without --dry-run to submit the job.")
 }
 
-func (c command) pollUntilDone(ctx context.Context, client HordeClient, jobID string) error {
+func (c command) pollUntilDone(ctx context.Context, client HordeClient, jobID, coordinatorURL string) error {
 	deadline := c.now().Add(waitTimeout)
 	for {
-		state, err := client.GetJobStatus(ctx, jobID)
+		status, err := client.GetJobStatus(ctx, jobID)
 		if err != nil {
 			return fmt.Errorf("polling job %s: %w", jobID, err)
 		}
 
-		fmt.Fprintf(c.out, "Job %s: %s\n", jobID, state)
+		fmt.Fprintf(c.out, "Job %s: %s\n", jobID, status.State)
 
-		switch state {
+		switch status.State {
 		case horde.JobStateComplete:
-			return nil
+			return c.reportOutcome(jobID, coordinatorURL, status)
 		case horde.JobStateWaiting, horde.JobStateRunning:
 		default:
 			return fmt.Errorf("job %s reported state %q, which fabrica does not recognise (expected %s, %s, or %s); inspect the job in the Horde web UI",
-				jobID, state, horde.JobStateWaiting, horde.JobStateRunning, horde.JobStateComplete)
+				jobID, status.State, horde.JobStateWaiting, horde.JobStateRunning, horde.JobStateComplete)
 		}
 
 		if c.now().After(deadline) {
@@ -304,6 +305,38 @@ func (c command) pollUntilDone(ctx context.Context, client HordeClient, jobID st
 			return fmt.Errorf("waiting for job %s: %w", jobID, err)
 		}
 	}
+}
+
+// reportOutcome prints a completed job's warnings and fails when any step or
+// batch did not succeed. Horde's Complete state only says the job stopped.
+func (c command) reportOutcome(jobID, coordinatorURL string, status horde.JobStatus) error {
+	outcome := horde.EvaluateCompleted(status)
+	for _, w := range outcome.Warnings {
+		fmt.Fprintf(c.out, "Warning: job %s: %s\n", jobID, w)
+	}
+	if !outcome.Failed() {
+		return nil
+	}
+	return jobFailedError(jobID, coordinatorURL, outcome)
+}
+
+// jobFailedError names the job, up to MaxListedFailures failing items, and the
+// next step. coordinatorURL is empty when the client was injected; the link
+// is then omitted.
+func jobFailedError(jobID, coordinatorURL string, o horde.JobOutcome) error {
+	where := fmt.Sprintf("open job %s in the Horde dashboard", jobID)
+	if coordinatorURL != "" {
+		where = fmt.Sprintf("open the job in the Horde dashboard at %s/job/%s", coordinatorURL, jobID)
+	}
+	msg := fmt.Sprintf("job %s finished with %d failing item(s): %s", jobID, o.FailureCount, strings.Join(o.Failures, "; "))
+	if more := o.FailureCount - len(o.Failures); more > 0 {
+		msg += fmt.Sprintf("; and %d more", more)
+	}
+	msg += ". " + where + " to see the step logs."
+	if o.AgentsMissing {
+		msg += " For NoAgentsInPool or NoAgentsOnline, check that 'fabrica horde agents' lists enrolled agents and approve pending ones with 'fabrica horde agents approve'."
+	}
+	return errors.New(msg)
 }
 
 func (c command) resolvePrivateIP(ctx context.Context, instanceID string) (string, error) {

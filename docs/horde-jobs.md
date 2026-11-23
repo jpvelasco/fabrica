@@ -48,4 +48,12 @@ fabrica horde submit --dry-run   # prints stream, template, target, and the requ
 fabrica horde submit --wait      # a wrong stream or template fails with a hint
 ```
 
+`--wait` exits non-zero when any step fails or any batch errors. Horde reports
+`Complete` when a job stops, even if its steps failed, so fabrica reads each
+batch and step before reporting success. A step that completed with warnings
+still succeeds; its warning is printed. The error names the job, up to 10
+failing items, and the dashboard link `<coordinator>/job/<id>`. For
+`NoAgentsInPool` or `NoAgentsOnline`, check `fabrica horde agents` and approve
+pending agents with `fabrica horde agents approve`.
+
 A 401 or 403 means the `fabrica-ci` service account lacks job permission.
