@@ -64,7 +64,7 @@ if [ -z "$HELIX_DEB_VERSION" ]; then
   HELIX_DEB_VERSION="$(helix_resolve helix-p4d)"
 fi
 if [ -z "$HELIX_DEB_VERSION" ]; then
-  echo "ERROR: Helix Core {{ .Version }} is not in the Perforce apt repo (available: $(apt-cache madison helix-p4d | awk -F'|' '{gsub(/ /, "", $2); printf "%s ", $2}')). Set perforce.version to an available release, or \"latest\", and re-run fabrica perforce create." >&2
+  echo "ERROR: Helix Core {{ .Version }} is not in the Perforce apt repo (available: $( { apt-cache madison p4-server; apt-cache madison helix-p4d; } | awk -F'|' '{gsub(/ /, "", $2); if (!seen[$2]++) printf "%s ", $2}')). Set perforce.version to an available release, or \"latest\", and re-run fabrica perforce create." >&2
   exit 1
 fi
 # p4-server depends on p4-server-base (= its own version), and apt will not

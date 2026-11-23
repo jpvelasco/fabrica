@@ -51,6 +51,7 @@ func TestHelixInstall(t *testing.T) {
 		{name: "exact build pins p4-server", version: "2025.1/3138991", wantInstall: "p4-server=2025.1-3138991~jammy p4-server-base=2025.1-3138991~jammy", wantOut: "Installed Helix Core p4d 2025.1-3138991"},
 		{name: "old release pins helix-p4d", version: "2024.2", wantInstall: "helix-p4d=2024.2-3084003~jammy", wantOut: "Installed Helix Core p4d 2024.2-3084003"},
 		{name: "missing release fails before install", version: "2023.1", wantExit: 1, wantOut: "is not in the Perforce apt repo"},
+		{name: "missing release lists p4-server-only releases", version: "2023.1", wantExit: 1, wantOut: "2025.1-3138991~jammy"},
 		{name: "release prefix does not match a longer release", version: "2025.20", wantExit: 1, wantOut: "is not in the Perforce apt repo"},
 		{name: "unpinned server fails closed", version: "2025.2", p4dOverride: "2026.1-3141402", wantExit: 1, wantInstall: "p4-server=2025.2-3148719~jammy p4-server-base=2025.2-3148719~jammy", wantOut: "refusing to run an unpinned server"},
 		{name: "latest installs helix-p4d", version: "latest", wantInstall: "helix-p4d", wantOut: "Installed Helix Core p4d 2026.1-3141402"},
