@@ -47,12 +47,12 @@ func TestHelixInstall(t *testing.T) {
 		wantExit                   int
 		wantInstall, wantOut       string
 	}{
-		{name: "new release pins p4-server", version: "2025.2", wantInstall: "p4-server=2025.2-3148719~jammy", wantOut: "Installed Helix Core p4d 2025.2-3148719"},
-		{name: "exact build pins p4-server", version: "2025.1/3138991", wantInstall: "p4-server=2025.1-3138991~jammy", wantOut: "Installed Helix Core p4d 2025.1-3138991"},
+		{name: "new release pins p4-server", version: "2025.2", wantInstall: "p4-server=2025.2-3148719~jammy p4-server-base=2025.2-3148719~jammy", wantOut: "Installed Helix Core p4d 2025.2-3148719"},
+		{name: "exact build pins p4-server", version: "2025.1/3138991", wantInstall: "p4-server=2025.1-3138991~jammy p4-server-base=2025.1-3138991~jammy", wantOut: "Installed Helix Core p4d 2025.1-3138991"},
 		{name: "old release pins helix-p4d", version: "2024.2", wantInstall: "helix-p4d=2024.2-3084003~jammy", wantOut: "Installed Helix Core p4d 2024.2-3084003"},
 		{name: "missing release fails before install", version: "2023.1", wantExit: 1, wantOut: "is not in the Perforce apt repo"},
 		{name: "release prefix does not match a longer release", version: "2025.20", wantExit: 1, wantOut: "is not in the Perforce apt repo"},
-		{name: "unpinned server fails closed", version: "2025.2", p4dOverride: "2026.1-3141402", wantExit: 1, wantInstall: "p4-server=2025.2-3148719~jammy", wantOut: "refusing to run an unpinned server"},
+		{name: "unpinned server fails closed", version: "2025.2", p4dOverride: "2026.1-3141402", wantExit: 1, wantInstall: "p4-server=2025.2-3148719~jammy p4-server-base=2025.2-3148719~jammy", wantOut: "refusing to run an unpinned server"},
 		{name: "latest installs helix-p4d", version: "latest", wantInstall: "helix-p4d", wantOut: "Installed Helix Core p4d 2026.1-3141402"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -90,9 +90,13 @@ func writeHelixStubs(t *testing.T, dir string, repo map[string]string) {
 			`  p4-server) for v in ` + repo["p4-server"] + `; do echo " p4-server | $v | repo"; done ;;` + "\n" +
 			`  helix-p4d) for v in ` + repo["helix-p4d"] + `; do echo " helix-p4d | $v | repo"; done ;;` + "\n" +
 			"esac\n",
-		"apt-get": `echo "$3" > "$STUB_DIR/installed"` + "\n",
+		// Like apt, refuse p4-server=V unless p4-server-base=V is pinned too.
+		"apt-get": `shift 2; specs="$*"` + "\n" +
+			`first="${specs%% *}"; v="${first#p4-server=}"` + "\n" +
+			`case "$first" in p4-server=*) case " $specs " in *" p4-server-base=$v "*) ;; *) echo "p4-server : Depends: p4-server-base (= $v) but a newer one is to be installed" >&2; exit 100 ;; esac ;; esac` + "\n" +
+			`echo "$specs" > "$STUB_DIR/installed"` + "\n",
 		"p4d": `v="$P4D_OVERRIDE"` + "\n" +
-			`spec="$(cat "$STUB_DIR/installed")"` + "\n" +
+			`spec="$(cut -d" " -f1 "$STUB_DIR/installed")"` + "\n" +
 			`if [ -z "$v" ]; then case "$spec" in p4-server=*|helix-p4d=2024*) v="${spec#*=}"; v="${v%~*}" ;; *) v="` + newest + `" ;; esac; fi` + "\n" +
 			`echo "Rev. P4D/LINUX26X86_64/${v%%-*}/${v#*-} (2026/11/12)."` + "\n",
 	}

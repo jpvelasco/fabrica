@@ -46,7 +46,7 @@ DATA_MOUNT="{{ .DataMount }}"
 // helixInstallBody installs Helix Core. Since 2025.1 the server ships as
 // p4-server and helix-p4d is a transitional package whose unversioned
 // p4-server dependency installs the newest server, so a pin resolves against
-// p4-server first (its p4-server-base dependency is exact) and falls back to
+// p4-server and its exact p4-server-base dependency first, and falls back to
 // helix-p4d for older releases. The installed p4d must then report the pinned
 // release, or the boot fails closed (#699).
 const helixInstallBody = `{{ if eq .Version "latest" -}}
@@ -67,7 +67,12 @@ if [ -z "$HELIX_DEB_VERSION" ]; then
   echo "ERROR: Helix Core {{ .Version }} is not in the Perforce apt repo (available: $(apt-cache madison helix-p4d | awk -F'|' '{gsub(/ /, "", $2); printf "%s ", $2}')). Set perforce.version to an available release, or \"latest\", and re-run fabrica perforce create." >&2
   exit 1
 fi
-apt-get install -y "$HELIX_PKG=$HELIX_DEB_VERSION"
+# p4-server depends on p4-server-base (= its own version), and apt will not
+# pick an older candidate to satisfy that, so pin both to the same build.
+HELIX_SPECS="$HELIX_PKG=$HELIX_DEB_VERSION"
+[ "$HELIX_PKG" = p4-server ] && HELIX_SPECS="$HELIX_SPECS p4-server-base=$HELIX_DEB_VERSION"
+# shellcheck disable=SC2086 # word-split the package specs on purpose
+apt-get install -y $HELIX_SPECS
 {{- end }}
 P4D_BIN=/opt/perforce/sbin/p4d
 [ -x "$P4D_BIN" ] || P4D_BIN="$(command -v p4d)"
