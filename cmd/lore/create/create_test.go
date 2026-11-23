@@ -329,7 +329,7 @@ func TestCreateDryRunPrintsAllowedCIDROnce(t *testing.T) {
 		Account: "1", Region: "us-east-1", InstanceType: "m7i.large", VolumeSize: 100,
 		AllowedCIDR: "10.0.0.0/8", VPCID: "vpc-x", AmiID: "ami-x", StoreBackend: lore.StoreBackendLocal,
 		SGName: "sg", RoleName: "role", InstanceProfileName: "prof", InstanceName: "inst",
-	})
+	}, nil)
 	got := out.String()
 	assert.Contains(t, got, "Allowed CIDR:     10.0.0.0/8")
 	if n := strings.Count(got, "Allowed CIDR:"); n != 1 {

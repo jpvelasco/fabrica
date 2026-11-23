@@ -159,8 +159,12 @@ func (c command) run(ctx context.Context, region string) error {
 	}
 	plan.RootDeviceName = rootDevice
 
+	warnings, err := provision.NetworkPreflight(ctx, view.Network, provision.NetworkTarget{Module: "ddc region add", Placement: "--vpc-id and --subnet-id", VPCID: plan.VPCID, SubnetID: plan.SubnetID, DefaultVPC: plan.DefaultVPC})
+	if err != nil {
+		return err
+	}
 	if c.dryRun {
-		c.printDryRun(plan)
+		c.printDryRun(plan, warnings)
 		return nil
 	}
 
@@ -184,6 +188,7 @@ func (c command) run(ctx context.Context, region string) error {
 		return nil
 	}
 
+	provision.WriteWarnings(c.out, warnings)
 	c.printPlan(plan)
 	if !provision.ConfirmSetup(c.out, provision.CreateResourcesPrompt, c.assumeYes, c.confirm) {
 		return nil
@@ -292,10 +297,11 @@ func edgeSG(resources []fabricastate.ModuleResource, region string) (fabricastat
 	return fabricastate.ModuleResource{}, false
 }
 
-func (c command) printDryRun(plan *ddc.EdgePlan) {
+func (c command) printDryRun(plan *ddc.EdgePlan, warnings []string) {
 	fmt.Fprintln(c.out, "Additional DDC region (dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "  Name prefix:      %s\n", plan.Prefix)
+	provision.WriteWarnings(c.out, warnings)
 	c.printPlanBody(plan)
 	fmt.Fprintln(c.out)
 	c.costs.EstimateAll(plan.CostResources).Render(c.out, lineWidth)

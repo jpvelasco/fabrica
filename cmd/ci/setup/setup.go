@@ -146,11 +146,16 @@ func (c command) run(ctx context.Context) error {
 		plan.HordeConnection = connection
 	}
 
+	warnings, err := provision.NetworkPreflight(ctx, provision.NetworkInspector(c.runtime.Provider), provision.NetworkTarget{Module: "ci", Placement: "ci.vpcId and ci.subnetId", VPCID: plan.VPCID, SubnetID: plan.SubnetID, DefaultVPC: plan.DefaultVPC})
+	if err != nil {
+		return err
+	}
 	if c.dryRun {
-		c.printDryRun(plan)
+		c.printDryRun(plan, warnings)
 		return nil
 	}
 
+	provision.WriteWarnings(c.out, warnings)
 	c.printPlan(plan)
 	if !provision.ConfirmSetup(c.out, provision.CreateResourcesPrompt, c.assumeYes, c.confirm) {
 		return nil
@@ -333,10 +338,11 @@ func (c command) resolveHordeURL(ctx context.Context) string {
 	return connection.URL(ip)
 }
 
-func (c command) printDryRun(plan *ci.CreatePlan) {
+func (c command) printDryRun(plan *ci.CreatePlan, warnings []string) {
 	fmt.Fprintln(c.out, "CI setup (dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "  Name prefix:   %s\n", plan.Prefix)
+	provision.WriteWarnings(c.out, warnings)
 	c.printPlanDetails(plan)
 	c.costs.EstimateAll(plan.CostResources).Render(c.out, lineWidth)
 	fmt.Fprintln(c.out, "Run without --dry-run to create these resources.")

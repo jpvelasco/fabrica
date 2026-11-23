@@ -259,8 +259,12 @@ func (c command) run(ctx context.Context) error {
 		}
 	}
 
+	warnings, err := provision.NetworkPreflight(ctx, provision.NetworkInspector(c.runtime.Provider), provision.NetworkTarget{Module: "horde.agents", Placement: "horde.agents.vpcId and horde.agents.subnetId", VPCID: plan.VPCID, SubnetID: plan.SubnetID, DefaultVPC: plan.DefaultVPC})
+	if err != nil {
+		return err
+	}
 	if c.dryRun {
-		c.printDryRun(plan)
+		c.printDryRun(plan, warnings)
 		return nil
 	}
 
@@ -269,6 +273,7 @@ func (c command) run(ctx context.Context) error {
 		return fmt.Errorf("reading state: %w", err)
 	}
 
+	provision.WriteWarnings(c.out, warnings)
 	c.printApplyPlan(plan)
 	if !provision.ConfirmCreate(c.out, moduleName, account, c.assumeYes, c.confirm) {
 		return nil
@@ -637,7 +642,7 @@ func (c command) applyScalingResources(ctx context.Context, plan *horde.AgentsCr
 	return resources, nil
 }
 
-func (c command) printDryRun(plan *horde.AgentsCreatePlan) {
+func (c command) printDryRun(plan *horde.AgentsCreatePlan, warnings []string) {
 	extraFields := []provision.PlanField{
 		{Key: "Agent AMI ID", Value: plan.AmiID},
 		{Key: "Coordinator IP", Value: plan.CoordinatorPrivateIP},
@@ -684,6 +689,7 @@ func (c command) printDryRun(plan *horde.AgentsCreatePlan) {
 		CostResources: plan.CostResources,
 		Costs:         c.costs,
 		OmitVolume:    true,
+		Warnings:      warnings,
 	}
 	if plan.ScalingEnabled {
 		spec.RawBetween = func(w io.Writer) {

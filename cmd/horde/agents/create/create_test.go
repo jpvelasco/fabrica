@@ -735,7 +735,7 @@ func TestPrintDryRun_WithScaling(t *testing.T) {
 		out:   &out,
 		costs: fabricacost.Global,
 	}
-	c.printDryRun(plan)
+	c.printDryRun(plan, nil)
 
 	got := out.String()
 	if !strings.Contains(got, "Scaling enabled") {
@@ -785,7 +785,7 @@ func TestPrintDryRun_WithoutScaling(t *testing.T) {
 		out:   &out,
 		costs: fabricacost.Global,
 	}
-	c.printDryRun(plan)
+	c.printDryRun(plan, nil)
 
 	got := out.String()
 	if strings.Contains(got, "Scaling enabled") {
@@ -821,7 +821,7 @@ func agentsPlanForPrint() *horde.AgentsCreatePlan {
 func TestPrintDryRun_FillsAccountRegionInstanceTypeAndOmitsVolume(t *testing.T) {
 	var out bytes.Buffer
 	c := command{out: &out, costs: fabricacost.Global}
-	c.printDryRun(agentsPlanForPrint())
+	c.printDryRun(agentsPlanForPrint(), nil)
 
 	got := out.String()
 	for _, want := range []string{

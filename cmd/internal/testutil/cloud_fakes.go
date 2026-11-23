@@ -340,3 +340,43 @@ func (p *GameLiftProvider) FleetEvents(context.Context, string) ([]cloud.FleetEv
 	p.FleetEventsCalls++
 	return p.FleetEventsResult, p.FleetEventsErr
 }
+
+// NetworkProvider extends TestProvider with a canned network inspector so
+// create tests exercise the VPC Block Public Access preflight through the
+// provider capability.
+type NetworkProvider struct {
+	TestProvider
+
+	BPA       cloud.BPAStatus
+	BPAErr    error
+	Subnet    cloud.SubnetNetwork
+	SubnetErr error
+}
+
+var _ cloud.NetworkInspector = (*NetworkProvider)(nil)
+
+func (p *NetworkProvider) BlockPublicAccess(context.Context) (cloud.BPAStatus, error) {
+	return p.BPA, p.BPAErr
+}
+
+func (p *NetworkProvider) SubnetEgress(context.Context, string) (cloud.SubnetNetwork, error) {
+	return p.Subnet, p.SubnetErr
+}
+
+// IGWOnlySubnet is a subnet whose only egress is an internet gateway.
+func IGWOnlySubnet(id string) cloud.SubnetNetwork {
+	return cloud.SubnetNetwork{SubnetID: id, VPCID: "vpc-1", DefaultRoute: cloud.RouteIGW}
+}
+
+// SSMOnlySubnet is a subnet with no default route but the full SSM endpoint set.
+func SSMOnlySubnet(id string) cloud.SubnetNetwork {
+	return cloud.SubnetNetwork{
+		SubnetID: id, VPCID: "vpc-1", RouteTableID: "rtb-1",
+		Endpoints: []cloud.VPCEndpoint{
+			{ServiceName: "com.amazonaws.us-west-2.ssm", Type: "Interface", State: "Available"},
+			{ServiceName: "com.amazonaws.us-west-2.ssmmessages", Type: "Interface", State: "Available"},
+			{ServiceName: "com.amazonaws.us-west-2.ec2messages", Type: "Interface", State: "Available"},
+			{ServiceName: "com.amazonaws.us-west-2.s3", Type: "Gateway", State: "Available", RouteTableIDs: []string{"rtb-1"}},
+		},
+	}
+}

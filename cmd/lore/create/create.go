@@ -169,11 +169,14 @@ func (c command) run(ctx context.Context) error {
 		CleanupCommand:    "fabrica lore destroy",
 		Confirm:           c.confirm,
 		ReadState:         c.readState,
-		PrintDryRun:       c.printDryRun,
-		PrintApplyPlan:    c.printApplyPlan,
-		Apply:             c.applyCreate,
-		Runtime:           c.runtime,
-		Operation:         "lore create",
+		Preflight: provision.PreflightFor(c.runtime.Provider, provision.NetworkTarget{
+			Module: "lore", Placement: "lore.vpcId and lore.subnetId", VPCID: plan.VPCID, SubnetID: plan.SubnetID, DefaultVPC: plan.DefaultVPC,
+		}),
+		PrintDryRun:    c.printDryRun,
+		PrintApplyPlan: c.printApplyPlan,
+		Apply:          c.applyCreate,
+		Runtime:        c.runtime,
+		Operation:      "lore create",
 	})
 }
 
@@ -339,7 +342,7 @@ func (c command) createIAMResources(ctx context.Context, plan *lore.CreatePlan, 
 	return resources, nil
 }
 
-func (c command) printDryRun(plan *lore.CreatePlan) {
+func (c command) printDryRun(plan *lore.CreatePlan, warnings []string) {
 	resources := []string{
 		"Security Group:   " + plan.SGName,
 		"EC2 Instance:     " + plan.InstanceName,
@@ -365,7 +368,8 @@ func (c command) printDryRun(plan *lore.CreatePlan) {
 		extraFields = append(extraFields, provision.PlanField{Key: "Root volume", Value: plan.RootDeviceName + " (encrypted)"})
 	}
 	provision.DryRun(c.out, provision.DryRunSpec{
-		Title: "Lore loreserver",
+		Warnings: warnings,
+		Title:    "Lore loreserver",
 		Info: provision.PlanInfo{
 			Account:      plan.Account,
 			Region:       plan.Region,

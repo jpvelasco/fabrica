@@ -66,9 +66,10 @@ type CreatePlan struct {
 
 	// VPCID and SubnetID place the CodeBuild project inside a VPC so builds
 	// can reach a private-IP Horde. SGName is the project's security group.
-	VPCID    string
-	SubnetID string
-	SGName   string
+	VPCID      string
+	SubnetID   string
+	DefaultVPC bool
+	SGName     string
 
 	// IAM is the resolved path and permissions boundary for the CodeBuild role.
 	IAM config.IAM
@@ -101,7 +102,7 @@ func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.CIConfi
 		buildTimeout = defaultBuildTimeout
 	}
 
-	vpcID, subnetID, _, err := topology.ResolveVPC(ctx, cfg.VPCId, cfg.SubnetId, resolver)
+	vpcID, subnetID, defaultVPC, err := topology.ResolveVPC(ctx, cfg.VPCId, cfg.SubnetId, resolver)
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +120,7 @@ func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.CIConfi
 		HordeCAPath:   cfg.HordeCAPath,
 		VPCID:         vpcID,
 		SubnetID:      subnetID,
+		DefaultVPC:    defaultVPC,
 		SGName:        prefix.SG("ci"),
 		IAM:           cfg.IAM,
 		CostResources: CostResources(prefix, cfg),

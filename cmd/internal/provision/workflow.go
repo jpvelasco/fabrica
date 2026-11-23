@@ -32,20 +32,28 @@ type CreateSpec[P any] struct {
 	CleanupCommand string
 	Confirm        func(string, string) bool
 	ReadState      func() (*fabricastate.State, error)
-	PrintDryRun    func(P)
+	// Preflight inspects the target network before any state access. Its
+	// warnings are printed by the dry-run or create path; its error blocks.
+	Preflight      func(context.Context) ([]string, error)
+	PrintDryRun    func(P, []string)
 	PrintApplyPlan func(P)
 	Apply          func(context.Context, *fabricastate.State, P) error
 	Runtime        globals.Runtime
 	Operation      string
 }
 
-// RunCreate enforces the shared create lifecycle: dry runs stop before state
-// access, existing modules stop before confirmation, and resource creation only
-// begins after confirmation succeeds. Non-dry-run paths take the account-level
-// state lock so concurrent creates cannot interleave the local/remote RMW.
+// RunCreate enforces the shared create lifecycle: the network preflight runs
+// first for dry runs and creates alike, dry runs stop before state access,
+// existing modules stop before confirmation, and resource creation only begins
+// after confirmation succeeds. Non-dry-run paths take the account-level state
+// lock so concurrent creates cannot interleave the local/remote RMW.
 func RunCreate[P any](ctx context.Context, spec CreateSpec[P]) error {
+	warnings, err := runPreflight(ctx, spec.Preflight)
+	if err != nil {
+		return err
+	}
 	if spec.DryRun {
-		spec.PrintDryRun(spec.Plan)
+		spec.PrintDryRun(spec.Plan, warnings)
 		return nil
 	}
 
@@ -71,12 +79,21 @@ func RunCreate[P any](ctx context.Context, spec CreateSpec[P]) error {
 		return nil
 	}
 
+	WriteWarnings(spec.Out, warnings)
 	spec.PrintApplyPlan(spec.Plan)
 	if !ConfirmCreate(spec.Out, spec.ModuleName, spec.Account, spec.AssumeYes, spec.Confirm) {
 		return nil
 	}
 
 	return spec.Apply(ctx, st, spec.Plan)
+}
+
+// runPreflight runs the optional network check; a nil hook checks nothing.
+func runPreflight(ctx context.Context, check func(context.Context) ([]string, error)) ([]string, error) {
+	if check == nil {
+		return nil, nil
+	}
+	return check(ctx)
 }
 
 // incompleteResources reports the required resource types a recorded module
