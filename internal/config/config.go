@@ -264,6 +264,8 @@ type DDCConfig struct {
 	Replication        DDCReplicationConfig `mapstructure:"replication"    yaml:"replication"`
 	// IAM overrides cloud.aws.iam for this module when a field is set.
 	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
+	// InstanceProfile names a pre-created instance profile (name or ARN), shared by the home and edge regions.
+	InstanceProfile string `mapstructure:"instanceProfile" yaml:"instanceProfile,omitempty"`
 }
 
 // DDCScyllaConfig is the production Scylla topology overlay. Nodes=1 remains
@@ -304,6 +306,8 @@ type WorkstationConfig struct {
 	Schedule           CapacitySchedule `mapstructure:"schedule"           yaml:"schedule"`
 	// IAM overrides cloud.aws.iam for this module when a field is set.
 	IAM IAM `mapstructure:"iam" yaml:"iam,omitempty"`
+	// InstanceProfile names a pre-created instance profile (name or ARN).
+	InstanceProfile string `mapstructure:"instanceProfile" yaml:"instanceProfile,omitempty"`
 }
 
 // CapacitySchedule is a weekly on/off window used by Horde agents and

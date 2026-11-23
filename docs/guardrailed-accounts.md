@@ -23,14 +23,17 @@ On `AWS::IAM::Role`, Fabrica sends `Path` and `PermissionsBoundary`. On `AWS::IA
 
 ## Pre-created instance profiles
 
-Use this when fabrica runs as a bounded workload role that can pass roles but cannot create them. Set `perforce.instanceProfile` or `horde.agents.instanceProfile` to a profile name or an instance-profile ARN:
+Use this when fabrica runs as a bounded workload role that can pass roles but cannot create them. Set `<module>.instanceProfile` to a profile name or an instance-profile ARN. The key is accepted for `perforce`, `horde` (coordinator), `horde.agents`, `lore`, `workstation`, and `ddc` (shared by its edge regions). CI creates no instance profile, so it has no key:
 
 ```yaml
 perforce:
   instanceProfile: arn:aws:iam::123456789012:instance-profile/platform/fabrica-perforce
 horde:
+  instanceProfile: fabrica-horde
   agents:
     instanceProfile: fabrica-horde-agents
+lore:
+  instanceProfile: fabrica-lore
 ```
 
 Fabrica then creates no IAM role or profile for that module, and create, dry run, and plan make zero IAM create calls. The agent pool's launch template attaches the profile by name. Before anything is created, Fabrica checks the profile with `iam:GetInstanceProfile`; the check fails if the profile is missing, unreadable, or lacks exactly one role. The error names the profile and the permission. destroy never deletes the profile or its role, drift neither reports nor fixes it, and export references it by name. Dry-run output shows `Instance Profile: <name> (pre-created, not managed)`.

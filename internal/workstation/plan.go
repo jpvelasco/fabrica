@@ -7,6 +7,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/instanceprofile"
 	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
@@ -82,6 +83,9 @@ type CreatePlan struct {
 	// IAM is the resolved path and permissions boundary for the instance role.
 	IAM config.IAM
 
+	// Profile is the workstation.instanceProfile reference; external means no role or profile is created.
+	Profile instanceprofile.Ref
+
 	CostResources []cost.Resource
 }
 
@@ -90,12 +94,8 @@ type CreatePlan struct {
 // inventory against this list to separate a fully provisioned module (in any
 // transitional status) from a partial one.
 func (p CreatePlan) RequiredResources() []string {
-	return []string{
-		cloud.TypeAWSEC2SecurityGroup,
-		cloud.TypeAWSIAMRole,
-		cloud.TypeAWSIAMInstanceProfile,
-		cloud.TypeAWSEC2Instance,
-	}
+	types := append([]string{cloud.TypeAWSEC2SecurityGroup}, p.Profile.RecordedTypes()...)
+	return append(types, cloud.TypeAWSEC2Instance)
 }
 
 // resolveSizing applies the sizing precedence per field: explicit config
@@ -134,6 +134,10 @@ func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.Worksta
 		return nil, fmt.Errorf("workstation.amiId is required. Provide a NICE DCV-enabled AMI ID.\nSee: https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-installing.html")
 	}
 	if err := cfg.IAM.Validate(); err != nil {
+		return nil, err
+	}
+	profile, err := instanceprofile.Resolve(cfg.InstanceProfile)
+	if err != nil {
 		return nil, err
 	}
 
@@ -177,7 +181,8 @@ func NewCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.Worksta
 		SGName:              prefix.SG("workstation"),
 		InstanceName:        prefix.Instance("workstation"),
 		RoleName:            prefix.Role("workstation"),
-		InstanceProfileName: prefix.Profile("workstation"),
+		InstanceProfileName: profile.NameOr(prefix.Profile("workstation")),
+		Profile:             profile,
 		IAM:                 cfg.IAM,
 		CostResources:       CostResourcesFor(instanceType, volumeSize),
 	}, nil

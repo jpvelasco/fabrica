@@ -8,6 +8,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/instanceprofile"
 	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
@@ -85,6 +86,9 @@ type SetupPlan struct {
 	// IAM is the resolved path and permissions boundary for the instance role.
 	IAM config.IAM
 
+	// Profile is the ddc.instanceProfile reference; external means no role or profile is created.
+	Profile instanceprofile.Ref
+
 	Topology topology.Topology
 
 	CostResources []cost.Resource
@@ -96,6 +100,10 @@ func NewSetupPlan(ctx context.Context, prefix naming.Prefix, cfg config.DDCConfi
 		return nil, err
 	}
 	if err := cfg.IAM.Validate(); err != nil {
+		return nil, err
+	}
+	profile, err := instanceprofile.Resolve(cfg.InstanceProfile)
+	if err != nil {
 		return nil, err
 	}
 
@@ -139,7 +147,8 @@ func NewSetupPlan(ctx context.Context, prefix naming.Prefix, cfg config.DDCConfi
 		InstanceName:        prefix.Instance("ddc"),
 		ScyllaInstanceName:  prefix.For("ddc", "scylla"),
 		RoleName:            prefix.Role("ddc"),
-		InstanceProfileName: prefix.Profile("ddc"),
+		InstanceProfileName: profile.NameOr(prefix.Profile("ddc")),
+		Profile:             profile,
 		IAM:                 cfg.IAM,
 		Topology:            top,
 		CostResources:       CostResources(prefix, cfg),

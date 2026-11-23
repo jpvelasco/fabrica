@@ -159,6 +159,10 @@ func (c command) run(ctx context.Context, region string) error {
 	}
 	plan.RootDeviceName = rootDevice
 
+	// The home profile is reused, so it is verified here as well.
+	if err := provision.VerifyProfile(ctx, c.runtime.Provider, plan.Profile, "ddc.instanceProfile"); err != nil {
+		return err
+	}
 	warnings, err := provision.NetworkPreflight(ctx, view.Network, provision.NetworkTarget{Module: "ddc region add", Placement: "--vpc-id and --subnet-id", VPCID: plan.VPCID, SubnetID: plan.SubnetID, DefaultVPC: plan.DefaultVPC})
 	if err != nil {
 		return err
