@@ -51,8 +51,10 @@ var requiredEndpoints = []struct{ suffix, typ string }{
 
 // Classify grades a subnet against the BPA configuration. With BPA off every
 // subnet is OK. With BPA on, an IGW-only subnet fails unless an exclusion lifts
-// the block, an isolated subnet always fails, and an endpoint-only subnet warns
-// when internetAtBoot is set (the module downloads packages during boot).
+// the block, an isolated subnet always fails, a NAT subnet warns under
+// block-bidirectional unless the VPC is excluded (that mode blocks NAT gateway
+// traffic too), and an endpoint-only subnet warns when internetAtBoot is set
+// (the module downloads packages during boot).
 func Classify(bpa cloud.BPAStatus, net cloud.SubnetNetwork, internetAtBoot bool) Verdict {
 	p := pathOf(net)
 	if !bpa.On() {
@@ -60,10 +62,15 @@ func Classify(bpa cloud.BPAStatus, net cloud.SubnetNetwork, internetAtBoot bool)
 	}
 	switch p {
 	case PathIGWOnly:
-		if lifted(bpa, net) {
+		if excluded(bpa, net.SubnetID, net.VPCID) {
 			return Verdict{Level: LevelOK, Path: p}
 		}
 		return Verdict{Level: LevelFail, Path: p, Message: fmt.Sprintf("subnet %s reaches the internet only through an internet gateway, which VPC Block Public Access (%s) blocks. Fix: %s.", net.SubnetID, bpa.Mode, fixHint)}
+	case PathNAT:
+		// The NAT gateway's own subnet is not inspected, so only a VPC exclusion proves egress.
+		if bpa.Mode == cloud.BPAModeBlockBidirectional && !excluded(bpa, net.VPCID) {
+			return Verdict{Level: LevelWarn, Path: p, Message: fmt.Sprintf("subnet %s egresses through a NAT gateway, but VPC Block Public Access (%s) also blocks NAT gateway traffic unless the NAT gateway's subnet or the VPC is excluded. Fix: add an exclusion for the NAT gateway's subnet or the VPC, or add the ssm, ssmmessages and ec2messages interface endpoints plus the S3 gateway endpoint (docs/ssm-private.md).", net.SubnetID, bpa.Mode)}
+		}
 	case PathIsolated:
 		return Verdict{Level: LevelFail, Path: p, Message: fmt.Sprintf("subnet %s has no default route and no full set of SSM endpoints (ssm, ssmmessages, ec2messages and S3). Fix: %s.", net.SubnetID, fixHint)}
 	case PathEndpoints:
@@ -115,12 +122,12 @@ func hasEndpoint(net cloud.SubnetNetwork, suffix, typ string) bool {
 	return false
 }
 
-// lifted reports whether an exclusion on the subnet or its VPC lifts the block
-// for an IGW-only subnet. allow-bidirectional always lifts it; allow-egress
-// lifts it only under block-bidirectional, the one mode where it applies.
-func lifted(bpa cloud.BPAStatus, net cloud.SubnetNetwork) bool {
+// excluded reports whether an exclusion on one of ids lifts the block.
+// allow-bidirectional always lifts it; allow-egress lifts it only under
+// block-bidirectional, the one mode where it applies.
+func excluded(bpa cloud.BPAStatus, ids ...string) bool {
 	for _, ex := range bpa.Exclusions {
-		if ex.ResourceID != net.SubnetID && ex.ResourceID != net.VPCID {
+		if !slices.Contains(ids, ex.ResourceID) {
 			continue
 		}
 		if ex.Mode == cloud.BPAExclusionAllowBidirectional ||
