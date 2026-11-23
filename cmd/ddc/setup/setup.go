@@ -140,6 +140,10 @@ func (c command) run(ctx context.Context) error {
 		plan.ScyllaRootDeviceName = scyllaRootDevice
 	}
 
+	// Verified before any create, dry runs included.
+	if err := provision.VerifyProfile(ctx, c.runtime.Provider, plan.Profile, "ddc.instanceProfile"); err != nil {
+		return err
+	}
 	warnings, err := provision.NetworkPreflight(ctx, provision.NetworkInspector(c.runtime.Provider), provision.NetworkTarget{Module: "ddc", Placement: "ddc.vpcId and ddc.subnetId", VPCID: plan.VPCID, SubnetID: plan.SubnetID, DefaultVPC: plan.DefaultVPC})
 	if err != nil {
 		return err
@@ -193,25 +197,10 @@ func (c command) inspectRootDevice(ctx context.Context, amiID, subject string) (
 func (c command) apply(ctx context.Context, st *fabricastate.State, plan *ddc.SetupPlan) error {
 	var resources []fabricastate.ModuleResource
 
-	// IAM Role
-	resources, err := provision.ExecuteStep(ctx, provision.CreateStep{
-		Label:             "IAM role",
-		TypeName:          cloud.TypeAWSIAMRole,
-		BuildDesiredState: func() ([]byte, error) { return ddc.RoleDesiredState(plan) },
-	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	// IAM role and instance profile: created, or a referenced profile recorded.
+	resources, err := c.createIAM(ctx, plan, resources, st)
 	if err != nil {
-		return fmt.Errorf("creating IAM role: %w", err)
-	}
-
-	// Instance Profile
-	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
-		Label:             "Instance profile",
-		TypeName:          cloud.TypeAWSIAMInstanceProfile,
-		BuildDesiredState: func() ([]byte, error) { return ddc.InstanceProfileDesiredState(plan) },
-		IgnoreWriteError:  true,
-	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
-	if err != nil {
-		return fmt.Errorf("creating instance profile: %w", err)
+		return err
 	}
 
 	// S3 Bucket
@@ -322,6 +311,39 @@ func (c command) writeEndpointsFile(plan *ddc.SetupPlan) error {
 	return nil
 }
 
+// createIAM creates the DDC role and instance profile, or records a referenced profile.
+func (c command) createIAM(ctx context.Context, plan *ddc.SetupPlan, resources []fabricastate.ModuleResource, st *fabricastate.State) ([]fabricastate.ModuleResource, error) {
+	// A referenced profile (ddc.instanceProfile) is recorded, not created: no role, no profile.
+	if plan.Profile.External() {
+		return provision.ExecuteStep(ctx, provision.CreateStep{
+			Label:            "Instance profile",
+			TypeName:         cloud.TypeAWSIAMInstanceProfile,
+			ExternalID:       plan.Profile.Name,
+			IgnoreWriteError: true,
+		}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	}
+	resources, err := provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:             "IAM role",
+		TypeName:          cloud.TypeAWSIAMRole,
+		BuildDesiredState: func() ([]byte, error) { return ddc.RoleDesiredState(plan) },
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return nil, fmt.Errorf("creating IAM role: %w", err)
+	}
+
+	// Instance Profile
+	resources, err = provision.ExecuteStep(ctx, provision.CreateStep{
+		Label:             "Instance profile",
+		TypeName:          cloud.TypeAWSIAMInstanceProfile,
+		BuildDesiredState: func() ([]byte, error) { return ddc.InstanceProfileDesiredState(plan) },
+		IgnoreWriteError:  true,
+	}, moduleName, plan.AmiID, "provisioning", resources, st, c.out, c.createResource, c.writeState)
+	if err != nil {
+		return nil, fmt.Errorf("creating instance profile: %w", err)
+	}
+	return resources, nil
+}
+
 func (c command) printDryRun(plan *ddc.SetupPlan, warnings []string) {
 	fmt.Fprintln(c.out, "Distributed DDC (dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
@@ -356,7 +378,11 @@ func (c command) printPlanBody(plan *ddc.SetupPlan) {
 	fmt.Fprintln(c.out)
 	fmt.Fprintln(c.out, "Resources to create:")
 	fmt.Fprintf(c.out, "  IAM role:         %s\n", plan.RoleName)
-	fmt.Fprintf(c.out, "  Instance profile: %s\n", plan.InstanceProfileName)
+	profileLabel := plan.InstanceProfileName
+	if plan.Profile.External() {
+		profileLabel += " (pre-created, not managed)"
+	}
+	fmt.Fprintf(c.out, "  Instance profile: %s\n", profileLabel)
 	for _, line := range provision.IAMResourceLines(plan.IAM) {
 		fmt.Fprintf(c.out, "  %s\n", line)
 	}

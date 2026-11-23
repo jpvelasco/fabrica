@@ -12,6 +12,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/instanceprofile"
 	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/state"
 	"github.com/jpvelasco/fabrica/internal/topology"
@@ -56,7 +57,9 @@ type EdgePlan struct {
 	SGName              string
 	InstanceName        string
 	InstanceProfileName string
-	CostResources       []cost.Resource
+	// Profile is the home stack's ddc.instanceProfile reference, reused by the edge.
+	Profile       instanceprofile.Ref
+	CostResources []cost.Resource
 }
 
 // regionPattern is a light AWS region-name check; AWS rejects invalid regions
@@ -98,6 +101,10 @@ func NewEdgePlan(ctx context.Context, prefix naming.Prefix, cfg config.DDCConfig
 	}
 
 	def := resolveDefaults(prefix, cfg, account, homeRegion)
+	profile, err := instanceprofile.Resolve(cfg.InstanceProfile)
+	if err != nil {
+		return nil, err
+	}
 	vpcID, subnetID, defaultVPC, err := topology.ResolveVPC(ctx, opts.VPCID, opts.SubnetID, resolver)
 	if err != nil {
 		return nil, err
@@ -130,7 +137,8 @@ func NewEdgePlan(ctx context.Context, prefix naming.Prefix, cfg config.DDCConfig
 		Namespace:           def.namespace,
 		SGName:              EdgeSGName(prefix, region),
 		InstanceName:        EdgeInstanceName(prefix, region),
-		InstanceProfileName: prefix.Profile("ddc"),
+		InstanceProfileName: profile.NameOr(prefix.Profile("ddc")),
+		Profile:             profile,
 		CostResources:       EdgeCostResources(cfg, opts),
 	}, nil
 }
