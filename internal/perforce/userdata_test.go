@@ -2,8 +2,13 @@ package perforce
 
 import (
 	"encoding/base64"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"text/template"
 
 	"github.com/jpvelasco/fabrica/internal/assert"
 	"github.com/jpvelasco/fabrica/internal/userdata"
@@ -22,45 +27,84 @@ func TestGenerateRaw_LatestVersion(t *testing.T) {
 	}
 }
 
-// TestGenerateRaw_PinnedVersionFailsClosed pins #699: a pin resolves to an
-// exact repo version and never falls back to an unpinned install.
-func TestGenerateRaw_PinnedVersionFailsClosed(t *testing.T) {
-	for _, tc := range []struct{ version, pin string }{
-		{"2025.2", "2025.2"},
-		{"2024.2/3084003", "2024.2/3084003"},
+// TestHelixInstall runs the rendered install fragment under bash against stub
+// apt-cache, apt-get and p4d (#699). The stub reproduces the live repo, where
+// helix-p4d 2025.1+ is a transitional package that pulls the newest p4-server.
+func TestHelixInstall(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the install fragment is bash; covered on Linux and macOS")
+	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not found")
+	}
+	repo := map[string]string{
+		"p4-server": "2026.1-3141402~jammy 2025.2-3148719~jammy 2025.1-3138991~jammy",
+		"helix-p4d": "2026.1-3141402~jammy 2025.2-3148719~jammy 2024.2-3084003~jammy",
+	}
+	for _, tc := range []struct {
+		name, version, p4dOverride string
+		wantExit                   int
+		wantInstall, wantOut       string
+	}{
+		{name: "new release pins p4-server", version: "2025.2", wantInstall: "p4-server=2025.2-3148719~jammy p4-server-base=2025.2-3148719~jammy", wantOut: "Installed Helix Core p4d 2025.2-3148719"},
+		{name: "exact build pins p4-server", version: "2025.1/3138991", wantInstall: "p4-server=2025.1-3138991~jammy p4-server-base=2025.1-3138991~jammy", wantOut: "Installed Helix Core p4d 2025.1-3138991"},
+		{name: "old release pins helix-p4d", version: "2024.2", wantInstall: "helix-p4d=2024.2-3084003~jammy", wantOut: "Installed Helix Core p4d 2024.2-3084003"},
+		{name: "missing release fails before install", version: "2023.1", wantExit: 1, wantOut: "is not in the Perforce apt repo"},
+		{name: "missing release lists p4-server-only releases", version: "2023.1", wantExit: 1, wantOut: "2025.1-3138991~jammy"},
+		{name: "release prefix does not match a longer release", version: "2025.20", wantExit: 1, wantOut: "is not in the Perforce apt repo"},
+		{name: "unpinned server fails closed", version: "2025.2", p4dOverride: "2026.1-3141402", wantExit: 1, wantInstall: "p4-server=2025.2-3148719~jammy p4-server-base=2025.2-3148719~jammy", wantOut: "refusing to run an unpinned server"},
+		{name: "latest installs helix-p4d", version: "latest", wantInstall: "helix-p4d", wantOut: "Installed Helix Core p4d 2026.1-3141402"},
 	} {
-		t.Run(tc.version, func(t *testing.T) {
-			got, err := GenerateRaw(UserDataConfig{Version: tc.version, AdminPasswordParameter: testAdminParam, Region: testRegion})
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeHelixStubs(t, dir, repo)
+			var script strings.Builder
+			if err := template.Must(template.New("i").Parse(helixInstallBody)).Execute(&script, UserDataConfig{Version: tc.version}); err != nil {
+				t.Fatal(err)
 			}
-			for _, want := range []string{
-				`HELIX_PIN="$(echo '` + tc.pin + `' | tr / -)"`,
-				"apt-cache madison helix-p4d",
-				`if [ -z "$HELIX_DEB_VERSION" ]; then`,
-				"ERROR: Helix Core " + tc.pin + " is not in the Perforce apt repo",
-				`apt-get install -y "helix-p4d=$HELIX_DEB_VERSION"`,
-				`echo "Installed helix-p4d $(dpkg-query -W -f='${Version}' helix-p4d)"`,
-			} {
-				if !strings.Contains(got, want) {
-					t.Errorf("pinned userdata missing %q", want)
-				}
+			cmd := exec.Command(bash, "-euo", "pipefail", "-c", script.String())
+			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STUB_DIR="+dir, "P4D_OVERRIDE="+tc.p4dOverride)
+			out, _ := cmd.CombinedOutput()
+			if got := cmd.ProcessState.ExitCode(); got != tc.wantExit {
+				t.Fatalf("exit = %d, want %d\n%s", got, tc.wantExit, out)
 			}
-			errIdx := strings.Index(got, "is not in the Perforce apt repo")
-			if errIdx < 0 {
-				t.Fatal("missing unavailable-pin error message")
+			if !strings.Contains(string(out), tc.wantOut) {
+				t.Fatalf("output missing %q:\n%s", tc.wantOut, out)
 			}
-			installIdx := strings.Index(got, `apt-get install -y "helix-p4d=$HELIX_DEB_VERSION"`)
-			exitIdx := strings.Index(got[errIdx:], "exit 1")
-			if exitIdx < 0 || installIdx < 0 || errIdx+exitIdx > installIdx {
-				t.Error("an unavailable pin must exit 1 before the pinned install")
-			}
-			for _, banned := range []string{"falling back", "apt-get install -y helix-p4d\n", `"helix-p4d=` + tc.pin + `"`} {
-				if strings.Contains(got, banned) {
-					t.Errorf("pinned userdata must not contain %q", banned)
-				}
+			installed, _ := os.ReadFile(filepath.Join(dir, "installed"))
+			if strings.TrimSpace(string(installed)) != tc.wantInstall {
+				t.Fatalf("apt-get installed %q, want %q", strings.TrimSpace(string(installed)), tc.wantInstall)
 			}
 		})
+	}
+}
+
+// writeHelixStubs installs fake apt-cache, apt-get and p4d. apt-get records
+// the package spec; p4d reports the version a transitional helix-p4d
+// (2025.1+) would really pull in: the newest p4-server.
+func writeHelixStubs(t *testing.T, dir string, repo map[string]string) {
+	t.Helper()
+	newest := strings.TrimSuffix(strings.Fields(repo["p4-server"])[0], "~jammy")
+	stubs := map[string]string{
+		"apt-cache": `case "$2" in` + "\n" +
+			`  p4-server) for v in ` + repo["p4-server"] + `; do echo " p4-server | $v | repo"; done ;;` + "\n" +
+			`  helix-p4d) for v in ` + repo["helix-p4d"] + `; do echo " helix-p4d | $v | repo"; done ;;` + "\n" +
+			"esac\n",
+		// Like apt, refuse p4-server=V unless p4-server-base=V is pinned too.
+		"apt-get": `shift 2; specs="$*"` + "\n" +
+			`first="${specs%% *}"; v="${first#p4-server=}"` + "\n" +
+			`case "$first" in p4-server=*) case " $specs " in *" p4-server-base=$v "*) ;; *) echo "p4-server : Depends: p4-server-base (= $v) but a newer one is to be installed" >&2; exit 100 ;; esac ;; esac` + "\n" +
+			`echo "$specs" > "$STUB_DIR/installed"` + "\n",
+		"p4d": `v="$P4D_OVERRIDE"` + "\n" +
+			`spec="$(cut -d" " -f1 "$STUB_DIR/installed")"` + "\n" +
+			`if [ -z "$v" ]; then case "$spec" in p4-server=*|helix-p4d=2024*) v="${spec#*=}"; v="${v%~*}" ;; *) v="` + newest + `" ;; esac; fi` + "\n" +
+			`echo "Rev. P4D/LINUX26X86_64/${v%%-*}/${v#*-} (2026/11/12)."` + "\n",
+	}
+	for name, body := range stubs {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/bash\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
