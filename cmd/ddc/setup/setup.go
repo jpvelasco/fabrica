@@ -326,7 +326,7 @@ func (c command) printDryRun(plan *ddc.SetupPlan, warnings []string) {
 	fmt.Fprintln(c.out, "Distributed DDC (dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "  Name prefix:      %s\n", plan.Prefix)
-	provision.WriteWarnings(c.out, warnings)
+	provision.WriteDryRunWarnings(c.out, warnings)
 	c.printPlanBody(plan)
 	fmt.Fprintln(c.out)
 	c.costs.EstimateAll(plan.CostResources).Render(c.out, lineWidth)

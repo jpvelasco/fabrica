@@ -342,7 +342,7 @@ func (c command) printDryRun(plan *ci.CreatePlan, warnings []string) {
 	fmt.Fprintln(c.out, "CI setup (dry run)")
 	fmt.Fprintln(c.out, strings.Repeat("-", lineWidth))
 	fmt.Fprintf(c.out, "  Name prefix:   %s\n", plan.Prefix)
-	provision.WriteWarnings(c.out, warnings)
+	provision.WriteDryRunWarnings(c.out, warnings)
 	c.printPlanDetails(plan)
 	c.costs.EstimateAll(plan.CostResources).Render(c.out, lineWidth)
 	fmt.Fprintln(c.out, "Run without --dry-run to create these resources.")

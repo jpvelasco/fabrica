@@ -67,6 +67,13 @@ func inspectionFailure(err error) ([]string, error) {
 	return nil, fmt.Errorf("checking VPC Block Public Access: %w. Retry, or check AWS connectivity and credentials", err)
 }
 
+// WriteDryRunWarnings prints preflight warnings as aligned dry-run fields.
+func WriteDryRunWarnings(out io.Writer, warnings []string) {
+	for _, w := range warnings {
+		fmt.Fprintln(out, "  Warning:          "+w)
+	}
+}
+
 // WriteWarnings prints preflight warnings ahead of a create.
 func WriteWarnings(out io.Writer, warnings []string) {
 	for _, w := range warnings {

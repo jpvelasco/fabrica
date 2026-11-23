@@ -100,9 +100,7 @@ func DryRun(out io.Writer, spec DryRunSpec) {
 		fmt.Fprintf(out, "  VPC:              %s\n", spec.Info.VPCID)
 	}
 
-	for _, w := range spec.Warnings {
-		fmt.Fprintln(out, "  Warning:          "+w)
-	}
+	WriteDryRunWarnings(out, spec.Warnings)
 	if spec.RawBetween != nil {
 		spec.RawBetween(out)
 	}
