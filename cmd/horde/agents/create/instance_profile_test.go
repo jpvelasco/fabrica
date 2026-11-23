@@ -3,15 +3,56 @@ package create
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/jpvelasco/fabrica/cmd/globals"
+	"github.com/jpvelasco/fabrica/cmd/internal/testutil"
 	"github.com/jpvelasco/fabrica/internal/cloud"
+	"github.com/jpvelasco/fabrica/internal/config"
 	fabricacost "github.com/jpvelasco/fabrica/internal/cost"
 	"github.com/jpvelasco/fabrica/internal/horde"
 	"github.com/jpvelasco/fabrica/internal/instanceprofile"
 	fabricastate "github.com/jpvelasco/fabrica/internal/state"
 )
+
+// A missing agent profile fails run before network placement and before any create.
+func TestRunReferencedProfileMissingFailsBeforePlacement(t *testing.T) {
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{
+		{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord"},
+		{TypeName: cloud.TypeAWSEC2SecurityGroup, Identifier: "sg-coord"},
+	})
+	cfg := config.Defaults()
+	cfg.Horde.Agents.AmiID = "ami-agent123"
+	cfg.Horde.Agents.InstanceProfile = "workload"
+	provider := &testutil.InstanceProfileProvider{}
+	var out bytes.Buffer
+	c := command{
+		runtime:   globals.Runtime{Config: cfg, Provider: provider},
+		out:       &out,
+		assumeYes: true,
+		readState: func() (*fabricastate.State, error) { return st, nil },
+		getResource: func(_ context.Context, r *cloud.Resource) error {
+			switch r.TypeName {
+			case cloud.TypeAWSEC2Instance:
+				r.ActualState = json.RawMessage(`{"PrivateIpAddress":"10.0.1.50","SubnetId":"subnet-abc123"}`)
+			case cloud.TypeAWSEC2SecurityGroup:
+				r.ActualState = json.RawMessage(`{"VpcId":"vpc-abc123"}`)
+			}
+			return nil
+		},
+	}
+	err := c.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "horde.agents.instanceProfile") {
+		t.Fatalf("run error = %v, want a horde.agents.instanceProfile error", err)
+	}
+	if len(provider.CreatedTypes) != 0 {
+		t.Errorf("created %v before the profile check failed", provider.CreatedTypes)
+	}
+}
 
 // referencedProfilePlan is the agent pool plan for a pre-created profile.
 func referencedProfilePlan() *horde.AgentsCreatePlan {
@@ -76,5 +117,53 @@ func TestPrintDryRunReferencedProfileRow(t *testing.T) {
 	}
 	if strings.Contains(got, "Agent IAM Role:") {
 		t.Errorf("dry-run output = %q, want no agent IAM role row for a referenced profile", got)
+	}
+}
+
+// A managed agent profile whose create fails stops the apply with that error.
+func TestApplyCreateManagedProfileFailureStops(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord"}})
+	c := command{
+		out: &out,
+		createResource: func(_ context.Context, r *cloud.Resource) error {
+			if r.TypeName == cloud.TypeAWSIAMInstanceProfile {
+				return errors.New("access denied")
+			}
+			r.Identifier = "res-" + r.TypeName
+			return nil
+		},
+		writeState: func(*fabricastate.State) error { return nil },
+	}
+	plan := agentsPlanForPrint()
+	err := c.applyCreate(context.Background(), st, plan)
+	if err == nil || !strings.Contains(err.Error(), "creating agent instance profile") {
+		t.Fatalf("applyCreate error = %v, want a creating agent instance profile error", err)
+	}
+}
+
+// A referenced profile that cannot be recorded in state stops the apply.
+func TestApplyCreateReferencedProfileWriteFailureStops(t *testing.T) {
+	var out bytes.Buffer
+	st := fabricastate.NewState("123456789012", "us-east-1")
+	st.UpsertModule("horde", "v1", "ready", []fabricastate.ModuleResource{{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-coord"}})
+	c := command{
+		out: &out,
+		createResource: func(_ context.Context, r *cloud.Resource) error {
+			r.Identifier = "res-" + r.TypeName
+			return nil
+		},
+		writeState: func(s *fabricastate.State) error {
+			m := s.GetModule("horde")
+			if m != nil && len(m.Resources) > 0 && m.Resources[len(m.Resources)-1].TypeName == cloud.TypeAWSIAMInstanceProfile {
+				return errors.New("disk full")
+			}
+			return nil
+		},
+	}
+	err := c.applyCreate(context.Background(), st, referencedProfilePlan())
+	if err == nil || !strings.Contains(err.Error(), "recording agent instance profile") {
+		t.Fatalf("applyCreate error = %v, want a recording agent instance profile error", err)
 	}
 }

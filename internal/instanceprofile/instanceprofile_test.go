@@ -32,6 +32,16 @@ func TestResolveAndExternal(t *testing.T) {
 	}
 }
 
+// Drop keeps Fabrica-owned resources and removes referenced profiles.
+func TestDropRemovesReferencedProfiles(t *testing.T) {
+	owned := fabricastate.ModuleResource{TypeName: cloud.TypeAWSEC2Instance, Identifier: "i-1"}
+	profile := fabricastate.ModuleResource{TypeName: cloud.TypeAWSIAMInstanceProfile, Identifier: "workload", Properties: map[string]string{PropertyExternal: "true"}}
+	got := Drop([]fabricastate.ModuleResource{profile, owned})
+	if len(got) != 1 || got[0].Identifier != "i-1" {
+		t.Errorf("Drop = %+v, want only the owned instance", got)
+	}
+}
+
 func TestVerify(t *testing.T) {
 	tests := []struct {
 		err     error
