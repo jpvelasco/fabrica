@@ -675,6 +675,7 @@ perforce:
 horde:
   instance_type: m7i.2xlarge
   ami_id: ami-xxxxxxxxxxxxxxxxx   # job-capable Docker compose AMI (MongoDB, Redis, Horde with jobs API)
+  instanceProfile: ""           # optional — a pre-created profile name or ARN (see docs/guardrailed-accounts.md)
   agents:
     amiId: ami-yyyyyyyyyyyyyyyyy  # dedicated agent AMI (see docs/horde-agent-ami.md)
     instanceProfile: ""           # optional — a pre-created profile name or ARN (see docs/guardrailed-accounts.md)
@@ -718,7 +719,7 @@ Choose the owner before running `fabrica setup`. Custom ownership requires a com
 
 Accounts that require an IAM path and permissions boundary, or a project tag on both the instance and its root volume, set `cloud.aws.iam` and `cloud.aws.volumeRequestTags`. See [docs/guardrailed-accounts.md](docs/guardrailed-accounts.md).
 
-Set `<module>.instanceProfile` (perforce, horde, horde.agents, lore, workstation, or ddc; a name or an instance-profile ARN) to launch under a profile the platform team pre-created.
+Set `<module>.instanceProfile` (perforce, horde, horde.agents, lore, workstation, or ddc; a name or an instance-profile ARN) to launch under a profile the platform team pre-created. Fabrica then creates no IAM role or profile for that module and never deletes the profile. See [Pre-created instance profiles](docs/guardrailed-accounts.md#pre-created-instance-profiles).
 
 ## Architecture
 
