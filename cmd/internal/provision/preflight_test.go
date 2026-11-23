@@ -54,7 +54,7 @@ func TestNetworkPreflight(t *testing.T) {
 		{name: "bpa off passes", insp: &fakeInspector{bpa: cloud.BPAStatus{Mode: cloud.BPAModeOff}, subnet: igwSubnet}, target: defaultTarget},
 		{name: "default vpc refused", insp: &fakeInspector{bpa: blockIngress}, target: NetworkTarget{Module: "perforce", Placement: "perforce.vpcId and perforce.subnetId", DefaultVPC: true}, wantErr: "will not fall back to the default VPC. Set perforce.vpcId and perforce.subnetId"},
 		{name: "subnet denied warns", insp: &fakeInspector{bpa: blockIngress, subnetErr: errDenied}, target: defaultTarget, wantWarn: "were not checked"},
-		{name: "subnet other error blocks", insp: &fakeInspector{bpa: blockIngress, subnetErr: errors.New("boom")}, target: defaultTarget, wantErr: "checking VPC Block Public Access"},
+		{name: "subnet other error blocks", insp: &fakeInspector{bpa: blockIngress, subnetErr: errors.New("boom")}, target: defaultTarget, wantErr: "checking egress for subnet "},
 		{name: "igw subnet blocks", insp: &fakeInspector{bpa: blockIngress, subnet: igwSubnet}, target: defaultTarget, wantErr: "cannot be placed: subnet subnet-pub"},
 		{name: "nat subnet passes", insp: &fakeInspector{bpa: blockIngress, subnet: natSubnet}, target: defaultTarget},
 		{name: "endpoints warn for boot-time internet", insp: &fakeInspector{bpa: blockIngress, subnet: ssmSubnet}, target: NetworkTarget{Module: "perforce", SubnetID: "subnet-ssm", InternetAtBoot: true}, wantWarn: "downloads packages"},

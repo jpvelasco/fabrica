@@ -36,7 +36,7 @@ func NetworkPreflight(ctx context.Context, insp cloud.NetworkInspector, t Networ
 	}
 	bpa, err := insp.BlockPublicAccess(ctx)
 	if err != nil {
-		return inspectionFailure(err)
+		return inspectionFailure("VPC Block Public Access", err)
 	}
 	if !bpa.On() {
 		return nil, nil
@@ -46,7 +46,7 @@ func NetworkPreflight(ctx context.Context, insp cloud.NetworkInspector, t Networ
 	}
 	net, err := insp.SubnetEgress(ctx, t.SubnetID)
 	if err != nil {
-		return inspectionFailure(err)
+		return inspectionFailure("egress for subnet "+t.SubnetID, err)
 	}
 	v := egress.Classify(bpa, net, t.InternetAtBoot)
 	switch v.Level {
@@ -59,12 +59,12 @@ func NetworkPreflight(ctx context.Context, insp cloud.NetworkInspector, t Networ
 }
 
 // inspectionFailure degrades an IAM denial to a warning and fails closed on
-// any other inspection error.
-func inspectionFailure(err error) ([]string, error) {
+// any other inspection error, naming the step that failed.
+func inspectionFailure(step string, err error) ([]string, error) {
 	if errors.Is(err, cloud.ErrInspectionDenied) {
 		return []string{"VPC Block Public Access and subnet egress were not checked (" + err.Error() + "). Grant ec2:DescribeVpcBlockPublicAccessOptions, ec2:DescribeVpcBlockPublicAccessExclusions, ec2:DescribeRouteTables, ec2:DescribeVpcEndpoints and ec2:DescribeSubnets to enable this check."}, nil
 	}
-	return nil, fmt.Errorf("checking VPC Block Public Access: %w. Retry, or check AWS connectivity and credentials", err)
+	return nil, fmt.Errorf("checking %s: %w. Retry, or check AWS connectivity and credentials", step, err)
 }
 
 // WriteDryRunWarnings prints preflight warnings as aligned dry-run fields.
