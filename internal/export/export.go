@@ -417,9 +417,8 @@ func buildModule(prefix naming.Prefix, ms state.ModuleState, cfg *config.Config,
 			logicalID = id
 		}
 		props := extractProperties(prefix, ms.Name, *r, cfg, account, region, sessionPasswordParamName(ms))
-		if profile != "" && r.Properties["role"] == role && r.TypeName == "AWS::EC2::Instance" {
-			// The instance launches under the pre-created profile; no IAM resource is declared.
-			props["IamInstanceProfile"] = profile
+		if profile != "" && r.Properties["role"] == role {
+			referenceProfile(r.TypeName, props, profile)
 		}
 		mod.Resources = append(mod.Resources, ExportResource{
 			TypeName:   r.TypeName,
@@ -431,6 +430,22 @@ func buildModule(prefix naming.Prefix, ms state.ModuleState, cfg *config.Config,
 	}
 
 	return mod
+}
+
+// referenceProfile points an instance or launch template at a pre-created
+// profile by name; the export declares no IAM resource for it.
+func referenceProfile(typeName string, props map[string]any, name string) {
+	switch typeName {
+	case "AWS::EC2::Instance":
+		props["IamInstanceProfile"] = name
+	case "AWS::EC2::LaunchTemplate":
+		data, ok := props["LaunchTemplateData"].(map[string]any)
+		if !ok {
+			data = map[string]any{}
+			props["LaunchTemplateData"] = data
+		}
+		data["IamInstanceProfile"] = map[string]any{"Name": name}
+	}
 }
 
 // referencedProfileFor returns the name and role tag of a module's pre-created

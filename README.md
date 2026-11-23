@@ -678,6 +678,7 @@ horde:
   agents:
     amiId: ami-yyyyyyyyyyyyyyyyy  # dedicated agent AMI (see docs/horde-agent-ami.md)
     instanceProfile: ""           # optional — a pre-created profile name or ARN (see docs/guardrailed-accounts.md)
+    instanceProfile: ""           # optional — a pre-created profile name or ARN (see docs/guardrailed-accounts.md)
     instanceType: m7i.xlarge
     minSize: 2
     desiredCapacity: 3

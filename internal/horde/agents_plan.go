@@ -9,6 +9,7 @@ import (
 	"github.com/jpvelasco/fabrica/internal/cloud"
 	"github.com/jpvelasco/fabrica/internal/config"
 	"github.com/jpvelasco/fabrica/internal/cost"
+	"github.com/jpvelasco/fabrica/internal/instanceprofile"
 	"github.com/jpvelasco/fabrica/internal/naming"
 	"github.com/jpvelasco/fabrica/internal/topology"
 )
@@ -95,6 +96,9 @@ type AgentsCreatePlan struct {
 
 	// IAM is the resolved path and permissions boundary. Agents share horde.iam.
 	IAM config.IAM
+	// Profile is the pre-created instance profile reference (horde.agents.instanceProfile).
+	// When external, the pool launches under it and Fabrica creates no role or profile.
+	Profile instanceprofile.Ref
 	// OperatorTags are cloud.aws.tags. The launch template, Auto Scaling group,
 	// instances, and volumes carry them; identity tags always win on conflict.
 	OperatorTags map[string]string
@@ -155,6 +159,15 @@ func NewAgentsCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.H
 		grpcPort = DefaultGRPCPort
 	}
 
+	profile, err := instanceprofile.Resolve(cfg.InstanceProfile)
+	if err != nil {
+		return nil, err
+	}
+	profileName := prefix.For("horde", "agents", "profile")
+	if profile.External() {
+		profileName = profile.Name
+	}
+
 	vpcID, subnetID, defaultVPC, err := resolveAgentPlacement(ctx, cfg, coord, resolver)
 	if err != nil {
 		return nil, err
@@ -203,7 +216,8 @@ func NewAgentsCreatePlan(ctx context.Context, prefix naming.Prefix, cfg config.H
 		CoordinatorSGID:      coord.SGID,
 		SGName:               prefix.For("horde", "agents", "sg"),
 		RoleName:             prefix.For("horde", "agents", "role"),
-		InstanceProfileName:  prefix.For("horde", "agents", "profile"),
+		InstanceProfileName:  profileName,
+		Profile:              profile,
 		LaunchTemplateName:   prefix.For("horde", "agents", "lt"),
 		ASGName:              prefix.For("horde", "agents", "asg"),
 		// Scaling
